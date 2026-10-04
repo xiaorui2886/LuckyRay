@@ -7,6 +7,7 @@ LuckyRay 是面向创作者的本地优先工作空间，让素材整理、Markd
 ## 开始使用
 
 - [下载与安装](docs/downloads.md) · 桌面下载即将开放
+- [版本历史](docs/version-history.md) · 按原发布日期查看更新
 - [下载插件 SDK 1.0.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/sdk-v1.0.0) · 开发者预览
 - [插件开发指南](sdk/README.zh-CN.md) · [English SDK guide](sdk/README.md)
 - [插件目录](catalog/README.md) · [提交你的插件](catalog/SUBMISSION.md)
