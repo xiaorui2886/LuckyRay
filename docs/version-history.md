@@ -2,7 +2,7 @@
 
 按原版本发布日期排列，时间统一为 UTC+08:00。这里保留功能演进记录；本仓库的公开归档时间与原版本发布日期分别记录。
 
-桌面历史安装包尚未开放下载。可用附件以 [Releases](https://github.com/xiaorui2886/LuckyRay/releases) 为准；有版本说明不代表有可下载的安装包。旧版本不代表当前推荐版本，请勿用旧程序直接打开新版格式的数据。
+目前已开放 v1.9.4 桌面历史安装包下载，其余版本的下载状态见各条目。可用附件以 [Releases](https://github.com/xiaorui2886/LuckyRay/releases) 为准；有版本说明不代表有可下载的安装包。旧版本不代表当前推荐版本，请勿用旧程序直接打开新版格式的数据。
 
 ## v1.9.4
 
@@ -11,7 +11,7 @@
 - 改进手机连接与授权界面、素材来源记录和原文件／CSV 导出。
 - 完善图片对比、全局提示及 LightSeek 资料交接；随包引擎更新至 DSH 0.1.7-rc.2。
 
-桌面下载：尚未开放。[Collector 1.9.4 历史版本归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.4)已开放下载（预发布），需搭配兼容桌面端。
+桌面下载：[Windows x64 1.9.4 历史归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.4)（公开归档日期：2026-10-04；安装器未重新构建）。请同时下载并保留[第三方许可及源码材料包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-third-party-materials.zip)。[Collector 1.9.4 历史版本归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.4)已开放下载（预发布），需搭配兼容桌面端。
 
 ## v1.9.3
 

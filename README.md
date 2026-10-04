@@ -6,7 +6,7 @@ LuckyRay 是面向创作者的本地优先工作空间，让素材整理、Markd
 
 ## 开始使用
 
-- [下载与安装](docs/downloads.md) · 桌面下载即将开放
+- [下载与安装](docs/downloads.md) · [Windows x64 1.9.4 历史归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.4)，请同时保留第三方材料包
 - [下载 Collector 1.9.4](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.4) · 历史版本归档（预发布），需搭配兼容桌面端
 - [版本历史](docs/version-history.md) · 按原发布日期查看更新
 - [下载插件 SDK 1.0.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/sdk-v1.0.0) · 开发者预览
@@ -32,4 +32,4 @@ SDK 1.0.0 提供 API 类型、创建/检查/打包工具，以及素材清单、
 
 [贡献指南](CONTRIBUTING.md) · [隐私说明](PRIVACY.md) · [安全报告](SECURITY.md) · [LightSeek 与开源致谢](docs/lightseek.md)
 
-**English:** LuckyRay connects local materials, Markdown notes, a visual canvas and AI in one creative workspace. Desktop downloads are coming soon. Explore the [plugin SDK](sdk/README.md) to get started.
+**English:** LuckyRay connects local materials, Markdown notes, a visual canvas and AI in one creative workspace. The [Windows x64 1.9.4 archive](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.4) is available; download and keep its companion third-party materials. Explore the [plugin SDK](sdk/README.md) to get started.
