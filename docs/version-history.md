@@ -11,7 +11,7 @@
 - 改进手机连接与授权界面、素材来源记录和原文件／CSV 导出。
 - 完善图片对比、全局提示及 LightSeek 资料交接；随包引擎更新至 DSH 0.1.7-rc.2。
 
-下载：尚未开放。
+桌面下载：尚未开放。[Collector 1.9.4 历史版本归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.4)已开放下载（预发布），需搭配兼容桌面端。
 
 ## v1.9.3
 
