@@ -1,0 +1,1 @@
+{"name":"@luckyray/plugin-sdk","version":"1.0.0","private":false,"license":"MIT","type":"module","types":"index.d.ts","bin":{"lr-plugin":"cli.mjs"},"files":["index.d.ts","cli.mjs","README.md","LICENSE"]}
