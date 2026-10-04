@@ -4,15 +4,17 @@
 
 ## Windows x64 桌面版 1.9.4
 
-请同时下载并保留安装器与第三方材料包；材料包是本安装器的必要分发附件。
+请同时下载并保留安装器与以下两个第三方材料包；两个材料包均为本安装器的必要分发附件，彼此不替代。
 
 - [下载 LuckyRay_1.9.4_x64-setup.exe](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay_1.9.4_x64-setup.exe)（198,051,397 字节）
   - SHA-256：`612486e6249f4cff781f8f2b02746fd6f817cc5b409337550505e951a57d1806`
 - [下载 LuckyRay-1.9.4-third-party-materials.zip](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-third-party-materials.zip)（2,705,024 字节）
   - SHA-256：`055418e72a27e83592545a63fa95930c2b2223cd2f1f0c25ba2ba2eb58fa06a0`
+- [下载 LuckyRay-1.9.4-desktop-third-party-supplement.zip](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-desktop-third-party-supplement.zip)（1,883,394 字节）
+  - SHA-256：`bf84f934be36d0ad19b912e31c3ee9f48307fc9cedb0af810a1e976f7c130a45`
 - [SHA-256 校验清单](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/SHA256SUMS.txt)
 
-材料包包含第三方版权、许可原文及源码获取、补丁、构建与重新链接说明。请先阅读包内 `README.zh-CN.md` 与 `THIRD-PARTY/SOURCE.zh-CN.md`；各第三方许可证赋予的权利保持有效，具体许可范围见包内说明。
+原第三方材料包包含第三方版权、许可原文及源码获取、补丁、构建与重新链接说明，请先阅读包内 `README.zh-CN.md` 与 `THIRD-PARTY/SOURCE.zh-CN.md`。桌面组件补充包提供前端、Rust 依赖、Rust 标准库及相关原生组件的许可与源码说明，并随附适用 MPL-2.0 组件的精确源包，请阅读其 `README.zh-CN.md` 与 `SOURCE.zh-CN.md`。各第三方许可证赋予的权利保持有效，具体许可范围见对应包内说明。
 
 原版本发布于 2026-09-28 21:25（UTC+08:00），公开归档发布于 2026-10-04。安装器保持原版字节不变，未重新构建；本次归档未新增 Windows 安装或运行测试。
 

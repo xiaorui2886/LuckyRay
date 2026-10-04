@@ -11,7 +11,7 @@
 - 改进手机连接与授权界面、素材来源记录和原文件／CSV 导出。
 - 完善图片对比、全局提示及 LightSeek 资料交接；随包引擎更新至 DSH 0.1.7-rc.2。
 
-桌面下载：[Windows x64 1.9.4 历史归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.4)（公开归档日期：2026-10-04；安装器未重新构建）。请同时下载并保留[第三方许可及源码材料包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-third-party-materials.zip)。[Collector 1.9.4 历史版本归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.4)已开放下载（预发布），需搭配兼容桌面端。
+桌面下载：[Windows x64 1.9.4 历史归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.4)（公开归档日期：2026-10-04；安装器未重新构建）。请同时下载并保留[第三方许可及源码材料包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-third-party-materials.zip)与[桌面组件许可补充包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-desktop-third-party-supplement.zip)。[Collector 1.9.4 历史版本归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.4)已开放下载（预发布），需搭配兼容桌面端。
 
 ## v1.9.3
 
