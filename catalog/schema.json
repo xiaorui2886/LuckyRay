@@ -1,0 +1,374 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LuckyRay static catalogue entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "version",
+    "status",
+    "author",
+    "source",
+    "license",
+    "artifact",
+    "compatibility",
+    "permissions",
+    "verification",
+    "support"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^(?!.*\\.\\.)[a-z][a-z0-9.-]{2,79}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
+    },
+    "status": {
+      "enum": [
+        "submitted",
+        "official-example",
+        "community-reviewed",
+        "withdrawn"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "url"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceAvailable",
+        "revision"
+      ],
+      "properties": {
+        "sourceAvailable": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "required": [
+            "path"
+          ]
+        }
+      ]
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "spdx",
+        "notice"
+      ],
+      "properties": {
+        "spdx": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bytes",
+        "sha256"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "required": [
+            "path"
+          ]
+        }
+      ]
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sdkVersion",
+        "apiVersion",
+        "minHostVersion",
+        "testedHostVersions",
+        "platforms",
+        "notes"
+      ],
+      "properties": {
+        "sdkVersion": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
+        },
+        "apiVersion": {
+          "const": 1
+        },
+        "minHostVersion": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
+        },
+        "testedHostVersions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
+          }
+        },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "windows-x64"
+            ]
+          }
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "optional",
+        "purpose",
+        "objectScope",
+        "writes"
+      ],
+      "properties": {
+        "required": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "materials.read",
+              "materials.image",
+              "materials.tags",
+              "knowledge.read",
+              "knowledge.create",
+              "knowledge.insert",
+              "canvas.read",
+              "canvas.export"
+            ]
+          }
+        },
+        "optional": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "materials.read",
+              "materials.image",
+              "materials.tags",
+              "knowledge.read",
+              "knowledge.create",
+              "knowledge.insert",
+              "canvas.read",
+              "canvas.export"
+            ]
+          }
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "objectScope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "writes": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "notes"
+      ],
+      "properties": {
+        "level": {
+          "enum": [
+            "authoring-only",
+            "host-tested"
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "support": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "withdrawalReason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "community-reviewed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "properties": {
+              "level": {
+                "const": "host-tested"
+              }
+            }
+          },
+          "compatibility": {
+            "properties": {
+              "testedHostVersions": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "withdrawn"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "withdrawalReason"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verification": {
+            "properties": {
+              "level": {
+                "const": "host-tested"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "compatibility": {
+            "properties": {
+              "testedHostVersions": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
