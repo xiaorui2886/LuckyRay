@@ -18,6 +18,14 @@
 
 原版本发布于 2026-09-28 21:25（UTC+08:00），公开归档发布于 2026-10-04。安装器保持原版字节不变，未重新构建；本次归档未新增 Windows 安装或运行测试。
 
+## 其他桌面历史版本
+
+已开放以下 Windows x64 历史归档：[v1.6.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.6.0) · [v1.7.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.0) · [v1.7.1](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.1) · [v1.7.2](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.2) · [v1.7.3](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.3)。其他版本的下载状态见[版本历史](version-history.md)。
+
+这些归档保留原安装包，未重新构建，也未重新运行历史安装、升级或卸载流程。请先备份资料，阅读各版升级说明，并同时下载、保留该 Release 列出的全部第三方材料及校验清单。v1.7.2 与 v1.7.3 均需保留桌面组件补充包和 Hermes 运行时材料包。
+
+**v1.7.0 升级注意**：数据库会迁移至 v3，并移除旧 SQLite 笔记及相关索引对象；请确认笔记已保存在 Markdown 知识库后再升级。
+
 ## Collector 1.9.4
 
 Collector 是 Edge / Chrome 浏览器采集扩展，需搭配兼容版本的 LuckyRay 桌面端使用。
