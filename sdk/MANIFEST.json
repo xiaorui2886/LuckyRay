@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-10-04T09:01:54.964Z",
+  "sdkVersion": "1.0.0",
+  "documentationChanges": [
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "files": {
+    "LICENSE": {
+      "sha256": "32bbf64dae6418f2cb4f482cdfb9c1a660d8c801a568bcdf5f61892979095979",
+      "bytes": 1162,
+      "sourceSha256": "32bbf64dae6418f2cb4f482cdfb9c1a660d8c801a568bcdf5f61892979095979",
+      "modified": false
+    },
+    "package.json": {
+      "sha256": "f775cf68983c5886cfdaef614c4726f3f9db68fdacbff1592572378127295162",
+      "bytes": 204,
+      "sourceSha256": "f775cf68983c5886cfdaef614c4726f3f9db68fdacbff1592572378127295162",
+      "modified": false
+    },
+    "index.d.ts": {
+      "sha256": "403e201c87a41531dd2e8fc1156a6b9438bee7747d427944549ae0ae93ebf513",
+      "bytes": 3176,
+      "sourceSha256": "403e201c87a41531dd2e8fc1156a6b9438bee7747d427944549ae0ae93ebf513",
+      "modified": false
+    },
+    "cli.mjs": {
+      "sha256": "2429fe61dad93a75ff90d91842db614ce31168dc877858733e43adc097ec2c9e",
+      "bytes": 3659,
+      "sourceSha256": "2429fe61dad93a75ff90d91842db614ce31168dc877858733e43adc097ec2c9e",
+      "modified": false
+    },
+    "README.md": {
+      "sha256": "98c6bf0757a5333a946104d455a8800010822b0c8fd20a18b691f945b3becc88",
+      "bytes": 18580,
+      "sourceSha256": "c2b4679bc5cb5f7459f1b9b9730dd1f2d072b4235611f880d77d4c9170901fb5",
+      "modified": true
+    },
+    "README.zh-CN.md": {
+      "sha256": "8abf14087de987745b785a63954445dc41ae78d5a7e6ee92840e25e182dab9e0",
+      "bytes": 7234,
+      "sourceSha256": "5a7c00a3520d43018991cdb957c24269c68a6a8bfae00fcbd878518fc99b5c39",
+      "modified": true
+    },
+    "examples/palette/plugin.json": {
+      "sha256": "49fc34c77b2836f6ccfc8ca7a27b2cb1d195e66e6d35d709bce3a22486f00ba1",
+      "bytes": 656,
+      "sourceSha256": "49fc34c77b2836f6ccfc8ca7a27b2cb1d195e66e6d35d709bce3a22486f00ba1",
+      "modified": false
+    },
+    "examples/palette/main.js": {
+      "sha256": "642b1a98968c5354b72b16352f7c3bd7a805408d7a01e65d84fd68a9487cc296",
+      "bytes": 3363,
+      "sourceSha256": "642b1a98968c5354b72b16352f7c3bd7a805408d7a01e65d84fd68a9487cc296",
+      "modified": false
+    },
+    "examples/palette/example.palette.lrpack.json": {
+      "sha256": "1f3f02c56e4df97a659cc8dbfe1e55104f4a9e8531d7d7e93968eba31075a5e3",
+      "bytes": 4429,
+      "sourceSha256": "1f3f02c56e4df97a659cc8dbfe1e55104f4a9e8531d7d7e93968eba31075a5e3",
+      "modified": false
+    },
+    "examples/outline/plugin.json": {
+      "sha256": "978c2cbeeed7ba121c56060ceaa5052c7f7d00b6d9f405fa13bb85c6ba22003b",
+      "bytes": 425,
+      "sourceSha256": "978c2cbeeed7ba121c56060ceaa5052c7f7d00b6d9f405fa13bb85c6ba22003b",
+      "modified": false
+    },
+    "examples/outline/main.js": {
+      "sha256": "64c30836b9441684e6c80afd22fe8a250d61dda233614f697bca4f8f158013d3",
+      "bytes": 2178,
+      "sourceSha256": "64c30836b9441684e6c80afd22fe8a250d61dda233614f697bca4f8f158013d3",
+      "modified": false
+    },
+    "examples/outline/example.outline.lrpack.json": {
+      "sha256": "702d341c9ad84e4f96cace99909426d4e94d433c62ee614154769d8e6a7ac627",
+      "bytes": 2941,
+      "sourceSha256": "702d341c9ad84e4f96cace99909426d4e94d433c62ee614154769d8e6a7ac627",
+      "modified": false
+    },
+    "examples/canvas-export/plugin.json": {
+      "sha256": "bc3a084bf9c28e8e6909ef023fce22851909ac258f7d40fc8b1fa01177d207f7",
+      "bytes": 403,
+      "sourceSha256": "bc3a084bf9c28e8e6909ef023fce22851909ac258f7d40fc8b1fa01177d207f7",
+      "modified": false
+    },
+    "examples/canvas-export/main.js": {
+      "sha256": "66517182b3b617230cc4475df467b173b93e34cdaf99dfe71839c1ba20c17975",
+      "bytes": 1492,
+      "sourceSha256": "66517182b3b617230cc4475df467b173b93e34cdaf99dfe71839c1ba20c17975",
+      "modified": false
+    },
+    "examples/canvas-export/example.canvas-export.lrpack.json": {
+      "sha256": "77f787a03fadc849bc364527648aaf660a2b162f7cbfd32c4a2ae2eb22971ed7",
+      "bytes": 2180,
+      "sourceSha256": "77f787a03fadc849bc364527648aaf660a2b162f7cbfd32c4a2ae2eb22971ed7",
+      "modified": false
+    },
+    "examples/material-manifest/plugin.json": {
+      "sha256": "091105f53da2b0186d57dd08e103129f8b649c3b72af67c2ea78254a7a16df7d",
+      "bytes": 626,
+      "sourceSha256": "091105f53da2b0186d57dd08e103129f8b649c3b72af67c2ea78254a7a16df7d",
+      "modified": false
+    },
+    "examples/material-manifest/main.js": {
+      "sha256": "d5389e0eaa3e73a9bccc0fa763e0785d97cb0e133f37b8260bb05611af37d48b",
+      "bytes": 4967,
+      "sourceSha256": "d5389e0eaa3e73a9bccc0fa763e0785d97cb0e133f37b8260bb05611af37d48b",
+      "modified": false
+    },
+    "examples/material-manifest/example.material-manifest.lrpack.json": {
+      "sha256": "abcaefdbc820f3909b0cf2886fe4cde9b922939637ca5e82da2c718a666cebc0",
+      "bytes": 6080,
+      "sourceSha256": "abcaefdbc820f3909b0cf2886fe4cde9b922939637ca5e82da2c718a666cebc0",
+      "modified": false
+    }
+  }
+}
