@@ -20,9 +20,17 @@
 
 ## 其他桌面历史版本
 
-已开放以下 Windows x64 历史归档：[v1.6.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.6.0) · [v1.7.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.0) · [v1.7.1](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.1) · [v1.7.2](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.2) · [v1.7.3](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.3)。其他版本的下载状态见[版本历史](version-history.md)。
+已开放以下 Windows x64 历史归档：[v1.6.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.6.0) · [v1.7.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.0) · [v1.7.1](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.1) · [v1.7.2](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.2) · [v1.7.3](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.3) · [v1.7.4](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.4) · [v1.8.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.8.0) · [v1.9.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.0) · [v1.9.1](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.1) · [v1.9.2](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.2) · [v1.9.3](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.3)。各版更新说明见[版本历史](version-history.md)。v1.6.1–v1.6.7 仅保留更新说明，未附独立桌面安装包。
 
-这些归档保留原安装包，未重新构建，也未重新运行历史安装、升级或卸载流程。请先备份资料，阅读各版升级说明，并同时下载、保留该 Release 列出的全部第三方材料及校验清单。v1.7.2 与 v1.7.3 均需保留桌面组件补充包和 Hermes 运行时材料包。
+这些归档保留原安装包，未重新构建，也未重新运行历史安装、升级或卸载流程。请先备份资料，阅读各版升级说明，并同时下载、保留该 Release 列出的全部第三方材料及校验清单。
+
+- v1.6.0、v1.7.0–v1.7.3：请使用桌面组件补充包 v2；旧补充包仅作为上一版说明归档保留。v1.7.2 与 v1.7.3 还需 Hermes 运行时材料包。
+- v1.7.4、v1.8.0、v1.9.0–v1.9.3：需同时保留桌面组件补充包 v2 和历史运行时第三方材料包，并按包内 `APPLICABILITY.json` 阅读该版本适用的材料。
+- v1.7.4 与 v1.8.0 另提供[FFmpeg 7.1 对应源码与构建材料](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.7.4/LuckyRay-1.7.4-1.8.0-FFmpeg-source-materials.zip)（567,001,807 字节；两版共用，保存在 v1.7.4 发行页）。SHA-256：`7c1cf0683b635ee243c58779da636d8356d51197d046bef5663bdcbaac47b8ae`。
+
+安装使用无需解压或安装源码材料；需要查看组件源码或再次分发时，请一并查阅并保留相应材料及许可说明。
+
+材料索引与许可范围另见[开源组件说明](../third-party/README.md)。
 
 **v1.7.0 升级注意**：数据库会迁移至 v3，并移除旧 SQLite 笔记及相关索引对象；请确认笔记已保存在 Markdown 知识库后再升级。
 
