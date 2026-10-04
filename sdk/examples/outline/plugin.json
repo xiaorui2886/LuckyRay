@@ -1,0 +1,24 @@
+{
+  "id": "example.outline",
+  "name": "笔记结构整理",
+  "version": "1.0.1",
+  "requiredModules": [
+    "knowledge"
+  ],
+  "optionalModules": [],
+  "requiredPermissions": [
+    "knowledge.read"
+  ],
+  "optionalPermissions": [
+    "knowledge.create",
+    "knowledge.insert"
+  ],
+  "dataVersion": 1,
+  "contributions": [
+    {
+      "id": "outline",
+      "label": "生成笔记提纲",
+      "kind": "panel"
+    }
+  ]
+}
