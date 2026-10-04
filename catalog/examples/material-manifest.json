@@ -1,0 +1,52 @@
+{
+  "$schema": "../schema.json",
+  "id": "example.material-manifest",
+  "name": "素材使用清单",
+  "version": "1.0.2",
+  "status": "official-example",
+  "description": "官方教学示例：本次授权素材的分组清单、插件自有设置与可选创建笔记。",
+  "author": {
+    "name": "LuckyRay SDK contributors",
+    "url": "https://github.com/xiaorui2886"
+  },
+  "source": {
+    "sourceAvailable": true,
+    "path": "sdk/examples/material-manifest",
+    "revision": "sdk-1.0.0"
+  },
+  "license": {
+    "spdx": "MIT",
+    "notice": "sdk/LICENSE"
+  },
+  "artifact": {
+    "path": "sdk/examples/material-manifest/example.material-manifest.lrpack.json",
+    "bytes": 6080,
+    "sha256": "abcaefdbc820f3909b0cf2886fe4cde9b922939637ca5e82da2c718a666cebc0"
+  },
+  "compatibility": {
+    "sdkVersion": "1.0.0",
+    "apiVersion": 1,
+    "minHostVersion": "1.9.2",
+    "testedHostVersions": [],
+    "platforms": [
+      "windows-x64"
+    ],
+    "notes": "最低版本来自插件包声明；教学示例未完成公开发行后的实机运行验证。"
+  },
+  "permissions": {
+    "required": [
+      "materials.read"
+    ],
+    "optional": [
+      "knowledge.create"
+    ],
+    "purpose": "读取本次选中素材的元数据；用户明确选择创建时可生成清单笔记。",
+    "objectScope": "只处理宿主在本次运行中选择的素材；建笔记是独立授权选项。",
+    "writes": "保存插件自有设置；可选创建笔记，需宿主授权与确认，结果以宿主回执为准。"
+  },
+  "verification": {
+    "level": "authoring-only",
+    "notes": "CLI检查和可复现打包；教学代码不列入生产目录，不代表实机验收。"
+  },
+  "support": "CONTRIBUTING.md"
+}
