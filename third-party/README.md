@@ -13,6 +13,19 @@ LuckyRay 感谢所使用的开源项目。各组件保留自己的版权与许�
 
 两个材料包彼此不替代，各第三方许可证赋予的权利保持有效。
 
+## 其他桌面历史版本
+
+v1.6.0、v1.7.0–v1.7.4、v1.8.0 与 v1.9.0–v1.9.3 的公开归档入口见[版本历史](../docs/version-history.md)及[下载说明](../docs/downloads.md)。各版安装器需与发行说明列出的全部第三方材料一同下载并保留。
+
+- 桌面组件材料：使用 `LuckyRay-historical-desktop-third-party-supplement-v2.zip`，包含历史前端、Rust、标准库与原生组件的版权、许可、适用范围及源码材料。早期发行页保留的旧补充包已被 v2 替代。
+- v1.7.2 与 v1.7.3：另需 `LuckyRay-historical-Hermes-notices.zip`，提供相应 Hermes/Python 运行时材料。
+- v1.7.4、v1.8.0 与 v1.9.0–v1.9.3：另需 `LuckyRay-historical-runtime-third-party-materials.zip`。按包内 `APPLICABILITY.json` 选取对应版本的运行时、原生库、版权、许可及源码材料；未列出的目录不表示该组件存在于相应版本。
+- v1.7.4 与 v1.8.0：另提供[FFmpeg 7.1 对应源码与构建材料](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.7.4/LuckyRay-1.7.4-1.8.0-FFmpeg-source-materials.zip)，两版共用同一份公开附件，保存在 v1.7.4 发行页。文件大小和 SHA-256 见各版发行说明及校验清单。
+
+安装使用无需解压或安装源码材料；需要查看组件源码或再次分发时，请一并查阅并保留相应材料及许可说明。
+
+历史 FFmpeg 工具与库组合含有 GPL 组件，其分发须遵守 GPL-3.0-or-later；原始 LGPL 文本一并保留，不能只依据上游文件名中的 LGPL 标签判断实际许可范围。该范围针对 FFmpeg 工具与库，不对独立 LuckyRay 宿主作自动许可推断。请阅读包内对应的许可范围、源码与构建说明；材料整理不构成法律认证。
+
 参考：[MPL 2.0](https://www.mozilla.org/en-US/MPL/2.0/) · [LGPL v3](https://www.gnu.org/licenses/lgpl-3.0.html) · [FFmpeg 分发说明](https://ffmpeg.org/legal.html)
 
 Collector 是独立扩展，不适用本仓库 SDK 的 MIT 许可；以其发行附件中的说明为准。
