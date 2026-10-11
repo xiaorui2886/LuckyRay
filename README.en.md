@@ -1,70 +1,104 @@
 <div align="center">
 
-# LuckyRay
+<a href="https://luckyray.me"><img src="assets/readme-hero.svg" alt="LuckyRay: Collect. Connect. Create. A local-first workspace for assets, notes and AI creation." width="100%" /></a>
 
-**Bring your materials, notes and ideas into one creative workspace.**
+### Turn what you collect into what you create.
 
-A local-first Windows app · Material library · Markdown notes · Canvas · AI
+An organized asset library · Connected Markdown notes · A canvas you can create in
+
+**[Only official website · luckyray.me](https://luckyray.me)** · [Download for Windows](https://luckyray.me/atelier/edition/download) · [Browser extension](https://luckyray.me/atelier/edition/collector) · [Documentation](https://luckyray.me/atelier/edition/docs)
+
+[![Release](https://img.shields.io/github/v/release/xiaorui2886/LuckyRay?style=flat-square&color=806399&label=release)](https://github.com/xiaorui2886/LuckyRay/releases/latest)
+![Platform](https://img.shields.io/badge/platform-Windows_x64-31343b?style=flat-square)
+[![Website](https://img.shields.io/badge/official-luckyray.me-806399?style=flat-square)](https://luckyray.me)
 
 [简体中文](README.md) · **English**
 
-[Download desktop app](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [Installation guide](docs/downloads.md) · [Version history](docs/version-history.md) · [Feedback](https://github.com/xiaorui2886/LuckyRay/issues)
-
 </div>
 
-## Put what you collect to work
+## Good references deserve more than a bookmark
 
-Save a reference image, capture an idea, then bring them together on a canvas. LuckyRay connects material organization, Markdown notes and AI-assisted creation, making the content you find easier to understand, organize and use again.
+Reference images in your browser. Assets in folders. Ideas in notes. When it is time to create, you have to bring them together all over again.
 
-**Collect references → Organize materials → Connect ideas → Create**
+**LuckyRay brings an asset library, Markdown notes, a relationship graph, a canvas and optional AI into one local-first Windows workspace.** Collect, organize, understand and create, with more of your existing work within reach.
 
-## A connected workspace
+If you enjoy Eagle-style asset organization and Obsidian-style linked thinking, the working habits will feel familiar. LuckyRay focuses on the connections between them: a place where references, notes and creative work can continue together.
 
-| Space | What you can do |
-| --- | --- |
-| **Material library** | Organize images, videos and creative files with folders, tags and search. Keep source information and export original files or CSV metadata. |
-| **Markdown knowledge base** | Write notes and connect ideas through links, backlinks and a relationship graph. |
-| **Canvas** | Arrange text, images and videos freely to organize references, develop ideas and plan your next piece of work. |
-| **AI / LightSeek** | Connect your chosen model provider and use authorized notes and materials to help find, understand and create content. |
-| **Collector web capture** | Collect web content and supported materials through the Edge / Chrome extension, then organize them in the desktop app. |
-| **Plugins** | Add capabilities as you need them. Review permissions at installation and choose which materials a plugin can access. |
+> **Save a reference → Capture an idea → Explore it on a canvas → Keep the result in your own library.**
+
+## One workspace, five ways to create
+
+| View | Put your collection to work |
+| :--- | :--- |
+| **Asset library** | Organize images, videos and creative files with folders, tags and search. Keep source information and export original files or CSV metadata. |
+| **Knowledge base** | Write in Markdown and connect related notes with links and backlinks. In-window split views and layout management help keep reading and organizing connected. |
+| **Relationship graph** | Step beyond a single note and explore the connections across your knowledge. |
+| **Canvas** | Bring text, images and video together. Configure models to create directly, use reference packs and templates, compare versions, refine images and save results to the asset library or a new note. |
+| **LightSeek / LSH** | Connect your chosen model provider and use authorized materials to help find, understand and create. AI is optional; core organization does not depend on a model service. |
+
+### Start on the web. Continue on your desktop.
+
+**LuckyRay Collector** brings text, links, images and supported videos from Edge / Chrome into LuckyRay. Version 1.9.6 adds **MP3/WAV audio capture**, plus a visibility toggle and keyboard shortcut for the video overlay button.
+
+[Explore Collector →](https://luckyray.me/atelier/edition/collector)
+
+## Keep a starting point for your next idea
+
+- **Design and visual work:** Collect layouts, colors and image references, add your notes, then organize directions and compare options on the canvas.
+- **Learning and research:** Turn scattered web references into Markdown notes and build connections through links and a graph.
+- **AI-assisted creation:** Bring existing materials and writing into the creative process, try models and variations, then keep the results worth revisiting.
+
+We learn from thoughtful asset and knowledge tools, while focusing on a simple goal: **less moving things between tools, more continuity between organizing and creating.**
 
 ## Get started
 
-### Choose your download
+**Current stable release: LuckyRay 1.9.6 + Collector 1.9.6** · October 11, 2026
 
-| Download | Who it is for |
-| --- | --- |
-| [**LuckyRay 1.9.6 · Windows x64**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) | Current stable desktop release for Windows 10/11 x64. Download and keep both companion third-party license and source material packages alongside the installer. |
-| [**Collector 1.9.6**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) | Edge / Chrome extension. Download separately for use with the LuckyRay 1.9.6 desktop app. |
-| [**Plugin SDK 1.0.0**](https://github.com/xiaorui2886/LuckyRay/releases/tag/sdk-v1.0.0) | Developer preview for plugin authors, with type definitions, tools and teaching examples. |
+| What you need | Start here |
+| :--- | :--- |
+| **Use the desktop app** | [Official download page](https://luckyray.me/atelier/edition/download) · [Direct Windows x64 installer](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.6/LuckyRay_1.9.6_x64-setup.exe) |
+| **Install or update Collector** | [Extension guide](https://luckyray.me/atelier/edition/collector) · [Direct extension ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.6/LuckyRay-Collector-1.9.6.zip) |
+| **See what changed** | [What's new](https://luckyray.me/atelier/edition/changelog) · [Release files and checksums](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) |
 
-Desktop 1.9.6 and Collector 1.9.6 were publicly released on **2026-10-11 (UTC)**. Updating the desktop app does not automatically update Collector in your browser. Update the extension separately: switch to the new extracted folder or replace the files in the currently loaded folder, click **Reload** in the browser's extension manager, then refresh any open pages. See the [installation guide](docs/downloads.md) for details and the [version history](docs/version-history.md) for other releases and download availability.
+1. **Open the desktop app.** Available for Windows 10/11 x64. Read the [installation and verification guide](docs/downloads.md) and keep independent backups of important data.
+2. **Keep your first reference.** Import an image, write a note or explore a small idea on the canvas.
+3. **Add what you need.** Install Collector for web capture. Configure a model provider when you want AI assistance.
 
-1. **Install the desktop app.** Read the [installation guide](docs/downloads.md) for system requirements, checksums and installation notes. Back up important data first.
-2. **Build your own workspace.** Import materials, organize Markdown notes and bring references and ideas together on the canvas.
-3. **Connect what you need.** Install Collector for web capture. To use AI, configure your own model provider and choose the materials it may use.
+<details>
+<summary><strong>Installation, platforms and updates: read before using</strong></summary>
 
-## Extend your workflow
+- The current installer is not Authenticode-signed. Verify its official SHA-256 and keep the third-party materials and desktop component supplement linked in the release notes.
+- Collector is a separate extension package, loaded and updated manually. Updating the desktop app does not automatically update the browser extension.
+- In-app updates currently check versions and offer an installer download. Full automatic updating is not included in this release.
+- Android remains in testing. macOS, Linux and iOS are not released. Features under development are not promises about the current installer.
+- Capture depends on site structure, access permissions and DRM restrictions. Not every website or media format is supported.
 
-SDK 1.0.0 includes tools to create, check and package plugins, plus four teaching examples: **material manifests, color palettes, note outlines and canvas export**. Running a plugin requires a compatible desktop host. Start with the [compatibility notes](docs/compatibility.md).
+</details>
 
-The plugin catalog is open for submissions and currently has no listed third-party entries. For now, users download plugins manually and install them in the app.
+## Your content, your choices
 
-[English SDK guide](sdk/README.md) · [中文开发指南](sdk/README.zh-CN.md) · [Browse the catalog](catalog/README.md) · [Submit a plugin](catalog/SUBMISSION.md)
+**Local-first. AI when you want it.** Assets, Markdown notes and canvases are stored locally or in a location you choose by default. Remote models, web search and web fetching may send relevant content to the services you select, and those providers may charge separately.
 
-## Your materials, your choices
+[Privacy and networking](PRIVACY.md) · [LightSeek guide](docs/lightseek.md) · [Data and backup guidance](https://luckyray.me/atelier/edition/docs)
 
-Materials, Markdown notes and canvases are stored locally or in your chosen location by default. When you use AI, web search or web fetching, relevant content may be sent to the services you select. Model and search providers may charge separately. Adding materials to a conversation draft does not automatically send them to a model.
+## Help shape what comes next
 
-Web capture depends on site structure, access permissions and DRM restrictions. Keep independent backups of important data. Read more in the [privacy and network notes](PRIVACY.md) and [LightSeek overview](docs/lightseek.md).
+If this direction resonates with you, give LuckyRay a **Star** at the top of this page. It makes the project easier to find again and helps other creators discover it.
 
-## Documentation and feedback
+For release notifications, choose **Watch → Custom → Releases**. A specific piece of feedback about your workflow is just as valuable.
 
-- **Installation and releases:** [Download guide](docs/downloads.md) · [1.9.6 release notes](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [Full version history](docs/version-history.md)
-- **Use and licensing:** [Use and license terms](LICENSE.md) · [Privacy](PRIVACY.md) · [Open-source acknowledgments](third-party/README.md)
-- **Help improve LuckyRay:** [Report a bug / suggest a feature](https://github.com/xiaorui2886/LuckyRay/issues) · [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md)
+[Report a bug / suggest a feature](https://github.com/xiaorui2886/LuckyRay/issues) · [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md)
 
-The desktop app is free to install and use; see the [application terms](LICENSE.md) for details. The `sdk/` directory is [MIT-licensed](sdk/LICENSE). The desktop app, Collector and third-party components have their own applicable licenses, and rights granted by third-party licenses remain in effect.
+### A place for plugin authors
 
-The SDK has a dedicated English guide. Most other linked documentation is currently in Chinese.
+**Plugin SDK 1.0.0** includes type definitions, creation/checking/packaging tools and four teaching examples: material manifests, color palettes, note outlines and canvas export. The catalog accepts submissions and currently has no listed third-party entries.
+
+[English SDK guide](sdk/README.md) · [中文 SDK 指南](sdk/README.zh-CN.md) · [Compatibility](docs/compatibility.md) · [Submit a plugin](catalog/SUBMISSION.md)
+
+---
+
+**Only official website: [https://luckyray.me](https://luckyray.me)**
+
+This is LuckyRay's public release, documentation and community repository. It does not contain the full desktop application source. The desktop app is free to install and use under its [application terms](LICENSE.md); `sdk/` is [MIT-licensed](sdk/LICENSE). The desktop app, Collector and third-party components have their own applicable licenses. See the [third-party acknowledgments](third-party/README.md).
+
+Eagle and Obsidian belong to their respective owners. They are referenced as inspirations for working habits, not as claims of affiliation, full compatibility or feature parity. The website has a language switch; some repository documentation is currently in Chinese.

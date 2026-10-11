@@ -1,68 +1,104 @@
 <div align="center">
 
-# LuckyRay
+<a href="https://luckyray.me"><img src="assets/readme-hero.svg" alt="LuckyRay：收集、连接、创作。本地优先的素材、笔记与 AI 创作空间。" width="100%" /></a>
 
-**把素材、笔记与灵感，连接成你的创作空间。**
+### 让收藏，成为创作的起点。
 
-本地优先的 Windows 桌面应用 · 素材管理 · Markdown 知识库 · 画布 · AI
+素材管理的秩序感 · 双向链接的知识网络 · 可以直接创作的 AI 画布
+
+**[唯一官网 · luckyray.me](https://luckyray.me)** · [下载 Windows 版](https://luckyray.me/atelier/edition/download) · [浏览器插件](https://luckyray.me/atelier/edition/collector) · [使用文档](https://luckyray.me/atelier/edition/docs)
+
+[![Release](https://img.shields.io/github/v/release/xiaorui2886/LuckyRay?style=flat-square&color=806399&label=release)](https://github.com/xiaorui2886/LuckyRay/releases/latest)
+![Platform](https://img.shields.io/badge/platform-Windows_x64-31343b?style=flat-square)
+[![Website](https://img.shields.io/badge/official-luckyray.me-806399?style=flat-square)](https://luckyray.me)
 
 **简体中文** · [English](README.en.md)
 
-[下载桌面版](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [下载与安装](docs/downloads.md) · [版本历史](docs/version-history.md) · [反馈建议](https://github.com/xiaorui2886/LuckyRay/issues)
-
 </div>
 
-## 让收集的内容，继续参与创作
+## 好的参考，不该止步于收藏夹
 
-保存一张参考图，记录一个想法，再把它们放到同一张画布上。LuckyRay 将素材整理、Markdown 笔记与 AI 辅助创作连接起来，让找到的内容更容易被理解、组织和再次使用。
+浏览器里有参考图，文件夹里有素材，笔记里有想法。真正开始创作时，又要把它们重新找一遍。
 
-**收集参考 → 整理资料 → 连接想法 → 继续创作**
+**LuckyRay 把素材库、Markdown 知识库、关系图谱、画布与可选 AI 放进一个本地优先的 Windows 创作空间。** 从收集到整理，从理解到生成，让已有的积累继续参与下一次创作。
 
-## 一个连贯的工作空间
+如果你喜欢 Eagle 式的素材整理，也习惯 Obsidian 式的链接思考，这里会有熟悉的工作习惯。LuckyRay 想进一步连接它们：让参考、笔记与创作在同一处接续。
 
-| 空间 | 你可以做什么 |
-| --- | --- |
-| **素材库** | 用文件夹、标签与搜索整理图片、视频和创作文件；保留来源信息，导出原文件与 CSV 元数据清单。 |
-| **Markdown 知识库** | 记录笔记，以链接、反链与关系图谱连接想法，让资料之间的关联清晰可见。 |
-| **画布** | 自由组合文字、图片和视频，整理参考、梳理思路，规划下一步创作。 |
-| **AI / LightSeek** | 连接你选择的模型服务，在授权范围内使用笔记和素材，辅助查找、理解与创作。 |
-| **Collector 网页采集** | 通过 Edge / Chrome 扩展收集网页内容与受支持的素材，交给桌面端继续整理。 |
-| **插件扩展** | 按需加入新的工作方式；安装时查看权限，决定插件可以访问的资料。 |
+> **收下一张图 → 记下一个想法 → 在画布里展开 → 把成果留回自己的资料库。**
 
-## 开始使用
+## 一个空间，五种创作视角
 
-### 选择你需要的下载
+| 视角 | 不只是存下来，更是用起来 |
+| :--- | :--- |
+| **素材库** | 用文件夹、标签与搜索整理图片、视频及创作文件。保留来源，导出原文件或 CSV 清单，让素材更容易找回。 |
+| **知识库** | 用 Markdown 写下想法，通过双向链接、反向链接连接相关笔记。支持窗内分屏与布局管理，让阅读和整理更连贯。 |
+| **关系图谱** | 从单篇笔记走向关联网络，换一个视角理解资料之间的联系。 |
+| **Canvas 画布** | 把文字、图片与视频放在同一张画布上。配置模型后直接创作，使用参考包、创作模板、版本对比与图片精修；成果可保存到素材库或新建笔记。 |
+| **LightSeek / LSH** | 连接你选择的模型服务，在授权范围内使用资料，辅助查找、理解与创作。AI 按需启用，核心整理不依赖模型服务。 |
 
-| 下载 | 适用场景 |
-| --- | --- |
-| [**LuckyRay 1.9.6 · Windows x64**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) | 当前桌面正式版。适用于 Windows 10/11 x64；请同时下载并保留该版本的两个第三方许可及源码材料附件。 |
-| [**Collector 1.9.6**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) | Edge / Chrome 浏览器扩展，独立下载，配套 LuckyRay 1.9.6 桌面端使用。 |
-| [**插件 SDK 1.0.0**](https://github.com/xiaorui2886/LuckyRay/releases/tag/sdk-v1.0.0) | 面向插件作者的开发者预览，包含类型定义、工具与教学示例。 |
+### 从网页开始，也能接上这条工作流
 
-桌面 1.9.6 与 Collector 1.9.6 于 **2026-10-11（UTC）** 公开发布。桌面更新不会自动更新浏览器中已加载的 Collector，请按下载说明单独更新扩展。其他版本的说明与下载状态见[版本历史](docs/version-history.md)。
+配套 **LuckyRay Collector** 将 Edge / Chrome 中的文字、链接、图片与受支持的视频带回桌面。1.9.6 加入 **MP3/WAV 音频采集**，以及视频悬浮按钮的显示开关和快捷键。
 
-1. **安装桌面端**：先阅读[下载与安装](docs/downloads.md)中的系统要求、文件校验和安装注意事项，并备份重要资料。
-2. **建立自己的资料空间**：导入素材、整理 Markdown 笔记，在画布中组合参考与想法。
-3. **按需连接更多能力**：需要网页采集时安装 Collector；需要 AI 时配置自己的模型服务，并选择要使用的资料范围。
+[了解 Collector →](https://luckyray.me/atelier/edition/collector)
 
-## 按需扩展你的工作方式
+## 为你的下一次创作，留好起点
 
-SDK 1.0.0 提供插件创建、检查与打包工具，以及**素材清单、配色、笔记提纲、画布导出**四个教学示例。安装运行需要兼容的桌面宿主，请先查看[版本兼容说明](docs/compatibility.md)。
+- **设计与视觉创作**：收集版式、色彩与图片参考，加入自己的笔记，在画布里组织方向、比较方案。
+- **学习与研究**：把零散网页整理成 Markdown 笔记，用链接和图谱逐渐形成自己的知识网络。
+- **AI 辅助创作**：让已有素材与文字参与创作，尝试不同模型与结果，再把值得保留的成果归档。
 
-插件目录已开放提交，目前尚无上架的第三方条目。现阶段由用户手动下载并在应用内安装。
+我们向优秀的素材管理与知识工具学习，同时专注一件事：**减少在工具之间搬运，让整理与创作自然衔接。**
 
-[中文开发指南](sdk/README.zh-CN.md) · [English SDK guide](sdk/README.md) · [浏览插件目录](catalog/README.md) · [提交你的插件](catalog/SUBMISSION.md)
+## 从这里开始
 
-## 你的资料，你来选择
+**当前正式版：LuckyRay 1.9.6 + Collector 1.9.6** · 2026-10-11
 
-素材、Markdown 笔记与画布优先保存在本地或你选择的资料位置。使用 AI、联网搜索或网页抓取时，相关内容可能发送给你选择的服务；模型和搜索服务可能单独收费。资料加入会话草稿不会自动发送给模型。
+| 你要做什么 | 入口 |
+| :--- | :--- |
+| **开始使用桌面端** | [官网下载页](https://luckyray.me/atelier/edition/download) · [直接下载 Windows x64 安装包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.6/LuckyRay_1.9.6_x64-setup.exe) |
+| **安装或更新浏览器插件** | [Collector 安装说明](https://luckyray.me/atelier/edition/collector) · [直接下载扩展 ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.6/LuckyRay-Collector-1.9.6.zip) |
+| **查看这次改进了什么** | [新版更新说明](https://luckyray.me/atelier/edition/changelog) · [发行包与校验值](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) |
 
-网页采集会受到站点结构、访问权限和 DRM 等条件影响。重要资料请保持独立备份。更多说明见[隐私与联网](PRIVACY.md)及 [LightSeek](docs/lightseek.md)。
+1. **打开桌面端**：适用于 Windows 10/11 x64。安装前阅读[安装与校验说明](docs/downloads.md)，重要资料保持独立备份。
+2. **留下第一份参考**：导入一张图片，写一篇笔记，或在画布中整理一个小想法。
+3. **按需扩展**：安装 Collector 接上浏览器；需要 AI 时，再配置自己的模型服务。
 
-## 文档与反馈
+<details>
+<summary><strong>安装、平台与更新：使用前请看</strong></summary>
 
-- **安装与版本**：[下载说明](docs/downloads.md) · [1.9.6 版本说明](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [完整版本历史](docs/version-history.md)
-- **使用与许可**：[使用与许可说明](LICENSE.md) · [隐私说明](PRIVACY.md) · [开源组件致谢](third-party/README.md)
-- **参与改进**：[报告问题 / 提出建议](https://github.com/xiaorui2886/LuckyRay/issues) · [贡献指南](CONTRIBUTING.md) · [安全报告指引](SECURITY.md)
+- 当前桌面安装器未进行 Authenticode 签名。请核对官方 SHA-256，并保留发行说明中链接的第三方材料包与桌面组件补充包。
+- Collector 是独立扩展包，需手动加载或更新；更新桌面端不会自动更新浏览器扩展。
+- 应用内目前支持检查版本与下载安装包，完整自动更新尚未包含在本版。
+- Android 仍在测试；macOS、Linux、iOS 尚未发布。不要把开发中的功能当作当前安装包能力。
+- 网页采集受站点结构、访问权限和 DRM 等限制，并非所有网站和媒体都支持。
 
-LuckyRay 桌面应用可免费安装和使用，详情见[应用使用条款](LICENSE.md)。本仓库 `sdk/` 采用 [MIT 许可证](sdk/LICENSE)；桌面应用、Collector 与第三方组件各自适用对应许可，第三方许可证赋予的权利保持有效。
+</details>
+
+## 你的内容，你来决定
+
+**本地优先，AI 可选。** 素材、Markdown 笔记与画布优先存放在本地或你选择的位置。使用远程模型、联网搜索或网页抓取时，相关内容可能发送给你选择的服务，服务商也可能单独收费。
+
+[隐私与联网说明](PRIVACY.md) · [LightSeek 使用说明](docs/lightseek.md) · [数据与备份指南](https://luckyray.me/atelier/edition/docs)
+
+## 一起把它打磨得更好
+
+如果这个方向对你有用，欢迎点一下右上角 **Star**，方便下次找到，也让更多创作者看到 LuckyRay。
+
+想接收新版提醒，可在 **Watch → Custom → Releases** 中订阅。一次具体的使用反馈，同样能帮助产品变好。
+
+[报告问题 / 提出建议](https://github.com/xiaorui2886/LuckyRay/issues) · [贡献指南](CONTRIBUTING.md) · [安全问题报告](SECURITY.md)
+
+### 为插件作者留一个入口
+
+**Plugin SDK 1.0.0** 提供类型定义、创建/检查/打包工具，以及素材清单、配色、笔记提纲、画布导出四个教学示例。插件目录接受提交，目前尚无已上架的第三方条目。
+
+[中文 SDK 指南](sdk/README.zh-CN.md) · [English SDK guide](sdk/README.md) · [兼容说明](docs/compatibility.md) · [提交插件](catalog/SUBMISSION.md)
+
+---
+
+**唯一官网：[https://luckyray.me](https://luckyray.me)**
+
+这是 LuckyRay 的公开发布、文档与社区仓库，不包含桌面应用的完整源码。桌面应用可免费安装和使用，具体见[应用使用条款](LICENSE.md)；`sdk/` 采用 [MIT 许可证](sdk/LICENSE)。桌面应用、Collector 与第三方组件分别适用各自许可，详见[开源组件致谢](third-party/README.md)。
+
+Eagle 与 Obsidian 是各自权利人的产品；此处仅描述工作习惯上的参考，不代表官方关联、完整兼容或功能对等。

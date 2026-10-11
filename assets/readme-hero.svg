@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-labelledby="title desc">
+<title id="title">LuckyRay — Collect. Connect. Create.</title>
+<desc id="desc">A local-first creative workspace connecting your assets, notes and canvas. Brand illustration, not a product screenshot.</desc>
+<defs><linearGradient id="paper" x2="1" y2="1"><stop stop-color="#f6f2eb"/><stop offset="1" stop-color="#eee6db"/></linearGradient><linearGradient id="ray" x2="1"><stop stop-color="#bba4e7" stop-opacity="0"/><stop offset=".5" stop-color="#8362bb"/><stop offset="1" stop-color="#bba4e7" stop-opacity="0"/></linearGradient></defs>
+<rect width="1280" height="400" rx="20" fill="url(#paper)"/>
+<path d="M736 0V400M1058 0V400" stroke="#d9d0c5" stroke-opacity=".55"/>
+<text x="68" y="69" fill="#776b63" font-family="Arial, sans-serif" font-size="14" letter-spacing="3">A PRIVATE SPACE FOR YOUR IDEAS</text>
+<text x="64" y="164" fill="#27212c" font-family="Arial, sans-serif" font-weight="700" font-size="76" letter-spacing="-4">LuckyRay</text>
+<text x="68" y="214" fill="#66576e" font-family="Arial, sans-serif" font-size="29" letter-spacing=".4">Collect. Connect. Create.</text>
+<path d="M68 248H645" stroke="#cfc3b7"/>
+<text x="68" y="287" fill="#746a61" font-family="Arial, sans-serif" font-size="17">Your assets. Your notes. Your next idea.</text>
+<text x="68" y="343" fill="#85786e" font-family="Arial, sans-serif" font-size="13" letter-spacing="2">LOCAL FIRST</text><circle cx="191" cy="338" r="2" fill="#96878e"/><text x="210" y="343" fill="#85786e" font-family="Arial, sans-serif" font-size="13" letter-spacing="2">WINDOWS</text><circle cx="313" cy="338" r="2" fill="#96878e"/><text x="332" y="343" fill="#85786e" font-family="Arial, sans-serif" font-size="13" letter-spacing="2">AI, BY CHOICE</text>
+<g transform="translate(822 52) rotate(-7 110 94)"><rect x="4" y="6" width="190" height="158" rx="7" fill="#35283a" opacity=".08"/><rect width="190" height="158" rx="7" fill="#d6c6df" stroke="#b9a7c6"/><circle cx="137" cy="45" r="18" fill="#f8f0e3"/><path d="M0 116L55 65L115 122L153 89L190 118V158H0Z" fill="#8b7496"/><path d="M0 143L82 111L145 158H0Z" fill="#5c496d"/></g>
+<g transform="translate(988 136) rotate(6 85 91)"><rect x="4" y="6" width="172" height="183" rx="7" fill="#35283a" opacity=".08"/><rect width="172" height="183" rx="7" fill="#fffcf5" stroke="#d7c9bb"/><text x="20" y="33" fill="#86776c" font-family="Arial, sans-serif" font-size="10" letter-spacing="1.5">A THOUGHT, KEPT.</text><path d="M20 61H143M20 77H121M20 93H140M20 109H92" stroke="#c4b5a7" stroke-width="3"/><rect x="20" y="135" width="77" height="24" rx="12" fill="#eae1f0"/><text x="33" y="151" fill="#806c95" font-family="Arial, sans-serif" font-size="10">[[next idea]]</text></g>
+<path d="M741 324C784 224 913 330 1098 70" fill="none" stroke="url(#ray)" stroke-width="3"/>
+<circle cx="912" cy="266" r="7" fill="#806399"/><circle cx="912" cy="266" r="16" fill="none" stroke="#aa92bc" stroke-opacity=".4"/>
+<text x="821" y="362" fill="#897b83" font-family="Arial, sans-serif" font-size="12" letter-spacing="1.6">LESS SCATTER. MORE POSSIBILITY.</text>
+</svg>
