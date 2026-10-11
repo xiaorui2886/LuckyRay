@@ -4,6 +4,23 @@
 
 各桌面历史版本的下载状态见下方条目。可用附件以 [Releases](https://github.com/xiaorui2886/LuckyRay/releases) 为准；有版本说明不代表有可下载的安装包。旧版本不代表当前推荐版本，请勿用旧程序直接打开新版格式的数据。
 
+## v1.9.6
+
+公开发布日期：2026-10-11（UTC+08:00）。桌面及 Collector 同为 1.9.6。
+
+- 改善窗内分屏、布局管理、主导航收放及知识库标签保留。
+- 改善 LSH 预载、认证恢复、手机连接页静默刷新及退出保存反馈。
+- 画布加入参考包、创作模板、基础精修、版本对比、独立文本配置和结果收纳。
+- Collector 增加直接 MP3/WAV 音频采集、视频悬浮图标开关，改善图片与视频保存反馈。
+
+[下载桌面与插件、阅读完整说明](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6)。安装器未签名；桌面与扩展分别更新，尚不提供自动下载安装。没有恢复原生独立窗口或旧工作区入口。
+
+## v1.9.5
+
+公开发布日期：2026-10-06（UTC）。
+
+[原桌面发行说明与归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5) · [Collector 1.9.5 归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.5)。原附件保持可用。
+
 ## v1.9.4
 
 原发布日期：2026-09-28 21:25（UTC+08:00）

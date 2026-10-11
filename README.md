@@ -8,7 +8,7 @@
 
 **简体中文** · [English](README.en.md)
 
-[下载桌面版](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5) · [下载与安装](docs/downloads.md) · [版本历史](docs/version-history.md) · [反馈建议](https://github.com/xiaorui2886/LuckyRay/issues)
+[下载桌面版](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [下载与安装](docs/downloads.md) · [版本历史](docs/version-history.md) · [反馈建议](https://github.com/xiaorui2886/LuckyRay/issues)
 
 </div>
 
@@ -35,11 +35,11 @@
 
 | 下载 | 适用场景 |
 | --- | --- |
-| [**LuckyRay 1.9.5 · Windows x64**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5) | 当前桌面正式版。适用于 Windows 10/11 x64；请同时下载并保留该版本的两个第三方许可及源码材料附件。 |
-| [**Collector 1.9.5 · Main R7**](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.5) | Edge / Chrome 浏览器扩展（预发布），独立下载，配套 LuckyRay 1.9.5 桌面端使用。 |
+| [**LuckyRay 1.9.6 · Windows x64**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) | 当前桌面正式版。适用于 Windows 10/11 x64；请同时下载并保留该版本的两个第三方许可及源码材料附件。 |
+| [**Collector 1.9.6**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) | Edge / Chrome 浏览器扩展，独立下载，配套 LuckyRay 1.9.6 桌面端使用。 |
 | [**插件 SDK 1.0.0**](https://github.com/xiaorui2886/LuckyRay/releases/tag/sdk-v1.0.0) | 面向插件作者的开发者预览，包含类型定义、工具与教学示例。 |
 
-桌面 1.9.5 与 Collector 1.9.5 于 **2026-10-06（UTC）** 公开发布。桌面更新不会自动更新浏览器中已加载的 Collector，请按下载说明单独更新扩展。其他版本的说明与下载状态见[版本历史](docs/version-history.md)。
+桌面 1.9.6 与 Collector 1.9.6 于 **2026-10-11（UTC）** 公开发布。桌面更新不会自动更新浏览器中已加载的 Collector，请按下载说明单独更新扩展。其他版本的说明与下载状态见[版本历史](docs/version-history.md)。
 
 1. **安装桌面端**：先阅读[下载与安装](docs/downloads.md)中的系统要求、文件校验和安装注意事项，并备份重要资料。
 2. **建立自己的资料空间**：导入素材、整理 Markdown 笔记，在画布中组合参考与想法。
@@ -61,7 +61,7 @@ SDK 1.0.0 提供插件创建、检查与打包工具，以及**素材清单、�
 
 ## 文档与反馈
 
-- **安装与版本**：[下载说明](docs/downloads.md) · [1.9.5 版本说明](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5) · [完整版本历史](docs/version-history.md)
+- **安装与版本**：[下载说明](docs/downloads.md) · [1.9.6 版本说明](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [完整版本历史](docs/version-history.md)
 - **使用与许可**：[使用与许可说明](LICENSE.md) · [隐私说明](PRIVACY.md) · [开源组件致谢](third-party/README.md)
 - **参与改进**：[报告问题 / 提出建议](https://github.com/xiaorui2886/LuckyRay/issues) · [贡献指南](CONTRIBUTING.md) · [安全报告指引](SECURITY.md)
 

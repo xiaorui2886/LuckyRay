@@ -8,7 +8,7 @@ A local-first Windows app · Material library · Markdown notes · Canvas · AI
 
 [简体中文](README.md) · **English**
 
-[Download desktop app](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5) · [Installation guide](docs/downloads.md) · [Version history](docs/version-history.md) · [Feedback](https://github.com/xiaorui2886/LuckyRay/issues)
+[Download desktop app](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [Installation guide](docs/downloads.md) · [Version history](docs/version-history.md) · [Feedback](https://github.com/xiaorui2886/LuckyRay/issues)
 
 </div>
 
@@ -35,11 +35,11 @@ Save a reference image, capture an idea, then bring them together on a canvas. L
 
 | Download | Who it is for |
 | --- | --- |
-| [**LuckyRay 1.9.5 · Windows x64**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5) | Current stable desktop release for Windows 10/11 x64. Download and keep both companion third-party license and source material packages alongside the installer. |
-| [**Collector 1.9.5 · Main R7**](https://github.com/xiaorui2886/LuckyRay/releases/tag/collector-v1.9.5) | Edge / Chrome extension, marked as a pre-release. Download separately for use with the LuckyRay 1.9.5 desktop app. |
+| [**LuckyRay 1.9.6 · Windows x64**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) | Current stable desktop release for Windows 10/11 x64. Download and keep both companion third-party license and source material packages alongside the installer. |
+| [**Collector 1.9.6**](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) | Edge / Chrome extension. Download separately for use with the LuckyRay 1.9.6 desktop app. |
 | [**Plugin SDK 1.0.0**](https://github.com/xiaorui2886/LuckyRay/releases/tag/sdk-v1.0.0) | Developer preview for plugin authors, with type definitions, tools and teaching examples. |
 
-Desktop 1.9.5 and Collector 1.9.5 were publicly released on **2026-10-06 (UTC)**. Updating the desktop app does not automatically update Collector in your browser. Update the extension separately: switch to the new extracted folder or replace the files in the currently loaded folder, click **Reload** in the browser's extension manager, then refresh any open pages. See the [installation guide](docs/downloads.md) for details and the [version history](docs/version-history.md) for other releases and download availability.
+Desktop 1.9.6 and Collector 1.9.6 were publicly released on **2026-10-11 (UTC)**. Updating the desktop app does not automatically update Collector in your browser. Update the extension separately: switch to the new extracted folder or replace the files in the currently loaded folder, click **Reload** in the browser's extension manager, then refresh any open pages. See the [installation guide](docs/downloads.md) for details and the [version history](docs/version-history.md) for other releases and download availability.
 
 1. **Install the desktop app.** Read the [installation guide](docs/downloads.md) for system requirements, checksums and installation notes. Back up important data first.
 2. **Build your own workspace.** Import materials, organize Markdown notes and bring references and ideas together on the canvas.
@@ -61,7 +61,7 @@ Web capture depends on site structure, access permissions and DRM restrictions. 
 
 ## Documentation and feedback
 
-- **Installation and releases:** [Download guide](docs/downloads.md) · [1.9.5 release notes](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5) · [Full version history](docs/version-history.md)
+- **Installation and releases:** [Download guide](docs/downloads.md) · [1.9.6 release notes](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [Full version history](docs/version-history.md)
 - **Use and licensing:** [Use and license terms](LICENSE.md) · [Privacy](PRIVACY.md) · [Open-source acknowledgments](third-party/README.md)
 - **Help improve LuckyRay:** [Report a bug / suggest a feature](https://github.com/xiaorui2886/LuckyRay/issues) · [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md)
 
