@@ -33,7 +33,7 @@ jobs:
           pnpm exec tsc --noEmit
           pnpm build
       - name: Bounded signed-update and lifecycle behavior tests
-        run: node --test tests/publicBuildInputs.test.mjs tests/desktopUpdateInstall.test.mjs tests/desktopUpdateManifest.test.mjs tests/dshDesktopUpdateLifecycle.test.mjs
+        run: node --test tests/publicBuildInputs.test.mjs tests/desktopUpdateInstall.test.mjs tests/desktopUpdateManifest.test.mjs tests/dshDesktopUpdateLifecycle.test.mjs tests/distributionNotices.test.mjs tests/dshDistributionMetadata.test.mjs
       - name: Public source boundaries
         working-directory: .
         run: node scripts/check-public-source.mjs
@@ -63,7 +63,15 @@ jobs:
           rustup override set 1.95.0
           pnpm install --frozen-lockfile
       - name: Check sealed Git checkout inputs before runtime assembly
-        run: node --test tests/publicBuildInputs.test.mjs
+        run: node --test tests/publicBuildInputs.test.mjs tests/distributionNotices.test.mjs tests/dshDistributionMetadata.test.mjs
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            D:/lr-public-check-target
+          key: public-win-cargo-1.95-${{ hashFiles('luckyray-app/src-tauri/Cargo.lock', 'luckyray-app/tests/desktop-updater-native/Cargo.lock') }}
+          restore-keys: public-win-cargo-1.95-
       - name: Stage exact public media inputs
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-media-engine.ps1
