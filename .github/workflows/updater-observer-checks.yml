@@ -1,7 +1,7 @@
 name: Updater observer preflight
 on:
   push:
-    branches: [fix/ray-updater-observers-20261016]
+    branches: [fix/ray-updater-observers-20261016, test/ray-updater-1.9.8-20261017]
     paths:
       - 'luckyray-app/tests/formal-update/**'
       - '.github/workflows/updater-observer-checks.yml'
@@ -25,6 +25,6 @@ jobs:
         run: |
           node --check luckyray-app/tests/formal-update/installed-chain.mjs
           if ($LASTEXITCODE -ne 0) { throw 'chain-syntax-invalid' }
-          node --test luckyray-app/tests/formal-update/observation.test.mjs luckyray-app/tests/formal-update/windows-native-encoding.test.mjs
+          node --test luckyray-app/tests/formal-update/input-contract.test.mjs luckyray-app/tests/formal-update/observation.test.mjs luckyray-app/tests/formal-update/windows-native-encoding.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'observer-tests-failed' }
 # No installation, certificate changes, credentials, updater dispatch, or build.

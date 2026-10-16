@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "purpose": "Immutable public test-only A18/B19 inputs. Not a production feed or stable release.",
   "distributionReview": {
-    "approved": true,
-    "status": "FROZEN_A18_B19_READ_BACK_NATIVE_SEALS_AND_NOTICES_REVIEWED",
+    "approved": false,
+    "status": "OLD_A18_B19_CONFIRMED_REMOTE_CLEAR_BUG_DO_NOT_DISPATCH_WAIT_FOR_NEW_SIGNED_INPUTS",
     "noticeSupplement": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/LuckyRay-1.9.18-1.9.19-third-party-notices.zip",
     "noticeSha256": "b1270c7d098f2a95cbce2fc11bd39a246f819220306afa4c7edf2d447ba984d9",
     "scope": "Existing frozen packages; complete public downloads verified. Original runtime admission and unchanged production signature verification run before any test certificate or installation action. No stable release or feed change."

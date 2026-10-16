@@ -10,13 +10,14 @@ import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {Transform} from 'node:stream';
 import {within,lineCollector} from './observation.mjs';
+import {validateFrozenInputs} from './check-frozen-inputs.mjs';
 
 if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_OS!=='Windows'||process.env.GITHUB_REPOSITORY!=='xiaorui2886/LuckyRay')throw Error('disposable-public-runner-only');
 const run=promisify(execFile), root='D:\\lr-formal-uat';
 const paths=JSON.parse((await readFile(join(root,'private/paths.json'),'utf8')).replace(/^\uFEFF/,''));
 const tls=JSON.parse((await readFile(paths.tls,'utf8')).replace(/^\uFEFF/,''));
 const spec=JSON.parse(await readFile(process.env.UPGRADE_SPEC,'utf8'));
-assert.equal(spec.a.version,'1.9.18');assert.equal(spec.b.version,'1.9.19');
+validateFrozenInputs(spec);
 assert.equal(spec.distributionReview.approved,true,'reviewed public test inputs required');
 const updateMode=process.env.UPGRADE_MODE||'immediate';
 assert.ok(['immediate','scheduled'].includes(updateMode));
@@ -334,12 +335,14 @@ try{
   for(const replay of [spec.b.manifest,spec.a.manifest]){
     servedManifest=replay;
     const requestCount=trace.filter(r=>r.kind==='formal_manifest_request').length;
+    const artifactCount=trace.filter(r=>r.kind==='formal_artifact_request').length;
     await page.locator('.settings-update-native').getByRole('button',{name:/^(检查更新|Check for updates)$/}).click();
     await wait('equal/older release rejected',async()=>{const s=await invoke('desktop_application_update',{action:'status'});if(s.phase==='error')throw Error(s.errorCode);return s.phase==='current'&&!s.canDownload&&!s.canInstall&&trace.filter(r=>r.kind==='formal_manifest_request').length>requestCount;});
+    assert.equal(trace.filter(r=>r.kind==='formal_artifact_request').length,artifactCount,'equal/older replay must not download any installer');
     await event('equal_or_older_replay_rejected',{installedVersion:spec.b.version,claimedVersion:replay.version,status:await invoke('desktop_application_update',{action:'status'})});
   }
   await snapshot('B-equal-older-replay-rejected');
-  const final={status:'PASS_CONTINUOUS_SIGNED_UPGRADE_'+updateMode.toUpperCase(),versions:[spec.a.version,spec.b.version],updateMode,testSourceSha:process.env.GITHUB_SHA,runUrl:`https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,source:spec,APid:A.pid,AExit,scheduledStartupPid:Startup?.pid??null,StartupExit,installer:installerResult,BProcess,profile:paths.profile,install:paths.install,expectedTextBytes:Buffer.byteLength(expected),expectedTextSha256:hash(expected),fullTextEqualAfterRestart:true,pendingDraftAtPreclick:beforeClick!==expected,settingsPreserved:true,syntheticGrantPreserved:true,noManualBLaunch:true,realLshSavedAndExitedBeforeApp:true,wrongPlatformRejectedBeforeDownload:true,equalAndOlderReplayRejected:true,formalTrustUnchanged:true,otherUpgradeMode:'SEPARATE_CONTINUOUS_RUN_REQUIRED',MCP:'Unchanged Community/stdio result reused; grant preservation verified in this same run',productionFeedAvailability:'NOT_RUN: owner-approved exact-URL HTTPS replay, no public feed switch',externalWebTunnel:'NOT_RUN',realIME:'NOT_RUN: controlled events are not real IME evidence',installerUi:'Official passive installer, stored language inherited, no test UI actions. Necessary OS security prompts are not bypassed.'};
+  const final={status:'PASS_CONTINUOUS_SIGNED_UPGRADE_'+updateMode.toUpperCase(),versions:[spec.a.version,spec.b.version],updateMode,bootstrapIsPublishedStable:false,originalStableUpgrade:'NOT_TESTED: patched synthetic bootstrap',testSourceSha:process.env.GITHUB_SHA,runUrl:`https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,source:spec,APid:A.pid,AExit,scheduledStartupPid:Startup?.pid??null,StartupExit,installer:installerResult,BProcess,profile:paths.profile,install:paths.install,expectedTextBytes:Buffer.byteLength(expected),expectedTextSha256:hash(expected),fullTextEqualAfterRestart:true,pendingDraftAtPreclick:beforeClick!==expected,settingsPreserved:true,syntheticGrantPreserved:true,noManualBLaunch:true,realLshSavedAndExitedBeforeApp:true,wrongPlatformRejectedBeforeDownload:true,equalAndOlderReplayRejected:true,formalTrustUnchanged:true,otherUpgradeMode:'SEPARATE_CONTINUOUS_RUN_REQUIRED',MCP:'Unchanged Community/stdio result reused; grant preservation verified in this same run',productionFeedAvailability:'NOT_RUN: owner-approved exact-URL HTTPS replay, no public feed switch',externalWebTunnel:'NOT_RUN',realIME:'NOT_RUN: controlled events are not real IME evidence',installerUi:'Official passive installer, stored language inherited, no test UI actions. Necessary OS security prompts are not bypassed.'};
   await writeFile(join(evidence,'RESULT.json'),JSON.stringify(final,null,2)+'\n');
   console.log(JSON.stringify({status:final.status,fullTextEqualAfterRestart:true,noManualBLaunch:true}));
 }catch(error){
