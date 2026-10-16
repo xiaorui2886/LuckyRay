@@ -1,50 +1,49 @@
 {
   "schemaVersion": 1,
-  "purpose": "Immutable public test-only16/17 inputs. Not a production feed or stable release.",
+  "purpose": "Immutable public test-only A18/B19 inputs. Not a production feed or stable release.",
   "distributionReview": {
-    "approved": false,
-    "status": "OLD_PAIR_KNOWN_PRELOAD_BLOCKER_WAITING_CORRECTED_IMMUTABLE_INPUTS",
-    "noticeSupplement": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/LuckyRay-1.9.16-1.9.17-third-party-notices.zip",
-    "noticeSha256": "45c4f0a98bd036a16498d40572ef51da53f1097140105a0070f886ec6b3bb93a",
-    "requiredClarification": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/LICENSE-CLARIFICATION-A16-B17.md",
-    "scope": "Exact upstream development-only metadata exclusion; full original runtime seals/native checks retained; original grants and complete license texts supplied; only the wasmparser selected-label clarification is supplemental, not a missing permission or package alteration."
+    "approved": true,
+    "status": "FROZEN_A18_B19_READ_BACK_NATIVE_SEALS_AND_NOTICES_REVIEWED",
+    "noticeSupplement": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/LuckyRay-1.9.18-1.9.19-third-party-notices.zip",
+    "noticeSha256": "b1270c7d098f2a95cbce2fc11bd39a246f819220306afa4c7edf2d447ba984d9",
+    "scope": "Existing frozen packages; complete public downloads verified. Original runtime admission and unchanged production signature verification run before any test certificate or installation action. No stable release or feed change."
   },
   "a": {
-    "version": "1.9.16",
-    "bytes": 200819722,
-    "sha256": "22e84ff8349c7d52ec78e7fcb411dd864958714a5877af117bdd3bb0efae548d",
-    "installedExeSha256": "2e563c95df5d22ff0352420a8bf9d60e24159e558b24fcd1e23a5aefa4531093",
-    "publicSourceCommit": "aafb4d5f672fbcb203404b01de6dde7a6911b463",
-    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMGw2Zzk3dFdXKzBBQ2hCMHAwRmdjWjU3TmJjVlYyT2YzS2FCdmRlMElqb05uMGJsZVppWmRoczVwNS9PMW5qWnlrS0xaRXliUU53UUV1N0dNVXR1RjhMeEhtQUg5dmdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTU1MjM3CWZpbGU6THVja3lSYXlfMS45LjE2X3g2NC1zZXR1cC5leGUKZGxRWmFVbkUxeExmWU9BSSs5VldBRFE4cVowRytzWE02MWZaemp5UThFYlpXdVdyeWdrL25tM3d5dXVjb3RrZkYwYmFkell3NDJFcjNzN2hEaWs1REE9PQo=",
-    "testInputUrl": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/LuckyRay_1.9.16_x64-setup.exe",
+    "version": "1.9.18",
+    "bytes": 200830221,
+    "sha256": "40eedb0a84a763adf6390654d5acb8206399e8728a19ec391c968da5485777b8",
+    "installedExeSha256": "d86ba54dd90fb90afd7d3b40144bc7a1bb50bd2552d4ab6ab17c99412ed4adbb",
+    "publicSourceCommit": "fae63809f6e322e99dfd0abbe51cdcb47199c211",
+    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMGw2Zzk3dFdXKzI3OFlIdHhOV0hqQmw4dmZBUFZxU3dPTXNhNmNjaExpamRQSEtZT0FzRkhnWERIV0pWMThadkd6K21tbVoxVVdrbGc3bkdYdGVjeGxsbHVxckFRTEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTYyMTEzCWZpbGU6THVja3lSYXlfMS45LjE4X3g2NC1zZXR1cC5leGUKSFVUeVc5TDkxVjBYcUZXalkrK0tKVVhzb21xeC9aUFVzZ2dOWTFiOVF2STJwekRIZWE3blZRalo5T09OdGpKQ2NjWlRBZWJ3YkZiUFBDNDc3RDV6RHc9PQo=",
+    "testInputUrl": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/LuckyRay_1.9.18_x64-setup.exe",
     "manifest": {
-      "version": "1.9.16",
-      "pub_date": "2026-10-16T13:00:30.944Z",
+      "version": "1.9.18",
+      "pub_date": "2026-10-16T14:50:23.058Z",
       "notes": "TEST ONLY: isolated installed-updater acceptance, not stable or a production-feed switch.",
       "platforms": {
         "windows-x86_64-nsis": {
-          "url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/LuckyRay_1.9.16_x64-setup.exe",
-          "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMGw2Zzk3dFdXKzBBQ2hCMHAwRmdjWjU3TmJjVlYyT2YzS2FCdmRlMElqb05uMGJsZVppWmRoczVwNS9PMW5qWnlrS0xaRXliUU53UUV1N0dNVXR1RjhMeEhtQUg5dmdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTU1MjM3CWZpbGU6THVja3lSYXlfMS45LjE2X3g2NC1zZXR1cC5leGUKZGxRWmFVbkUxeExmWU9BSSs5VldBRFE4cVowRytzWE02MWZaemp5UThFYlpXdVdyeWdrL25tM3d5dXVjb3RrZkYwYmFkell3NDJFcjNzN2hEaWs1REE9PQo="
+          "url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/LuckyRay_1.9.18_x64-setup.exe",
+          "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMGw2Zzk3dFdXKzI3OFlIdHhOV0hqQmw4dmZBUFZxU3dPTXNhNmNjaExpamRQSEtZT0FzRkhnWERIV0pWMThadkd6K21tbVoxVVdrbGc3bkdYdGVjeGxsbHVxckFRTEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTYyMTEzCWZpbGU6THVja3lSYXlfMS45LjE4X3g2NC1zZXR1cC5leGUKSFVUeVc5TDkxVjBYcUZXalkrK0tKVVhzb21xeC9aUFVzZ2dOWTFiOVF2STJwekRIZWE3blZRalo5T09OdGpKQ2NjWlRBZWJ3YkZiUFBDNDc3RDV6RHc9PQo="
         }
       }
     }
   },
   "b": {
-    "version": "1.9.17",
-    "bytes": 200879178,
-    "sha256": "d08b12e354c969a977665f76e6b8c900d4e12166b9d983d376f3a0534eba534e",
-    "installedExeSha256": "14bc98cdc88cec9fd59271bc929e5054b2e99f183e8c04bf8a2a3ca026daff6a",
-    "publicSourceCommit": "e57eab76c40eb96cf47dc3f00549d0f6d6a9224b",
-    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMGw2Zzk3dFdXKy9aTHNDdmJCQSsrZEtNOWVsSlo0RGpnK1R6a1hKU1V5d1FlN3NIaGE1cm5WS01yOTJGbzZlK1VBdUJZVllvS2pXcEFLcEVYNElIQ1VSZmp1aG5LS2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTU3Njk3CWZpbGU6THVja3lSYXlfMS45LjE3X3g2NC1zZXR1cC5leGUKN2JkNDFvT3VEdUJRakpCTG5JeVU2aFRvaUNLS3kzRTM5VDFMblFZa1JhalRQNnJzRVlzOUF1TnN3ME16RHZMNExiTjFkOGUvL3VzSHJuTUt5dk5vRFE9PQo=",
-    "testInputUrl": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/LuckyRay_1.9.17_x64-setup.exe",
+    "version": "1.9.19",
+    "bytes": 200787769,
+    "sha256": "099c1a3da14d955236acaad532b36d67a021d6a68ccdf25f16c8be733b24477d",
+    "installedExeSha256": "7f7e5c9cbddf7b7bae9bbb5a656252ed7b0e9f4b7afbab3a225934612c5ecbde",
+    "publicSourceCommit": "57c0dcab8c9534976b0b97a45380ec379c573eed",
+    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMGw2Zzk3dFdXKzhnd1RyS3FFeStrMU5RSHU1ejJ2MEoybXFQTEdLSUpudFh3c3FhVktwd2Fvd2ZIcVdCYjJKTGc2TXc3Vi9ydngzSFAxREIrZG5pak9pSHZEMWFWbkE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTY0NDU2CWZpbGU6THVja3lSYXlfMS45LjE5X3g2NC1zZXR1cC5leGUKWlBZRktMZkZBMGxyTmMyVkt4VmxqTjdTNDVMLzZWRUsxRWFPdlVYVkVEOWJ2b1dYRnNWNGpIckFFSE56RVMrVWliblNBL0lpUDJDRHJwUW1ha0NQRGc9PQo=",
+    "testInputUrl": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.19/LuckyRay_1.9.19_x64-setup.exe",
     "manifest": {
-      "version": "1.9.17",
-      "pub_date": "2026-10-16T13:34:58.864Z",
+      "version": "1.9.19",
+      "pub_date": "2026-10-16T15:27:45.398Z",
       "notes": "TEST ONLY: isolated installed-updater acceptance, not stable or a production-feed switch.",
       "platforms": {
         "windows-x86_64-nsis": {
-          "url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/LuckyRay_1.9.17_x64-setup.exe",
-          "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMGw2Zzk3dFdXKy9aTHNDdmJCQSsrZEtNOWVsSlo0RGpnK1R6a1hKU1V5d1FlN3NIaGE1cm5WS01yOTJGbzZlK1VBdUJZVllvS2pXcEFLcEVYNElIQ1VSZmp1aG5LS2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTU3Njk3CWZpbGU6THVja3lSYXlfMS45LjE3X3g2NC1zZXR1cC5leGUKN2JkNDFvT3VEdUJRakpCTG5JeVU2aFRvaUNLS3kzRTM5VDFMblFZa1JhalRQNnJzRVlzOUF1TnN3ME16RHZMNExiTjFkOGUvL3VzSHJuTUt5dk5vRFE9PQo="
+          "url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.19/LuckyRay_1.9.19_x64-setup.exe",
+          "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMGw2Zzk3dFdXKzhnd1RyS3FFeStrMU5RSHU1ejJ2MEoybXFQTEdLSUpudFh3c3FhVktwd2Fvd2ZIcVdCYjJKTGc2TXc3Vi9ydngzSFAxREIrZG5pak9pSHZEMWFWbkE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTY0NDU2CWZpbGU6THVja3lSYXlfMS45LjE5X3g2NC1zZXR1cC5leGUKWlBZRktMZkZBMGxyTmMyVkt4VmxqTjdTNDVMLzZWRUsxRWFPdlVYVkVEOWJ2b1dYRnNWNGpIckFFSE56RVMrVWliblNBL0lpUDJDRHJwUW1ha0NQRGc9PQo="
         }
       }
     }
