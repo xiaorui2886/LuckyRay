@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "runtimePackage": {
+    "name": "@deepseek-ai/dsh",
+    "version": "0.1.7-rc.2",
+    "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz",
+    "registryIntegrity": "sha512-SQFhriLvza8GnFApnC5/32AgpcyKxrWnYXhvwDOLJdgWpkCX2EexyR9c8kCkMITJXnFLEN3Qb2CEh0W36vkLyw==",
+    "registrySha1": "2078409337e9934df3366535d873494e601f90d0",
+    "sha256": "5f2da7272d9485abc223e681075809a8d929697c5232ee445718e1b7e066bff8",
+    "size": 23335,
+    "license": "MIT"
+  },
+  "sourceReference": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "commit": "477b4f420553e8a52c2fbccc464d7561b239c443",
+    "tree": "e3e63253d1d35ad07f785273235c40813cb6c8bd",
+    "declaredVersion": "0.1.7-rc.2",
+    "role": "audit-only",
+    "provenanceBoundToRuntime": false
+  },
+  "nodeRuntime": {
+    "version": "22.19.0",
+    "platform": "win32",
+    "architecture": "x64",
+    "archive": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-win-x64.zip",
+    "archiveSha256": "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86",
+    "nodeExeSha256": "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362",
+    "licenseSha256": "339c50294da6a84322dcbe7285b57b248123bd4d9e37a2f72d68d5abf2574783",
+    "stagedFiles": [
+      "LICENSE",
+      "node.exe"
+    ]
+  },
+  "packageManager": {
+    "name": "pnpm",
+    "version": "11.7.0",
+    "tarball": "https://registry.npmjs.org/pnpm/-/pnpm-11.7.0.tgz",
+    "registryIntegrity": "sha512-GcyFLBIMcSV2DyRD7mvgyltA+fUFmN4aCaHxd1A+AQ5Xwjx3ZG4B52HeWb+HT7IqM5jDOrlpH8E+uUa28PTWIA==",
+    "registrySha1": "bea54364524dadf0a42dae28dbfeeab25ff177e5",
+    "sha256": "deafa7ec98a1218b6a047289b92fbe2395c1e22d3495bb711653013218ee15ee",
+    "license": "MIT",
+    "archivePolicy": {
+      "schemaVersion": 1,
+      "format": "ustar",
+      "magicHex": "757374617200",
+      "version": "00",
+      "regularFilesOnly": true,
+      "requireEmptyPrefix": true,
+      "requireEmptyLinkName": true,
+      "windowsCanonicalPaths": true,
+      "compressedByteLimit": 33554432,
+      "uncompressedByteLimit": 33554432,
+      "entryCountLimit": 1024,
+      "entryByteLimit": 16777216,
+      "pathByteLimit": 100,
+      "pathDepthLimit": 32,
+      "pathSegmentByteLimit": 255,
+      "endZeroBlockCount": 2
+    },
+    "extractedTree": {
+      "schemaVersion": 1,
+      "fileCount": 449,
+      "byteCount": 18644360,
+      "sha256": "ccb8af2ce09e65f728ab5689a1bc00df5b1f508bc23cfc9829d95d3dccc1340e",
+      "entryPoint": "package/bin/pnpm.mjs"
+    },
+    "installPolicy": {
+      "ignorePnpmfile": true,
+      "isolatedGlobalConfig": true,
+      "packageImportMethod": "copy",
+      "nodeLinker": "isolated",
+      "virtualStoreDir": "node_modules/.pnpm",
+      "installScripts": false,
+      "offline": true,
+      "frozenLockfile": true,
+      "minimumReleaseAge": 1440,
+      "minimumReleaseAgeStrict": true,
+      "minimumReleaseAgeIgnoreMissingTime": false,
+      "missingReleaseTimeBehavior": "reject",
+      "workspacePolicySha256": "460e2012bf651c0b13acdc433a98255ee144585461ba280a335211a1b0af56f7"
+    }
+  },
+  "dependencyClosure": {
+    "lockfile": "pnpm-lock.yaml",
+    "lockfileVersion": "9.0",
+    "sha256": "27879348455b15729c05aa9491710a7a4cbd252130a5137a6be809a4df2cb25b",
+    "packageCount": 591,
+    "stagedPackageCount": 516,
+    "installedAuditSha256": "ba561d892c9037cb9a13572f92bdd36225659cc7dea377f7ef6a71aa45a59d13",
+    "resolverGraphSha256": "f5ef1096cd3dc88f73c6fe7d01105b47f09b51488e41c340db6aa19821b3830e",
+    "lockReconciliationSha256": "a36fbceae4aac3ff17f1f84d89e93d27b3a87c754ca58c85fff46013f030b503",
+    "releaseLayout": {
+      "schemaVersion": 1,
+      "nodeLinker": "hoisted",
+      "packageImportMethod": "copy",
+      "physicalPackageRootCount": 517,
+      "resolverGraphEdgeCount": 0,
+      "maxNodeModulesRelativePathLength": 157,
+      "maxRelativePathLength": 175,
+      "fileCount": 25659,
+      "contentSha256": "1ddf49eb2c09ede017bf97f908d05e702a484221ee37e4822fb554db34f5bbbe",
+      "normalizedShimCount": 13,
+      "fixedEntryPoint": "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
+      "reparsePoints": 0
+    },
+    "nodeVersion": "22.19.0",
+    "pnpmVersion": "11.7.0"
+  },
+  "policy": {
+    "runtimeAuthority": "npm-tarball-and-frozen-closure",
+    "upstreamPatchCount": 0,
+    "allowSystemNodeFallback": false,
+    "allowNetworkDuringOfflineStage": false,
+    "allowInstallScripts": false
+  }
+}

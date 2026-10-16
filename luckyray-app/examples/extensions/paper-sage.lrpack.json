@@ -1,0 +1,4 @@
+{
+  "manifest": {"schemaVersion":0,"id":"org.luckyray.paper-sage","name":"Paper Sage","version":"1.0.0","type":"theme","entry":"theme.json","minHostVersion":"1.9.2","apiVersion":0,"requiredModules":[],"optionalModules":[]},
+  "resource": {"base":"light","tokens":{"--theme-app-bg":"#edf1e8","--theme-sidebar-bg":"#e2e9dd","--theme-titlebar-bg":"#f6f8f2","--theme-surface-base":"#f2f5ec","--theme-surface-raised":"#fcfdf9","--theme-surface-panel":"#e8eee1","--theme-card-bg":"#f6f8f2","--theme-hover":"#dce5d4","--theme-selected":"#ceddc3","--theme-border-subtle":"#dce4d4","--theme-border-strong":"#c3d1b9","--theme-dialog-border":"#c3d1b9","--theme-text-muted":"#74806d","--text-primary":"#293b29","--text-secondary":"#52664d"}}
+}

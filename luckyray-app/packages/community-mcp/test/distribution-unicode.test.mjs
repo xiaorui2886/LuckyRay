@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+const read = path => readFile(new URL(path, import.meta.url), 'utf8');
+test('Unicode component release keeps the old inventory and pins an immutable new artifact', async () => {
+  const catalog = JSON.parse(await read('../../../src-tauri/community-mcp/catalog.json'));
+  assert.equal(catalog.version, '0.1.1');
+  assert.equal(catalog.artifactUrl, 'https://github.com/xiaorui2886/LuckyRay/releases/download/mcp-v0.1.1/luckyray-web-mcp-0.1.1-windows-x64.zip');
+  assert.equal(catalog.artifactSha256, '3c9a1c4961af3f5ef2bdd73dfcba7b2f25ed190cae6622a30b2f12e7f55ede1a');
+  assert.equal(catalog.inventorySha256, 'e5091e98fed26447c9c0679d8a581dd97c53ff27570cb811761523a988fc8c31');
+  assert.equal(catalog.downloadBytes, 61476109);
+  assert.deepEqual(catalog.previousInventories.find(row => row.version === '0.1.0'), {
+    version: '0.1.0', inventorySha256: '52e63ee7b80692d29736004b01d16de37e2d4504e4e08e7293e50a3f802eb76f',
+  });
+  assert.equal(catalog.previousInventories.length, 3);
+  const packageInfo = JSON.parse(await read('../package.json'));
+  assert.equal(packageInfo.version, catalog.version);
+  const transport = await read('../../materials-mcp/src/transport.mjs');
+  assert.ok(transport.includes('[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false);'));
+  assert.ok(transport.includes('target-not-running'));
+});

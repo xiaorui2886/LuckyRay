@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>LuckyRay S1 fixture page</title>
+</head>
+<body>
+  <!-- The S1 MAIN-world trust negative case (Issue #13 §5D). This page is
+       served from loopback and exercises the real manifest content scripts:
+       page-media-probe.js (MAIN world) and extension-protocol.js +
+       content-script.js (ISOLATED world). Everything below runs in the page's
+       MAIN world and is therefore as untrusted as any website script. -->
+  <video id="fixture-video" width="320" height="180"></video>
+  <img id="fixture-image" src="fixture-image.png" width="160" height="120" alt="fixture image">
+  <p>LuckyRay M1-S2 fixture 可读正文。Quick Collect 需要页面具备可读正文才能验证笔记写入路径；这段文字会被真实 content script 提取为页面正文。</p>
+  <script>
+    "use strict";
+    window.__lrSpoofPage = {};
+
+    (() => {
+      const PROBE_EVENT = "__luckyray_page_media_probe_v1__";
+      const video = document.getElementById("fixture-video");
+      const image = document.getElementById("fixture-image");
+
+      // A real blob: MediaSource URL so the isolated content receiver treats
+      // the probe payload as shape-valid (untrusted candidate, not authority).
+      let blobUrl = "";
+      try {
+        const mediaSource = new MediaSource();
+        blobUrl = URL.createObjectURL(mediaSource);
+        video.src = blobUrl;
+      } catch (_) {
+        blobUrl = "";
+      }
+      window.__lrSpoofPage.blobUrl = blobUrl;
+
+      const emitProbe = (detail) => {
+        try {
+          document.dispatchEvent(new CustomEvent(PROBE_EVENT, {
+            detail: Object.freeze({ version: 1, ...detail }),
+          }));
+        } catch (_) {}
+      };
+
+      const rectCenter = (element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+      };
+
+      const dispatchUntrusted = (element, type, point) => {
+        const options = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clientX: point.x,
+          clientY: point.y,
+          button: 2,
+        };
+        try {
+          element.dispatchEvent(new MouseEvent(type, options));
+        } catch (_) {}
+      };
+
+      // Exposed so the CDP driver can fire the whole spoof payload once the
+      // page and the extension's content scripts are definitely installed.
+      window.__lrSpoof = () => {
+        const now = Date.now();
+        window.__lrSpoofPage.startedAt = now;
+        if (blobUrl) {
+          // MSE probe: looks like a page playing media through a MediaSource.
+          emitProbe({ kind: "mse-candidate", blobUrl, candidateUrl: "http://127.0.0.1:37499/fake-media.mp4", contentType: "video/mp4" });
+          emitProbe({ kind: "drm", blobUrl });
+          // site-track-pair with a supported-looking page URL — the content
+          // receiver must reject it on a loopback page (pageUrl mismatch).
+          emitProbe({ kind: "site-track-pair", pageUrl: "https://www.bilibili.com/video/BV1fake", videoUrl: "https://upos-sz-mirrorcos.bilivideo.com/fake-video.m4s", audioUrl: "https://upos-sz-mirrorcos.bilivideo.com/fake-audio.m4s", contentType: "video/mp4" });
+          // pinterest catalog shape.
+          emitProbe({ kind: "pinterest-video-catalog", pinId: "1234567890", pageUrl: "https://www.pinterest.com/pin/1234567890/", variants: [{ url: "https://v.pinimg.com/fake.mp4", width: 1280, height: 720 }] });
+        }
+        // Untrusted synthetic user-like events over a real <video> element.
+        const videoPoint = rectCenter(video);
+        dispatchUntrusted(video, "mousemove", videoPoint);
+        dispatchUntrusted(video, "mousedown", videoPoint);
+        dispatchUntrusted(video, "contextmenu", videoPoint);
+        const imagePoint = rectCenter(image);
+        dispatchUntrusted(image, "mousemove", imagePoint);
+        dispatchUntrusted(image, "contextmenu", imagePoint);
+        window.__lrSpoofPage.doneAt = Date.now();
+        window.__lrSpoofPage.done = true;
+        return true;
+      };
+    })();
+  </script>
+</body>
+</html>

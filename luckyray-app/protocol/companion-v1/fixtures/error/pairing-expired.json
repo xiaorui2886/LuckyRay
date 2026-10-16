@@ -1,0 +1,4 @@
+{
+  "status": 410,
+  "body": { "ok": false, "code": "pairing-expired", "message": "The pairing bootstrap has expired" }
+}

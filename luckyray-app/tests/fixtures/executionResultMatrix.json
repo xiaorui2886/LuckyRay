@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "status": "passed", "reason": "valid", "manifestName": "package.json", "receiptState": "committed", "summary": "项目清单检查已通过（package.json）。" },
+    { "status": "passed", "reason": "valid", "manifestName": "Cargo.toml", "receiptState": "committed", "summary": "项目清单检查已通过（Cargo.toml）。" },
+    { "status": "passed", "reason": "valid", "manifestName": "pyproject.toml", "receiptState": "committed", "summary": "项目清单检查已通过（pyproject.toml）。" },
+
+    { "status": "failed", "reason": "missing", "manifestName": null, "receiptState": "committed-warning", "summary": "未找到支持的项目清单，项目清单检查未通过。" },
+    { "status": "failed", "reason": "unavailable", "manifestName": null, "receiptState": "committed-warning", "summary": "项目清单暂不可读取，项目清单检查未通过。" },
+
+    { "status": "failed", "reason": "empty", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "package.json 为空，项目清单检查未通过。" },
+    { "status": "failed", "reason": "empty", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "Cargo.toml 为空，项目清单检查未通过。" },
+    { "status": "failed", "reason": "empty", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "pyproject.toml 为空，项目清单检查未通过。" },
+    { "status": "failed", "reason": "encoding-invalid", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "package.json 不是有效的 UTF-8 文本，项目清单检查未通过。" },
+    { "status": "failed", "reason": "encoding-invalid", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "Cargo.toml 不是有效的 UTF-8 文本，项目清单检查未通过。" },
+    { "status": "failed", "reason": "encoding-invalid", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "pyproject.toml 不是有效的 UTF-8 文本，项目清单检查未通过。" },
+    { "status": "failed", "reason": "format-invalid", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "package.json 格式无效，项目清单检查未通过。" },
+    { "status": "failed", "reason": "format-invalid", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "Cargo.toml 格式无效，项目清单检查未通过。" },
+    { "status": "failed", "reason": "format-invalid", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "pyproject.toml 格式无效，项目清单检查未通过。" },
+    { "status": "failed", "reason": "too-large", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "package.json 超过检查大小上限，项目清单检查未通过。" },
+    { "status": "failed", "reason": "too-large", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "Cargo.toml 超过检查大小上限，项目清单检查未通过。" },
+    { "status": "failed", "reason": "too-large", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "pyproject.toml 超过检查大小上限，项目清单检查未通过。" },
+    { "status": "failed", "reason": "unsafe-file", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "package.json 不是可安全检查的普通文件，项目清单检查未通过。" },
+    { "status": "failed", "reason": "unsafe-file", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "Cargo.toml 不是可安全检查的普通文件，项目清单检查未通过。" },
+    { "status": "failed", "reason": "unsafe-file", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "pyproject.toml 不是可安全检查的普通文件，项目清单检查未通过。" },
+    { "status": "failed", "reason": "unreadable", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "package.json 无法读取，项目清单检查未通过。" },
+    { "status": "failed", "reason": "unreadable", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "Cargo.toml 无法读取，项目清单检查未通过。" },
+    { "status": "failed", "reason": "unreadable", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "pyproject.toml 无法读取，项目清单检查未通过。" },
+    { "status": "failed", "reason": "result-invalid", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "项目清单检查结果无法验证。" },
+    { "status": "failed", "reason": "result-invalid", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "项目清单检查结果无法验证。" },
+    { "status": "failed", "reason": "result-invalid", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "项目清单检查结果无法验证。" },
+
+    { "status": "not-run", "reason": "not-started", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "项目清单检查未运行。" },
+    { "status": "not-run", "reason": "not-started", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "项目清单检查未运行。" },
+    { "status": "not-run", "reason": "not-started", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "项目清单检查未运行。" },
+    { "status": "not-run", "reason": "manifest-changed", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "授权项目或项目清单已变化，检查未运行。" },
+    { "status": "not-run", "reason": "manifest-changed", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "授权项目或项目清单已变化，检查未运行。" },
+    { "status": "not-run", "reason": "manifest-changed", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "授权项目或项目清单已变化，检查未运行。" },
+
+    { "status": "stopped", "reason": "user-stopped", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "项目清单检查已停止。" },
+    { "status": "stopped", "reason": "user-stopped", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "项目清单检查已停止。" },
+    { "status": "stopped", "reason": "user-stopped", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "项目清单检查已停止。" },
+    { "status": "timed-out", "reason": "time-limit", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "项目清单检查超时。" },
+    { "status": "timed-out", "reason": "time-limit", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "项目清单检查超时。" },
+    { "status": "timed-out", "reason": "time-limit", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "项目清单检查超时。" },
+    { "status": "start-failed", "reason": "could-not-start", "manifestName": "package.json", "receiptState": "committed-warning", "summary": "项目清单检查未能启动。" },
+    { "status": "start-failed", "reason": "could-not-start", "manifestName": "Cargo.toml", "receiptState": "committed-warning", "summary": "项目清单检查未能启动。" },
+    { "status": "start-failed", "reason": "could-not-start", "manifestName": "pyproject.toml", "receiptState": "committed-warning", "summary": "项目清单检查未能启动。" },
+    { "status": "uncertain", "reason": "result-needs-reconciliation", "manifestName": "package.json", "receiptState": "uncertain", "summary": "项目清单检查结果待核对；不会自动重试。" },
+    { "status": "uncertain", "reason": "result-needs-reconciliation", "manifestName": "Cargo.toml", "receiptState": "uncertain", "summary": "项目清单检查结果待核对；不会自动重试。" },
+    { "status": "uncertain", "reason": "result-needs-reconciliation", "manifestName": "pyproject.toml", "receiptState": "uncertain", "summary": "项目清单检查结果待核对；不会自动重试。" }
+  ]
+}

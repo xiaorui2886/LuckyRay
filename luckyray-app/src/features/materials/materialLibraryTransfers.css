@@ -1,0 +1,16 @@
+.material-transfer-toolbar,.material-transfer-selection{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:3px 16px 7px;font-size:12px;color:var(--text-secondary)}
+.material-transfer-toolbar button,.material-transfer-selection button{font:inherit;color:var(--text-primary);background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;padding:5px 9px;cursor:pointer}
+.material-transfer-toolbar button:disabled{opacity:.45;cursor:default}
+.material-transfer-dialog{width:min(650px,calc(100vw - 32px))}
+.material-transfer-dialog .material-transfer-move-confirm{display:flex;flex-direction:row;align-items:flex-start;gap:8px;line-height:1.5}
+.material-transfer-dialog .material-transfer-move-confirm input[type="checkbox"]{width:auto;flex:0 0 auto;margin:3px 0 0;padding:0}
+.material-transfer-move-plan{font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.material-transfer-move-plan summary{cursor:pointer;color:var(--text-secondary)}
+.material-transfer-move-plan ul{padding-left:20px;max-height:180px;overflow:auto}
+.material-transfer-tasks{display:flex;flex-direction:column;gap:12px;max-height:58vh;overflow:auto;margin-top:16px;scrollbar-gutter:stable}
+.material-transfer-task{padding:12px;border:1px solid var(--border);border-radius:8px;font-size:12px;overflow-wrap:anywhere}
+.material-transfer-task-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.material-transfer-task-heading strong{margin-right:auto}.material-transfer-task-heading button{flex-shrink:0}
+.material-transfer-task p{margin:8px 0}.material-transfer-task progress{width:100%;height:8px;accent-color:var(--accent)}
+.material-transfer-current{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--text-muted)}
+.material-transfer-task summary{cursor:pointer;color:var(--text-secondary)}.material-transfer-task ul{padding:0;list-style:none;max-height:200px;overflow:auto}.material-transfer-task li{display:flex;flex-direction:column;gap:4px;padding:7px 0;border-bottom:1px solid var(--border)}
+@media(max-width:620px){.material-transfer-toolbar,.material-transfer-selection{padding-inline:8px}.material-transfer-toolbar>span{width:100%}}

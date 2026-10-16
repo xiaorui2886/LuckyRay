@@ -1,0 +1,1 @@
+{"name":"@luckyray/materials-mcp","version":"0.1.0-candidate.4","private":true,"type":"module","engines":{"node":">=22"},"bin":{"luckyray-materials-mcp":"src/server.mjs"},"files":["src","examples","README.md","NOTICE.md"],"scripts":{"test":"node --test test/*.test.mjs","pack:private":"npm pack --ignore-scripts"},"license":"MIT"}

@@ -1,0 +1,15 @@
+/* Genuine action progress must never participate in the Main shell's layout. */
+.workspace-note-main-status {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 8px 12px;
+  border: 1px solid var(--theme-border-strong);
+  border-radius: 8px;
+  background: var(--theme-surface-raised);
+  color: var(--text-secondary);
+  font-size: 13px;
+  pointer-events: none;
+}

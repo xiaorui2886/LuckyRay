@@ -1,0 +1,45 @@
+# LuckyRay overlay over the frozen, unmodified 0.1.7-rc.2 Web composition.
+# The carrier and resource plugins install as @luckyray packages under the
+# isolated state root's profiles/node_modules before the official Host boots;
+# the 0.1.5 loader resolves plugin entries by package name and no longer
+# loads file URL entries. The official rc.2 runtime stays unmodified.
+# Private authority arrives over fd 3 and never appears in this file.
+- id: webserver
+  disabled: true
+
+- insert:
+    - id: luckyray-authenticated-webserver
+      name: '@luckyray/dsh-authenticated-webserver'
+      config:
+        authorityFd: 3
+        readyFd: 4
+        controlFd: 5
+        controlLineFd: 6
+      inject:
+        - settings
+        - credentials
+        - llm
+
+    - id: luckyray-resource-tools
+      name: '@luckyray/dsh-resource-tools'
+      config:
+        authorityFd: 7
+        requestFd: 8
+        responseFd: 9
+      inject:
+        - tools
+        - sandboxPolicy
+        - approval
+        - fs
+
+    - id: luckyray-native-surface-state
+      name: '@luckyray/dsh-native-surface-state'
+      inject:
+        - webServer
+        - clientModules
+
+    - id: luckyray-lightseek-ui
+      name: '@luckyray/dsh-lightseek-ui'
+      inject:
+        - webServer
+        - clientModules

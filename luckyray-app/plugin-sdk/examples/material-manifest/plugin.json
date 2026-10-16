@@ -1,0 +1,35 @@
+{
+  "id": "example.material-manifest",
+  "name": "素材使用清单",
+  "version": "1.0.2",
+  "requiredModules": [
+    "materials"
+  ],
+  "optionalModules": [
+    "knowledge"
+  ],
+  "requiredPermissions": [
+    "materials.read"
+  ],
+  "optionalPermissions": [
+    "knowledge.create"
+  ],
+  "dataVersion": 1,
+  "contributions": [
+    {
+      "id": "manifest",
+      "label": "生成素材清单",
+      "kind": "command"
+    },
+    {
+      "id": "manifest-menu",
+      "label": "素材清单面板",
+      "kind": "menu"
+    },
+    {
+      "id": "settings",
+      "label": "清单设置",
+      "kind": "settings"
+    }
+  ]
+}

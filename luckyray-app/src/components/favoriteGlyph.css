@@ -1,0 +1,13 @@
+.favorite-glyph {
+  display: inline-flex;
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  pointer-events: none;
+}
+
+.favorite-glyph svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.favorite-glyph.is-filled svg { stroke-width: 1.15; }

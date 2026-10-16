@@ -1,0 +1,4 @@
+[
+  {"fileName":"MCP-UAT-python-powered.png","url":"https://raw.githubusercontent.com/scanny/python-pptx/278b47b1dedd5b46ee84c286e77cdfb0bf4594be/tests/test_files/python-powered.png","allowedKinds":["image"]},
+  {"fileName":"MCP-UAT-minimal.pptx","url":"https://raw.githubusercontent.com/scanny/python-pptx/278b47b1dedd5b46ee84c286e77cdfb0bf4594be/tests/test_files/minimal.pptx","allowedKinds":["document"]}
+]

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "luckyray://companion/v1/session-response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "protocolVersion", "deviceId", "deviceLabel"],
+  "properties": {
+    "ok": { "const": true },
+    "protocolVersion": { "const": 1 },
+    "deviceId": { "type": "string", "pattern": "^device-[a-f0-9]{32}$" },
+    "deviceLabel": { "type": "string", "minLength": 1, "maxLength": 80 }
+  }
+}

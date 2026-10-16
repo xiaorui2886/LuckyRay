@@ -1,0 +1,1 @@
+{"mcpServers":{"luckyray-materials":{"command":"C:/Program Files/nodejs/node.exe","args":["C:/YOUR_MCP_DIR/node_modules/@luckyray/materials-mcp/src/server.mjs","--config","C:/YOUR_CONFIG_DIR/luckyray-materials.json"]}}}

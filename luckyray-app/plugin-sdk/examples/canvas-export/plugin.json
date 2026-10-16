@@ -1,0 +1,23 @@
+{
+  "id": "example.canvas-export",
+  "name": "画布关系图导出",
+  "version": "1.0.1",
+  "requiredModules": [
+    "canvas"
+  ],
+  "optionalModules": [],
+  "requiredPermissions": [
+    "canvas.read"
+  ],
+  "optionalPermissions": [
+    "canvas.export"
+  ],
+  "dataVersion": 1,
+  "contributions": [
+    {
+      "id": "export",
+      "label": "导出画布关系图",
+      "kind": "panel"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "status": "local-development-only",
+  "redistributionApproved": false,
+  "component": "libmpv",
+  "sourceCommit": "3186d369f9f090cd1363be0ac46a037824b702c6",
+  "sourceUrl": "https://github.com/mpv-player/mpv/tree/3186d369f9f090cd1363be0ac46a037824b702c6",
+  "buildRepository": "https://github.com/zhongfly/mpv-winbuild",
+  "buildCommit": "88bdc4db67bb476a7606921eb2d68b273440d59b",
+  "buildRecipeCommit": "05a60b3cfd04e3e3b89918f4a27f3dde2935dff2",
+  "buildJob": "https://github.com/zhongfly/mpv-winbuild/actions/runs/36858966630/job/110358230122",
+  "archive": {
+    "url": "https://github.com/zhongfly/mpv-winbuild/releases/download/2026-10-01-3186d369f9/mpv-dev-lgpl-x86_64-20261001-git-3186d369f9.7z",
+    "fileName": "mpv-dev-lgpl-x86_64-20261001-git-3186d369f9.7z",
+    "size": 28273230,
+    "sha256": "1c91708e027ed19eceff5a6f9b62ab1901b3592f02a1924473396db33bc9cec4"
+  },
+  "dll": {
+    "fileName": "libmpv-2.dll",
+    "size": 100487168,
+    "sha256": "1a51f1000450ce97ae99fa44b13bc312ab5335e511bc8ae28ae2d90c78069848"
+  },
+  "observedConfiguration": {
+    "mpvGpl": false,
+    "ffmpegLicense": "LGPL version 3 or later",
+    "ffmpegSourcePrefix": "0b01ed76a",
+    "staticTransitiveDependencies": true
+  },
+  "releaseGates": [
+    "Exact transitive dependency source revisions and corresponding-source archive",
+    "Full component and dependency license texts, attribution and build instructions",
+    "LGPL replacement/relinking and reverse-engineering-for-debugging compliance review",
+    "Product-specific codec patent/distribution review"
+  ]
+}

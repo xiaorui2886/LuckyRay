@@ -1,0 +1,7 @@
+{
+  "name": "luckyray-desktop-updater-ui-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {"test": "node dom-test.mjs", "test:browser": "node run.mjs"},
+  "devDependencies": {"esbuild": "0.28.2", "jsdom": "26.1.0", "playwright": "1.64.0"}
+}

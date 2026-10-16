@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="../../src/features/settings/settings.css">
+  <link rel="stylesheet" href="../../src/features/settings/dshEngineUpdate.css">
+  <style>
+    :root { --space-1:4px; --space-3:12px; --space-4:16px; --space-7:28px;
+      --text-primary:#f5f5f8; --text-secondary:#a4a4b3; --text-tertiary:#858596;
+      --border-subtle:#30303b; --border:#454553; --accent:#8585ff;
+      --accent-muted:#30304e; --bg-hover:#292932; }
+    body { margin:0; padding:24px; background:#101014; color:var(--text-primary);
+      font:16px Arial,sans-serif; }
+    main { max-width:600px; margin:auto; }
+    .sample-title { margin:25px 0 8px; color:var(--text-secondary); }
+  </style>
+</head>
+<body>
+<main>
+  <div class="sample-title">Before: horizontal SettingRow</div>
+  <div id="before" class="setting-row">
+    <div class="setting-label">LightSeek 引擎更新
+      <div class="desc">独立引擎的受信更新、版本与恢复状态；不会更新 LuckyRay 整包。</div>
+    </div>
+    <div class="setting-control"><div class="dsh-engine-update-card">
+      <div class="dsh-engine-update-versions">当前引擎: <strong>0.1.5-rc.2</strong> 预览通道 隔离开发签名源</div>
+      <p>已准备在本次正常退出后切换。请用窗口 × 或系统托盘“退出 LuckyRay”，待进程完全退出后重新打开。</p>
+      <div class="settings-action-row"><button class="settings-btn">检查更新</button><button class="settings-btn">撤销未激活的切换</button></div>
+    </div></div>
+  </div>
+  <div class="sample-title">After: stacked SettingRow</div>
+  <div id="after" class="setting-row setting-row-stack">
+    <div class="setting-label">LightSeek 引擎更新
+      <div class="desc">独立引擎的受信更新、版本与恢复状态；不会更新 LuckyRay 整包。</div>
+    </div>
+    <div class="setting-control"><div class="dsh-engine-update-card">
+      <div class="dsh-engine-update-versions">当前引擎: <strong>0.1.5-rc.2</strong> 预览通道 隔离开发签名源</div>
+      <p>已准备在本次正常退出后切换。请用窗口 × 或系统托盘“退出 LuckyRay”，待进程完全退出后重新打开。</p>
+      <div class="settings-action-row"><button class="settings-btn">检查更新</button><button class="settings-btn">撤销未激活的切换</button></div>
+    </div></div>
+  </div>
+</main>
+</body>
+</html>

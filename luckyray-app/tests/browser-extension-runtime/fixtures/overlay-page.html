@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>LuckyRay overlay fixture</title>
+  <style>
+    body { font: 14px sans-serif; margin: 8px; }
+    .ov-row { margin-bottom: 10px; }
+    .ov-row video { width: 300px; height: 170px; display: block; }
+  </style>
+</head>
+<body>
+  <!-- M1-S4 FIX-1 P1-2 fixture: every player overlay (one chip per real video
+       element, closed shadow DOM) must project the same unified user-level
+       video state as the popup. Each video owns an ISOLATED ancestor chain —
+       lrCollectorResolverPageForVideo scans up to 10 ancestors for anchors,
+       so a shared grid would leak the resolver anchor into other sessions:
+         ov-direct  -> ready-direct   (one direct candidate)
+         ov-multi   -> choose-quality (three quality sources)
+         ov-resolve -> needs-resolve  (blob player + nearby supported
+                        resolver page anchor; only the site-resolver item is
+                        savable, so no direct candidate can mask it)
+         ov-blob    -> record-fallback (blob player, no resolver page) -->
+  <div class="ov-row">
+    <video id="ov-direct" src="movie.mp4" controls></video>
+  </div>
+  <div class="ov-row">
+    <video id="ov-multi" controls>
+      <source src="movie-480.mp4" type="video/mp4">
+      <source src="movie-720.mp4" type="video/mp4">
+      <source src="movie-1080.mp4" type="video/mp4">
+    </video>
+  </div>
+  <div class="ov-row">
+    <video id="ov-blob" width="300" height="170" controls></video>
+  </div>
+  <script>
+    "use strict";
+    // Blob-only players: candidates resolve to record-fallback / needs-resolve,
+    // never to a backend-downloadable direct link (M1-S4 §5D/§5E).
+    const blobify = (id) => {
+      try {
+        const mediaSource = new MediaSource();
+        document.getElementById(id).src = URL.createObjectURL(mediaSource);
+      } catch (_) {}
+    };
+    blobify("ov-blob");
+    window.__lrOverlayPage = true;
+  </script>
+</body>
+</html>

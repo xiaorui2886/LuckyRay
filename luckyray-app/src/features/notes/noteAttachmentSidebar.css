@@ -1,0 +1,382 @@
+/* The frame owns width + the inner drag edge; the sidebar fills it. The left
+   index panel's resize interaction, mirrored on the right. */
+.lr-attachment-sidebar-frame {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+}
+.lr-attachment-sidebar-frame .note-attachment-sidebar {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
+}
+.editor-row[data-attachments-animating="true"] .lr-attachment-sidebar-frame {
+  transition: width 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+body.lr-attachment-resizing,
+body.lr-attachment-resizing .editor-row,
+body.lr-attachment-resizing .lr-attachment-sidebar-frame {
+  transition: none !important;
+  cursor: col-resize;
+  user-select: none;
+}
+.lr-attachment-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+.lr-attachment-resize-handle:hover,
+.lr-attachment-resize-handle:focus-visible {
+  background: color-mix(in srgb, var(--accent, #7c8aff) 26%, transparent);
+}
+.lr-attachment-resize-handle:focus-visible {
+  outline: none;
+  border-left: 2px solid var(--accent, #7c8aff);
+}
+.note-attachment-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel, var(--bg-base));
+  color: var(--text-primary);
+  font-size: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .editor-row[data-attachments-animating="true"] .lr-attachment-sidebar-frame {
+    transition: none;
+  }
+}
+.note-attachment-sidebar header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.note-attachment-tabs {
+  display: flex;
+  flex: 1;
+  gap: 18px;
+}
+.note-attachment-tabs button {
+  padding: 8px 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.note-attachment-tabs button[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.note-attachment-sidebar button {
+  cursor: pointer;
+  font: inherit;
+}
+.note-attachment-sidebar button:focus-visible,
+.note-attachment-sidebar input:focus-visible,
+.note-attachment-sidebar select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.note-attachment-sidebar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.note-attachment-close {
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 20px !important;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+.note-attachment-close:hover {
+  background: var(--bg-hover);
+}
+.note-attachment-tools {
+  padding: 14px 12px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.note-attachment-tools label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: var(--bg-base);
+}
+.note-attachment-tools svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--text-tertiary);
+  stroke-width: 1.5;
+}
+.note-attachment-tools input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+.note-attachment-tools select {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font: inherit;
+}
+.note-attachment-view {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 12px 10px;
+  color: var(--text-tertiary);
+  gap: 8px;
+}
+.note-attachment-view > div {
+  display: flex;
+  border-radius: 6px;
+  background: var(--bg-base);
+  padding: 3px;
+}
+.note-attachment-view button {
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+.note-attachment-view button[aria-pressed="true"] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.note-attachment-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 12px 16px;
+  scrollbar-gutter: stable;
+}
+.note-attachment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.note-attachment-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-base);
+  transition: border-color 0.15s;
+}
+.note-attachment-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.note-attachment-thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 4/3;
+  padding: 0;
+  border: 0;
+  /* A quiet reserved area, not a black card: the real aspect from a previous
+     decode is applied inline by the thumbnail, so this only shows briefly on
+     a genuinely cold first read. */
+  background: color-mix(in srgb, var(--bg-hover) 55%, transparent);
+  overflow: hidden;
+}
+.note-attachment-thumb img,
+.note-attachment-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.note-attachment-kind {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.66);
+  color: #fff;
+  font-size: 10px;
+}
+.note-attachment-file {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-tertiary);
+}
+.note-attachment-file svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+.note-attachment-caption {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 5px 5px 8px;
+}
+.note-attachment-caption > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.note-attachment-caption > button {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 18px;
+}
+.note-attachment-group {
+  margin-bottom: 8px;
+}
+.note-attachment-group summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 9px 0;
+  color: var(--text-secondary);
+}
+.note-attachment-group summary:before {
+  content: "›";
+  transition: transform 0.15s;
+}
+.note-attachment-group[open] summary:before {
+  transform: rotate(90deg);
+}
+.note-attachment-group summary > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-attachment-group small {
+  color: var(--accent);
+  font-size: 10px;
+}
+.note-attachment-group b {
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+.note-attachment-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 55px 8px;
+  gap: 10px;
+  color: var(--text-tertiary);
+}
+.note-attachment-empty strong {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.note-attachment-empty svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  margin-bottom: 6px;
+}
+.note-attachment-message {
+  padding: 18px 4px;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.note-attachment-message button {
+  margin: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-radius: 5px;
+}
+.note-attachment-sidebar footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+#page-notes .note-title-strip {
+  grid-template-columns: minmax(0, 1fr) 30px 30px 30px;
+}
+#page-notes .note-title-strip > .note-title-input {
+  /* Reserve equal room on both sides for all three trailing actions. */
+  width: calc(100% - 228px);
+}
+.note-attachments-action {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.note-attachment-error-dot { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--warning, #dca85b); }
+.note-attachments-action svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.note-attachments-action:hover,
+.note-attachments-action[aria-pressed="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+#page-notes .note-title-strip > .note-attachments-action {
+  grid-column: 4;
+  grid-row: 1;
+}
+/* Standalone sidebar (outside the resize frame) keeps the fixed width. */
+.note-attachment-sidebar:not(.lr-attachment-sidebar-frame .note-attachment-sidebar) {
+  width: 320px;
+  min-width: 260px;
+  max-width: 38%;
+  flex-shrink: 0;
+}
+@media (max-width: 1050px) {
+  .note-attachment-sidebar:not(.lr-attachment-sidebar-frame .note-attachment-sidebar) {
+    width: 270px;
+    min-width: 220px;
+  }
+}

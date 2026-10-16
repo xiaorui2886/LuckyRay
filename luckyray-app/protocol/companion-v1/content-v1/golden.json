@@ -1,0 +1,213 @@
+{
+  "capabilities": {
+    "contentVersion": 1,
+    "bundleRevision": "2026-09-21.1",
+    "capabilities": {
+      "materialPreview": true,
+      "lshRemoteSurface": true,
+      "noteRead": true,
+      "noteWrite": true,
+      "noteChanges": true,
+      "noteAttachments": true,
+      "materialFavorite": true,
+      "materialTags": true,
+      "materialFolders": true,
+      "materialBatch": true
+    },
+    "limits": {
+      "pageSize": 100,
+      "noteBytes": 4194304,
+      "attachmentBytes": 67108864,
+      "chunkBytes": 262144,
+      "batchAssets": 100
+    }
+  },
+  "mutation": {
+    "opId": "op-golden",
+    "noteId": "kn-golden",
+    "vaultId": "vault-golden",
+    "kind": "create",
+    "title": "中文 (对照)",
+    "content": "第一段\n"
+  },
+  "document": {
+    "noteId": "kn-golden",
+    "vaultId": "vault-golden",
+    "title": "中文 (对照)",
+    "relativePath": "中文 (对照).md",
+    "content": "第一段\n",
+    "revision": "r-golden",
+    "resources": []
+  },
+  "tombstone": {
+    "noteId": "kn-golden",
+    "vaultId": "vault-golden",
+    "deleted": true
+  },
+  "assetPage": {
+    "items": [],
+    "page": 1,
+    "limit": 50,
+    "hasMore": false,
+    "nextPage": null
+  },
+  "manifest": {
+    "vaultId": "vault-golden",
+    "expectedRevision": "r-golden",
+    "name": "中文 (附件).txt",
+    "mime": "text/plain",
+    "sizeBytes": 3,
+    "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  },
+  "chunk": {
+    "vaultId": "vault-golden",
+    "offset": 0,
+    "data": "YWJj",
+    "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  },
+  "waveAMaterialOrganization": {
+    "favorite": {
+      "method": "POST",
+      "path": "/v1/assets/{id}/favorite",
+      "request": {
+        "desktopAssetId": "asset-1",
+        "favorited": true
+      },
+      "response": {
+        "desktopAssetId": "asset-1",
+        "favorited": true
+      }
+    },
+    "tags": {
+      "method": "PATCH",
+      "path": "/v1/assets/{id}/tags",
+      "request": {
+        "desktopAssetId": "asset-1",
+        "set": [
+          "tag-a"
+        ]
+      },
+      "requestAddRemove": {
+        "desktopAssetId": "asset-1",
+        "add": [
+          "tag-a"
+        ],
+        "remove": [
+          "tag-b"
+        ]
+      },
+      "response": {
+        "desktopAssetId": "asset-1",
+        "tags": [
+          "tag-a"
+        ]
+      }
+    },
+    "folder": {
+      "method": "PATCH",
+      "path": "/v1/assets/{id}/folder",
+      "request": {
+        "desktopAssetId": "asset-1",
+        "folderId": "folder-a"
+      },
+      "requestRoot": {
+        "desktopAssetId": "asset-1",
+        "folderId": null
+      },
+      "response": {
+        "desktopAssetId": "asset-1",
+        "folderId": "folder-a"
+      }
+    },
+    "createTag": {
+      "method": "POST",
+      "path": "/v1/assets/tags",
+      "request": {
+        "name": "新标签"
+      },
+      "response": {
+        "tag": {
+          "id": "tag-a",
+          "name": "新标签"
+        }
+      }
+    },
+    "createFolder": {
+      "method": "POST",
+      "path": "/v1/assets/folders",
+      "request": {
+        "name": "项目A"
+      },
+      "response": {
+        "folder": {
+          "id": "folder-a",
+          "name": "项目A"
+        }
+      }
+    },
+    "batch": {
+      "method": "POST",
+      "path": "/v1/assets/favorite-batch",
+      "request": {
+        "desktopAssetIds": [
+          "asset-1",
+          "asset-2"
+        ],
+        "favorited": true
+      },
+      "response": {
+        "requested": 2,
+        "succeeded": [
+          "asset-1"
+        ],
+        "failed": [
+          {
+            "desktopAssetId": "asset-2",
+            "reason": "favorite-failed"
+          }
+        ],
+        "atomic": false
+      }
+    },
+    "assetRead": {
+      "desktopAssetId": "asset-1",
+      "name": "示例素材",
+      "kind": "image",
+      "mimeType": "image/png",
+      "sizeBytes": 1024,
+      "updatedAt": "2026-09-21T00:00:00Z",
+      "thumbnailRevision": "2026-09-21T00:00:00Z:hash",
+      "folderId": null,
+      "storageMode": "managed",
+      "description": null,
+      "favorite": true,
+      "tags": []
+    },
+    "batchFolders": {
+      "omitted": {
+        "request": {
+          "desktopAssetIds": [
+            "asset-1"
+          ],
+          "favorited": true
+        }
+      },
+      "root": {
+        "request": {
+          "desktopAssetIds": [
+            "asset-1"
+          ],
+          "folderId": null
+        }
+      },
+      "target": {
+        "request": {
+          "desktopAssetIds": [
+            "asset-1"
+          ],
+          "folderId": "folder-a"
+        }
+      }
+    }
+  }
+}

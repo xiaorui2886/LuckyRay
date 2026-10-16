@@ -1,0 +1,27 @@
+{
+  "description": "Non-normative consumer requests executed against the real Knowledge Services domain adapter in its isolated native production test. {vault} is the paired device's current Content vault key, never a filesystem path. Shared TLS/discovery and canonical schemas are tested by the sole shared assembler.",
+  "readCases": [
+    {"name":"clean note advice","method":"GET","path":"/v1/services/knowledge/notes/kn-target/editing?vault={vault}","status":200,"expected":{"noteId":"kn-target","desktopEditing":false,"mobileEditing":false,"leaseMs":15000}},
+    {"name":"unknown query rejected","method":"GET","path":"/v1/services/knowledge/notes/kn-target/editing?vault={vault}&extra=1","status":400,"errorCode":"INPUT_INVALID"},
+    {"name":"duplicate query rejected","method":"GET","path":"/v1/services/knowledge/notes/kn-target/editing?vault={vault}&vault={vault}","status":400,"errorCode":"INPUT_INVALID"},
+    {"name":"directory traversal rejected","method":"GET","path":"/v1/services/knowledge/vaults/{vault}/directories?afterPath=..%2Foutside","status":400,"errorCode":"INPUT_INVALID"},
+    {"name":"absolute directory rejected","method":"GET","path":"/v1/services/knowledge/vaults/{vault}/directories?afterPath=C%3A%2Fprivate","status":400,"errorCode":"INPUT_INVALID"},
+    {"name":"zero page rejected","method":"GET","path":"/v1/services/knowledge/notes/kn-source/relations?vault={vault}&limit=0","status":400,"errorCode":"INPUT_INVALID"},
+    {"name":"missing note rejected","method":"GET","path":"/v1/services/knowledge/notes/kn-missing/editing?vault={vault}","status":404,"errorCode":"ENTITY_NOT_FOUND"},
+    {"name":"wrong method rejected","method":"DELETE","path":"/v1/services/knowledge/notes/kn-target/editing?vault={vault}","status":405,"errorCode":"METHOD_NOT_ALLOWED"},
+    {"name":"ungranted vault rejected","method":"GET","path":"/v1/services/knowledge/notes/kn-target/editing?vault=other-vault","status":403,"errorCode":"GRANT_REQUIRED"}
+  ],
+  "createRequest": {"opId":"consumer-create-1","noteId":"kn-consumer-1","vaultId":"{vault}","kind":"create","expectedRevision":"","title":"新笔记","content":"手机已提交正文\n","parentRelativePath":""},
+  "editingOpenRequest": {"vaultId":"{vault}"},
+  "editingOpenExpected": {"generation":0,"editing":false,"leaseMs":15000},
+  "editingSetRequest": {"vaultId":"{vault}","sessionId":"{serverSessionId}","generation":1,"editing":true},
+  "releaseRequest": {"vaultId":"{vault}","sessionId":"{serverSessionId}","generation":3,"editing":false},
+  "lateRenewExpected": {"status":410,"errorCode":"CURSOR_TOO_OLD"},
+  "relationExamples": [
+    {"kind":"wikiLink","target":"Target","line":1,"status":"resolved","noteIds":["kn-target"]},
+    {"kind":"wikiLink","target":"Missing","line":2,"status":"unresolved","noteIds":[]},
+    {"kind":"backlink","sourceNoteId":"kn-source","target":"Target","line":1,"status":"resolved","noteIds":["kn-target"]},
+    {"kind":"material","assetId":"material-registered","target":"linked.png"}
+  ],
+  "materialReferenceExample": {"noteId":"kn-source","target":"linked.png"}
+}

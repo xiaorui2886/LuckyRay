@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "workspace-content-window",
+  "description": "Registered workspace content windows: window UI and scoped Rust workspace commands only; no SQL, FS, global shortcuts or main-only permissions.",
+  "windows": ["workspace-*"],
+  "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-set-background-color", "core:webview:allow-set-webview-background-color"]
+}

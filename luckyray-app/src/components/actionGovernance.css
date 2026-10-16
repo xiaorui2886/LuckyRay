@@ -1,0 +1,57 @@
+.action-governance-history-button {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 1100;
+  border: 1px solid var(--border-subtle, rgba(120, 128, 150, 0.24));
+  border-radius: 8px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
+  color: inherit;
+  padding: 7px 11px;
+  cursor: pointer;
+}
+
+.action-governance-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 12, 18, 0.56);
+  backdrop-filter: blur(6px);
+}
+
+.action-governance-dialog {
+  width: min(520px, 100%);
+  max-height: min(680px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--border-subtle, rgba(120, 128, 150, 0.26));
+  border-radius: 16px;
+  background: var(--bg-primary, #17191f);
+  color: var(--text-primary, #f4f5f7);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+  padding: 22px;
+}
+
+.action-governance-dialog h2 { margin: 8px 0; font-size: 20px; }
+.action-governance-dialog > p { margin: 0 0 16px; color: var(--text-secondary, #aeb4c0); }
+.action-governance-risk { color: #f2ad5d; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; }
+.action-governance-dialog dl { display: grid; gap: 8px; margin: 0; }
+.action-governance-dialog dl div { display: grid; grid-template-columns: 82px 1fr; gap: 10px; }
+.action-governance-dialog dt { color: var(--text-muted, #808794); }
+.action-governance-dialog dd { margin: 0; overflow-wrap: anywhere; }
+.action-governance-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.action-governance-actions button, .action-governance-dialog header button { border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.action-governance-actions .primary { background: #6d67f5; color: #fff; }
+.action-governance-actions button:disabled { cursor: wait; opacity: 0.58; }
+.action-governance-dialog header { display: flex; align-items: center; justify-content: space-between; }
+.action-governance-dialog header h2 { margin: 0; }
+.action-governance-dialog header button { background: transparent; color: inherit; font-size: 22px; }
+.action-governance-log-list { display: grid; gap: 10px; margin-top: 16px; }
+.action-governance-log-list article { border: 1px solid var(--border-subtle, rgba(120, 128, 150, 0.2)); border-radius: 10px; padding: 11px; }
+.action-governance-log-list article > div { display: flex; justify-content: space-between; gap: 12px; }
+.action-governance-log-list span { color: #a9a6ff; }
+.action-governance-log-list small { color: var(--text-muted, #808794); }
+.action-governance-log-list p { margin: 6px 0 0; color: var(--text-secondary, #aeb4c0); font-size: 12px; }
+.action-governance-empty { padding: 28px 0; text-align: center; }

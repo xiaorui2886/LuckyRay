@@ -1,0 +1,4 @@
+{
+  "status": 409,
+  "body": { "ok": false, "code": "pairing-device-limit", "message": "The paired device limit has been reached" }
+}

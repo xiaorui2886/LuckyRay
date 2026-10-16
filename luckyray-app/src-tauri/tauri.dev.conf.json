@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LuckyRay Dev",
+  "identifier": "com.luckyray.desktop.dev",
+  "build": {
+    "beforeDevCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/assert-runtime-profile.ps1 && node scripts/dev-frontend.mjs",
+    "devUrl": "http://127.0.0.1:1420"
+  },
+  "bundle": {
+    "active": false
+  }
+}

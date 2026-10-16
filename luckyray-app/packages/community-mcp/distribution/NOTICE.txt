@@ -1,0 +1,18 @@
+LuckyRay optional Web MCP runtime 0.1.1
+Copyright 2026 LuckyRay contributors. All rights reserved for LuckyRay code.
+
+This package redistributes the unmodified Windows x64 Node.js executable
+from Node.js 24.14.1, and the unmodified OpenAI tunnel-client runtime and
+cloudflared companion from OpenAI tunnel-client 0.0.16. Their original
+license texts, copyright notices, dependency report and SBOM are included.
+The additional LuckyRay runtime files implement the selected-library MCP
+bridge and encrypted local secret access; vendor executables are unchanged.
+
+OpenAI upstream notice is retained verbatim in licenses/tunnel-NOTICE.
+Cloudflare's Apache-2.0 license and dependency notices are retained in
+licenses/THIRD_PARTY_LICENSES.txt. Node.js notices are retained in
+licenses/node-LICENSE.txt. No endorsement by these projects is implied.
+
+No user configuration, database, login, token, tunnel binding or private
+Agent Gateway is shipped. This archive is installed only after Add in
+LuckyRay Community; it does not register a Windows service or startup task.

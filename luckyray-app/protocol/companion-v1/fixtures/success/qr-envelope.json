@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "name": "LuckyRay Desktop",
+  "instance": "desktop-0123456789abcdef0123456789abcdef",
+  "ip": "192.168.10.20",
+  "port": 48180,
+  "secret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "fp": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

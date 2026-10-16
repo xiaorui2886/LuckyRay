@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "integrationState": "dsh-1-blocked",
+  "runtimeAuthority": "npm-tarball-and-frozen-closure",
+  "platform": "win32",
+  "architecture": "x64",
+  "executable": "node/node.exe",
+  "nodeLicense": "node/LICENSE",
+  "hostRoot": "host",
+  "entryPoint": "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
+  "systemNodeFallback": false,
+  "capabilityProbe": {
+    "arguments": [
+      "--version"
+    ],
+    "expectedStdout": "0.1.7-rc.2",
+    "startsSupervisor": false,
+    "opensTransport": false
+  },
+  "entryPointAuthority": {
+    "requestedPath": "@deepseek-ai/dsh/lib/bin.js",
+    "targetPath": ".pnpm/@deepseek-ai+dsh@0.1.7-rc.2_5cc34dd47a9d07f6834d5d3360a055fd/node_modules/@deepseek-ai/dsh/lib/bin.js",
+    "targetPackage": "@deepseek-ai/dsh@0.1.7-rc.2",
+    "targetContentSha256": "307eed493fbebf8f6333ffec214b62911365ff5cc36d11696fb368a10e1e7124",
+    "fileSha256": "935e95d05f4dc70a8a013eea59da80028946b5c139e45c6351dcaf2810ca00a1"
+  },
+  "processSupervisor": null,
+  "transport": null,
+  "readiness": null,
+  "shutdown": null
+}

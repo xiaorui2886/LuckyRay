@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "luckyray://companion/v1/pair-response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["deviceId", "credential", "protocolVersion"],
+  "properties": {
+    "deviceId": { "type": "string", "pattern": "^device-[a-f0-9]{32}$" },
+    "credential": { "type": "string", "pattern": "^device-[a-f0-9]{32}\\.[a-f0-9]{64}$" },
+    "protocolVersion": { "const": 1 }
+  }
+}

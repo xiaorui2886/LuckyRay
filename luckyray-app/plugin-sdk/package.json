@@ -1,0 +1,11 @@
+{
+  "name": "@luckyray/plugin-sdk",
+  "version": "1.0.1",
+  "private": false,
+  "license": "MIT",
+  "type": "module",
+  "types": "index.d.ts",
+  "engines": { "node": ">=18" },
+  "bin": { "lr-plugin": "cli.mjs" },
+  "files": ["index.d.ts", "cli.mjs", "export-sdk.mjs", "README.md", "README.zh-CN.md", "DELIVERY.md", "COMPATIBILITY.md", "LICENSE", "MANIFEST.json", "examples/*/main.js", "examples/*/plugin.json", "material-library-consumer.js", "material-library-consumer.d.ts", "material-library-consumer.md"]
+}

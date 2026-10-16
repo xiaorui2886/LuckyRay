@@ -1,0 +1,14 @@
+{
+  "instanceId": "desktop-0123456789abcdef0123456789abcdef",
+  "displayName": "LuckyRay Desktop",
+  "platform": "windows",
+  "appVersion": "1.8.0",
+  "protocolVersion": 1,
+  "certificateFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "capabilities": {
+    "pairing": true,
+    "authenticatedEvents": true,
+    "deviceRevocation": true,
+    "runs": false
+  }
+}

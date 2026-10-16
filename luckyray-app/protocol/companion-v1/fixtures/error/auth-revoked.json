@@ -1,0 +1,4 @@
+{
+  "status": 401,
+  "body": { "ok": false, "code": "AUTH_REVOKED", "message": "The paired device credential has been revoked" }
+}

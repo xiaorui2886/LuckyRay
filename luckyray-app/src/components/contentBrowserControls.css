@@ -1,0 +1,13 @@
+.content-browser-control {
+  border-color: var(--border-subtle, rgba(255, 255, 255, .09));
+  border-radius: 9px;
+  color: var(--text-primary, #eeeef2);
+  background: var(--bg-secondary, rgba(255, 255, 255, .035));
+}
+
+.content-browser-control:focus-within,
+.content-browser-control:focus-visible {
+  border-color: color-mix(in srgb, var(--accent, #7c8aff) 62%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #7c8aff) 12%, transparent);
+  outline: none;
+}

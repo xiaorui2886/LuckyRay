@@ -99,6 +99,8 @@
 
 **唯一官网：[https://luckyray.me](https://luckyray.me)**
 
-这是 LuckyRay 的公开发布、文档与社区仓库，不包含桌面应用的完整源码。桌面应用可免费安装和使用，具体见[应用使用条款](LICENSE.md)；`sdk/` 采用 [MIT 许可证](sdk/LICENSE)。桌面应用、Collector 与第三方组件分别适用各自许可，详见[开源组件致谢](third-party/README.md)。
+LuckyRay 自有源码现已采用 [MIT 许可证](LICENSE) 开放，桌面端、Collector 与可选 MCP 的候选源码见 `luckyray-app/`。[构建与测试](docs/development/README.md) · [贡献指南](CONTRIBUTING.md) · [第三方许可](docs/development/third-party.md) · [品牌说明](BRANDING.md)。第三方组件保留原有许可，不被重标为 MIT。
+
+当前开放的是 **1.9.15 自动更新验收候选源码**，不是正式新版发布。安装升级仍需分别完成连续验收；官网稳定版、Latest Release 和正式更新清单均不因源码开放而改变。详见[候选验证状态](docs/development/updater-validation.md)。
 
 Eagle 与 Obsidian 是各自权利人的产品；此处仅描述工作习惯上的参考，不代表官方关联、完整兼容或功能对等。

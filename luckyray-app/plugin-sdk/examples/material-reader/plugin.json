@@ -1,0 +1,6 @@
+{
+  "id": "example.material-reader", "name": "Selected materials reader", "version": "1.0.0",
+  "requiredModules": ["materials"], "optionalModules": ["knowledge"],
+  "requiredPermissions": ["materials.read"], "optionalPermissions": ["knowledge.create"],
+  "dataVersion": 1, "contributions": [{ "id": "read", "label": "Read selected materials", "kind": "panel" }]
+}

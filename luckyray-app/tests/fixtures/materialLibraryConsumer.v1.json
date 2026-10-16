@@ -1,0 +1,164 @@
+{
+  "status": "domain-proposal-not-production-canonical",
+  "consumerVersion": 1,
+  "paths": {
+    "libraries": "/api/material-libraries",
+    "taxonomy": "/api/material-libraries/taxonomy",
+    "importBytes": "/api/material-libraries/import-bytes",
+    "query": "/api/material-libraries/query",
+    "detail": "/api/material-libraries/detail"
+  },
+  "libraries": {
+    "consumerVersion": 1,
+    "legacyLibraryId": "library-legacy",
+    "libraries": [
+      {
+        "libraryId": "library-A",
+        "name": "默认素材",
+        "state": "ready",
+        "visible": true,
+        "version": 3,
+        "capabilities": {
+          "read": true,
+          "organize": true,
+          "import": true,
+          "files": false
+        }
+      },
+      {
+        "libraryId": "library-B",
+        "name": "截图素材",
+        "state": "ready",
+        "visible": true,
+        "version": 7,
+        "capabilities": {
+          "read": true,
+          "organize": true,
+          "import": true,
+          "files": false
+        }
+      },
+      {
+        "libraryId": "library-offline",
+        "name": "离线素材",
+        "state": "offline",
+        "visible": true,
+        "version": 1,
+        "capabilities": {
+          "read": false,
+          "organize": false,
+          "import": false,
+          "files": false
+        }
+      }
+    ]
+  },
+  "taxonomyRequest": {
+    "libraryId": "library-B",
+    "requestId": "popup:taxonomy-1"
+  },
+  "taxonomyResponse": {
+    "consumerVersion": 1,
+    "libraryId": "library-B",
+    "requestId": "popup:taxonomy-1",
+    "version": 7,
+    "folders": [
+      {
+        "id": "folder-B",
+        "parentId": null,
+        "name": "网页截图",
+        "sortOrder": 0
+      }
+    ],
+    "tags": [
+      {
+        "id": "tag-B",
+        "name": "参考",
+        "color": null
+      }
+    ]
+  },
+  "importRequest": {
+    "libraryId": "library-B",
+    "requestId": "popup:screenshot-1",
+    "name": "页面截图.png",
+    "mimeType": "image/png",
+    "bytesBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "targetFolderId": "folder-B",
+    "tagNames": [
+      "参考"
+    ],
+    "sourcePageUrl": "https://example.test/article",
+    "sourcePageKind": "capture-page",
+    "sourcePageTitle": "示例文章"
+  },
+  "importResponse": {
+    "consumerVersion": 1,
+    "libraryId": "library-B",
+    "requestId": "popup:screenshot-1",
+    "assetId": "asset-B",
+    "assetName": "页面截图.png",
+    "disposition": "imported",
+    "changed": true,
+    "atomic": false,
+    "asset": {
+      "id": "asset-B",
+      "name": "页面截图.png",
+      "kind": "image",
+      "mimeType": "image/png",
+      "storageMode": "managed",
+      "sizeBytes": 68,
+      "description": "",
+      "folderId": "folder-B",
+      "tagIds": [
+        "tag-B"
+      ],
+      "revision": "revision-example-only"
+    },
+    "view": {
+      "available": false,
+      "reason": "explicit-library-view-not-connected"
+    }
+  },
+  "limits": {
+    "bytes": 12582912,
+    "pixels": 40000000,
+    "maxSide": 32767,
+    "tagCount": 32,
+    "requestIdBytes": 128
+  },
+  "errors": [
+    {
+      "status": 403,
+      "code": "consumer-library-denied"
+    },
+    {
+      "status": 403,
+      "code": "consumer-folder-denied"
+    },
+    {
+      "status": 403,
+      "code": "consumer-tag-denied"
+    },
+    {
+      "status": 409,
+      "code": "library-unavailable"
+    },
+    {
+      "status": 409,
+      "code": "request-id-conflict"
+    },
+    {
+      "status": 409,
+      "code": "capture-commit-uncertain"
+    },
+    {
+      "status": 400,
+      "code": "consumer-input-invalid"
+    },
+    {
+      "status": 413,
+      "code": "consumer-capture-too-large"
+    }
+  ]
+}

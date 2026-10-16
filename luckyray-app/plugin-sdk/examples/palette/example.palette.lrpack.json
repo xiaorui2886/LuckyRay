@@ -1,0 +1,47 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "apiVersion": 1,
+    "type": "script",
+    "entry": "main.js",
+    "minHostVersion": "1.9.2",
+    "requiredModules": [
+      "materials"
+    ],
+    "optionalModules": [
+      "knowledge"
+    ],
+    "id": "example.palette",
+    "name": "离线配色与标签",
+    "version": "1.0.1"
+  },
+  "resource": {
+    "code": "/// <reference path=\"../../index.d.ts\" />\n// Rule-based average colour from the host's bounded thumbnail pixels. No AI, no network.\nLuckyRay.register(async event => {\n  const data = await LuckyRay.call(\"data.get\");\n  const prefix = (data.settings && typeof data.settings.prefix === \"string\" && data.settings.prefix.trim()) || \"色彩\";\n  if (event.input.contribution === \"settings\") {\n    let shown = prefix;\n    if (event.input.action === \"save\") {\n      shown = (event.input.fields.prefix || \"\").trim().slice(0, 20) || \"色彩\";\n      await LuckyRay.call(\"data.set\", { ...data, revision: data.revision + 1, settings: { prefix: shown } });\n    }\n    return {\n      title: \"配色设置\",\n      text: event.input.action === \"save\" ? \"标签前缀已保存，下次添加颜色标签时使用。\" : \"标签前缀只影响本插件生成的颜色标签名，例如“色彩 #a1b2c3”。\",\n      fields: [{ id: \"prefix\", label: \"颜色标签前缀\", value: shown }],\n      actions: [{ id: \"save\", label: \"保存插件设置\" }]\n    };\n  }\n  const objects = await LuckyRay.call(\"materials.list\");\n  const images = objects.filter(a => a.kind === \"image\");\n  const rows = [];\n  let tagged = 0;\n  for (const asset of images.slice(0, 4)) {\n    const image = await LuckyRay.call(\"materials.image.open\", { id: asset.id, revision: asset.revision });\n    try {\n      const pixels = await LuckyRay.call(\"materials.image.read\", { handle: image.handle });\n      const sum = [0, 0, 0]; let weight = 0;\n      for (let i = 0; i < pixels.rgba.length; i += 4) { const a = pixels.rgba[i + 3] / 255; weight += a; for (let c = 0; c < 3; c++) sum[c] += pixels.rgba[i + c] * a; }\n      const color = \"#\" + sum.map(v => Math.round(v / (weight || 1)).toString(16).padStart(2, \"0\")).join(\"\");\n      rows.push(asset.name + \"：\" + color);\n      if (event.input.action === \"tags\") { await LuckyRay.call(\"materials.tags\", { id: asset.id, revision: asset.revision, tags: [prefix + \" \" + color] }); tagged += 1; }\n    } finally { await LuckyRay.call(\"materials.image.release\", { handle: image.handle }); }\n  }\n  if (images.length === 0) return { title: \"素材平均配色（规则计算）\", text: \"本次没有选择图片素材。请在上方选择图片后重新运行；缺少可选的知识库权限不影响配色提取。\" };\n  const notes = [];\n  if (images.length > 4) notes.push(\"为控制运行时长，每次只处理前 4 张图片。\");\n  if (event.input.action === \"tags\") notes.push(\"已请求为 \" + tagged + \" 项素材添加“\" + prefix + \" #…”标签；实际结果以下方“宿主确认的操作”为准。\");\n  if (event.input.action === \"note\" && event.objects.knowledge) {\n    await LuckyRay.call(\"knowledge.create\", { title: \"素材配色记录\", content: \"# 配色记录\\n\\n\" + rows.join(\"\\n\") + \"\\n\" });\n    notes.push(\"已请求创建笔记《素材配色记录》；请以宿主确认结果为准。\");\n  }\n  const actions = [];\n  if (event.capabilities.includes(\"materials.tags\")) actions.push({ id: \"tags\", label: \"为这些素材添加颜色标签\" });\n  if (event.capabilities.includes(\"knowledge.create\") && event.objects.knowledge) actions.push({ id: \"note\", label: \"创建配色记录笔记\" });\n  return { title: \"素材平均配色（规则计算，非 AI）\", text: rows.join(\"\\n\") + (notes.length ? \"\\n\\n\" + notes.join(\"\\n\") : \"\"), actions };\n});\n",
+    "requiredPermissions": [
+      "materials.read",
+      "materials.image"
+    ],
+    "optionalPermissions": [
+      "materials.tags",
+      "knowledge.create"
+    ],
+    "dataVersion": 1,
+    "contributions": [
+      {
+        "id": "palette",
+        "label": "提取配色",
+        "kind": "command"
+      },
+      {
+        "id": "palette-menu",
+        "label": "素材配色操作",
+        "kind": "menu"
+      },
+      {
+        "id": "settings",
+        "label": "配色设置",
+        "kind": "settings"
+      }
+    ]
+  }
+}

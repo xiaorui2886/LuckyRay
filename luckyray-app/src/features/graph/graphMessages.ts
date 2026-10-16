@@ -1,0 +1,17 @@
+export const graphMessages = {
+  moveNativeWindow: {'zh-CN': '移至新窗口', 'en-US': 'Move to new window'},
+  openNativeWindow: {'zh-CN': '在新窗口打开', 'en-US': 'Open in new window'},
+  screenshotSaved: {'zh-CN': '已保存当前图谱截图', 'en-US': 'Graph screenshot saved'},
+  screenshotUnavailable: {'zh-CN': '当前图谱尚未接入截图保存服务', 'en-US': 'Screenshot export needs a verified child host service'},
+  viewTabs: {'zh-CN': '图谱视图标签', 'en-US': 'Graph view tabs'},
+  newTab: {'zh-CN': '新建图谱标签', 'en-US': 'New graph tab'},
+  closeTab: {'zh-CN': '关闭图谱标签', 'en-US': 'Close graph tab'},
+  duplicateTab: {'zh-CN': '复制为独立标签', 'en-US': 'Duplicate as independent tab'},
+  groups: {'zh-CN': '颜色组', 'en-US': 'Color groups'},
+  help: {'zh-CN': '按名称、path:文件夹或 tag:标签着色，优先使用首个匹配组。标签节点关闭时也可着色。', 'en-US': 'Match a name, path:folder or tag:label. The first matching group wins. Tag colors work even when tag nodes are hidden.'},
+  color: {'zh-CN': '颜色组 {index} 颜色', 'en-US': 'Group {index} color'},
+  query: {'zh-CN': '颜色组 {index} 条件', 'en-US': 'Group {index} query'},
+  placeholder: {'zh-CN': '名称 / path: / tag:', 'en-US': 'Name / path: / tag:'},
+  remove: {'zh-CN': '移除颜色组 {index}', 'en-US': 'Remove group {index}'},
+  add: {'zh-CN': '添加颜色组', 'en-US': 'Add color group'},
+} as const;

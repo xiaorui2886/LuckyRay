@@ -1,0 +1,28 @@
+{
+  "bundleRevision": "2026-09-30.1",
+  "algorithm": "SHA-256",
+  "bundleDigest": "6342ca7f1525c7f04238ed42b892034d74f218274bd1dec1c38e00736d74772d",
+  "files": {
+    ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
+    "ADR-0001.md": "a223e2149d675fa35a73b6944b49eb66b8bb95b62e0d20a163e210684ca81b54",
+    "ADR-0002.md": "41ad751bc5c66a76bed3994a3086422461122057c0db38b26ca728202eda118e",
+    "ADR-0003.md": "be9ee6f46e6bedd4c3a1b49e975a0bc79fd227a558405242d0dc1b0291a8304e",
+    "ADR-0004.md": "ac37f0d4f9c411d1633a28d77a63939301160f067ce9711087de763c8611e3b4",
+    "ADR-0005-knowledge-live-sync.md": "7ff374187f4d85eac55260cbfd8a7ef5459666f410f7eae85931a4a8f7aa8cef",
+    "README.md": "f13088dba42bfb772bf93565fa70403cd68ac7fea0587562655dfe385b7b0902",
+    "errors.json": "8e23b039fb5f069c41f5c2fab70761ea8f08b62e6c4fc35ccb009cf791186cc6",
+    "fixture-server.mjs": "6bfc8c31adad51a5ef9025e093518e93bf2a5a5606f8dc4566d62839e318944d",
+    "fixture.mjs": "c14cfed3f88561517dd0aa3eef864c392b212d538b8b858c61fd58cc3f17d158",
+    "golden.json": "b14787d7180743306ec5352cde01eee41c528931681b44ee193936175542519e",
+    "knowledge-fixture.mjs": "f84eb58fab6cbf2453753b55e31f477152419a61ea453e7c15aa683cf7fad93c",
+    "manifest.json": "f11b7252ad3f78cdd020734f80b2e6ebf439e70bffe5af08b4416ef7182d25c4",
+    "operations.json": "07b386c3c2781fb77fa590f7f3f8c5e9139f5d0943bedad9259e552800d3e646",
+    "routes.md": "952bf03b3ab1b114970d38ce92dd575785423f151fcbcedff119750b57134951",
+    "schema.json": "e4dbf40729b4f2960158c58eb767dee96cc7473b4f87f4eafe76736635bea5c9",
+    "types.ts": "1f33d1d92252efae03a3441373cb00f3e56a83bd52bf28abf0a44586b883f2f6",
+    "verify-http.mjs": "10318e219d0b942457a6da0d55c3b1657969471d1c1f7dfcaed491ca7623e7c9",
+    "verify-knowledge.mjs": "0aa66edf7d8411fec2aab83d554252b2b102e063d00bc081bd6d58b2be7e6437",
+    "verify-schema.py": "dae43430b024bec5c741fe99357f0455d4aef7972c883c47954151d2e3b02e83",
+    "verify.mjs": "dd8d543fa87d2b54a15c582a957ebaeb5e925916bbcd1f22dbec62a7cafe5e38"
+  }
+}

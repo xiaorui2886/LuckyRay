@@ -28,4 +28,6 @@ v1.6.0、v1.7.0–v1.7.4、v1.8.0 与 v1.9.0–v1.9.3 的公开归档入口见[�
 
 参考：[MPL 2.0](https://www.mozilla.org/en-US/MPL/2.0/) · [LGPL v3](https://www.gnu.org/licenses/lgpl-3.0.html) · [FFmpeg 分发说明](https://ffmpeg.org/legal.html)
 
-Collector 是独立扩展，不适用本仓库 SDK 的 MIT 许可；以其发行附件中的说明为准。
+## 当前开放的候选源码
+
+LuckyRay 自有桌面、Collector 与可选 MCP 源码现采用根目录 MIT；这不改变第三方许可，也不改写旧发行物的原始附件。当前候选的固定依赖、字体、FFmpeg 与 libmpv 边界见[源码依赖说明](../docs/development/third-party.md)。候选源码开放与新安装包发布/升级验收是不同门槛。

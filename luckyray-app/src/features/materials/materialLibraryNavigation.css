@@ -1,0 +1,37 @@
+.folder-all-with-accessory{min-width:0}
+.folder-root-select{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:0;border:0;color:inherit;background:none;text-align:left;cursor:pointer;font:inherit}
+.folder-root-select .folder-name{min-width:0;text-overflow:ellipsis;white-space:nowrap}
+.folder-root-select:focus-visible,.material-library-menu-trigger:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--radius-sm,4px)}
+.material-library-menu-trigger{display:flex;align-items:center;justify-content:center;position:relative;width:24px;height:24px;flex-shrink:0;padding:0;border:0;border-radius:var(--radius-sm,4px);background:none;color:var(--text-secondary);cursor:pointer}
+.material-library-menu-trigger:hover,.material-library-menu-trigger[aria-expanded=true]{background:var(--bg-active,var(--bg-hover));color:var(--text-primary)}
+.material-library-menu-trigger:disabled{opacity:.5;cursor:default}
+.material-library-task-count{position:absolute;top:-3px;right:-4px;min-width:12px;padding:0 2px;border-radius:5px;background:var(--accent);color:var(--bg-surface);font-size:9px;line-height:13px;text-align:center}
+.material-library-menu{position:fixed;z-index:2000;box-sizing:border-box;width:max-content;min-width:min(160px,calc(100vw - 16px));max-width:min(280px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;padding:5px;border:1px solid var(--border);border-radius:var(--radius-md,8px);background:var(--theme-surface-raised,var(--bg-surface));color:var(--text-primary);box-shadow:0 10px 32px #0004;font-size:12px;font-family:var(--lr-font-family,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}
+.material-library-menu [role=group]+[role=group]{border-top:1px solid var(--border);margin-top:4px;padding-top:4px}
+.material-library-menu-heading{padding:5px 9px;color:var(--text-muted);font-size:11px}
+.material-library-menu button{display:flex;align-items:center;gap:7px;width:100%;min-height:30px;padding:6px 9px;border:0;border-radius:var(--radius-sm,4px);color:inherit;background:none;font:inherit;text-align:left;cursor:pointer}
+.material-library-menu button:hover,.material-library-menu button:focus-visible{background:var(--bg-hover);outline:none}
+.material-library-menu button:disabled{opacity:.45;cursor:default}
+.material-library-menu-libraries{max-height:min(360px,calc(100vh - 80px));overflow:auto}
+.material-library-menu-check{width:14px;flex-shrink:0;color:var(--accent)}
+.material-library-menu-name{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.material-library-menu small{flex-shrink:0;color:var(--text-muted);font-size:10px}
+.react-nav-shell .sidebar.collapsed .folder-all-with-accessory{padding:5px 10px;gap:0}
+.react-nav-shell .sidebar.collapsed .folder-root-select{gap:0;min-width:16px}
+.react-nav-shell .sidebar.collapsed .folder-all-with-accessory>.material-library-menu-trigger{display:none}
+.react-nav-shell .sidebar.collapsed .folder-root-select{justify-content:flex-start;height:16px;line-height:1}
+.material-library-switch-indicator{width:16px;height:16px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.material-library-menu-trigger>svg{width:16px;height:16px;display:block}
+.material-library-menu-library{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.material-library-menu-library small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary)}
+.material-library-menu-name{display:block}
+.material-library-menu-state{font-size:10px;color:var(--text-muted);flex-shrink:0}
+.material-library-menu-heading{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.material-library-action-icon{width:16px;height:16px;flex-shrink:0;color:var(--text-secondary)}
+.material-library-action-label{display:flex;flex-direction:column;gap:3px;min-width:0}
+.material-library-action-label small{font-size:10px;line-height:1.4;white-space:normal}
+.material-library-menu .material-library-action-danger:not(:disabled){color:var(--danger,#c54c48)}
+.material-library-dialog .material-library-menu button{min-height:30px;padding:6px 9px;border:0;background:none;text-align:left;white-space:normal}
+.material-library-dialog .material-library-menu button:hover,.material-library-dialog .material-library-menu button:focus-visible{background:var(--bg-hover)}
+.material-library-dialog .material-library-menu-trigger{padding:0;border:0;background:none;color:var(--text-secondary)}
+.material-library-dialog .material-library-menu-trigger:hover,.material-library-dialog .material-library-menu-trigger[aria-expanded=true]{background:var(--bg-hover);color:var(--text-primary)}

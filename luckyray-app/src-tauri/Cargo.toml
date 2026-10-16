@@ -1,0 +1,140 @@
+[package]
+name = "luckyray-app"
+version = "1.9.15"
+description = "A Tauri App"
+authors = ["xiaorui2886 (xiaorui liang)"]
+license = "MIT"
+edition = "2021"
+default-run = "luckyray-app"
+
+[features]
+# Offline public-key verification tool; never shipped as a runtime sidecar.
+desktop-update-release-tools = []
+extension-runtime-fixture = []
+workspace-runtime-fixture = []
+issue189-isolated-fixture = []
+issue189-frozen-old-fixture = ["issue189-isolated-fixture"]
+# UI-only isolated debug identity; no engine-update test trust or old runtime.
+issue191-isolated-fixture = []
+default = ["sidecar-binaries"]
+browser-host-runtime = ["dep:url", "dep:webview2-com", "dep:windows"]
+# Explicit Windows preview opt-in until hidden-child/DPI/IME native QA passes.
+lsh-background-surface-preload = ["browser-host-runtime"]
+sidecar-binaries = ["browser-host-runtime"]
+browser-host-poc = ["browser-host-runtime"]
+browser-host-poc-fixture = ["browser-host-poc"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "luckyray_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "luckyray-native-host"
+path = "src/sidecars/luckyray-native-host.rs"
+required-features = ["sidecar-binaries"]
+
+[[bin]]
+name = "luckyray-cli"
+path = "src/sidecars/luckyray-cli.rs"
+required-features = ["sidecar-binaries"]
+
+[[bin]]
+name = "luckyray-mcp"
+path = "src/sidecars/luckyray-mcp.rs"
+required-features = ["sidecar-binaries"]
+
+[[bin]]
+name = "luckyray-browser-host"
+path = "src/sidecars/luckyray-browser-host.rs"
+required-features = ["sidecar-binaries"]
+
+[[bin]]
+name = "luckyray-browser-host-poc"
+path = "src/poc/luckyray-browser-host-poc.rs"
+required-features = ["browser-host-poc"]
+
+[[bin]]
+name = "luckyray-update-verify"
+path = "src/release_tools/desktop-update-verify.rs"
+required-features = ["desktop-update-release-tools"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+[dependencies]
+flate2 = "=1.1.9"
+unicode-normalization = "=0.1.25"
+rquickjs = { version = "=0.12.1", default-features = false, features = ["std"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "unstable"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "=0.8.2"
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = { version = "2", features = ["watch"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+base64 = "0.22"
+hmac = "0.12"
+ring = "0.17"
+semver = "1"
+minisign-verify = "=0.3.0"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+rcgen = "=0.13.2"
+reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
+rustls = { version = "=0.23.40", default-features = false, features = ["ring", "std"] }
+sha1 = "0.10"
+zeroize = "1.8.2"
+dom_query = { version = "=0.27.0", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
+futures-util = "0.3"
+tauri-plugin-global-shortcut = "2.3.2"
+rand = "0.8"
+qrcode = { version = "=0.14.1", default-features = false }
+rmcp = { version = "=2.0.0", default-features = false, features = ["server", "transport-io"] }
+webview2-com = { version = "=0.38.2", optional = true }
+windows = { version = "=0.61.3", optional = true, features = [
+  "Win32_Foundation", "Win32_Security",
+  "Win32_Graphics_Gdi",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_JobObjects",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+  "Win32_System_Registry", "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+] }
+url = { version = "=2.5.8", optional = true }
+pulldown-cmark = { version = "=0.13.4", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+fs2 = "=0.4.3"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+drag = "=2.1.1"
+image = { version = "=0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+
+[dev-dependencies]
+rmcp = { version = "=2.0.0", default-features = false, features = ["client", "transport-child-process"] }
+tempfile = "3"
+
+[patch.crates-io]
+# Keep Win32 message pumping outside Tao's keyboard/layout mutexes.
+tao = { path = "vendor/tao-0.35.3" }

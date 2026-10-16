@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "python": {
+    "version": "3.11.8",
+    "fileName": "python-3.11.8-embed-amd64.zip",
+    "url": "https://www.python.org/ftp/python/3.11.8/python-3.11.8-embed-amd64.zip",
+    "sha256": "6347068ca56bf4dd6319f7ef5695f5a03f1ade3e9aa2d6a095ab27faa77a1290",
+    "license": "Python-2.0"
+  },
+  "ytDlp": {
+    "version": "2026.7.4",
+    "fileName": "yt_dlp-2026.7.4-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/f9/8a/cd4c9b02c10c563adfe78118310129641900e1cd6de888cfae2452072696/yt_dlp-2026.7.4-py3-none-any.whl",
+    "sha256": "f11f2b11d5a8ac4059f9bdf29fa4407dc7c6bb00c5097e95ca22a7a9db518266",
+    "license": "Unlicense"
+  },
+  "ytDlpEjs": {
+    "version": "0.8.0",
+    "fileName": "yt_dlp_ejs-0.8.0-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/e3/bd/520769863744b669440a924271a6159ddd82ad5ae26b4ac4d4b69e9f8d44/yt_dlp_ejs-0.8.0-py3-none-any.whl",
+    "sha256": "79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4",
+    "license": "Unlicense with bundled MIT and ISC components"
+  },
+  "deno": {
+    "version": "2.9.4",
+    "fileName": "deno-x86_64-pc-windows-msvc.zip",
+    "url": "https://github.com/denoland/deno/releases/download/v2.9.4/deno-x86_64-pc-windows-msvc.zip",
+    "sha256": "68ed08b05c56cf887e9aa509947dc3f468f7e12f47a13e5c1abd51d46d1453ef",
+    "license": "MIT"
+  },
+  "ffmpeg": {
+    "version": "9.0.1",
+    "variant": "x64-windows-shared-lgpl",
+    "fileName": "ffmpeg-9.0.1_x64-windows-shared-lgpl.zip",
+    "url": "https://github.com/System233/ffmpeg-msvc-prebuilt/releases/download/ffmpeg-9.0.1/ffmpeg-9.0.1_x64-windows-shared-lgpl.zip",
+    "sha256": "8e363a656460dfcbd3cddfc906ddb8c1f2bee99e38a3f8cfc2d008a36b0a189d",
+    "license": "LGPL-2.1-or-later"
+  },
+  "supportedSitePacks": [
+    "youtube.com",
+    "youtu.be",
+    "bilibili.com",
+    "b23.tv",
+    "x.com",
+    "twitter.com",
+    "pinterest.com",
+    "pinimg.com"
+  ],
+  "licenseFiles": [
+    {
+      "fileName": "yt-dlp-LICENSE",
+      "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.07.04/LICENSE",
+      "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"
+    },
+    {
+      "fileName": "yt-dlp-ejs-LICENSE",
+      "url": "https://raw.githubusercontent.com/yt-dlp/ejs/0.8.0/LICENSE",
+      "sha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c"
+    },
+    {
+      "fileName": "deno-LICENSE",
+      "url": "https://raw.githubusercontent.com/denoland/deno/v2.9.4/LICENSE.md",
+      "sha256": "f62497fffecc0852960c8d3e6934b9db86d16396e9b604072e923892cae3a588"
+    }
+  ]
+}

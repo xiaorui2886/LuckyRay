@@ -1,0 +1,192 @@
+import { defineMessages } from "../../core/i18n/index";
+import { EXTENSION_ERROR_COPY, type ExtCopyKey } from "./extensionMessages";
+import { domainErrorCode } from "../../core/extensions/runtime";
+
+/**
+ * Copy for the functional-plugin (script package) surface. Keys are namespaced
+ * `plugin.*`; package-level lifecycle copy reuses the `pack.*` catalog so theme,
+ * template and functional plugins keep one wording for shared actions.
+ */
+export const SCRIPT_PLUGIN_MESSAGES = defineMessages({
+  "plugin.panel.title": { "zh-CN": "功能插件", "en-US": "Functional plugins" },
+  "plugin.panel.desc": { "zh-CN": "安装本地打包的功能插件；先逐项同意插件能力，启用后每次运行前再单独选择本次要授权的素材、笔记或画布。", "en-US": "Install local functional plugins; consent to capabilities first, then pick the exact objects to authorize before each run." },
+  "plugin.panel.empty": { "zh-CN": "尚未安装功能插件。从本地选择 .lrpack.json 安装。", "en-US": "No functional plugins installed yet. Pick a local .lrpack.json to install." },
+  "plugin.panel.loading": { "zh-CN": "正在读取功能插件…", "en-US": "Reading functional plugins…" },
+  "plugin.panel.loadFailed": { "zh-CN": "无法读取功能插件列表。", "en-US": "Could not read the functional-plugin list." },
+  "plugin.panel.stale": { "zh-CN": "下方保留上次读取的列表，当前状态尚未确认。请重试刷新。", "en-US": "The last loaded list is shown below. Its current state is unconfirmed; retry to refresh." },
+  "plugin.panel.retry": { "zh-CN": "重试", "en-US": "Retry" },
+  "plugin.install": { "zh-CN": "安装本地插件", "en-US": "Install local plugin" },
+  "plugin.update": { "zh-CN": "更新…", "en-US": "Update…" },
+  "plugin.details": { "zh-CN": "详情", "en-US": "Details" },
+  "plugin.uninstall": { "zh-CN": "卸载", "en-US": "Uninstall" },
+  "plugin.uninstallConfirm": { "zh-CN": "卸载将清除该插件自己的设置与缓存，并撤销其授权；你已生成的笔记、标签和导出文件会保留。确定卸载「{name}」？", "en-US": "Uninstalling clears this plugin's own settings/cache and its grants; notes, tags and exports you already created remain. Uninstall “{name}”?" },
+  "plugin.grant.save": { "zh-CN": "保存授权", "en-US": "Save grants" },
+  "plugin.grant.saved": { "zh-CN": "已保存「{name}」的授权（{count} 项能力）。", "en-US": "Saved grants for “{name}” ({count} capabilities)." },
+  "plugin.grant.revokeAll": { "zh-CN": "撤销全部授权", "en-US": "Revoke all grants" },
+  "plugin.grant.revoked": { "zh-CN": "已撤销「{name}」的全部授权；插件已停用。", "en-US": "Revoked all grants for “{name}”; the plugin is disabled." },
+  "plugin.material.image": { "zh-CN": "图片", "en-US": "Image" },
+  "plugin.material.video": { "zh-CN": "视频", "en-US": "Video" },
+  "plugin.material.audio": { "zh-CN": "音频", "en-US": "Audio" },
+  "plugin.material.document": { "zh-CN": "文档", "en-US": "Document" },
+  "plugin.dialog.writeConfirm": { "zh-CN": "本次允许插件写入：{scope}。写入完成后不会自动重试，是否继续？", "en-US": "Allow the plugin to write to: {scope}. Completed writes are never retried automatically. Continue?" },
+  "plugin.dialog.writeScope.materials": { "zh-CN": "{count} 项所选素材的标签", "en-US": "tags of {count} selected materials" },
+  "plugin.dialog.writeScope.notes": { "zh-CN": "{count} 篇所选笔记", "en-US": "{count} selected notes" },
+  "plugin.dialog.writeScope.create": { "zh-CN": "在当前知识库创建笔记", "en-US": "creating notes in the current vault" },
+  "plugin.dialog.writeScope.canvas": { "zh-CN": "导出 {count} 个画布到你选择的位置", "en-US": "exporting {count} canvases to a location you pick" },
+  "plugin.dialog.writeScope.data": { "zh-CN": "插件自有设置", "en-US": "plugin-owned settings" },
+  "plugin.dialog.sourceChanged": { "zh-CN": "知识库已切换，请关闭并重新选择授权对象。", "en-US": "The knowledge vault changed; close and choose objects again." },
+  "plugin.dialog.running": { "zh-CN": "正在运行…本次范围已冻结", "en-US": "Running… this run's scope is frozen" },
+  "plugin.enable": { "zh-CN": "启用", "en-US": "Enable" },
+  "plugin.disable": { "zh-CN": "停用", "en-US": "Disable" },
+  "plugin.consentCleared": { "zh-CN": "插件能力有变化，需要重新确认授权后才能启用。", "en-US": "Plugin capabilities changed; review the grants again before enabling." },
+
+  "plugin.status.enabled": { "zh-CN": "已启用", "en-US": "Enabled" },
+  "plugin.status.disabled": { "zh-CN": "已停用", "en-US": "Disabled" },
+  "plugin.status.needsConsent": { "zh-CN": "待授权", "en-US": "Consent needed" },
+  "plugin.status.incompatible": { "zh-CN": "不兼容", "en-US": "Incompatible" },
+  "plugin.entry.header": { "zh-CN": "提供 {count} 个入口", "en-US": "{count} entries" },
+  "plugin.entry.more": { "zh-CN": "查看全部 {count} 个入口", "en-US": "Show all {count} entries" },
+  "plugin.entry.less": { "zh-CN": "收起入口", "en-US": "Show fewer entries" },
+  "plugin.page.sidebarShort": { "zh-CN": "显示在侧栏", "en-US": "In sidebar" },
+  "plugin.entry.item": { "zh-CN": "{label}（{kind}）", "en-US": "{label} ({kind})" },
+  "plugin.yes": { "zh-CN": "是", "en-US": "yes" },
+  "plugin.no": { "zh-CN": "否", "en-US": "no" },
+  "plugin.page.showInSidebar": { "zh-CN": "在侧栏显示「{label}」", "en-US": "Show “{label}” in sidebar" },
+  "plugin.page.prefHint": { "zh-CN": "只控制侧栏快捷入口；关闭不影响插件启用与页面使用。", "en-US": "Only controls the sidebar shortcut; hiding does not disable the plugin or the page." },
+  "plugin.run": { "zh-CN": "运行", "en-US": "Run" },
+  "plugin.stop": { "zh-CN": "终止", "en-US": "Stop" },
+  "plugin.close": { "zh-CN": "关闭", "en-US": "Close" },
+  "plugin.kind.command": { "zh-CN": "命令", "en-US": "command" },
+  "plugin.kind.menu": { "zh-CN": "菜单", "en-US": "menu" },
+  "plugin.kind.panel": { "zh-CN": "面板", "en-US": "panel" },
+  "plugin.kind.settings": { "zh-CN": "设置", "en-US": "settings" },
+  "plugin.kind.page": { "zh-CN": "页面", "en-US": "page" },
+
+  "plugin.perm.required": { "zh-CN": "必需", "en-US": "Required" },
+  "plugin.perm.optional": { "zh-CN": "可选", "en-US": "Optional" },
+  "plugin.perm.caption": { "zh-CN": "同意的是“能力”。每次运行前还会单独选择本次可访问的对象，写入需再次确认。", "en-US": "You consent to capabilities here. Objects are chosen per run, and writes are confirmed again before dispatch." },
+  "plugin.perm.materials.read": { "zh-CN": "读取所选素材的名称、格式、标签等登记信息（不含文件路径）", "en-US": "Read metadata (name, format, tags) of the selected materials; no file paths" },
+  "plugin.perm.materials.image": { "zh-CN": "读取所选图片的受限缩略像素（最大 128×128）", "en-US": "Read bounded thumbnail pixels (≤128×128) of the selected images" },
+  "plugin.perm.materials.tags": { "zh-CN": "为所选素材添加标签（写入前需确认）", "en-US": "Add tags to the selected materials (write confirmed first)" },
+  "plugin.perm.knowledge.read": { "zh-CN": "读取所选笔记内容与当前选区", "en-US": "Read the selected notes and the current selection" },
+  "plugin.perm.knowledge.create": { "zh-CN": "在所选知识库创建新笔记（需单独勾选“允许创建”）", "en-US": "Create new notes in the selected vault (separate create opt-in)" },
+  "plugin.perm.knowledge.insert": { "zh-CN": "向所选笔记插入文本（需干净的编辑会话）", "en-US": "Insert text into the selected note (clean editor session required)" },
+  "plugin.perm.canvas.read": { "zh-CN": "读取所选画布的已保存结构（不含附件）", "en-US": "Read the saved structure of the selected canvas (no attachments)" },
+  "plugin.perm.canvas.export": { "zh-CN": "将所选画布导出为 SVG（保存位置由你选择）", "en-US": "Export the selected canvas as SVG (you choose the location)" },
+
+  "plugin.dialog.scopeTitle": { "zh-CN": "本次授权对象", "en-US": "Objects for this run" },
+  "plugin.dialog.summary.materials": { "zh-CN": "素材 {count} 项", "en-US": "{count} materials" },
+  "plugin.dialog.summary.notes": { "zh-CN": "笔记 {count} 篇", "en-US": "{count} notes" },
+  "plugin.dialog.summary.canvases": { "zh-CN": "画布 {count} 个", "en-US": "{count} canvases" },
+  "plugin.dialog.summary.create": { "zh-CN": "创建笔记：{value}", "en-US": "create notes: {value}" },
+  "plugin.dialog.writes.on": { "zh-CN": "允许写入：仅限本次所选对象", "en-US": "Writes allowed: only the objects selected for this run" },
+  "plugin.dialog.writes.off": { "zh-CN": "允许写入：否（只读运行）", "en-US": "Writes allowed: no (read-only run)" },
+  "plugin.dialog.writeToggle": { "zh-CN": "允许本次写入（运行前会再确认一次）", "en-US": "Allow writes this run (confirmed once more before dispatch)" },
+  "plugin.dialog.createToggle": { "zh-CN": "允许在当前知识库创建笔记", "en-US": "Allow creating notes in the current vault" },
+  "plugin.dialog.hint": { "zh-CN": "插件每次运行只能访问上面选中的对象；切换插件或关闭后授权即结束。", "en-US": "Each run sees only the objects selected above; authorization ends when the plugin switches or the dialog closes." },
+  "plugin.dialog.pick.search": { "zh-CN": "搜索以定位对象…", "en-US": "Search to locate objects…" },
+  "plugin.dialog.pick.selected": { "zh-CN": "已选 {count}/{max}", "en-US": "{count}/{max} selected" },
+  "plugin.dialog.pick.loading": { "zh-CN": "正在加载…", "en-US": "Loading…" },
+  "plugin.dialog.pick.empty": { "zh-CN": "暂无对象", "en-US": "Nothing here yet" },
+  "plugin.dialog.pick.noMatch": { "zh-CN": "没有匹配的对象", "en-US": "No matches" },
+  "plugin.dialog.pick.more": { "zh-CN": "共 {total} 项，列表显示前 {shown} 项；可搜索定位。", "en-US": "{total} total; showing the first {shown}. Use search to locate others." },
+  "plugin.dialog.pick.capped": { "zh-CN": "仅显示前 {shown} 条匹配，请缩小关键词。", "en-US": "Only the first {shown} matches are shown; narrow the keyword." },
+  "plugin.dialog.pick.notesCap": { "zh-CN": "默认列出最近 {cap} 篇笔记，不代表全库；搜索可覆盖整个知识库。", "en-US": "The newest {cap} notes are listed by default; search covers the whole vault." },
+  "plugin.dialog.pick.loadFailed": { "zh-CN": "{module} 暂不可用：{reason}。可继续使用其他对象。", "en-US": "{module} is unavailable: {reason}. Other objects still work." },
+  "plugin.dialog.module.materials": { "zh-CN": "素材", "en-US": "Materials" },
+  "plugin.dialog.module.knowledge": { "zh-CN": "笔记", "en-US": "Notes" },
+  "plugin.dialog.module.canvas": { "zh-CN": "画布", "en-US": "Canvas" },
+  "plugin.dialog.noKnowledgeSource": { "zh-CN": "当前没有打开的知识库可授权。", "en-US": "No open knowledge vault to authorize." },
+
+  "plugin.dialog.outputTitle": { "zh-CN": "运行结果", "en-US": "Result" },
+  "plugin.dialog.stale": { "zh-CN": "选择已变化。以下结果是上一次运行的内容，重新运行后才会反映新选择。", "en-US": "The selection changed. The result below is from the previous run; run again to reflect it." },
+  "plugin.dialog.outcomes": { "zh-CN": "宿主确认的操作", "en-US": "Host-confirmed operations" },
+  "plugin.dialog.outcomes.none": { "zh-CN": "本轮运行没有写入操作。", "en-US": "No write operations in this run." },
+  "plugin.dialog.round.title": { "zh-CN": "本轮宿主确认", "en-US": "This run, as confirmed by the host" },
+  "plugin.dialog.round.running": { "zh-CN": "进行中", "en-US": "in progress" },
+  "plugin.dialog.round.cancelled": { "zh-CN": "已终止", "en-US": "stopped" },
+  "plugin.dialog.round.failed": { "zh-CN": "未完成", "en-US": "did not complete" },
+  "plugin.dialog.round.nothingYet": { "zh-CN": "尚无写入操作。", "en-US": "No write operations yet." },
+  "plugin.dialog.round.unconfirmed": { "zh-CN": "{method}：结果未知，宿主未回报（{target}）", "en-US": "{method}: result unknown, nothing reported by the host ({target})" },
+  "plugin.dialog.round.unconfirmedDiag": { "zh-CN": "{method}：结果未知，宿主未回报（{target}）· 诊断 {code}", "en-US": "{method}: result unknown, nothing reported by the host ({target}) · diagnostic {code}" },
+  "plugin.dialog.round.unconfirmedHint": { "zh-CN": "未回报结果的写入可能已完成，也可能没有。请先检查目标，再决定是否再次运行；本应用不会自动重试。", "en-US": "A write without a reported result may or may not have completed. Check the target before deciding to run again; nothing is retried automatically." },
+  "plugin.dialog.round.refused": { "zh-CN": "{method}：未执行（{reason}）", "en-US": "{method}: not performed ({reason})" },
+  "plugin.dialog.method.knowledge.create": { "zh-CN": "创建笔记", "en-US": "Create note" },
+  "plugin.dialog.method.knowledge.insert": { "zh-CN": "写入笔记", "en-US": "Insert into note" },
+  "plugin.dialog.method.materials.tags": { "zh-CN": "保存标签", "en-US": "Save tags" },
+  "plugin.dialog.method.canvas.export": { "zh-CN": "导出画布", "en-US": "Export canvas" },
+  "plugin.dialog.method.data.set": { "zh-CN": "保存插件设置", "en-US": "Save plugin settings" },
+  "plugin.dialog.outcome.noteCreated": { "zh-CN": "已创建笔记《{title}》", "en-US": "Created note “{title}”" },
+  "plugin.dialog.outcome.noteInserted": { "zh-CN": "已写入笔记《{title}》", "en-US": "Written into note “{title}”" },
+  "plugin.dialog.outcome.tagsAdded": { "zh-CN": "已为素材「{name}」保存标签（现共 {count} 个）", "en-US": "Saved tags on “{name}” ({count} total)" },
+  "plugin.dialog.outcome.exported": { "zh-CN": "已导出画布 SVG（{nodes} 节点 / {edges} 连线 / {bytes} 字节）", "en-US": "Exported canvas SVG ({nodes} nodes / {edges} edges / {bytes} bytes)" },
+  "plugin.dialog.outcome.dataSaved": { "zh-CN": "已保存插件自有设置", "en-US": "Saved plugin-owned settings" },
+  "plugin.dialog.outcome.locate": { "zh-CN": "定位", "en-US": "Locate" },
+  "plugin.dialog.cancelled": { "zh-CN": "已终止本次运行。已被宿主接受的写入可能仍会完成：请检查目标，不要重复运行写入。", "en-US": "Stopped. Writes already accepted by the host may still finish: check the target and do not re-run writes." },
+  "plugin.dialog.logs": { "zh-CN": "运行日志", "en-US": "Run logs" },
+
+  "plugin.menu.label": { "zh-CN": "插件", "en-US": "Plugins" },
+  "plugin.menu.empty": { "zh-CN": "没有已启用的插件", "en-US": "No enabled plugins" },
+  "plugin.menu.invalidated": { "zh-CN": "「{name}」已停用、卸载或更新，本次会话已失效。", "en-US": "“{name}” was disabled, removed or updated; this session is no longer valid." },
+
+  "plugin.error.notScript": { "zh-CN": "请选择功能插件包（manifest type 为 script）。", "en-US": "Pick a functional-plugin package (manifest type “script”)." },
+  "plugin.error.changed": { "zh-CN": "插件状态已变化，操作未执行；请查看最新列表。", "en-US": "The plugin changed; the action was not applied. Review the latest list." },
+  "plugin.error.permissionDenied": { "zh-CN": "插件未被授权使用该能力。可在插件卡片中检查授权。", "en-US": "The plugin lacks a grant for that capability. Check the plugin card." },
+  "plugin.error.objectDenied": { "zh-CN": "所选对象不在本次授权范围内。", "en-US": "The object is outside this run's scope." },
+  "plugin.error.writeConfirm": { "zh-CN": "本次写入未经确认。请先勾选允许写入并在运行前确认。", "en-US": "The write was not confirmed. Enable writes and confirm before running." },
+  "plugin.error.parameters": { "zh-CN": "插件请求参数无效。", "en-US": "The plugin request had invalid parameters." },
+  "plugin.error.methodUnavailable": { "zh-CN": "当前环境不支持该插件能力。", "en-US": "That capability is unavailable here." },
+  "plugin.error.handleDenied": { "zh-CN": "插件引用了无效或已过期的句柄，请重新运行。", "en-US": "The plugin used an invalid/expired handle; run again." },
+  "plugin.error.nameConflict": { "zh-CN": "同名笔记已存在，未重复创建。请换一个标题，或先改名/删除已有笔记。", "en-US": "A note with this name already exists; nothing was created. Use another title or rename/delete the existing note first." },
+  "plugin.error.revisionConflict": { "zh-CN": "目标内容已变化（版本冲突）。请检查目标后重新运行，不要自动重试。", "en-US": "The target changed (revision conflict). Inspect it and run again; no auto retry." },
+  "plugin.error.retired": { "zh-CN": "插件会话已结束（停用/更新/关闭）。", "en-US": "The plugin session ended (disabled/updated/closed)." },
+  "plugin.error.hostVeto": { "zh-CN": "宿主未放行本次操作（来源或草稿状态检查未通过）。", "en-US": "The host vetoed the operation (source/draft checks failed)." },
+  "plugin.error.workerEnded": { "zh-CN": "插件进程提前结束。", "en-US": "The plugin process ended early." },
+  "plugin.error.limit": { "zh-CN": "达到插件运行资源上限，本轮未完成。已完成与未确认的操作见下方；若要缩小范围再运行，请先检查目标。", "en-US": "A plugin resource limit stopped this run. Completed and unconfirmed operations are listed below; check the targets before running a narrower scope." },
+  "plugin.error.runtime": { "zh-CN": "插件运行未完成。本轮已完成与未确认的操作见下方。", "en-US": "The plugin run did not complete. This run's completed and unconfirmed operations are listed below." },
+  "plugin.error.unknown": { "zh-CN": "插件运行未完成。本轮已完成与未确认的操作见下方；请先检查目标，再决定是否再次运行。", "en-US": "The plugin run did not complete. Check the completed and unconfirmed operations below before deciding to run again." },
+});
+
+export type PluginCopyKey = keyof typeof SCRIPT_PLUGIN_MESSAGES | ExtCopyKey;
+
+/** Plugin runtime error code → copy key; unknown codes keep one neutral line. */
+export const PLUGIN_ERROR_COPY: Record<string, PluginCopyKey> = {
+  "plugin-not-script": "plugin.error.notScript",
+  "plugin-changed": "plugin.error.changed",
+  "plugin-source-changed": "plugin.dialog.sourceChanged",
+  "plugin-permission-denied": "plugin.error.permissionDenied",
+  "plugin-object-denied": "plugin.error.objectDenied",
+  "plugin-write-confirmation-required": "plugin.error.writeConfirm",
+  "plugin-parameters": "plugin.error.parameters",
+  "plugin-method-unavailable": "plugin.error.methodUnavailable",
+  "plugin-handle-denied": "plugin.error.handleDenied",
+  "plugin-revision-conflict": "plugin.error.revisionConflict",
+  "knowledge-name-conflict": "plugin.error.nameConflict",
+  "plugin-retired": "plugin.error.retired",
+  "plugin-host-veto": "plugin.error.hostVeto",
+  "plugin-worker-ended": "plugin.error.workerEnded",
+  "plugin-input-limit": "plugin.error.limit",
+  "plugin-output-limit": "plugin.error.limit",
+  "plugin-result-limit": "plugin.error.limit",
+  "plugin-image-limit": "plugin.error.limit",
+  "plugin-document-limit": "plugin.error.limit",
+  "plugin-canvas-limit": "plugin.error.limit",
+  "extension-consent-required": "plugin.error.permissionDenied",
+  "extension-data-conflict-or-limit": "plugin.error.revisionConflict",
+  "extension-invalid-request": "plugin.error.parameters",
+};
+
+export function pluginErrorCode(error: unknown): string {
+  const coded = (error as { code?: unknown } | null | undefined)?.code;
+  if (typeof coded === "string" && coded) return coded;
+  if (error instanceof Error) return error.message || error.name;
+  return String(error);
+}
+
+/** Runtime `plugin-*` codes, then package `ExtensionError` codes, then one neutral line carrying the raw code. */
+export function pluginErrorCopyKey(error: unknown): PluginCopyKey {
+  const code = domainErrorCode(pluginErrorCode(error));
+  if (PLUGIN_ERROR_COPY[code]) return PLUGIN_ERROR_COPY[code];
+  if (code in EXTENSION_ERROR_COPY) return EXTENSION_ERROR_COPY[code];
+  return "plugin.error.unknown";
+}

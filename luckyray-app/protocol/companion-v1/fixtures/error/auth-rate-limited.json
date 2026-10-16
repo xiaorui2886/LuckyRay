@@ -1,0 +1,4 @@
+{
+  "status": 429,
+  "body": { "ok": false, "code": "AUTH_RATE_LIMITED", "message": "Device authentication is temporarily rate limited" }
+}

@@ -1,0 +1,46 @@
+.notes-import-toast {
+  box-sizing: border-box;
+}
+.notes-import-toast-content {
+  min-width: 0;
+  flex: 1;
+}
+.notes-import-toast-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.notes-import-toast-heading button {
+  flex: none;
+  border: 0;
+  padding: 0 3px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+}
+.notes-import-toast-content small {
+  color: var(--text-secondary);
+}
+.notes-import-toast-content details {
+  margin-top: 6px;
+}
+.notes-import-toast-content summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.notes-import-toast-details {
+  max-height: 180px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.notes-import-toast-details p {
+  margin: 8px 0 4px;
+}
+.notes-import-toast-details ul {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-secondary);
+}

@@ -1,0 +1,11 @@
+/* Fixture-only chrome around the production Community surface. */
+body { margin: 0; background: var(--bg-base, #101014); color: var(--text-primary, #e8e8ee); font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.fixture-shell { display: flex; flex-direction: column; gap: 12px; min-height: 100vh; padding: 12px 16px 48px; box-sizing: border-box; }
+.fixture-banner { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 8px 12px; border: 1px dashed var(--warning, #d29a3a); border-radius: 8px; background: color-mix(in srgb, var(--warning, #d29a3a) 10%, transparent); font-size: 11px; }
+.fixture-banner strong { color: var(--warning, #d29a3a); }
+.fixture-banner code { font-size: 10.5px; overflow-wrap: anywhere; }
+.fixture-readback { padding: 10px 12px; border: 1px solid var(--border, #33333d); border-radius: 8px; background: var(--bg-elevated, #1b1b21); font-size: 11px; }
+.fixture-readback h3 { margin: 0 0 8px; font-size: 11px; color: var(--text-secondary, #b6b6c2); }
+.fixture-readback article { padding: 6px 0; border-top: 1px dashed var(--border, #33333d); }
+.fixture-readback pre { max-height: 160px; overflow: auto; margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fixture-readback-error { color: var(--danger, #d05a5a); }

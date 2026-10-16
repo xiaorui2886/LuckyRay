@@ -1,0 +1,252 @@
+/* Appearance-only primitives shared by the accepted content routes. */
+.editorial-page-surface {
+  --editorial-page-content-max: 1480px;
+  --editorial-page-gutter: clamp(24px, 3vw, 44px);
+  background: var(--bg-base);
+}
+
+.editorial-page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+  margin-bottom: 22px;
+}
+
+.editorial-page-heading h1 {
+  margin: 0;
+  font-size: clamp(25px, 2.6vw, 34px);
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+}
+
+.editorial-page-heading p {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.react-nav-shell .editorial-primary-action {
+  display: inline-flex;
+  height: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 15px;
+  border: 1px solid color-mix(in srgb, var(--accent) 78%, transparent);
+  border-radius: 10px;
+  color: #fff;
+  background: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, color .16s ease, transform .16s ease;
+}
+
+.react-nav-shell .editorial-primary-action:hover {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.react-nav-shell .editorial-primary-action:active {
+  transform: translateY(0);
+}
+
+.react-nav-shell .editorial-primary-action:disabled {
+  opacity: .55;
+  cursor: wait;
+  transform: none;
+}
+
+.react-nav-shell .editorial-primary-action:focus-visible,
+.editorial-back-action:focus-visible,
+.editorial-dialog-close:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.editorial-back-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.editorial-back-action:hover {
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.editorial-back-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  background: currentColor;
+  -webkit-mask: url("../assets/icons/lightseek-ui-v2/back.svg") center / contain no-repeat;
+  mask: url("../assets/icons/lightseek-ui-v2/back.svg") center / contain no-repeat;
+}
+
+.editorial-dialog-backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--experience-overlay);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+.editorial-dialog {
+  display: grid;
+  width: min(560px, 100%);
+  max-height: min(590px, calc(100dvh - 48px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--experience-border);
+  border-radius: var(--experience-radius);
+  color: var(--text-primary);
+  background: var(--experience-surface);
+  box-shadow: var(--experience-shadow);
+  animation: editorialDialogEnter var(--experience-duration-standard) var(--experience-easing-standard) both;
+}
+
+.editorial-dialog-head {
+  position: relative;
+  min-width: 0;
+  padding: 14px 16px 12px;
+}
+
+.editorial-dialog-header-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.editorial-dialog-header-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.editorial-dialog-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.editorial-dialog-head h2,
+.editorial-dialog-title {
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 620;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.editorial-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 16px 16px;
+  scrollbar-gutter: stable;
+}
+
+.editorial-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-surface) 36%, transparent);
+}
+
+.editorial-dialog-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.editorial-dialog-close:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.editorial-dialog-close-icon {
+  display: block;
+  width: 17px;
+  height: 17px;
+  background: currentColor;
+  -webkit-mask: url("../assets/icons/lightseek-ui-v2/close.svg") center / contain no-repeat;
+  mask: url("../assets/icons/lightseek-ui-v2/close.svg") center / contain no-repeat;
+}
+
+@keyframes editorialDialogEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 620px) {
+  .editorial-page-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .editorial-dialog-backdrop {
+    padding: 12px;
+  }
+
+  .editorial-dialog {
+    max-height: calc(100dvh - 24px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-nav-shell .editorial-primary-action,
+  .editorial-back-action,
+  .editorial-dialog {
+    animation: none;
+    transition: none;
+  }
+}

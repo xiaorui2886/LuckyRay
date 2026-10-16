@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "luckyray://companion/v1/hello-response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instanceId", "displayName", "platform", "appVersion", "protocolVersion", "certificateFingerprint", "capabilities"],
+  "properties": {
+    "instanceId": { "type": "string", "pattern": "^desktop-[a-f0-9]{32}$" },
+    "displayName": { "type": "string" },
+    "platform": { "const": "windows" },
+    "appVersion": { "type": "string" },
+    "protocolVersion": { "const": 1 },
+    "certificateFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pairing", "authenticatedEvents", "deviceRevocation", "runs"],
+      "properties": {
+        "pairing": { "const": true },
+        "authenticatedEvents": { "const": true },
+        "deviceRevocation": { "const": true },
+        "runs": { "const": false }
+      }
+    }
+  }
+}

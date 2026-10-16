@@ -1,0 +1,4 @@
+{
+  "status": 401,
+  "body": { "ok": false, "code": "pairing-secret-invalid", "message": "The pairing secret is invalid" }
+}

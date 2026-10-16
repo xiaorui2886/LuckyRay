@@ -1,0 +1,321 @@
+/* Direction-neutral feedback primitives. Values derive from the active LuckyRay theme. */
+.react-nav-shell {
+  --experience-overlay: var(--theme-overlay);
+  --experience-surface: var(--bg-elevated);
+  --experience-surface-muted: color-mix(in srgb, var(--bg-surface) 84%, var(--bg-base));
+  --experience-border: var(--theme-dialog-border);
+  --experience-focus-ring: color-mix(in srgb, var(--accent) 64%, var(--text-primary));
+  --experience-shadow: var(--shadow-lg, 0 18px 48px color-mix(in srgb, var(--bg-base) 6%, rgb(0 0 0 / 42%)));
+  --experience-radius: 14px;
+  --experience-duration-fast: 120ms;
+  --experience-duration-standard: 180ms;
+  --experience-easing-standard: cubic-bezier(.2, .75, .25, 1);
+}
+
+.experience-dialog-backdrop,
+.editorial-dialog-backdrop.experience-dialog-backdrop {
+  background: var(--experience-overlay);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+.experience-dialog,
+.editorial-dialog.experience-dialog {
+  border-color: var(--experience-border);
+  border-radius: var(--experience-radius);
+  background: var(--experience-surface);
+  box-shadow: var(--experience-shadow);
+}
+
+.settings-confirm-overlay.experience-dialog-backdrop {
+  padding: 20px;
+  background: var(--experience-overlay);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: none;
+}
+
+.settings-confirm.experience-dialog {
+  border-color: var(--experience-border);
+  border-radius: var(--experience-radius);
+  background: var(--experience-surface);
+  box-shadow: var(--experience-shadow);
+  animation: experienceDialogEnter var(--experience-duration-standard) var(--experience-easing-standard) both;
+}
+
+.react-nav-shell .experience-dialog :is(button, input, select, textarea):focus-visible,
+.experience-toast:focus-visible,
+.experience-progress:focus-visible {
+  outline: 2px solid var(--experience-focus-ring);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.react-nav-shell .experience-dialog :is(input, select, textarea):focus-visible {
+  border-color: transparent;
+  outline-offset: 0;
+}
+
+.experience-toast,
+.experience-toast.materials-toast-react,
+.experience-toast.settings-message {
+  position: fixed;
+  z-index: 1600;
+  top: 52px;
+  right: 22px;
+  bottom: auto;
+  left: auto;
+  display: flex;
+  width: min(360px, calc(100vw - 32px));
+  min-height: 42px;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--experience-border);
+  border-radius: 12px;
+  color: var(--text-primary);
+  background: var(--experience-surface);
+  box-shadow: var(--experience-shadow);
+  font-size: 12px;
+  line-height: 1.5;
+  transform: none;
+  animation: experienceToastEnter var(--experience-duration-standard) var(--experience-easing-standard) both;
+}
+
+.experience-toast::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  content: "";
+}
+
+.experience-toast--success::before {
+  background: var(--mint);
+}
+
+.experience-toast--error::before {
+  background: var(--rose);
+}
+
+.experience-toast.settings-message.error {
+  border-color: color-mix(in srgb, var(--rose) 30%, var(--experience-border));
+  color: color-mix(in srgb, var(--rose) 78%, var(--text-primary));
+  background: color-mix(in srgb, var(--rose) 7%, var(--experience-surface));
+}
+
+.experience-progress,
+.experience-progress.material-import-progress {
+  border: 1px solid var(--experience-border);
+  border-radius: 12px;
+  background: var(--experience-surface);
+  box-shadow: var(--experience-shadow);
+}
+
+.experience-progress-track,
+.experience-progress-track.material-import-progress-track {
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 62%, transparent);
+}
+
+.experience-progress-track > span,
+.experience-progress-track.material-import-progress-track > span {
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--experience-duration-standard) var(--experience-easing-standard);
+}
+
+.experience-skeleton > * {
+  border-color: transparent;
+  background: var(--experience-surface-muted);
+  animation: experienceSkeleton 1.35s ease-in-out infinite alternate;
+}
+
+.experience-empty {
+  border-color: var(--experience-border);
+  background: color-mix(in srgb, var(--experience-surface-muted) 52%, transparent);
+}
+
+.experience-error {
+  border-color: color-mix(in srgb, var(--rose) 30%, var(--experience-border));
+  color: color-mix(in srgb, var(--rose) 78%, var(--text-primary));
+  background: color-mix(in srgb, var(--rose) 7%, var(--experience-surface));
+}
+
+.experience-knowledge-activity {
+  display: grid;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: 24px;
+  color: var(--text-secondary);
+  background: var(--bg-base);
+}
+
+.experience-knowledge-activity-card {
+  display: grid;
+  width: min(420px, 100%);
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  border: 1px solid var(--experience-border);
+  border-radius: var(--experience-radius);
+  background: var(--experience-surface);
+  text-align: center;
+}
+
+.experience-knowledge-activity-mark {
+  width: 24px;
+  height: 24px;
+  border: 2px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: experienceActivity 900ms linear infinite;
+}
+
+.experience-knowledge-activity strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.experience-knowledge-activity p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.experience-knowledge-activity button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-radius: 9px;
+  color: var(--text-primary);
+  background: var(--accent-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.notes-vault-switch-option.switching .notes-vault-switch-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notes-vault-switch-option.switching .notes-vault-switch-state::before {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: experienceActivity 900ms linear infinite;
+  content: "";
+}
+
+@keyframes experienceToastEnter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes experienceDialogEnter {
+  from { opacity: 0; transform: translateY(6px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes experienceSkeleton {
+  from { opacity: .56; }
+  to { opacity: .9; }
+}
+
+@keyframes experienceActivity {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 620px) {
+  .experience-toast,
+  .experience-toast.materials-toast-react,
+  .experience-toast.settings-message {
+    top: 48px;
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+}
+
+:root[data-animations="off"] .experience-dialog,
+:root[data-animations="off"] .editorial-dialog.experience-dialog,
+:root[data-animations="off"] .settings-confirm.experience-dialog,
+:root[data-animations="off"] .experience-toast,
+:root[data-animations="off"] .experience-toast.materials-toast-react,
+:root[data-animations="off"] .experience-toast.settings-message,
+:root[data-animations="off"] .experience-progress-track > span,
+:root[data-animations="off"] .experience-progress-track.material-import-progress-track > span,
+:root[data-animations="off"] .experience-progress-track.indeterminate > span,
+:root[data-animations="off"] .material-import-progress-track.experience-progress-track.indeterminate > span,
+:root[data-animations="off"] .experience-skeleton > *,
+:root[data-animations="off"] .experience-knowledge-activity-mark,
+:root[data-animations="off"] .tag-color-tone {
+  animation: none;
+  transition: none;
+}
+
+:root[data-animations="off"] .notes-vault-switch-option.switching .notes-vault-switch-state::before {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-nav-shell .experience-dialog,
+  .react-nav-shell .editorial-dialog.experience-dialog,
+  .react-nav-shell .settings-confirm.experience-dialog,
+  .react-nav-shell .experience-toast,
+  .react-nav-shell .experience-toast.materials-toast-react,
+  .react-nav-shell .experience-toast.settings-message,
+  .react-nav-shell .experience-progress-track > span,
+  .react-nav-shell .experience-progress-track.material-import-progress-track > span,
+  .react-nav-shell .experience-progress-track.indeterminate > span,
+  .react-nav-shell .material-import-progress-track.experience-progress-track.indeterminate > span,
+  .react-nav-shell .experience-skeleton > *,
+  .react-nav-shell .experience-knowledge-activity-mark,
+  .react-nav-shell .tag-color-tone {
+    animation: none;
+    transition: none;
+  }
+
+
+  .react-nav-shell .notes-vault-switch-option.switching .notes-vault-switch-state::before {
+    animation: none;
+  }
+}
+.react-nav-shell .experience-overlay-root {
+  position: fixed; z-index: 1700; top: calc(var(--titlebar-height, 60px) + 16px); right: 20px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  max-width: min(400px, calc(100vw - 40px)); pointer-events: none;
+}
+.experience-overlay-root .experience-ordinary-notices { display: grid; justify-items: end; gap: 10px; }
+.experience-overlay-root .experience-ordinary-notices:empty { display: none; }
+.react-nav-shell .experience-overlay-root .experience-ordinary-notice,
+.react-nav-shell .experience-overlay-root .material-export-notices {
+  position: static; inset: auto; width: fit-content; max-width: min(400px, calc(100vw - 40px));
+  min-width: 0; margin: 0; transform: none; text-align: start;
+}
+.react-nav-shell .experience-overlay-root .experience-ordinary-notice {
+  display: flex; gap: 10px; padding: 13px 16px; align-items: flex-start;
+  border-radius: 12px; border: 1px solid var(--experience-border);
+  background: var(--experience-surface); color: var(--text-primary);
+  box-shadow: 0 4px 10px rgb(0 0 0 / 8%), 0 16px 40px rgb(0 0 0 / 16%);
+  font-size: 13px; line-height: 1.55; pointer-events: auto; overflow-wrap: anywhere;
+}
+.experience-ordinary-notice::before { display: none; }
+.react-nav-shell .experience-overlay-root .experience-ordinary-notice[hidden] { display: none; }
+.experience-notice-icon { flex: 0 0 20px; width: 20px; height: 20px; fill: none; stroke: var(--mint, var(--accent)); stroke-width: 1.5; }
+.experience-ordinary-notice--error .experience-notice-icon { stroke: var(--rose); }
+.experience-overlay-root .material-export-notices { display: grid; gap: 10px; }
+.experience-overlay-root .material-export-notices[hidden] { display: none; }
