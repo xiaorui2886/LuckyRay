@@ -80,6 +80,10 @@ jobs:
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-dsh-package-runtime.ps1
           if ($LASTEXITCODE -ne 0) { throw 'public-lsh-input-staging-failed' }
+      - name: Real native embedded record and staged critical identity admission
+        run: |
+          cargo run --locked --manifest-path tests/desktop-updater-native/Cargo.toml --bin luckyray-runtime-record-verify -- "$env:GITHUB_WORKSPACE/luckyray-app/src-tauri/dsh"
+          if ($LASTEXITCODE -ne 0) { throw 'actual-native-runtime-admission-failed' }
       - name: Full native library check with preload feature
         run: |
           cargo check --locked --manifest-path src-tauri/Cargo.toml --lib --no-default-features --features browser-host-runtime,lsh-background-surface-preload

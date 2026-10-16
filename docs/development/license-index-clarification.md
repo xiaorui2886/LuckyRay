@@ -31,3 +31,10 @@ in `third-party-notices/deno-2.9.4/INDEX.json`. No different package version's
 license is substituted. This is a notice/index-label clarification only; all
 original permissions and warranty terms remain in force. Keep this document
 with the test candidates and their notice supplement.
+
+## Repaired A18 / B19 metadata
+
+The 1.9.18/1.9.19 source and notice indexes directly carry the corrected **MIT**
+selected-license label. The original grants, attributions and license bodies
+remain identical. This document retains the historical A16/B17 clarification;
+it is not a claim that the new candidates still contain that informational error.
