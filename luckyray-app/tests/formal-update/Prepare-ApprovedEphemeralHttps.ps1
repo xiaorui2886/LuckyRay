@@ -8,6 +8,9 @@ if ($OwnerApprovalReference -notmatch '\A[a-zA-Z0-9][a-zA-Z0-9._-]{3,79}\z') { t
 $env:PSModulePath=$PSHOME+'\Modules'
 $root='D:\lr-formal-uat'
 if (-not (Test-Path -LiteralPath "$root/private") -or -not (Test-Path -LiteralPath "$root/evidence")) { throw 'approved-test-root-required' }
+$certificateState=@{approvalReference=$OwnerApprovalReference;caThumbprint=$null;leafThumbprint=$null}
+function RecordCertificates { $certificateState | ConvertTo-Json | Set-Content "$root/private/test-certificates.json" -Encoding utf8 }
+RecordCertificates
 function Stage([string]$name) { @{atUtc=[DateTime]::UtcNow.ToString('o');stage=$name} | ConvertTo-Json -Compress | Tee-Object -FilePath "$root/evidence/HTTPS-PREPARE-STAGES.jsonl" -Append }
 Stage 'initialize-native-certificate-provider'
 # The native PKI cmdlet does not itself guarantee Cert: provider initialization.
@@ -21,8 +24,12 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 Stage 'create-ephemeral-ca'
 $expiry=(Get-Date).AddDays(1)
 $ca=New-SelfSignedCertificate -Type Custom -Subject 'CN=LuckyRay disposable CI update replay' -CertStoreLocation Cert:\CurrentUser\My -KeyUsage CertSign,CRLSign -TextExtension @('2.5.29.19={critical}{text}ca=TRUE&pathlength=0') -NotAfter $expiry
+$certificateState.caThumbprint=$ca.Thumbprint
+RecordCertificates
 Stage 'create-github-leaf'
 $leaf=New-SelfSignedCertificate -Type Custom -Subject 'CN=github.com' -DnsName github.com -Signer $ca -CertStoreLocation Cert:\CurrentUser\My -KeyUsage DigitalSignature,KeyEncipherment -TextExtension @('2.5.29.19={text}ca=FALSE','2.5.29.37={text}1.3.6.1.5.5.7.3.1') -NotAfter $expiry
+$certificateState.leafThumbprint=$leaf.Thumbprint
+RecordCertificates
 Stage 'export-public-ca'
 Export-Certificate -Cert $ca -FilePath "$root/private/replay-ca.cer" | Out-Null
 Stage 'import-approved-ephemeral-machine-ca'

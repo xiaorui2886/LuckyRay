@@ -100,6 +100,15 @@ jobs:
         env:
           UPGRADE_MODE: ${{ inputs.update_mode }}
         run: node tests/formal-update/installed-chain.mjs
+      - name: Remove only this approved disposable machine's test certificates and proxy configuration
+        if: always()
+        env:
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+        run: |
+          if (Test-Path -LiteralPath 'D:\lr-formal-uat\private\test-certificates.json') {
+            & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File luckyray-app/tests/formal-update/Remove-ApprovedEphemeralHttps.ps1 -OwnerApprovalReference $env:APPROVAL_REFERENCE
+            if ($LASTEXITCODE -ne 0) { throw 'approved-test-configuration-cleanup-failed' }
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
