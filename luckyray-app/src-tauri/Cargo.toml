@@ -1,6 +1,6 @@
 [package]
 name = "luckyray-app"
-version = "1.9.16"
+version = "1.9.17"
 description = "A Tauri App"
 authors = ["xiaorui2886 (xiaorui liang)"]
 license = "MIT"

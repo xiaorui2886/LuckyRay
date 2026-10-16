@@ -34,5 +34,5 @@ while (at < batch.length) {
 }
 assert.match(readFileSync('LICENSE', 'utf8'), /MIT License/);
 assert.match(readFileSync('README.md', 'utf8'), /https:\/\/luckyray\.me/);
-assert.equal(JSON.parse(readFileSync('luckyray-app/src-tauri/tauri.conf.json')).version, '1.9.16');
+assert.equal(JSON.parse(readFileSync('luckyray-app/src-tauri/tauri.conf.json')).version, '1.9.17');
 console.log(JSON.stringify({ status: 'PASS', trackedFiles: rows.length, uniqueBlobs: newObjects.length, bytes, scope: 'actual index blobs; complementary to external secret/license review' }));
