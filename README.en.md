@@ -9,12 +9,24 @@ An organized asset library · Connected Markdown notes · A canvas you can creat
 **[Only official website · luckyray.me](https://luckyray.me)** · [Download for Windows](https://luckyray.me/atelier/edition/download) · [Browser extension](https://luckyray.me/atelier/edition/collector) · [Documentation](https://luckyray.me/atelier/edition/docs)
 
 [![Release](https://img.shields.io/github/v/release/xiaorui2886/LuckyRay?style=flat-square&color=806399&label=release)](https://github.com/xiaorui2886/LuckyRay/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-806399?style=flat-square)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows_x64-31343b?style=flat-square)
 [![Website](https://img.shields.io/badge/official-luckyray.me-806399?style=flat-square)](https://luckyray.me)
 
 [简体中文](README.md) · **English**
 
 </div>
+
+## Open source. Build the connection with us.
+
+LuckyRay-owned source is available under **[MIT](LICENSE)**. Explore, modify and contribute; third-party components retain their respective licenses.
+
+- **Want to use it?** [Download the stable app](https://luckyray.me/atelier/edition/download). No compilation required.
+- **Want to contribute?** [Build and test](docs/development/README.md) · [Contribution guide](CONTRIBUTING.md) · [Browse source](luckyray-app/)
+- **Building a plugin?** [Plugin SDK](sdk/README.md) · [Submit a plugin](catalog/SUBMISSION.md)
+
+The source includes the **1.9.15 updater-acceptance candidate**; the stable desktop release is **1.9.7**. Passing source CI does not establish installed upgrade acceptance. See [candidate validation](docs/development/updater-validation.md) and the stable Release.
+
 
 ## Good references deserve more than a bookmark
 
@@ -52,13 +64,13 @@ We learn from thoughtful asset and knowledge tools, while focusing on a simple g
 
 ## Get started
 
-**Current stable release: LuckyRay 1.9.6 + Collector 1.9.6** · October 11, 2026
+**Current stable release: LuckyRay 1.9.7 + Collector 1.9.6** · October 16, 2026
 
 | What you need | Start here |
 | :--- | :--- |
-| **Use the desktop app** | [Official download page](https://luckyray.me/atelier/edition/download) · [Direct Windows x64 installer](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.6/LuckyRay_1.9.6_x64-setup.exe) |
-| **Install or update Collector** | [Extension guide](https://luckyray.me/atelier/edition/collector) · [Direct extension ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.6/LuckyRay-Collector-1.9.6.zip) |
-| **See what changed** | [What's new](https://luckyray.me/atelier/edition/changelog) · [Release files and checksums](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) |
+| **Use the desktop app** | [Official download page](https://luckyray.me/atelier/edition/download) · [Direct Windows x64 installer](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.7/LuckyRay_1.9.7_x64-setup.exe) |
+| **Install or update Collector** | [Extension guide](https://luckyray.me/atelier/edition/collector) · [Direct extension ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.7/LuckyRay-Collector-1.9.6.zip) |
+| **See what changed** | [What's new](https://luckyray.me/atelier/edition/changelog) · [Release files and checksums](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.7) |
 
 1. **Open the desktop app.** Available for Windows 10/11 x64. Read the [installation and verification guide](docs/downloads.md) and keep independent backups of important data.
 2. **Keep your first reference.** Import an image, write a note or explore a small idea on the canvas.
@@ -69,7 +81,7 @@ We learn from thoughtful asset and knowledge tools, while focusing on a simple g
 
 - The current installer is not Authenticode-signed. Verify its official SHA-256 and keep the third-party materials and desktop component supplement linked in the release notes.
 - Collector is a separate extension package, loaded and updated manually. Updating the desktop app does not automatically update the browser extension.
-- In-app updates currently check versions and offer an installer download. Full automatic updating is not included in this release.
+- For the current stable release, download and install updates manually from the official website. Full automatic updating is undergoing candidate validation and is not enabled on the stable channel.
 - Android remains in testing. macOS, Linux and iOS are not released. Features under development are not promises about the current installer.
 - Capture depends on site structure, access permissions and DRM restrictions. Not every website or media format is supported.
 
