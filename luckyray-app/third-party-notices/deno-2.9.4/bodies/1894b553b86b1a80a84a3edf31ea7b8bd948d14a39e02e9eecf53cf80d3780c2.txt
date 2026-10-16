@@ -1,0 +1,150 @@
+{
+  "name": "wasmparser",
+  "version": "0.244.0",
+  "declaredLicense": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+  "authors": [
+    "Yury Delendik <ydelendik@mozilla.com>"
+  ],
+  "repository": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser",
+  "originalPublishedSourceNotices": [
+    {
+      "path": "src/arity.rs",
+      "lines": [
+        "/* Copyright 2024 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/binary_reader.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/lib.rs",
+      "lines": [
+        "/* Copyright 2017 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/limits.rs",
+      "lines": [
+        "/* Copyright 2017 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/code.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/data.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/elements.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/exports.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/functions.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/globals.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/imports.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/init.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/memories.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/names.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/operators.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/producers.rs",
+      "lines": [
+        "/* Copyright 2019 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/tables.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/tags.rs",
+      "lines": [
+        "/* Copyright 2020 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers/core/types.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/readers.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/resources.rs",
+      "lines": [
+        "/* Copyright 2019 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/validator/operators.rs",
+      "lines": [
+        "/* Copyright 2019 Mozilla Foundation"
+      ]
+    },
+    {
+      "path": "src/validator.rs",
+      "lines": [
+        "/* Copyright 2018 Mozilla Foundation"
+      ]
+    }
+  ],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

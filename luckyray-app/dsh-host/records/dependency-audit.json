@@ -6699,9 +6699,9 @@
       "name": "debug",
       "version": "2.6.9",
       "license": "MIT",
-      "contentSha256": "e407fcfec94a357ca8c5ef09d7489c4b292b5664c6b371b8810a4a3c99f3bcbc",
-      "fileCount": 17,
-      "byteCount": 51243,
+      "contentSha256": "e58fe6649697cddd3f427ff3f84367879ab8a6898a3372f1290e11a57ea8da75",
+      "fileCount": 16,
+      "byteCount": 51197,
       "lifecycleScripts": [],
       "licenseFiles": [
         {
@@ -21377,7 +21377,7 @@
         "path": ".pnpm/compression@1.8.2/node_modules/debug",
         "targetPath": ".pnpm/debug@2.6.9/node_modules/debug",
         "targetPackage": "debug@2.6.9",
-        "targetContentSha256": "e407fcfec94a357ca8c5ef09d7489c4b292b5664c6b371b8810a4a3c99f3bcbc"
+        "targetContentSha256": "e58fe6649697cddd3f427ff3f84367879ab8a6898a3372f1290e11a57ea8da75"
       },
       {
         "path": ".pnpm/compression@1.8.2/node_modules/destroy",
@@ -24137,7 +24137,7 @@
         "path": ".pnpm/node_modules/debug",
         "targetPath": ".pnpm/debug@2.6.9/node_modules/debug",
         "targetPackage": "debug@2.6.9",
-        "targetContentSha256": "e407fcfec94a357ca8c5ef09d7489c4b292b5664c6b371b8810a4a3c99f3bcbc"
+        "targetContentSha256": "e58fe6649697cddd3f427ff3f84367879ab8a6898a3372f1290e11a57ea8da75"
       },
       {
         "path": ".pnpm/node_modules/default-browser",

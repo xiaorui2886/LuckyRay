@@ -281,6 +281,11 @@ try {
       $supplyChainScript, 'project-release-stage', '--stage', $partialPath
     )
     if ($projection.ExitCode -ne 0) { throw 'dsh-release-projection-failed' }
+  } else {
+    $projection = Invoke-AppOwnedNode -NodeExe $nodeExe -WorkingDirectory $repoRoot -PolicyRoot (Join-Path $buildRoot 'distribution-projection') -Arguments @(
+      $supplyChainScript, 'project-distribution-metadata', '--stage', $partialPath
+    )
+    if ($projection.ExitCode -ne 0) { throw 'dsh-distribution-projection-failed' }
   }
 
   $partialAuthority = Invoke-DshStageAuthorityGates -TrustedNodeExe $nodeExe -StageRoot $partialPath -PolicyRoot (Join-Path $buildRoot 'partial-authority') -ReleaseLayout:$ReleaseLayout

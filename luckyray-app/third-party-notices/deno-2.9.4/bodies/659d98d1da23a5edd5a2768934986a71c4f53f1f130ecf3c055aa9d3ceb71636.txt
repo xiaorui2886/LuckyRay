@@ -1,0 +1,82 @@
+{
+  "name": "zune-core",
+  "version": "0.4.12",
+  "declaredLicense": "MIT OR Apache-2.0 OR Zlib",
+  "authors": [],
+  "repository": null,
+  "originalPublishedSourceNotices": [
+    {
+      "path": "src/bit_depth.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/bytestream/reader.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/bytestream/traits.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/bytestream/writer.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/bytestream.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/colorspace.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/lib.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/log.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/options/decoder.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/options/encoder.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/result.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    },
+    {
+      "path": "src/serde.rs",
+      "lines": [
+        " * Copyright (c) 2023."
+      ]
+    }
+  ],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

@@ -1,0 +1,18 @@
+{
+  "name": "swc_ecma_transforms_base",
+  "version": "30.0.1",
+  "declaredLicense": "Apache-2.0",
+  "authors": [
+    "강동윤 <kdy1997.dev@gmail.com>"
+  ],
+  "repository": "https://github.com/swc-project/swc.git",
+  "originalPublishedSourceNotices": [
+    {
+      "path": "src/fixer.rs",
+      "lines": [
+        "  copyright: '© 2018 Denis Pushkarev (zloirock.ru)'"
+      ]
+    }
+  ],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

@@ -1,0 +1,9 @@
+{
+  "name": "opentelemetry-semantic-conventions",
+  "version": "0.32.1",
+  "declaredLicense": "Apache-2.0",
+  "authors": [],
+  "repository": "https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-semantic-conventions",
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

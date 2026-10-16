@@ -1,0 +1,52 @@
+{
+  "name": "rustls-tokio-stream",
+  "version": "0.8.0",
+  "declaredLicense": "MIT",
+  "authors": [],
+  "repository": "https://github.com/denoland/rustls-tokio-stream",
+  "originalPublishedSourceNotices": [
+    {
+      "path": "src/adapter.rs",
+      "lines": [
+        "// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license."
+      ]
+    },
+    {
+      "path": "src/connection_stream.rs",
+      "lines": [
+        "// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license."
+      ]
+    },
+    {
+      "path": "src/handshake.rs",
+      "lines": [
+        "// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license."
+      ]
+    },
+    {
+      "path": "src/lib.rs",
+      "lines": [
+        "// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license."
+      ]
+    },
+    {
+      "path": "src/stream.rs",
+      "lines": [
+        "// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license."
+      ]
+    },
+    {
+      "path": "src/system_test/fastwebsockets.rs",
+      "lines": [
+        "// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license."
+      ]
+    },
+    {
+      "path": "src/system_test/mod.rs",
+      "lines": [
+        "// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license."
+      ]
+    }
+  ],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

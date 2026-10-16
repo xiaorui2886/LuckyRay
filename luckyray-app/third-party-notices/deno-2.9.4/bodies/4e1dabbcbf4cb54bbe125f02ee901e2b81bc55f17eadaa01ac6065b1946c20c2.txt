@@ -1,0 +1,11 @@
+{
+  "name": "hexf-parse",
+  "version": "0.2.1",
+  "declaredLicense": "CC0-1.0",
+  "authors": [
+    "Kang Seonghoon <public+rust@mearie.org>"
+  ],
+  "repository": "https://github.com/lifthrasiir/hexf",
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

@@ -1,0 +1,9 @@
+{
+  "name": "opentelemetry-http",
+  "version": "0.32.0",
+  "declaredLicense": "Apache-2.0",
+  "authors": [],
+  "repository": "https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-http",
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

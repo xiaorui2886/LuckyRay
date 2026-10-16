@@ -86,8 +86,8 @@
     "sha256": "27879348455b15729c05aa9491710a7a4cbd252130a5137a6be809a4df2cb25b",
     "packageCount": 591,
     "stagedPackageCount": 516,
-    "installedAuditSha256": "ba561d892c9037cb9a13572f92bdd36225659cc7dea377f7ef6a71aa45a59d13",
-    "resolverGraphSha256": "f5ef1096cd3dc88f73c6fe7d01105b47f09b51488e41c340db6aa19821b3830e",
+    "installedAuditSha256": "1101b53e0a4713f031247e6110e9e11c76375e17d6b2751aafcc411847c940e3",
+    "resolverGraphSha256": "26b7346fa62a3ffde6364b957e2044d6d8cad5d0b8c5092e238f88cc430629fa",
     "lockReconciliationSha256": "a36fbceae4aac3ff17f1f84d89e93d27b3a87c754ca58c85fff46013f030b503",
     "releaseLayout": {
       "schemaVersion": 1,
@@ -97,8 +97,8 @@
       "resolverGraphEdgeCount": 0,
       "maxNodeModulesRelativePathLength": 157,
       "maxRelativePathLength": 175,
-      "fileCount": 25659,
-      "contentSha256": "1ddf49eb2c09ede017bf97f908d05e702a484221ee37e4822fb554db34f5bbbe",
+      "fileCount": 25658,
+      "contentSha256": "35e43f0fc3b627e74a5b53b14e19dc18f4e2e8c48ffa0e030df0b96eb1a5f98b",
       "normalizedShimCount": 13,
       "fixedEntryPoint": "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
       "reparsePoints": 0
