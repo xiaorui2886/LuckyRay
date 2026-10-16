@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "channel": "private-release-v1",
+  "origins": [
+    "chrome-extension://kjibmbcoioanaejehhfopjhdpnbkodla"
+  ],
+  "publicKeySha256": "a981c12e8e0d0494775ef973fd1ae3b03a40c7e51f83a3fdd3bbf3037aa5436e"
+}

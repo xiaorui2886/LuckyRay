@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "state": "approved-production",
+  "feedUrl": "https://raw.githubusercontent.com/xiaorui2886/luckyray-update-metadata/main/catalog/preview/windows-x86_64.json",
+  "publicKey": "2yc0Qm0xiTs1kP6EgwD1igVzqSdrsTt-WN5YNEzMu3k",
+  "fingerprintSha256": "ce08b1e8a9bdda216188602d39a2007cf635a2b46e5ae44f4d8a08aa23d98336",
+  "centralReview": "https://github.com/xiaorui2886/LuckyRay/blob/main/docs/development/lsh-trust.md#review-20261016"
+}

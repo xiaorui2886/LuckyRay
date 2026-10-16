@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "luckyray.official.web-mcp",
+  "version": "0.1.1",
+  "platform": "windows-x86_64",
+  "artifactUrl": "https://github.com/xiaorui2886/LuckyRay/releases/download/mcp-v0.1.1/luckyray-web-mcp-0.1.1-windows-x64.zip",
+  "artifactSha256": "3c9a1c4961af3f5ef2bdd73dfcba7b2f25ed190cae6622a30b2f12e7f55ede1a",
+  "inventorySha256": "e5091e98fed26447c9c0679d8a581dd97c53ff27570cb811761523a988fc8c31",
+  "downloadBytes": 61476109,
+  "maxUnpackedBytes": 268435456,
+  "releaseGate": "Optional public runtime, fixed version and archive/inventory hashes. Never bundle user state or enable desktop automatic update trust.",
+  "previousInventories": [
+    {
+      "version": "0.1.0",
+      "inventorySha256": "52e63ee7b80692d29736004b01d16de37e2d4504e4e08e7293e50a3f802eb76f"
+    },
+    {
+      "version": "0.1.0-candidate.2",
+      "inventorySha256": "1722370aefd4ad6aca41bd761e1b690c2b9c85b397b053ffe8718f95416def63"
+    },
+    {
+      "version": "0.1.0-candidate.1",
+      "inventorySha256": "cf0e5a2571d3d5655f1eb0eb892a39e2aabe7ea24f432f7037ceb66659a62d57"
+    }
+  ]
+}

@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://luckyray.local/schemas/declarative-package-v0.json",
+  "title": "LuckyRay declarative theme/template package v0",
+  "$comment": "Authoring schema only. Native validator also enforces UTF-8 byte budgets, combined module count, trimmed names/control characters, placeholders, resource safety and host compatibility.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest",
+    "resource"
+  ],
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "id",
+        "name",
+        "version",
+        "type",
+        "entry",
+        "minHostVersion",
+        "apiVersion",
+        "requiredModules",
+        "optionalModules"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 0
+        },
+        "id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80,
+          "pattern": "^[a-z](?!.*\\.\\.)[a-z0-9.-]*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
+        },
+        "minHostVersion": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
+        },
+        "type": {
+          "enum": [
+            "theme",
+            "template"
+          ]
+        },
+        "entry": {
+          "enum": [
+            "theme.json",
+            "template.json"
+          ]
+        },
+        "apiVersion": {
+          "const": 0
+        },
+        "requiredModules": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z-]{1,40}$"
+          }
+        },
+        "optionalModules": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z-]{1,40}$"
+          }
+        }
+      }
+    },
+    "resource": {}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "manifest": {
+            "properties": {
+              "type": {
+                "const": "theme"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "manifest": {
+            "properties": {
+              "entry": {
+                "const": "theme.json"
+              }
+            }
+          },
+          "resource": {
+            "type": "object",
+            "required": [
+              "base",
+              "tokens"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "base": {
+                "enum": [
+                  "dark",
+                  "light"
+                ]
+              },
+              "tokens": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "--theme-app-bg": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-sidebar-bg": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-titlebar-bg": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-surface-base": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-surface-raised": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-surface-panel": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-card-bg": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-hover": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-selected": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-border-subtle": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-border-strong": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-dialog-border": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--theme-text-muted": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--text-primary": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "--text-secondary": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "manifest": {
+            "properties": {
+              "entry": {
+                "const": "template.json"
+              },
+              "requiredModules": {
+                "contains": {
+                  "const": "knowledge"
+                }
+              }
+            }
+          },
+          "resource": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "markdown",
+              "parameters"
+            ],
+            "properties": {
+              "markdown": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "parameters": {
+                "type": "object",
+                "maxProperties": 12,
+                "propertyNames": {
+                  "pattern": "^[a-z0-9_]{1,32}$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 500
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

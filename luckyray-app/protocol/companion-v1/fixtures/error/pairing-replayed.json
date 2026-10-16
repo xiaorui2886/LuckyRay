@@ -1,0 +1,4 @@
+{
+  "status": 409,
+  "body": { "ok": false, "code": "pairing-replayed", "message": "The pairing bootstrap has already been consumed" }
+}

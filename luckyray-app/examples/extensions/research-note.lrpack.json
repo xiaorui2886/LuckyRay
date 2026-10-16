@@ -1,0 +1,4 @@
+{
+  "manifest": {"schemaVersion":0,"id":"org.luckyray.research-note","name":"Research note","version":"1.0.0","type":"template","entry":"template.json","minHostVersion":"1.9.2","apiVersion":0,"requiredModules":["knowledge"],"optionalModules":["assets"]},
+  "resource": {"markdown":"# {{topic}}\n\n## Research question\n\n{{question}}\n\n## Evidence\n\n- Source:\n- Observation:\n\n## Analysis\n\n## Conclusion\n\n## Next steps\n\n","parameters":{"topic":"Research note","question":"What do we need to learn?"}}
+}

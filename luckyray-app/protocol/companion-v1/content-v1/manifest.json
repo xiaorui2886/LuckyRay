@@ -1,0 +1,164 @@
+{
+  "contract": "luckyray-companion-content",
+  "version": 1,
+  "revision": "2026-09-21.1",
+  "authority": "xiaorui2886/luckyray-app:luckyray-app/protocol/companion-v1/content-v1",
+  "foundation": "../manifest.json",
+  "authentication": "existing bearer credential over pinned HTTPS; never query credentials",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/v1/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/assets",
+      "query": [
+        "page",
+        "limit",
+        "q",
+        "kind",
+        "folder",
+        "tag"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/assets/navigation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/assets/{id}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/assets/{id}/{file|thumbnail}",
+      "headers": [
+        "Range",
+        "If-Range",
+        "If-None-Match"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/vaults"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes",
+      "query": [
+        "vault",
+        "afterId",
+        "snapshotSeq",
+        "limit",
+        "q",
+        "directory",
+        "page"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/{id}",
+      "query": [
+        "vault"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/{id}/resources/{resourceId}",
+      "query": [
+        "vault"
+      ],
+      "headers": [
+        "Range",
+        "If-Range",
+        "If-None-Match"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/notes",
+      "body": "Mutation(create)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/notes/{id}",
+      "body": "Mutation(update|rename)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/notes/{id}",
+      "body": "Mutation(delete)"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sync/changes",
+      "query": [
+        "vault",
+        "after",
+        "limit"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/notes/{id}/attachments/{opId}",
+      "body": "UploadManifest"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/{id}/attachments/{opId}",
+      "query": [
+        "vault"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/notes/{id}/attachments/{opId}",
+      "body": "UploadChunk"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/notes/{id}/attachments/{opId}/complete",
+      "body": "VaultInput"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/assets/{id}/favorite"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/assets/{id}/tags"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/assets/{id}/folder"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/assets/tags"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/assets/folders"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/assets/favorite-batch"
+    }
+  ],
+  "errors": {
+    "409": [
+      "REVISION_CONFLICT",
+      "VAULT_CHANGED",
+      "OP_ID_REUSED",
+      "UPLOAD_OFFSET_MISMATCH",
+      "UPLOAD_INCOMPLETE"
+    ],
+    "410": [
+      "CURSOR_TOO_OLD"
+    ],
+    "503": [
+      "DESKTOP_DRAFT_BUSY"
+    ]
+  }
+}

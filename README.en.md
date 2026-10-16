@@ -99,6 +99,8 @@ For release notifications, choose **Watch → Custom → Releases**. A specific 
 
 **Only official website: [https://luckyray.me](https://luckyray.me)**
 
-This is LuckyRay's public release, documentation and community repository. It does not contain the full desktop application source. The desktop app is free to install and use under its [application terms](LICENSE.md); `sdk/` is [MIT-licensed](sdk/LICENSE). The desktop app, Collector and third-party components have their own applicable licenses. See the [third-party acknowledgments](third-party/README.md).
+LuckyRay-owned source is now available under [MIT](LICENSE), including the desktop, Collector and optional MCP candidate source in `luckyray-app/`. See [build and tests](docs/development/README.md), [contributing](CONTRIBUTING.md), [third-party licenses](docs/development/third-party.md) and [branding](BRANDING.md). Third-party files retain their original licenses.
+
+This is the **1.9.15 updater-acceptance candidate source**, not a new stable release. Stable downloads, Latest Release and the production update manifest are unchanged. See [candidate validation status](docs/development/updater-validation.md).
 
 Eagle and Obsidian belong to their respective owners. They are referenced as inspirations for working habits, not as claims of affiliation, full compatibility or feature parity. The website has a language switch; some repository documentation is currently in Chinese.

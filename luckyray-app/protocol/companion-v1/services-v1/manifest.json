@@ -1,0 +1,13 @@
+{
+  "contract": "luckyray-companion-services",
+  "major": 1,
+  "minor": 2,
+  "bundleRevision": "2026-09-30.1",
+  "authority": "xiaorui2886/luckyray-app:luckyray-app/protocol/companion-v1/services-v1",
+  "parentCommit": "8a4ae9dbb815abf28bc39d78c9ef136c222fd2df",
+  "parentTree": "e0c0c065f3f32692f47a57ff856e8f3cd2d38a7d",
+  "foundation": "../manifest.json",
+  "contentV1": "../content-v1/manifest.json",
+  "productionStatusAtFreeze": "shared-candidate-not-lan-accepted",
+  "checksumFile": "SHA256SUMS.json"
+}

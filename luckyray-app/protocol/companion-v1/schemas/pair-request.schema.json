@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "luckyray://companion/v1/pair-request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["secret", "fingerprint", "deviceLabel"],
+  "properties": {
+    "secret": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "deviceLabel": { "type": "string", "minLength": 1, "maxLength": 80 }
+  }
+}

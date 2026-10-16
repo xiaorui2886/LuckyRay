@@ -1,0 +1,32 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "apiVersion": 1,
+    "type": "script",
+    "entry": "main.js",
+    "minHostVersion": "1.9.2",
+    "requiredModules": [],
+    "optionalModules": [],
+    "id": "example.page-desk",
+    "name": "页面示例台",
+    "version": "1.0.0"
+  },
+  "resource": {
+    "code": "/// <reference path=\"../../index.d.ts\" />\n// EXT-PAGE verification sample: two pages from one package, own data only, no permissions.\nLuckyRay.register(async event => {\n  const data = await LuckyRay.call(\"data.get\");\n  const views = (data.settings.views || 0);\n  if (event.input.contribution === \"about\") {\n    return { title: \"关于此示例\", text: \"这是一个声明了两个 page 入口的验证样例。\"+\n      (\"本页累计被打开 \" + (views + 1) + \" 次（含看板页）。\")+\n      (\"\\n当前页：about。宿主会记住你正在填写的字段；写入类能力此样例未申请。\") };\n  }\n  if (event.input.action === \"save\") {\n    await LuckyRay.call(\"data.set\", { ...data, revision: data.revision + 1, settings: { views: views + 1, note: event.input.fields.note || \"\" } });\n  }\n  return { title: \"示例看板\", text: \"这是主内容区的插件页面（不是弹窗）。\"+\n    (\"\\n保存的备注：\" + (data.settings.note || \"（还没有）\")) +\n    (\"\\n已保存次数：\" + views), fields: [{ id: \"note\", label: \"备注（保存在插件自己的数据里）\", value: typeof data.settings.note === \"string\" ? data.settings.note : \"\" }], actions: [{ id: \"save\", label: \"保存备注\" }] };\n});\n",
+    "requiredPermissions": [],
+    "optionalPermissions": [],
+    "dataVersion": 1,
+    "contributions": [
+      {
+        "id": "board",
+        "label": "示例看板",
+        "kind": "page"
+      },
+      {
+        "id": "about",
+        "label": "关于此示例",
+        "kind": "page"
+      }
+    ]
+  }
+}

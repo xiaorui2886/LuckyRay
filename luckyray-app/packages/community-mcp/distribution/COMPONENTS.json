@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "package": "luckyray.official.web-mcp",
+  "version": "0.1.1",
+  "platform": "windows-x86_64",
+  "components": [
+    {
+      "name": "Node.js",
+      "version": "24.14.1",
+      "source": "https://nodejs.org/dist/v24.14.1/node-v24.14.1-win-x64.zip",
+      "upstreamArchiveSha256": "6e50ce5498c0cebc20fd39ab3ff5df836ed2f8a31aa093cecad8497cff126d70",
+      "verification": "Official HTTPS SHASUMS256.txt; packaged node.exe byte-matched to the archive; valid OpenJS Foundation Authenticode signature",
+      "license": "MIT; bundled dependencies retain their own licenses",
+      "licenseFile": "licenses/node-LICENSE.txt",
+      "modified": false
+    },
+    {
+      "name": "OpenAI tunnel-client runtime-cloudflared",
+      "version": "0.0.16",
+      "source": "https://github.com/openai/tunnel-client/releases/download/v0.0.16/tunnel-client-runtime-cloudflared-v0.0.16-windows-amd64.zip",
+      "sourceCommit": "5f99daabd4aa4a77049e6d81d54a0d8c18335397",
+      "upstreamArchiveSha256": "02346814ccd0a9a7a4e6d3d494e225c2befb095ede0c46cbe8d71a8d952acfcc",
+      "verification": "Official release digest and GitHub artifact attestation verified for openai/tunnel-client release.yml at refs/tags/v0.0.16",
+      "license": "Apache-2.0",
+      "licenseFile": "licenses/tunnel-LICENSE",
+      "noticeFile": "licenses/tunnel-NOTICE",
+      "modified": false
+    },
+    {
+      "name": "Cloudflare cloudflared",
+      "version": "2026.8.2",
+      "source": "https://github.com/cloudflare/cloudflared/tree/733bfb939963e150dcf5c4faddb1603f744fbc98",
+      "distribution": "Unmodified companion shipped in the verified OpenAI runtime-cloudflared archive above",
+      "sourceCommit": "733bfb939963e150dcf5c4faddb1603f744fbc98",
+      "license": "Apache-2.0; dependency report also lists MIT, BSD-2-Clause and BSD-3-Clause",
+      "licenseFile": "licenses/THIRD_PARTY_LICENSES.txt",
+      "manifestFile": "cloudflared-manifest.json",
+      "modified": false
+    }
+  ],
+  "runtimeCompatibility": "Vendor executable and third-party license bytes are unchanged from published 0.1.0. LuckyRay process discovery now emits UTF-8 for exact Unicode executable identity; authentication, permissions and protocol are unchanged.",
+  "includedUserState": false
+}

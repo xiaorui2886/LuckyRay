@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lr-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="color-scheme" content="dark light">
+  <title>LuckyRay 收集</title>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="collection.css">
+</head>
+<body>
+  <header class="lr-header">
+    <div class="lr-brand">
+      <img class="lr-mark" src="icons/icon-48.png" alt="">
+      <div class="lr-brand-copy">
+        <span class="lr-eyebrow">LUCKYRAY / COLLECT</span>
+        <h1>网页收集</h1>
+      </div>
+    </div>
+    <button class="lr-status" id="lr-status" type="button" title="重新检查 LuckyRay 连接"><i></i>连接中</button>
+  </header>
+
+  <div class="lr-connection-choices" id="lr-connection-choices" hidden></div>
+
+  <p class="lr-source-line"><i data-lr-icon="link" aria-hidden="true"></i><span id="lr-source">当前网页</span></p>
+
+  <main class="lr-main">
+    <div class="lr-scroll-content">
+    <section class="lr-capture-switch" aria-label="采集内容选择">
+      <div class="lr-type-row" role="group" aria-label="采集内容">
+        <button class="lr-type active" data-type="image" type="button"><i data-lr-icon="image" aria-hidden="true"></i><span>图片</span></button>
+        <button class="lr-type" data-type="video" type="button"><i data-lr-icon="video" aria-hidden="true"></i><span>视频</span></button>
+        <button class="lr-type" data-type="text" type="button"><i data-lr-icon="note" aria-hidden="true"></i><span>正文</span></button>
+        <button class="lr-type" data-type="audio" type="button"><i data-lr-icon="audio" aria-hidden="true"></i><span>音频</span></button>
+      </div>
+    </section>
+
+    <section class="lr-collect-entry" id="lr-image-entry" aria-label="图片采集">
+      <div class="lr-image-modes" role="group" aria-label="选择图片方式">
+        <button id="lr-image-single" class="lr-ghost" type="button" aria-pressed="true">单张图片</button>
+        <button id="lr-image-grid-open" class="lr-ghost" type="button" aria-pressed="false">网页图片</button>
+      </div>
+      <button class="lr-entry-action" id="lr-screenshot-open" type="button"><i data-lr-icon="image" aria-hidden="true"></i><span>网页截图</span><span aria-hidden="true">↗</span></button>
+      <span class="lr-entry-note">也可右键收集网页原图</span>
+    </section>
+    <section class="lr-panel lr-image-collection" id="lr-image-collection" hidden aria-label="网页图片选择">
+      <div class="lr-section-head"><strong>选择图片</strong><button class="lr-ghost" id="lr-images-refresh" type="button">刷新</button></div>
+      <div class="lr-image-filters">
+        <label>宽度 ≥<input class="lr-input" id="lr-filter-width" type="number" min="0" max="50000" value="0" inputmode="numeric" aria-label="最小宽度"></label>
+        <label>高度 ≥<input class="lr-input" id="lr-filter-height" type="number" min="0" max="50000" value="0" inputmode="numeric" aria-label="最小高度"></label>
+        <label>格式<select class="lr-select" id="lr-filter-format"><option value="all">全部</option><option value="jpg">JPG</option><option value="png">PNG</option><option value="webp">WebP</option><option value="gif">GIF</option><option value="avif">AVIF</option><option value="svg">SVG</option><option value="other">其他 / 未知</option></select></label>
+      </div>
+      <div class="lr-image-toolbar"><span id="lr-images-count" aria-live="polite">正在读取图片</span><button class="lr-ghost" id="lr-images-select" type="button">全选可见</button><button class="lr-ghost" id="lr-images-clear" type="button">清空</button></div>
+      <div class="lr-image-grid" id="lr-image-grid"></div>
+      <p class="lr-hint" id="lr-images-hint">滚动网页后，新图片会继续加入。尺寸来自已加载图片，格式按图片地址识别。</p>
+    </section>
+    <section class="lr-inline-error" id="lr-capture-error" hidden><p>此页未能显示预览。</p><button class="lr-ghost" id="lr-capture-fallback" type="button">打开独立预览</button></section>
+
+    <section class="lr-panel lr-page-preview" id="lr-page-preview" style="display:none">
+      <div class="lr-section-head">
+        <label class="lr-label">网页内容</label>
+        <span class="lr-preview-kind" id="lr-preview-kind"></span>
+      </div>
+      <strong class="lr-preview-title" id="lr-preview-title"></strong>
+      <span class="lr-preview-meta" id="lr-preview-meta"></span>
+      <p class="lr-preview-snippet" id="lr-preview-snippet"></p>
+      <div id="lr-article-entry" hidden><button class="lr-ghost" id="lr-article-open" type="button">预览完整正文 <span aria-hidden="true">↗</span></button></div>
+      <button class="lr-reload-extension" id="lr-reload-extension" type="button" style="display:none">应用插件更新</button>
+    </section>
+    <section class="lr-link-quick" id="lr-link-quick" hidden>
+      <button class="lr-ghost" id="lr-add-link" type="button" aria-expanded="false" aria-controls="lr-link-details"><i data-lr-icon="add" aria-hidden="true"></i><span>添加链接</span></button>
+      <div class="lr-panel lr-link-details" id="lr-link-details" hidden>
+        <div class="lr-section-head"><label class="lr-label">网页链接</label><button class="lr-ghost" id="lr-remove-link" type="button">移除</button></div>
+        <p class="lr-hint" id="lr-link-value"></p>
+        <p class="lr-hint">保留链接来源，使用下方保存按钮写入笔记。</p>
+      </div>
+    </section>
+
+    <section class="lr-panel lr-qc" id="lr-qc" aria-label="保存位置与快捷操作" title="点击调整保存位置与选项" role="button" tabindex="0">
+      <div class="lr-qc-dest-wrap">
+        <span class="lr-qc-caption">保存位置</span>
+        <strong class="lr-qc-target">
+          <i data-lr-icon="folder-open" aria-hidden="true"></i>
+          <em id="lr-target-summary">素材库根目录</em>
+        </strong>
+      </div>
+      <div class="lr-qc-right">
+        <div class="lr-qc-type" id="lr-qc-type" aria-label="当前模式">
+          <i data-lr-icon="image" aria-hidden="true"></i>
+          <span>图片</span>
+        </div>
+        <i data-lr-icon="chevron-down" class="lr-qc-arrow" aria-hidden="true"></i>
+      </div>
+    </section>
+
+    <section class="lr-panel lr-video-candidates" id="lr-video-section" style="display:none">
+      <label class="lr-preference"><input id="lr-video-overlays" type="checkbox" disabled><span>显示视频悬浮按钮</span></label>
+      <div class="lr-section-head">
+        <div class="lr-video-head-left">
+          <label class="lr-label">视频候选</label>
+
+        </div>
+        <button class="lr-ghost" id="lr-video-refresh" type="button"><i data-lr-icon="sync-retry" aria-hidden="true"></i><span>刷新</span></button>
+      </div>
+      <div class="lr-video-state" id="lr-video-state" data-state="" hidden></div>
+      <div class="lr-candidate-list" id="lr-video-candidates"></div>
+      <p class="lr-hint">直链可直接入库；支持站点可先解析并选择清晰度。扩展不会把视频下载到电脑。</p>
+    </section>
+    <section class="lr-panel" id="lr-audio-section" hidden>
+      <div class="lr-section-head"><label class="lr-label">音频候选</label><button class="lr-ghost" id="lr-audio-refresh" type="button"><i data-lr-icon="sync-retry" aria-hidden="true"></i><span>刷新</span></button></div>
+      <div class="lr-candidate-list" id="lr-audio-candidates"></div>
+      <p class="lr-hint" id="lr-audio-state" role="status"></p>
+      <details class="lr-audio-support"><summary>支持范围</summary><p class="lr-hint">首批支持普通网页 audio/source、音频链接和直接资源页的 MP3 / WAV，经桌面正式队列保存。blob、HLS/DASH 分段流、DRM、M4A / AAC / Ogg / FLAC 等其他音频格式，以及 YouTube / B站 / X / Pinterest 等流媒体站点音轨暂不支持。需登录、付费或站点限制导致无法下载时不会显示成功；不会获取登录凭据或绕过限制。</p></details>
+    </section>
+
+    <div class="lr-advanced" id="lr-advanced" hidden>
+      <section class="lr-panel" id="lr-media-organize">
+        <label class="lr-label" for="lr-media-name">保存名称</label>
+        <input class="lr-input" id="lr-media-name" maxlength="240" placeholder="默认使用原文件名或网页标题" />
+        <p class="lr-hint" id="lr-media-boundary">当前桌面版的图片使用原有名称；视频可在保存前改名。</p>
+        <label class="lr-label" for="lr-media-library">素材库</label>
+        <select class="lr-select" id="lr-media-library"><option value="">按桌面默认库保存</option></select>
+        <div id="lr-media-taxonomy" hidden><label class="lr-label">标签</label><div class="lr-media-tags" id="lr-media-tags"></div><input class="lr-input" id="lr-media-tag-names" placeholder="新标签，多个用逗号分隔" aria-label="新标签" /></div>
+        <div id="lr-media-parent-box" hidden><label class="lr-label" for="lr-media-parent">新文件夹放在</label><select class="lr-select" id="lr-media-parent"><option value="">根目录</option></select></div>
+        <p class="lr-hint" id="lr-media-read-status" role="status"></p>
+        <div class="lr-image-toolbar"><button class="lr-ghost" id="lr-media-use-legacy" type="button" hidden>按桌面默认库保存</button><button class="lr-ghost" id="lr-media-reload" type="button">重新读取保存位置</button></div>
+      </section>
+      <section class="lr-panel lr-current-note" id="lr-current-note"></section>
+
+      <section class="lr-panel lr-destination">
+        <div class="lr-section-head">
+          <label class="lr-label">保存位置</label>
+          <span class="lr-mini">LuckyRay</span>
+        </div>
+        <select class="lr-select" id="lr-target">
+          <option value="asset:root">素材库根目录</option>
+          <option value="asset:pick">指定素材文件夹</option>
+          <option value="asset:newFolder">新建素材文件夹</option>
+          <option value="note:insertCurrent">当前笔记光标处</option>
+          <option value="note:recent">指定最近笔记</option>
+          <option value="note:search">搜索并追加到笔记</option>
+          <option value="note:new">新建笔记</option>
+          <option value="collection:queue">收集箱兜底</option>
+        </select>
+      </section>
+
+      <section class="lr-panel lr-folder-pick" id="lr-folder-pick" style="display:none">
+        <label class="lr-label">素材文件夹</label>
+        <div class="lr-list" id="lr-folder-list">加载中</div>
+      </section>
+
+      <section class="lr-panel lr-folder-new" id="lr-folder-new" style="display:none">
+        <label class="lr-label" for="lr-new-folder-name">新文件夹名</label>
+        <input class="lr-input" id="lr-new-folder-name" placeholder="例如：网页参考" />
+      </section>
+
+      <section class="lr-panel lr-note-search" id="lr-note-search" style="display:none">
+        <label class="lr-label" for="lr-note-q">搜索笔记</label>
+        <div class="lr-field">
+          <i data-lr-icon="search" aria-hidden="true"></i>
+          <input class="lr-input" id="lr-note-q" placeholder="输入标题关键词" />
+        </div>
+        <div class="lr-list" id="lr-note-list"></div>
+      </section>
+
+      <section class="lr-panel lr-note-recent" id="lr-note-recent" style="display:none">
+        <label class="lr-label">最近笔记</label>
+        <div class="lr-list" id="lr-recent-list">加载中</div>
+      </section>
+
+      <section class="lr-panel lr-note-new" id="lr-note-new" style="display:none">
+        <label class="lr-label" for="lr-new-note-title">新笔记标题</label>
+        <input class="lr-input" id="lr-new-note-title" placeholder="默认使用网页标题" />
+      </section>
+
+      <section class="lr-panel lr-note-insert" id="lr-note-insert" style="display:none">
+        <p class="lr-hint">插入到桌面端当前打开笔记的光标位置。没有光标时追加到笔记末尾。</p>
+      </section>
+
+      <section class="lr-panel lr-record" id="lr-record">
+        <div class="lr-section-head">
+          <label class="lr-label">录制兜底</label>
+          <span class="lr-mini">视频站限制时使用</span>
+        </div>
+        <div class="lr-record-row">
+          <button class="lr-btn-record" id="lr-record-start" type="button">录制当前标签页</button>
+          <button class="lr-btn-record stop" id="lr-record-stop" type="button" disabled>停止并入库</button>
+        </div>
+        <div class="lr-record-status" id="lr-record-status">未在录制</div>
+        <p class="lr-hint" id="lr-record-hint">录制需要浏览器授权标签页音视频。适合无法直接下载的 blob、HLS 或 DRM 风险页面。</p>
+      </section>
+      <button class="lr-ghost" id="lr-shortcuts-open" type="button">快捷键设置</button>
+    </div>
+    </div>
+  </main>
+
+  <footer class="lr-footer">
+    <section class="lr-batch-result" id="lr-batch-result" hidden aria-live="polite">
+      <strong id="lr-batch-caption"></strong><p id="lr-batch-summary"></p>
+      <details><summary>查看每张图片</summary><ol id="lr-batch-items"></ol></details>
+      <div class="lr-image-toolbar"><button class="lr-ghost" id="lr-batch-stop" type="button" hidden>停止后续保存</button><button class="lr-ghost" id="lr-batch-resume" type="button" hidden>继续未开始的图片</button><button class="lr-ghost" id="lr-batch-retry" type="button" hidden>只重试失败图片</button><button class="lr-ghost" id="lr-batch-continue" type="button" hidden>继续采集</button></div>
+    </section>
+    <section class="lr-panel lr-capture-task" id="lr-capture-task" style="display:none" aria-live="polite">
+      <span class="lr-mini" id="lr-capture-task-caption"></span>
+      <span id="lr-capture-task-label"></span>
+      <div class="lr-record-row">
+        <button class="lr-btn-record" id="lr-capture-task-resume" type="button" style="display:none">继续检查原任务</button>
+        <button class="lr-btn-record" id="lr-capture-task-cancel" type="button" style="display:none">取消下载</button>
+        <button class="lr-btn-record" id="lr-capture-task-ack" type="button" style="display:none">已在桌面核对，允许新采集</button>
+      </div>
+    </section>
+    <div class="lr-transfer-progress" id="lr-transfer-progress" style="display:none">
+      <span id="lr-transfer-progress-label">等待入库</span>
+      <div class="lr-transfer-progress-track"><i id="lr-transfer-progress-fill"></i></div>
+    </div>
+    <span class="lr-action-summary" id="lr-action-summary" role="status" aria-live="polite">准备收集当前内容</span>
+    <button class="lr-more" id="lr-more-options" type="button" title="调整保存方式 / 更多选项" aria-expanded="false">
+      <span>调整保存方式 / 更多选项</span><i data-lr-icon="chevron-down" aria-hidden="true"></i>
+    </button>
+    <button class="lr-btn-primary" id="lr-submit" type="button">
+      <span>保存到 LuckyRay</span><i data-lr-icon="send" aria-hidden="true"></i>
+    </button>
+  </footer>
+
+  <div class="lr-toast" id="lr-toast" role="status" style="display:none"></div>
+  <div class="lr-prefill-hint" id="lr-prefill-hint" style="display:none"></div>
+
+  <script src="extension-protocol.js"></script>
+  <script src="video-overlay-preference.js"></script>
+  <script src="audio-collection.js"></script>
+  <script src="appearance.js"></script>
+  <script src="local-transport-auth.js"></script>
+  <script src="collection-input.js"></script>
+  <script src="image-collection.js"></script>
+  <script src="media-import-contract.js"></script>
+  <script src="popup.js"></script>
+  <script src="audio-popup.js"></script>
+  <script src="media-organization-popup.js"></script>
+  <script src="collection-popup.js"></script>
+</body>
+</html>

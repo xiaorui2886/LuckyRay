@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync} from 'node:fs';
+import {resolve,join,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {scopedCredential,validateConfig} from '../src/transport.mjs';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+test('GUI private save uses actual PS5.1 DPAPI stdin, Unicode and no overwrite', {skip:process.platform!=='win32'},async()=>{
+ const base=resolve(root,'../../output/materials-mcp-gui-fixtures');mkdirSync(base,{recursive:true});
+ const run=mkdtempSync(join(base,'gui-'));const directory=join(run,'中文 用户 连接');
+ const script=join(root,'src/store-gui-pairing.ps1');
+ const args=['-NoProfile','-NonInteractive','-File',script,'-Directory',directory];
+ const pair={version:1,authKind:'materials-mcp-scoped-v1',desktopExe:'C:\\测试 应用\\luckyray-app.exe',profileRoot:'C:\\测试 用户\\资料',baseUrl:'http://127.0.0.1:37418',clientId:'synthetic-client',clientName:'合成 Codex',libraryId:'synthetic-library',expiresAt:2000000000,scope:['materials.search','materials.inspect','folders.read','materials.import'],credential:'a'.repeat(64)};
+ execFileSync('powershell.exe',[...args,'-InitializeOnly'],{windowsHide:true});
+ execFileSync('powershell.exe',args,{input:JSON.stringify(pair),encoding:'utf8',windowsHide:true});
+ const {credential,...metadata}=pair;
+ const config=validateConfig({...metadata,credentialFile:join(directory,'credential.dpapi')});
+ assert.equal(await scopedCredential(config),credential);
+ const before=readFileSync(config.credentialFile,'utf8');assert.ok(!before.includes(credential));
+ assert.throws(()=>execFileSync('powershell.exe',args,{input:JSON.stringify({...pair,credential:'b'.repeat(64)}),encoding:'utf8',windowsHide:true,stdio:['pipe','pipe','pipe']}));
+ assert.equal(readFileSync(config.credentialFile,'utf8'),before);
+ writeFileSync(join(run,'RESULT.json'),JSON.stringify({synthetic:true,privateAclAndDpapi:true,unicode:true,overwriteRefused:true,realAuthorization:false}));
+});

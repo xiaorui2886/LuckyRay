@@ -1,0 +1,558 @@
+/* D93: shared FolderTree CSS
+   从 materials.css 提取 folder-* 样式，供素材库和知识库共用 */
+
+/* 左侧文件夹树 */
+.folder-sidebar-react {
+  width: 200px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.folder-sidebar-header-react {
+  padding: 12px 10px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.folder-sidebar-title-react {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-tertiary);
+}
+.folder-sidebar-add-react {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.folder-sidebar-add-react.text {
+  width: auto;
+  min-width: 54px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 18px;
+}
+.folder-sidebar-add-react:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.folder-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 6px;
+}
+.folder-list.folder-root-drop-target {
+  background: rgba(251, 191, 36, .06);
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, .18);
+}
+.folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  user-select: none;
+}
+.folder-item.folder-draggable {
+  cursor: grab;
+}
+.folder-item.dragging,
+.folder-document-item.dragging {
+  opacity: .48;
+  cursor: grabbing;
+}
+.folder-document-item.folder-draggable {
+  cursor: grab;
+}
+body.folder-pointer-dragging,
+body.folder-pointer-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+.folder-item.drop-target {
+  background: rgba(251, 191, 36, .16);
+  color: var(--accent);
+  outline: 1px solid rgba(251, 191, 36, .34);
+  outline-offset: -1px;
+}
+.folder-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.folder-item.drop-target:hover {
+  background: rgba(251, 191, 36, .18);
+  color: var(--accent);
+}
+.folder-item.active {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.folder-chevron {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform var(--transition);
+  color: var(--text-tertiary);
+}
+.folder-chevron.open {
+  transform: rotate(90deg);
+}
+.folder-chevron.hidden {
+  visibility: hidden;
+}
+.folder-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.folder-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke: var(--amber);
+  fill: none;
+  stroke-width: 1.5;
+}
+.folder-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.folder-inline-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--accent-soft-border, var(--accent));
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.folder-document-text .folder-inline-rename-input {
+  width: 100%;
+}
+
+.folder-children {
+  padding-left: 16px;
+}
+
+/* D93: 新建子文件夹按钮（hover 时显示） */
+.folder-action-btn-react {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.folder-item:hover .folder-action-btn-react {
+  opacity: 1;
+}
+.folder-action-btn-react:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.folder-ctx-react {
+  position: fixed;
+  z-index: 500;
+  min-width: 140px;
+  box-sizing: border-box;
+  overflow: visible;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  animation: folderCtxIn .12s ease-out;
+}
+
+@keyframes folderCtxIn {
+  from { opacity: 0; transform: scale(.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.folder-ctx-item-react {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: rgba(148, 153, 166, .72);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.folder-ctx-item-react:hover,
+.folder-ctx-item-react.has-sub:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.folder-ctx-item-react:disabled {
+  opacity: .48;
+  cursor: default;
+}
+
+.folder-ctx-item-react:disabled:hover {
+  background: transparent;
+  color: rgba(148, 153, 166, .72);
+}
+
+.folder-ctx-item-react.danger {
+  color: rgba(251, 113, 133, .78);
+}
+
+.folder-ctx-item-react.danger:hover {
+  background: var(--danger-muted);
+  color: var(--rose);
+}
+
+.folder-ctx-item-react svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  flex: 0 0 auto;
+}
+
+.folder-ctx-sep-react {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+
+.folder-ctx-arrow-react {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  color: rgba(148, 153, 166, .48);
+}
+
+.folder-ctx-arrow-react svg {
+  width: 12px;
+  height: 12px;
+}
+
+.folder-ctx-sub-react {
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  z-index: 510;
+  display: none;
+  min-width: 140px;
+  max-height: 260px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+}
+
+.folder-ctx-sub-react::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Hover bridge between parent item and submenu */
+.folder-ctx-sub-react::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: -8px;
+  width: 12px;
+}
+
+.folder-ctx-item-react.has-sub:hover .folder-ctx-sub-react {
+  display: block;
+}
+
+.folder-ctx-sub-react.flip-up {
+  top: auto;
+  bottom: -4px;
+}
+
+.folder-ctx-react.flip-sub-left .folder-ctx-sub-react,
+.folder-ctx-sub-react.flip-left {
+  left: auto;
+  right: 100%;
+}
+
+.folder-ctx-react.flip-sub-left .folder-ctx-sub-react::before,
+.folder-ctx-sub-react.flip-left::before {
+  left: auto;
+  right: -8px;
+}
+
+.folder-ctx-sub-react button {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: rgba(148, 153, 166, .72);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.folder-ctx-sub-react button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.folder-ctx-react .folder-ctx-item-react:not(:hover),
+.folder-ctx-react .folder-ctx-sub-react button:not(:hover) {
+  color: rgba(148, 153, 166, .72);
+}
+
+.folder-ctx-react .folder-ctx-item-react.danger:not(:hover) {
+  color: rgba(251, 113, 133, .78);
+}
+
+.folder-dialog-overlay-react {
+  position: fixed;
+  inset: 0;
+  z-index: 610;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--experience-overlay, rgba(0, 0, 0, .52));
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.folder-dialog-react {
+  width: min(340px, calc(100vw - 48px));
+  padding: 16px;
+  border: 1px solid var(--experience-border, var(--border));
+  border-radius: var(--experience-radius, var(--radius-md));
+  background: var(--experience-surface, var(--bg-surface));
+  box-shadow: var(--experience-shadow, 0 18px 54px rgba(0, 0, 0, .5));
+  animation: experienceDialogEnter var(--experience-duration-standard, 180ms) var(--experience-easing-standard, cubic-bezier(.2, .75, .25, 1)) both;
+}
+
+.folder-dialog-title-react {
+  margin-bottom: 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.folder-dialog-react p {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.folder-dialog-react input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--experience-border, var(--border));
+  border-radius: var(--radius-md, 8px);
+  outline: none;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  transition: border-color var(--experience-duration-fast, 120ms) ease;
+}
+
+.folder-dialog-react input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-muted, rgba(124, 138, 255, 0.25));
+}
+
+.folder-dialog-actions-react {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.folder-dialog-actions-react button {
+  height: 32px;
+  min-width: 64px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--experience-duration-fast, 120ms) ease;
+}
+
+.folder-dialog-actions-react button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.folder-dialog-actions-react button.primary {
+  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.folder-dialog-actions-react button.primary:hover {
+  background: var(--accent-hover, color-mix(in srgb, var(--accent) 88%, white));
+}
+
+.folder-dialog-actions-react button.danger {
+  border-color: color-mix(in srgb, var(--rose, #fb7185) 32%, transparent);
+  background: color-mix(in srgb, var(--rose, #fb7185) 12%, transparent);
+  color: var(--rose, #fb7185);
+}
+
+.folder-dialog-actions-react button.danger:hover {
+  background: color-mix(in srgb, var(--rose, #fb7185) 20%, transparent);
+}
+
+.folder-dialog-actions-react button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.folder-move-dialog-react {
+  width: min(390px, calc(100vw - 48px));
+}
+
+.folder-move-target-list {
+  max-height: 260px;
+  overflow: auto;
+  margin-top: 10px;
+  padding: 6px;
+  border: 1px solid var(--experience-border, var(--border));
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+}
+
+.folder-move-target-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--experience-duration-fast, 120ms) ease, color var(--experience-duration-fast, 120ms) ease;
+}
+
+.folder-move-target-list button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.folder-move-target-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.folder-move-target-list small {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.folder-dialog-empty-react {
+  padding: 14px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.folder-delete-impact-react {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--experience-border, var(--border));
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg-elevated) 76%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.folder-danger-confirm-react {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(251, 113, 133, .25);
+  border-radius: var(--radius-md, 8px);
+  background: rgba(251, 113, 133, .08);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.folder-danger-confirm-react input {
+  margin-top: 2px;
+}

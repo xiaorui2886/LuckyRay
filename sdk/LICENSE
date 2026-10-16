@@ -20,4 +20,5 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-This license covers this SDK directory only, not the private host application.
+This notice covers this SDK directory. LuckyRay-owned host source has its own
+MIT notice at the repository root; third-party components retain their licenses.

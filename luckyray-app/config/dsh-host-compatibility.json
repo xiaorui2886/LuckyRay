@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "adapterProtocol": 1,
+  "resourceProtocol": 1,
+  "capabilities": [
+    "authenticated-host-frames-v1",
+    "native-surface-loopback-v1",
+    "resource-intents-v1",
+    "plugin-quarantine-v1",
+    "signed-closure-switch-v1"
+  ]
+}

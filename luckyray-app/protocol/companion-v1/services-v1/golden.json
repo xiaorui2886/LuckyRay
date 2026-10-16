@@ -1,0 +1,14 @@
+{
+  "revision": "2026-09-30.1",
+  "cases": [
+    {"name":"paired-catalog","request":{"path":"/v1/services"},"status":200,"contains":{"bundleRevision":"2026-09-30.1","desktopInstanceId":"fixture-desktop-1","gatewayGeneration":7}},
+    {"name":"read-only-cannot-patch","request":{"deviceId":"device-read","method":"PATCH","path":"/v1/services/materials/assets/asset-1","body":{"opId":"write-1","expectedRevision":"asset-r1","name":"Changed"}},"status":403,"body":{"code":"GRANT_REQUIRED"}},
+    {"name":"revoked-cannot-read","request":{"deviceId":"device-revoked","path":"/v1/services/materials/assets/asset-1"},"status":401,"body":{"code":"AUTH_REVOKED"}},
+    {"name":"real-page-provenance","request":{"path":"/v1/services/materials/assets/asset-1"},"status":200,"contains":{"assetId":"asset-1","revision":"asset-r1","source":{"captureKind":"web","pageKind":"work-page","pageUrl":"https://www.pinterest.com/pin/700591285831031728/","siteOrigin":"https://www.pinterest.com"}}},
+    {"name":"initial-material-changes","request":{"path":"/v1/services/materials/changes?after=m:0"},"status":200,"contains":{"hasMore":false}},
+    {"name":"ungranted-lsh-state-readable","request":{"deviceId":"device-read","path":"/v1/lsh/remote/state"},"status":200,"contains":{"granted":false,"runtimeAvailable":false}},
+    {"name":"editing-advice-initial","request":{"path":"/v1/services/knowledge/notes/note-1/editing?vault=vault-1"},"status":200,"body":{"vaultId":"vault-1","noteId":"note-1","desktopEditing":false,"mobileEditing":false,"leaseMs":15000}},
+    {"name":"directory-root-page","request":{"path":"/v1/services/knowledge/vaults/vault-1/directories?limit=1"},"status":200,"body":{"vaultId":"vault-1","items":[{"parentRelativePath":""}],"nextAfterPath":"","hasMore":true}},
+    {"name":"read-only-cannot-open-editing","request":{"deviceId":"device-read","method":"POST","path":"/v1/services/knowledge/notes/note-1/editing","body":{"vaultId":"vault-1"}},"status":403,"body":{"code":"GRANT_REQUIRED"}}
+  ]
+}

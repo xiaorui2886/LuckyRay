@@ -1,0 +1,22 @@
+{
+  "id": "example.page-desk",
+  "name": "页面示例台",
+  "version": "1.0.0",
+  "requiredModules": [],
+  "optionalModules": [],
+  "requiredPermissions": [],
+  "optionalPermissions": [],
+  "dataVersion": 1,
+  "contributions": [
+    {
+      "id": "board",
+      "label": "示例看板",
+      "kind": "page"
+    },
+    {
+      "id": "about",
+      "label": "关于此示例",
+      "kind": "page"
+    }
+  ]
+}

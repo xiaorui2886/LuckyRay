@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>LuckyRay retarget fixture</title>
+</head>
+<body>
+  <!-- M1-S4 FIX-1 P1-3 fixture: the popup video candidate list is fed by REAL
+       network observations (webRequest on this page's fetches). The page only
+       ever creates three candidates (A 720p / B 1080p / C 480p); the QA
+       removes B from the persisted session cache and restarts the extension
+       service worker, so a popup refresh must observe A+C without B — proving
+       an explicit user pick that vanished is cleared, never silently
+       retargeted to a remaining candidate. -->
+  <script>
+    "use strict";
+    const fetchVideo = async (name) => {
+      const response = await fetch(name, { method: "GET" });
+      if (!response.ok) throw new Error(`candidate response failed: ${response.status}`);
+      await response.arrayBuffer();
+    };
+    let emission;
+    window.__lrEmitRetargetCandidates = () => emission ||= (async () => {
+      // Quality is inferred from the URL path ("720p" style, per
+      // inferVideoDimensionsFromUrl) — the popup rows are selected by their
+      // rendered labels, so the names must carry the explicit p suffix.
+      await fetchVideo("movie-720p.mp4?t=1");   // A
+      await fetchVideo("movie-1080p.mp4?t=1");  // B
+      await fetchVideo("movie-480p.mp4?t=1");   // C
+      window.__lrRetargetReady = true;
+    })();
+  </script>
+</body>
+</html>

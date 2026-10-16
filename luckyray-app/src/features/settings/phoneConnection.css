@@ -1,0 +1,70 @@
+.react-nav-shell .phone-connection-entry { width: 100%; border: 0; background: none; text-align: start; font: inherit; cursor: pointer; }
+.phone-connection-entry[data-connected="true"] .nav-icon { color: var(--mint); }
+.phone-connection-backdrop, .phone-revoke-backdrop { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; padding: 24px; overscroll-behavior: contain; }
+/* Width follows actual device content; never reserve an empty permissions pane. */
+.phone-connection-dialog { position: relative; width: min(420px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.phone-connection-dialog:has(.phone-connection-right) { width: min(840px, calc(100vw - 48px)); }
+.phone-connection-dialog h3, .phone-connection-dialog h4, .phone-connection-dialog p { margin: 0; overflow-wrap: anywhere; }
+.phone-connection-dialog h3 { font-size: 14px; font-weight: 550; line-height: 1.45; }
+.phone-connection-dialog p, .phone-connection-dialog small { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.phone-connection-dialog button, .phone-connection-dialog select { font: inherit; color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); padding: 7px 11px; cursor: pointer; min-width: 0; }
+.phone-connection-dialog button:disabled { opacity: .5; cursor: default; }
+.phone-connection-dialog button:not(.phone-permission-switch):hover:not(:disabled) { background: var(--bg-hover); }
+.phone-connection-dialog button:focus-visible, .phone-connection-entry:focus-visible { outline: 2px solid var(--experience-focus-ring); outline-offset: 2px; }
+.phone-connection-dialog button.primary { background: var(--accent); color: var(--theme-accent-on-solid, white); border-color: transparent; }
+/* Close stays on the surface, independent of both scrolling content and a header. */
+.phone-connection-dialog .phone-close { position: absolute; top: 10px; right: 10px; z-index: 1; width: 32px; height: 32px; border: 0; background: transparent; font-size: 24px; line-height: 1; padding: 4px; }
+.phone-connection-body { min-height: 0; overflow: auto; overscroll-behavior: contain; display: grid; grid-template-columns: minmax(0, 1fr); }
+.phone-connection-body:has(.phone-connection-right) { grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); }
+.phone-connection-left, .phone-connection-right { min-width: 0; padding: 26px 24px 18px; display: flex; flex-direction: column; gap: 12px; }
+.phone-connection-right { border-left: 1px solid var(--border); }
+.phone-device-heading { padding-right: 26px; display: grid; gap: 5px; }
+.phone-connection-status { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; padding-right: 30px; }
+.phone-connection-body:has(.phone-connection-right) .phone-connection-status { padding-right: 0; }
+.phone-connection-status [data-online="true"] { color: var(--mint); }
+.phone-connection-dialog .phone-connection-status button { background: none; border-color: transparent; color: var(--text-secondary); padding: 4px 6px; }
+/* Polling stays live without making the whole pane blink or remount every two seconds. */
+.phone-connection-dialog .phone-connection-status button:disabled,
+.phone-connection-right[aria-busy="true"] .phone-permission-switch:disabled { opacity: 1; }
+.phone-pairing-area { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.phone-pairing-area:has(.phone-qr-frame) { align-items: center; text-align: center; }
+.phone-pairing-area label { text-align: start; display: grid; gap: 6px; width: 100%; font-size: 12px; }
+.phone-pairing-area select { width: 100%; }
+.phone-qr-frame { width: min(240px, 100%); aspect-ratio: 1; padding: 10px; border-radius: 10px; background: white; }
+.phone-qr-frame svg { width: 100%; height: 100%; display: block; }
+.phone-qr-pending { width: 100%; height: 100%; display: grid; place-items: center; color: #53535f; font-size: 12px; }
+.phone-pair-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; }
+.phone-pairing-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.phone-connection-dialog .phone-device-list-title { margin-top: 8px; font-size: 11px; color: var(--text-muted); font-weight: 500; }
+.phone-device-list { display: grid; gap: 4px; }
+.phone-connection-dialog .phone-device { display: flex; width: 100%; align-items: center; gap: 10px; text-align: start; padding: 10px; border-color: transparent; background: transparent; font-size: 12px; }
+.phone-device > svg { flex: 0 0 20px; color: var(--text-muted); }
+.phone-device span { display: grid; gap: 2px; min-width: 0; }
+.phone-device b { font-weight: 550; overflow-wrap: anywhere; line-height: 1.5; }
+.phone-connection-dialog .phone-device[aria-pressed="true"] { background: var(--accent-muted); }
+.phone-kicker { color: var(--text-muted); font-size: 11px; letter-spacing: .02em; }
+.phone-connection-right h4 { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; font-weight: 500; line-height: 1.5; color: var(--text-secondary); }
+.phone-permission { display: flex; gap: 14px; align-items: center; justify-content: space-between; font-size: 12px; min-height: 24px; }
+.phone-permission > div { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
+.phone-lsh-permission { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
+.phone-connection-dialog .phone-permission-switch { flex: 0 0 40px; width: 40px; height: 23px; border-radius: 99px; padding: 2px; display: flex; align-items: center; background: var(--bg-hover); }
+.phone-permission-switch i { width: 17px; height: 17px; border-radius: 50%; background: var(--text-muted); transition: transform 120ms ease; }
+.phone-connection-dialog .phone-permission-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.phone-permission-switch[aria-checked="true"] i { background: white; transform: translateX(16px); }
+/* Hover emphasizes the current state, never previews the opposite permission. */
+.phone-connection-dialog .phone-permission-switch:hover:not(:disabled) { border-color: var(--text-secondary); box-shadow: 0 0 0 2px var(--border); }
+.phone-connection-dialog .phone-permission-switch[aria-checked="true"]:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-muted); }
+.phone-connection-dialog .phone-permission-switch:active:not(:disabled) { filter: brightness(.92); }
+.phone-connection-dialog .phone-error, .phone-connection-dialog .phone-revoke { color: var(--rose); }
+.phone-connection-dialog .phone-revoke { align-self: flex-start; background: transparent; border: 0; padding: 4px 0; font-size: 11px; }
+.phone-connection-aux { flex: 0 0 auto; padding: 0 24px 18px; display: flex; align-items: center; }
+.phone-connection-dialog .phone-link { color: var(--text-secondary); border: 0; background: none; padding: 0; font-size: 11px; }
+.phone-connection-loading { padding: 26px 56px 18px 24px; }
+.phone-revoke-backdrop { z-index: 2100; }
+.phone-revoke-dialog { width: min(380px, 100%); padding: 24px; }
+.phone-revoke-dialog p { margin: 14px 0; }
+.phone-revoke-dialog button { margin-right: 8px; }
+@media (max-width: 760px) { .phone-connection-body:has(.phone-connection-right) { grid-template-columns: minmax(0, 1fr); } .phone-connection-right { border-left: 0; border-top: 1px solid var(--border); padding-top: 18px; } .phone-connection-body:has(.phone-connection-right) .phone-connection-status { padding-right: 30px; } .phone-device-heading { padding-right: 0; } }
+@media (max-height: 560px) { .phone-connection-left, .phone-connection-right { padding-left: 18px; padding-right: 18px; } .phone-connection-aux { padding: 0 18px 12px; } }
+@media (prefers-reduced-motion: reduce) { .phone-permission-switch i { transition: none; } }
+:root[data-animations="off"] .phone-permission-switch i { transition: none; }

@@ -1,0 +1,37 @@
+{
+  "id": "example.palette",
+  "name": "离线配色与标签",
+  "version": "1.0.1",
+  "requiredModules": [
+    "materials"
+  ],
+  "optionalModules": [
+    "knowledge"
+  ],
+  "requiredPermissions": [
+    "materials.read",
+    "materials.image"
+  ],
+  "optionalPermissions": [
+    "materials.tags",
+    "knowledge.create"
+  ],
+  "dataVersion": 1,
+  "contributions": [
+    {
+      "id": "palette",
+      "label": "提取配色",
+      "kind": "command"
+    },
+    {
+      "id": "palette-menu",
+      "label": "素材配色操作",
+      "kind": "menu"
+    },
+    {
+      "id": "settings",
+      "label": "配色设置",
+      "kind": "settings"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+/* Center the document within its own pane, keeping scrollbars at the pane edge. */
+.note-content-area {
+  --note-content-width: 880px;
+  --note-content-gutter: clamp(16px, 4cqw, 40px);
+  container-type: inline-size;
+}
+.note-content-area .lr-live-markdown-editor .cm-content {
+  width: 100%;
+  max-width: calc(var(--note-content-width) + 2 * var(--note-content-gutter));
+  margin-inline: auto;
+  padding: 28px var(--note-content-gutter);
+  text-align: left;
+  box-sizing: border-box;
+}
+.note-content-area .note-preview:not(.compact) {
+  padding: 28px var(--note-content-gutter);
+  text-align: left;
+}
+.note-preview-content {
+  width: 100%;
+  max-width: var(--note-content-width, 880px);
+  margin-inline: auto;
+}
+.note-preview.compact > .note-preview-content { max-width: none; margin: 0; }
+.note-preview-media-block { display: block; }
+.note-content-area textarea {
+  padding-inline: max(var(--note-content-gutter), calc((100% - var(--note-content-width)) / 2));
+  text-align: left;
+}

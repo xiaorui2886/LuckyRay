@@ -1,0 +1,12 @@
+[package]
+name="mcp-native-seam-check"
+version="0.1.0"
+edition="2021"
+[dependencies]
+serde={version="1",features=["derive"]}
+serde_json="1"
+sha2="0.10"
+rand="0.8"
+zip={version="2",default-features=false,features=["deflate"]}
+reqwest={version="0.12",default-features=false,features=["blocking","json","rustls-tls"]}
+zeroize="1.8"

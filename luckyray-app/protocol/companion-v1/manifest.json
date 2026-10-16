@@ -1,0 +1,74 @@
+{
+  "bundle": "luckyray-companion-v1",
+  "protocolVersion": 1,
+  "qrEnvelope": {
+    "schema": "schemas/qr-envelope.schema.json",
+    "required": ["v", "name", "instance", "ip", "port", "secret", "fp"],
+    "additionalProperties": false
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/v1/hello",
+      "authentication": "none",
+      "responseSchema": "schemas/hello-response.schema.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/pair",
+      "authentication": "one-time-secret",
+      "contentType": "application/json",
+      "requestSchema": "schemas/pair-request.schema.json",
+      "responseSchema": "schemas/pair-response.schema.json"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/session",
+      "authentication": "bearer-device-credential",
+      "responseSchema": "schemas/session-response.schema.json"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/events",
+      "authentication": "bearer-device-credential",
+      "upgrade": "websocket"
+    }
+  ],
+  "tls": {
+    "pin": "sha256-certificate-der-hex",
+    "pinBeforeFirstRequest": true,
+    "hostnameTrustIsNotASubstitute": true
+  },
+  "events": {
+    "serverHeartbeatSeconds": 15,
+    "serverPingPayload": "eight-byte-big-endian-generation",
+    "clientMustEchoPongPayload": true,
+    "missedPongCloseCode": 1002,
+    "unsupportedFrameCloseCode": 1003
+  },
+  "reconnect": {
+    "sameCredentialAllowedAfterTransportLoss": true,
+    "stopOnAuthRevoked": true,
+    "rePairAfterRevocation": true
+  },
+  "revocation": {
+    "managementAuthority": "desktop-local-command",
+    "disconnectExistingEventSession": true,
+    "oldCredentialRejected": true
+  },
+  "errors": {
+    "PAIRING_REQUIRED": { "status": 401, "retry": "pair" },
+    "AUTH_REVOKED": { "status": 401, "retry": "re-pair" },
+    "AUTH_RATE_LIMITED": { "status": 429, "retry": "backoff" },
+    "pairing-secret-invalid": { "status": 401, "retry": "scan-current-code" },
+    "pairing-expired": { "status": 410, "retry": "generate-new-code" },
+    "pairing-replayed": { "status": 409, "retry": "generate-new-code" },
+    "pairing-device-limit": { "status": 409, "retry": "revoke-device" }
+  },
+  "compatibility": {
+    "unknownQrFields": "reject",
+    "unknownProtocolVersion": "reject",
+    "unknownResponseFields": "ignore",
+    "unknownErrorCode": "treat-as-terminal-for-current-request"
+  }
+}

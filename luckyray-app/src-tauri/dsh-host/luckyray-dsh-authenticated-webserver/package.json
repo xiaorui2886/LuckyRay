@@ -1,0 +1,8 @@
+{
+  "name": "@luckyray/dsh-authenticated-webserver",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "main": "index.mjs"
+}

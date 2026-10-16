@@ -1,0 +1,79 @@
+name: Public source checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: source-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  frontend-and-directed-tests:
+    if: github.repository == 'xiaorui2886/LuckyRay'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: luckyray-app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Install pinned frontend tools and public dependencies
+        run: |
+          npm install --global pnpm@11.3.0 --ignore-scripts --no-audit --no-fund
+          pnpm install --frozen-lockfile
+      - name: Typecheck and build (includes unchanged 16 resource seal tests)
+        run: |
+          pnpm exec tsc --noEmit
+          pnpm build
+      - name: Bounded signed-update and lifecycle behavior tests
+        run: node --test tests/publicBuildInputs.test.mjs tests/desktopUpdateInstall.test.mjs tests/desktopUpdateManifest.test.mjs tests/dshDesktopUpdateLifecycle.test.mjs
+      - name: Public source boundaries
+        working-directory: .
+        run: node scripts/check-public-source.mjs
+  windows-native-check:
+    needs: frontend-and-directed-tests
+    if: github.repository == 'xiaorui2886/LuckyRay'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TARGET_DIR: D:/lr-public-check-target
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: luckyray-app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Pinned public toolchain
+        run: |
+          npm install --global pnpm@11.3.0 --ignore-scripts --no-audit --no-fund
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup override set 1.95.0
+          pnpm install --frozen-lockfile
+      - name: Check sealed Git checkout inputs before runtime assembly
+        run: node --test tests/publicBuildInputs.test.mjs
+      - name: Stage exact public media inputs
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-media-engine.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'public-media-input-staging-failed' }
+      - name: Stage and verify exact public LSH inputs
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-dsh-package-runtime.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'public-lsh-input-staging-failed' }
+      - name: Full native library check with preload feature
+        run: |
+          cargo check --locked --manifest-path src-tauri/Cargo.toml --lib --no-default-features --features browser-host-runtime,lsh-background-surface-preload
+      - name: Public-reference trust parser and existing updater policy
+        run: cargo test --locked --manifest-path tests/desktop-updater-native/Cargo.toml --lib

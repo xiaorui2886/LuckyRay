@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>LuckyRay S3 hover fixture</title>
+  <style>
+    body { font: 14px sans-serif; }
+    #h-card { position: relative; width: 260px; height: 160px; background-image: url("card-bg.png"); }
+    #h-card-child { position: absolute; left: 10px; top: 10px; width: 60px; height: 40px; background: rgba(0,0,0,0.2); }
+    #h-overlay-wrap { position: relative; width: 200px; height: 140px; }
+    #h-under { position: absolute; left: 0; top: 0; width: 200px; height: 140px; }
+    #h-overlay { position: absolute; left: 0; top: 0; width: 200px; height: 140px; background: rgba(255,0,0,0.05); }
+    #h-video { width: 320px; height: 180px; }
+    #h-svg { width: 120px; height: 120px; }
+    #h-frame { width: 160px; height: 120px; }
+  </style>
+</head>
+<body>
+  <!-- M1-S3 hover target fixture: every visual case must resolve to the
+       browser-displayed resource, and hover/pointer observation must stay a
+       candidate-only (0 desktop write) untrusted input. -->
+  <img id="h-plain" src="plain.jpg" width="120" height="90" alt="plain">
+  <picture>
+    <source srcset="pic-1200.jpg 1200w">
+    <img id="h-picture-img" src="pic-fallback.jpg" width="120" height="90" alt="picture">
+  </picture>
+  <img id="h-lazy" data-src="lazy-real.jpg" width="120" height="90" alt="lazy">
+  <img id="h-placeholder" src="placeholder.jpg" data-original="original.jpg" width="120" height="90" alt="placeholder">
+  <div id="h-card"><span id="h-card-child"></span></div>
+  <div id="h-overlay-wrap">
+    <img id="h-under" src="under.jpg" alt="under overlay">
+    <div id="h-overlay"></div>
+  </div>
+  <video id="h-video" poster="poster.jpg" src="movie.mp4" controls></video>
+  <video id="h-blob" width="320" height="180"></video>
+  <svg id="h-svg"><image id="h-svg-image" href="svg-target.png" width="120" height="120"></image></svg>
+  <iframe id="h-frame" src="hover-frame.html"></iframe>
+  <script>
+    "use strict";
+    // A blob-only video: candidates resolve to record-fallback, never to a
+    // backend-downloadable direct link (M1-S4 §5D/§5E).
+    try {
+      const mediaSource = new MediaSource();
+      document.getElementById("h-blob").src = URL.createObjectURL(mediaSource);
+    } catch (_) {}
+    window.__lrHoverPage = true;
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+LuckyRay optional Web MCP runtime 0.1.1
+
+LuckyRay's own connection source in this repository is MIT licensed; retain
+the root copyright and license notice. Third-party runtime bytes are not
+relicensed and keep the licenses listed below. Previously published archives
+retain their original contents; this source notice does not replace them.
+
+Node.js 24.14.1: MIT and its bundled dependency licenses.
+  Full upstream text: licenses/node-LICENSE.txt
+OpenAI tunnel-client runtime-cloudflared 0.0.16: Apache-2.0.
+  Full text: licenses/tunnel-LICENSE; notice: licenses/tunnel-NOTICE
+Cloudflare cloudflared 2026.8.2: Apache-2.0.
+  Full text and dependency notices: licenses/THIRD_PARTY_LICENSES.txt
+  Upstream manifest: cloudflared-manifest.json
+
+The official tunnel release's dependency license inventory, SPDX SBOM and
+108 corresponding full license texts are retained under licenses/. See
+COMPONENTS.json for fixed upstream sources and archive checksums.
+
+No OpenAI or Cloudflare account, hosted-service entitlement, credential or
+trademark license is included. Users must satisfy the hosted service's own
+account, permission and usage requirements. LuckyRay is an independent app.

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+output/
+coverage/
+.env
+.env.*
+!.env.example
+*.local
+*.log
+__pycache__/
+*.pyc
+.tmp*/

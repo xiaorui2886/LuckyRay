@@ -1,0 +1,621 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://luckyray.invalid/companion/content-v1/schema.json",
+  "$defs": {
+    "Mutation": {
+      "type": "object",
+      "properties": {
+        "opId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        },
+        "noteId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        },
+        "vaultId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        },
+        "kind": {
+          "enum": [
+            "create",
+            "update",
+            "rename",
+            "delete"
+          ]
+        },
+        "expectedRevision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parentRelativePath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "opId",
+        "vaultId",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "UploadManifest": {
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        },
+        "expectedRevision": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "mime": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "vaultId",
+        "expectedRevision",
+        "name",
+        "mime",
+        "sizeBytes",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "UploadChunk": {
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 349528
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "vaultId",
+        "offset",
+        "data",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "VaultInput": {
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        }
+      },
+      "required": [
+        "vaultId"
+      ],
+      "additionalProperties": false
+    },
+    "Capabilities": {
+      "type": "object",
+      "properties": {
+        "contentVersion": {
+          "const": 1
+        },
+        "bundleRevision": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "materialPreview": {
+              "type": "boolean"
+            },
+            "noteRead": {
+              "type": "boolean"
+            },
+            "noteWrite": {
+              "type": "boolean"
+            },
+            "noteChanges": {
+              "type": "boolean"
+            },
+            "noteAttachments": {
+              "type": "boolean"
+            },
+            "materialFavorite": {
+              "type": "boolean"
+            },
+            "materialTags": {
+              "type": "boolean"
+            },
+            "materialFolders": {
+              "type": "boolean"
+            },
+            "materialBatch": {
+              "type": "boolean"
+            },
+            "lshRemoteSurface": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "materialPreview",
+            "noteRead",
+            "noteWrite",
+            "noteChanges",
+            "noteAttachments"
+          ],
+          "additionalProperties": false
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "pageSize": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "noteBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "attachmentBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "chunkBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "batchAssets": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "pageSize",
+            "noteBytes",
+            "attachmentBytes",
+            "chunkBytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contentVersion",
+        "bundleRevision",
+        "capabilities",
+        "limits"
+      ],
+      "additionalProperties": false
+    },
+    "Note": {
+      "type": "object",
+      "required": [
+        "noteId",
+        "vaultId"
+      ],
+      "properties": {
+        "noteId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        },
+        "vaultId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "relativePath": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "deleted": {
+          "type": "boolean"
+        },
+        "resources": {
+          "type": "array"
+        }
+      }
+    },
+    "AssetPage": {
+      "type": "object",
+      "required": [
+        "items",
+        "page",
+        "limit",
+        "hasMore",
+        "nextPage"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Asset"
+          }
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextPage": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "MaterialFavoriteInput": {
+      "type": "object",
+      "properties": {
+        "desktopAssetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "favorited": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "desktopAssetId",
+        "favorited"
+      ],
+      "additionalProperties": false
+    },
+    "MaterialTagsInput": {
+      "type": "object",
+      "properties": {
+        "desktopAssetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "set": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 160
+          }
+        },
+        "add": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 160
+          }
+        },
+        "remove": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 160
+          }
+        }
+      },
+      "required": [
+        "desktopAssetId"
+      ],
+      "additionalProperties": false
+    },
+    "MaterialFolderInput": {
+      "type": "object",
+      "properties": {
+        "desktopAssetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "folderId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "desktopAssetId",
+        "folderId"
+      ],
+      "additionalProperties": false
+    },
+    "MaterialCreateTagInput": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "MaterialCreateFolderInput": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "parentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "MaterialBatchInput": {
+      "type": "object",
+      "properties": {
+        "desktopAssetIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "favorited": {
+          "type": "boolean"
+        },
+        "add": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 160
+          }
+        },
+        "remove": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 160
+          }
+        },
+        "folderId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160,
+          "description": "omitted = leave folder unchanged; null = move to root; string = move to that folder"
+        }
+      },
+      "required": [
+        "desktopAssetIds"
+      ],
+      "additionalProperties": false
+    },
+    "MaterialBatchResult": {
+      "type": "object",
+      "properties": {
+        "requested": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "succeeded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "failed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "desktopAssetId": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "desktopAssetId",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "atomic": {
+          "const": false
+        }
+      },
+      "required": [
+        "requested",
+        "succeeded",
+        "failed",
+        "atomic"
+      ],
+      "additionalProperties": false
+    },
+    "Asset": {
+      "type": "object",
+      "properties": {
+        "desktopAssetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "contentHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thumbnailRevision": {
+          "type": "string"
+        },
+        "folderId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "storageMode": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "favorite": {
+          "type": "boolean"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "desktopAssetId",
+        "name",
+        "kind",
+        "mimeType",
+        "sizeBytes",
+        "updatedAt",
+        "thumbnailRevision",
+        "storageMode"
+      ],
+      "additionalProperties": true
+    },
+    "MaterialBatchFolderTriState": {
+      "type": "object",
+      "properties": {
+        "omitted": {
+          "type": "object",
+          "properties": {
+            "desktopAssetIds": {
+              "type": "array"
+            }
+          },
+          "additionalProperties": true
+        },
+        "root": {
+          "type": "object",
+          "properties": {
+            "desktopAssetIds": {
+              "type": "array"
+            },
+            "folderId": {
+              "type": "null"
+            }
+          },
+          "additionalProperties": true
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "desktopAssetIds": {
+              "type": "array"
+            },
+            "folderId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "omitted",
+        "root",
+        "target"
+      ]
+    }
+  }
+}

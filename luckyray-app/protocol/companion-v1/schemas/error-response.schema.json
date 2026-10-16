@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "luckyray://companion/v1/error-response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "code", "message"],
+  "properties": {
+    "ok": { "const": false },
+    "code": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "message": { "type": "string", "minLength": 1, "maxLength": 200 }
+  }
+}

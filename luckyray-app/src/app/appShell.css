@@ -1,0 +1,2814 @@
+.react-nav-shell,
+.react-nav-shell *,
+.material-viewer-react,
+.material-viewer-react *,
+.material-film-info,
+.material-film-info * {
+  box-sizing: border-box;
+}
+
+/* The material viewer is portaled to body for native video composition. Keep
+   its inherited presentation identical without applying shell layout to it. */
+.react-nav-shell, .material-viewer-react, .material-film-info {
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 100px;
+  --font: var(--lr-font-family, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif);
+  --font-mono: var(--lr-mono-font, "SF Mono", "JetBrains Mono", "Fira Code", monospace);
+  --sidebar-w: 220px;
+  --notes-index-width: 272px;
+  --titlebar-height: 60px;
+  --transition: 200ms cubic-bezier(0.25, 0.1, 0.25, 1);
+  --lr-font-size-base: 13px;
+  --lr-line-height: 1.5;
+  --lr-window-opacity: 1;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: var(--lr-font-size-base);
+  line-height: var(--lr-line-height);
+  -webkit-font-smoothing: antialiased;
+}
+.react-nav-shell {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--theme-app-bg);
+}
+/* Legacy consumers continue to receive their familiar names from the semantic theme authority. */
+:root .react-nav-shell, :root .material-viewer-react, :root .material-film-info {
+  --bg-base: var(--theme-surface-base);
+  --bg-surface: var(--theme-surface-panel);
+  --bg-elevated: var(--theme-surface-raised);
+  --bg-hover: var(--theme-hover);
+  --bg-active: var(--theme-selected);
+  --text-tertiary: var(--theme-text-muted);
+  --text-muted: var(--theme-text-muted);
+  --border: var(--theme-border-strong);
+  --border-subtle: var(--theme-border-subtle);
+  --shadow-sm: var(--theme-shadow-sm);
+  --shadow-md: var(--theme-shadow-md);
+  --shadow-lg: var(--theme-shadow-lg);
+}
+
+:root:is(:not([data-theme]), [data-theme="dark"]) :is(.react-nav-shell, .material-viewer-react, .material-film-info) {
+  --bg-base: var(--theme-app-bg);
+  --bg-surface: var(--theme-surface-base);
+}
+
+:root[data-density="compact"] .react-nav-shell {
+  --sidebar-w: 210px;
+}
+
+:root[data-density="loose"] .react-nav-shell {
+  --sidebar-w: 236px;
+}
+
+:root[data-animations="off"] .react-nav-shell *,
+:root[data-animations="off"] .search-overlay *,
+:root[data-animations="off"] .search-modal {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+:root[data-blur="off"] .search-overlay,
+:root[data-blur="off"] .ai-context-rail,
+:root[data-blur="off"] .material-viewer-react,
+:root[data-blur="off"] .collection-page,
+:root[data-blur="off"] .react-nav-shell .sidebar {
+  backdrop-filter: none !important;
+}
+
+.react-nav-shell button,
+.react-nav-shell input,
+.react-nav-shell textarea,
+.react-nav-shell select,
+.material-viewer-react button,
+.material-viewer-react input,
+.material-viewer-react textarea,
+.material-viewer-react select,
+.material-film-info button,
+.material-film-info input,
+.material-film-info textarea,
+.material-film-info select {
+  font: inherit;
+}
+
+.react-nav-shell button, .material-viewer-react button, .material-film-info button {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.react-nav-shell input,
+.react-nav-shell textarea,
+.material-viewer-react input,
+.material-viewer-react textarea,
+.material-film-info input,
+.material-film-info textarea {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.react-nav-shell ::-webkit-scrollbar, .material-viewer-react ::-webkit-scrollbar, .material-film-info ::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.react-nav-shell ::-webkit-scrollbar-track, .material-viewer-react ::-webkit-scrollbar-track, .material-film-info ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.react-nav-shell ::-webkit-scrollbar-thumb, .material-viewer-react ::-webkit-scrollbar-thumb, .material-film-info ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.react-nav-shell .sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--theme-sidebar-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  transition: width var(--transition), min-width var(--transition), transform var(--transition);
+}
+
+.react-nav-shell[data-sidebar-motion="automatic"] .sidebar {
+  transition: none;
+  animation: none;
+}
+
+.react-nav-shell[data-sidebar-motion="automatic"] :is(
+  .sidebar-header,
+  .logo-mark,
+  .logo-text,
+  .sidebar-brand-toggle,
+  .sidebar-toggle-brand,
+  .sidebar-brand-toggle-icon,
+  .nav-section-title,
+  .nav-label,
+  .nav-badge,
+  .sidebar-toggle,
+  .toggle-text,
+  .folder-item,
+  .folder-chevron
+) {
+  transition: none;
+  animation: none;
+}
+
+.react-nav-shell .sidebar.collapsed {
+  width: 60px;
+  min-width: 60px;
+}
+
+.react-nav-shell .sidebar-header {
+  padding: 12px 16px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  transition: padding var(--transition), gap var(--transition);
+}
+
+.react-nav-shell .logo-mark {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: margin var(--transition);
+}
+
+.react-nav-shell .logo-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px var(--accent-glow));
+}
+
+.react-nav-shell .logo-text {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity var(--transition);
+}
+
+.react-nav-shell .sidebar.collapsed .logo-text {
+  opacity: 0;
+}
+
+.react-nav-shell .sidebar.collapsed .sidebar-header {
+  justify-content: flex-start;
+  padding: 12px 8px 8px;
+  gap: 0;
+}
+
+/* Brand control stays in the header, with the same focus target in both states. */
+.react-nav-shell .sidebar-header .logo-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.react-nav-shell .sidebar-brand-toggle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background var(--transition), color var(--transition);
+}
+
+.react-nav-shell .sidebar-brand-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .sidebar-brand-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.react-nav-shell .sidebar-toggle-brand {
+  display: none;
+}
+
+.react-nav-shell .sidebar-brand-toggle .sidebar-brand-toggle-icon {
+  width: 20px;
+  height: 20px;
+  transition: opacity 120ms ease;
+}
+
+.react-nav-shell .sidebar-header[data-collapsed="true"] :is(.sidebar-expanded-brand, .logo-text) {
+  display: none;
+}
+
+.react-nav-shell .sidebar-header[data-collapsed="true"] .sidebar-brand-toggle {
+  flex-basis: 44px;
+  width: 44px;
+  height: 44px;
+}
+
+.react-nav-shell .sidebar-header[data-collapsed="true"] .sidebar-toggle-brand {
+  display: flex;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.react-nav-shell .sidebar-header[data-collapsed="true"] .sidebar-brand-toggle-icon {
+  opacity: 0;
+}
+
+.react-nav-shell .sidebar-header[data-collapsed="true"] .sidebar-brand-toggle:is(:hover, :focus-visible) .sidebar-toggle-brand {
+  opacity: 0;
+}
+
+.react-nav-shell .sidebar-header[data-collapsed="true"] .sidebar-brand-toggle:is(:hover, :focus-visible) .sidebar-brand-toggle-icon {
+  opacity: 1;
+}
+
+.react-nav-shell[data-sidebar-motion="automatic"] .sidebar-header :is(.sidebar-brand-toggle, .sidebar-toggle-brand, .sidebar-brand-toggle-icon) {
+  transition: none;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-nav-shell .sidebar-header[data-collapsed] :is(.sidebar-brand-toggle, .sidebar-toggle-brand, .sidebar-brand-toggle-icon) {
+    transition: none;
+    animation: none;
+  }
+}
+
+.react-nav-shell .sidebar-nav {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.react-nav-shell[data-route="materials"] .sidebar-nav { scrollbar-width: none; }
+.react-nav-shell[data-route="materials"] .sidebar-nav::-webkit-scrollbar { display: none; }
+.titlebar-search.titlebar-material-search { display: flex; align-items: center; gap: 6px; min-width: 120px; }
+.titlebar-material-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; }
+.titlebar-material-search:focus-within { outline: 1px solid var(--accent); }
+.titlebar-material-search button { flex: 0 0 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 4px; background: none; color: var(--text-secondary); cursor: pointer; }
+.titlebar-material-search button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.titlebar-material-search .titlebar-search-mode { flex:0 0 26px;min-width:26px;padding:0;color:var(--text-secondary); }
+.react-nav-shell .titlebar-search.titlebar-material-search { padding-inline:5px;gap:4px; }
+.react-nav-shell .titlebar-material-search .titlebar-search-mode svg { width:15px;height:15px;stroke:currentColor; }
+
+.react-nav-shell .nav-section {
+  margin-bottom: 4px;
+}
+
+.react-nav-shell .nav-section-title {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-tertiary);
+  padding: 12px 10px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity 120ms ease;
+}
+
+.react-nav-shell .sidebar.collapsed .nav-section-title {
+  opacity: 0;
+  height: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.react-nav-shell .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  position: relative;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.react-nav-shell .nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .nav-item.active {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.react-nav-shell .nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.react-nav-shell .sidebar.collapsed .nav-item.active::before {
+  display: none;
+}
+
+.react-nav-shell .nav-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.react-nav-shell .nav-icon svg,
+.react-nav-shell .nav-item > .nav-icon > svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-nav-shell .sidebar-masked-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  background: currentColor;
+  -webkit-mask: var(--sidebar-icon-url) center / contain no-repeat;
+  mask: var(--sidebar-icon-url) center / contain no-repeat;
+}
+
+.react-nav-shell .lightseek-harness-mark {
+  position: relative;
+  background: none;
+  -webkit-mask: none;
+  mask: none;
+}
+
+.react-nav-shell .lightseek-harness-mark::before,
+.react-nav-shell .lightseek-harness-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  -webkit-mask: var(--sidebar-icon-url) center / contain no-repeat;
+  mask: var(--sidebar-icon-url) center / contain no-repeat;
+}
+
+.react-nav-shell .nav-label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity var(--transition);
+}
+
+.react-nav-shell .sidebar.collapsed .nav-label,
+.react-nav-shell .sidebar.collapsed .nav-badge {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.react-nav-shell .nav-badge {
+  margin-left: auto;
+  font-size: 10px;
+  background: var(--bg-active);
+  padding: 1px 6px;
+  border-radius: 10px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: color var(--transition), opacity var(--transition);
+}
+
+.react-nav-shell .folder-section-add-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  background: none;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition);
+}
+
+.react-nav-shell .folder-section-add-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell #folder-list .folder-sidebar-react {
+  width: 100%;
+  border-right: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.react-nav-shell #folder-list .folder-sidebar-header-react {
+  display: none;
+}
+
+.react-nav-shell #folder-list .folder-list {
+  padding: 0;
+  overflow: visible;
+}
+
+.react-nav-shell .shell-folder-status {
+  margin: 4px 8px 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.react-nav-shell .folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), gap var(--transition);
+  position: relative;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.react-nav-shell .folder-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .folder-item.active {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.react-nav-shell .folder-chevron {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width var(--transition), opacity var(--transition), transform var(--transition);
+  color: var(--text-tertiary);
+}
+
+.react-nav-shell .folder-chevron.open {
+  transform: rotate(90deg);
+}
+
+.react-nav-shell .folder-chevron.hidden {
+  visibility: hidden;
+}
+
+.react-nav-shell .folder-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.react-nav-shell .folder-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke: var(--amber);
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-nav-shell .folder-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.react-nav-shell .folder-children {
+  padding-left: 14px;
+}
+
+.react-nav-shell .folder-action-btn-react {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  background: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.react-nav-shell .folder-item:hover .folder-action-btn-react {
+  opacity: 1;
+}
+
+.react-nav-shell .folder-action-btn-react:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .sidebar.collapsed .folder-children,
+.react-nav-shell .sidebar.collapsed .folder-action-btn-react,
+.react-nav-shell .sidebar.collapsed #folder-section-label,
+.react-nav-shell .sidebar.collapsed .folder-section-add-btn {
+  display: none;
+}
+
+.react-nav-shell .sidebar.collapsed .folder-item {
+  gap: 0;
+}
+
+.react-nav-shell .sidebar.collapsed .folder-chevron {
+  width: 0;
+  opacity: 0;
+}
+
+.react-nav-shell .sidebar.collapsed .folder-name {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+  position: absolute;
+  pointer-events: none;
+}
+
+.react-nav-shell .sidebar-footer {
+  flex: 0 0 auto;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--theme-sidebar-bg);
+  overflow: hidden;
+}
+
+.react-nav-shell .sidebar-footer > .nav-item,
+.react-nav-shell .sidebar-footer > .sidebar-toggle {
+  height: 32px;
+  padding: 0 10px;
+}
+
+.react-nav-shell .sidebar-agent-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
+  color: var(--text-secondary);
+}
+
+.react-nav-shell .sidebar-agent-run svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.react-nav-shell .sidebar-agent-run .nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.react-nav-shell .sidebar-agent-stop {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+  font-size: 10px;
+}
+
+.react-nav-shell .sidebar.collapsed .sidebar-agent-run {
+  justify-content: center;
+  padding-inline: 6px;
+}
+
+.react-nav-shell .sidebar.collapsed .sidebar-agent-run .nav-label,
+.react-nav-shell .sidebar.collapsed .sidebar-agent-stop {
+  display: none;
+}
+
+.react-nav-shell .sidebar-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  transition: background var(--transition), color var(--transition);
+}
+
+.react-nav-shell .toggle-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity var(--transition);
+}
+
+.react-nav-shell .sidebar-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.react-nav-shell .sidebar-toggle .sidebar-toggle-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.react-nav-shell .sidebar.collapsed .toggle-text {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.react-nav-shell .sidebar.collapsed .sidebar-toggle {
+  justify-content: flex-start;
+  padding: 0 10px;
+}
+
+.react-nav-shell .main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--theme-app-bg);
+}
+
+.react-nav-shell .titlebar {
+  --titlebar-inline-start: 14px;
+  --titlebar-inline-end: 14px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  padding-inline: var(--titlebar-inline-start) var(--titlebar-inline-end);
+  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 30;
+  background: var(--theme-titlebar-bg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.react-nav-shell .sidebar .sidebar-header,
+.react-nav-shell .sidebar .nav-section-title,
+.react-nav-shell .sidebar .nav-item,
+.react-nav-shell .sidebar .sidebar-toggle,
+.react-nav-shell .sidebar .folder-item,
+.react-nav-shell .titlebar button,
+.react-nav-shell .titlebar .tab,
+.react-nav-shell .titlebar .breadcrumb-item {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.react-nav-shell .titlebar :is(input, textarea, select, [contenteditable="true"]),
+.react-nav-shell .sidebar :is(input, textarea, select, [contenteditable="true"]) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.react-nav-shell .titlebar.graph-titlebar-split {
+  padding: 0;
+  gap: 0;
+}
+
+.react-nav-shell .titlebar.notes-titlebar-split {
+  padding: 0;
+  gap: 0;
+}
+
+.react-nav-shell .titlebar button,
+.react-nav-shell .titlebar input,
+.react-nav-shell .titlebar select,
+.react-nav-shell .titlebar .tab,
+.react-nav-shell .titlebar .titlebar-action,
+.react-nav-shell .titlebar .toolbar-nav button,
+.react-nav-shell .titlebar .titlebar-search,
+.react-nav-shell .titlebar .graph-tabs-bar-react,
+.react-nav-shell .titlebar .graph-tab-react,
+.react-nav-shell .titlebar .graph-tab-new-react,
+.react-nav-shell .titlebar .window-controls button {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.react-nav-shell .titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.react-nav-shell .titlebar-canvas-home {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.react-nav-shell .titlebar-canvas-home:hover {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--border));
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .titlebar-canvas-home svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+.react-nav-shell .titlebar-ai-browser {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.react-nav-shell .titlebar-ai-browser:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .titlebar-ai-browser.active {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.react-nav-shell .titlebar-ai-browser:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: 2px;
+}
+
+.react-nav-shell .titlebar-ai-restart:disabled {
+  cursor: default;
+  opacity: 0.48;
+  border-color: var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+}
+
+.react-nav-shell .titlebar-ai-browser svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
+.react-nav-shell .toolbar-nav {
+  display: flex;
+  gap: 2px;
+}
+
+.react-nav-shell .toolbar-nav button {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  transition: all var(--transition);
+}
+
+.react-nav-shell .toolbar-nav button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .toolbar-nav button:disabled {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+
+.react-nav-shell .toolbar-nav button svg,
+.react-nav-shell .titlebar-action svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-nav-shell .titlebar-import {
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+}
+
+.react-nav-shell .titlebar-import:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.react-nav-shell[data-route="settings"] .toolbar-nav button,
+.react-nav-shell[data-route="settings"] .titlebar-import {
+  color: #5a5a62 !important;
+}
+
+.react-nav-shell[data-route="settings"] .toolbar-nav button:hover,
+.react-nav-shell[data-route="settings"] .titlebar-import:hover {
+  color: #f0f0f2 !important;
+}
+
+.react-nav-shell[data-route="settings"] .toolbar-nav button:disabled {
+  color: #5a5a62 !important;
+  opacity: 0.3;
+}
+
+.react-nav-shell .titlebar-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.react-nav-shell .graph-tabs-bar-react {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+  gap: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.react-nav-shell .graph-titlebar-pane-groups {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-self: stretch;
+  height: 100%;
+}
+
+.react-nav-shell .graph-titlebar-pane-group {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  padding: 0 14px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.react-nav-shell .graph-titlebar-pane-root .graph-tabs-bar-react {
+  align-self: stretch;
+  align-items: flex-end;
+}
+
+.react-nav-shell .graph-titlebar-pane-child .graph-titlebar-child-tab {
+  min-width: 84px;
+  max-width: min(292px, 100%);
+}
+
+.react-nav-shell .graph-titlebar-pane-divider {
+  position: relative;
+  pointer-events: none;
+}
+
+.react-nav-shell .graph-titlebar-pane-divider::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(50% - .5px);
+  width: 1px;
+  content: "";
+  background: color-mix(in srgb, var(--border) 90%, transparent);
+}
+
+.react-nav-shell .notes-titlebar-pane-groups {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-self: stretch;
+  height: 100%;
+  overflow: visible;
+  position: relative;
+  z-index: 4;
+}
+
+.react-nav-shell .notes-titlebar-pane-groups.notes-titlebar-horizontal {
+  display: grid;
+}
+
+.react-nav-shell .notes-titlebar-pane-group {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  padding: 0 14px;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.react-nav-shell .notes-titlebar-pane-root,
+.react-nav-shell .notes-titlebar-pane-child {
+  justify-content: flex-start;
+}
+
+.react-nav-shell .notes-titlebar-horizontal .notes-titlebar-pane-root {
+  grid-column: 1;
+}
+
+.react-nav-shell .notes-titlebar-horizontal .notes-titlebar-pane-divider {
+  grid-column: 2;
+}
+
+.react-nav-shell .notes-titlebar-horizontal .notes-titlebar-pane-child {
+  grid-column: 3;
+}
+
+.react-nav-shell .notes-titlebar-horizontal.notes-titlebar-index-open .notes-titlebar-pane-root {
+  /* The index owns its own grid track; the tab/drop target owns only the
+     editor track. Padding cannot substitute for a pane's real bounds. */
+  grid-column: 2;
+}
+
+.react-nav-shell .notes-titlebar-horizontal.notes-titlebar-index-open .notes-titlebar-pane-divider {
+  grid-column: 3;
+}
+
+.react-nav-shell .notes-titlebar-horizontal.notes-titlebar-index-open .notes-titlebar-pane-child {
+  grid-column: 4;
+}
+
+.react-nav-shell .notes-titlebar-pane-groups.notes-titlebar-index-open:not(.notes-titlebar-horizontal) .notes-titlebar-pane-root {
+  margin-left: var(--notes-index-width);
+}
+
+.react-nav-shell .notes-titlebar-pane-group .notes-split-control {
+  flex: 0 0 36px;
+}
+
+.react-nav-shell .notes-titlebar-pane-group .tab {
+  align-self: flex-end;
+}
+
+.react-nav-shell .notes-titlebar-pane-tab.pane-active {
+  color: var(--text-primary);
+}
+
+.react-nav-shell .notes-titlebar-pane-divider {
+  position: relative;
+  pointer-events: none;
+}
+
+.react-nav-shell .notes-titlebar-pane-divider::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(50% - .5px);
+  width: 1px;
+  content: "";
+  background: color-mix(in srgb, var(--border) 90%, transparent);
+}
+
+.react-nav-shell[data-route="graph"] .titlebar-left {
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+}
+
+.react-nav-shell[data-route="graph"] .graph-tabs-bar-react {
+  align-self: stretch;
+  align-items: flex-end;
+}
+
+.react-nav-shell[data-route="graph"] .graph-tab-react {
+  height: 34px;
+  border-radius: 8px 8px 0 0;
+}
+
+.react-nav-shell .titlebar.graph-titlebar-split .titlebar-right {
+  position: absolute;
+  top: 0;
+  right: var(--titlebar-inline-end);
+  z-index: 2;
+  height: 100%;
+  margin-left: 0 !important;
+  background: var(--bg-base);
+}
+
+.react-nav-shell .titlebar.notes-titlebar-split .titlebar-right {
+  position: absolute;
+  top: 0;
+  right: var(--titlebar-inline-end);
+  z-index: 10;
+  height: 100%;
+  margin-left: 0 !important;
+  background: var(--bg-base);
+  pointer-events: auto;
+}
+
+.react-nav-shell .titlebar.notes-titlebar-split .titlebar-right .titlebar-search {
+  display: none;
+}
+
+.react-nav-shell .graph-tab-react {
+  flex: 0 1 204px;
+  width: 204px;
+  min-width: 84px;
+  max-width: 292px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.react-nav-shell .graph-tab-react > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.react-nav-shell .graph-tab-react:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.react-nav-shell .graph-tab-react.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .graph-tab-close-react {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: -5px;
+  border-radius: 3px;
+  opacity: .8;
+  transition: all var(--transition);
+  color: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+
+.react-nav-shell .graph-tab-react:hover .graph-tab-close-react {
+  opacity: .84;
+}
+
+.react-nav-shell .graph-tab-close-react:hover {
+  background: rgba(255, 255, 255, .1);
+  opacity: 1;
+}
+
+.react-nav-shell .graph-tab-close-react svg {
+  width: 10.5px;
+  height: 10.5px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+.react-nav-shell .graph-tab-new-react {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition);
+  flex-shrink: 0;
+  margin: 0 4px 3px;
+}
+
+.react-nav-shell .graph-tab-new-react:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .graph-tab-new-react svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+.react-nav-shell .breadcrumb-item {
+  cursor: pointer;
+  color: var(--text-tertiary);
+  padding: 3px 8px;
+  border-radius: 5px;
+  transition: all var(--transition);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+.react-nav-shell .breadcrumb-item.current {
+  color: var(--text-primary);
+  font-weight: 500;
+  cursor: default;
+}
+
+.react-nav-shell .titlebar-center {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+}
+
+.react-nav-shell .titlebar-center .btn-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.react-nav-shell .view-cycle {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  position: relative;
+}
+
+.react-nav-shell .view-cycle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .view-cycle svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-nav-shell .view-cycle-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 5px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.react-nav-shell .view-cycle:hover .view-cycle-tooltip {
+  opacity: 1;
+}
+
+.react-nav-shell .workview-cycle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.react-nav-shell .workview-cycle:hover { background: var(--bg-hover); color: var(--text-primary); }
+.react-nav-shell .workview-cycle svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+.react-nav-shell .titlebar-action {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  position: relative;
+}
+
+.react-nav-shell .titlebar-action:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .titlebar-action.open,
+.react-nav-shell .titlebar-action.active {
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-elevated));
+  color: var(--accent);
+}
+
+.react-nav-shell .materials-filter-clear-action {
+  width: 24px;
+  margin-left: -3px;
+  color: var(--text-tertiary);
+}
+
+.react-nav-shell .filter-count-react {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.react-nav-shell .materials-export-attention-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rose);
+}
+
+.react-nav-shell .materials-titlebar .view-cycle:focus-visible,
+.react-nav-shell .materials-titlebar .workview-cycle:focus-visible,
+.react-nav-shell .materials-titlebar .titlebar-action:focus-visible,
+.react-nav-shell .materials-titlebar .titlebar-search:focus-visible,
+.react-nav-shell .materials-titlebar .zoom-slider input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 76%, transparent);
+  outline-offset: 2px;
+}
+
+.react-nav-shell .toolbar-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 3px;
+}
+
+.react-nav-shell .zoom-slider {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.react-nav-shell .materials-titlebar .zoom-slider {
+  margin-inline-end: 6px;
+}
+
+.react-nav-shell .zoom-slider input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100px;
+  height: 3px;
+  background: var(--bg-active);
+  border-radius: 2px;
+  outline: none;
+}
+
+.react-nav-shell .zoom-slider input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--bg-surface);
+}
+
+.react-nav-shell .zoom-slider svg {
+  width: 12px;
+  height: 12px;
+  stroke: var(--text-tertiary);
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-nav-shell .materials-titlebar .view-cycle svg,
+.react-nav-shell .materials-titlebar .titlebar-action svg,
+.react-nav-shell .materials-titlebar .zoom-slider svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-nav-shell .titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.react-nav-shell .titlebar-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+  width: 200px;
+  height: 32px;
+}
+
+.react-nav-shell .titlebar-search:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: var(--bg-hover);
+}
+
+.react-nav-shell .titlebar-search svg {
+  width: 13px;
+  height: 13px;
+  stroke: var(--text-tertiary);
+  fill: none;
+  stroke-width: 2;
+  flex-shrink: 0;
+}
+
+.react-nav-shell .titlebar-search span {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.react-nav-shell .window-controls {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 60px;
+  position: relative;
+}
+
+.react-nav-shell .win-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.react-nav-shell .win-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: var(--text-tertiary);
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 150ms ease;
+}
+
+.react-nav-shell .win-btn:hover {
+  background: var(--bg-hover);
+}
+
+.react-nav-shell .win-btn:hover svg {
+  stroke: var(--text-primary);
+}
+
+.react-nav-shell .win-close:hover {
+  background: rgba(255, 59, 48, 0.15);
+}
+
+.react-nav-shell .win-close:hover svg {
+  stroke: #ff3b30;
+}
+
+.react-nav-shell .window-close-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--experience-overlay, rgba(0, 0, 0, 0.52));
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.react-nav-shell .window-close-confirm {
+  width: min(360px, calc(100vw - 48px));
+  box-sizing: border-box;
+  padding: 18px 20px;
+  border: 1px solid var(--theme-border-strong, var(--border));
+  border-radius: var(--experience-radius, var(--radius-lg));
+  background: var(--bg-surface, var(--theme-app-bg, #111114));
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.6);
+  animation: experienceDialogEnter var(--experience-duration-standard, 180ms) var(--experience-easing-standard, cubic-bezier(.2, .75, .25, 1)) both;
+  z-index: 1201;
+}
+
+.react-nav-shell .window-close-confirm-title {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+
+.react-nav-shell .window-close-confirm-desc {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 18px;
+}
+
+.react-nav-shell .window-close-confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.react-nav-shell .window-close-confirm-actions button {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--experience-duration-fast, 120ms) ease;
+}
+
+.react-nav-shell .window-close-confirm-actions button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .window-close-confirm-actions .btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.react-nav-shell .window-close-confirm-actions .btn-primary:hover {
+  background: var(--accent-hover, color-mix(in srgb, var(--accent) 88%, white));
+}
+
+.react-nav-shell .window-close-confirm-actions .btn-danger,
+.react-nav-shell .window-close-confirm-actions .danger {
+  border-color: color-mix(in srgb, var(--rose, #fb7185) 30%, transparent);
+  background: color-mix(in srgb, var(--rose, #fb7185) 12%, transparent);
+  color: var(--rose, #fb7185);
+}
+
+.react-nav-shell .window-close-confirm-actions .btn-danger:hover,
+.react-nav-shell .window-close-confirm-actions .danger:hover {
+  background: color-mix(in srgb, var(--rose, #fb7185) 20%, transparent);
+}
+
+.command-palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(8px);
+}
+
+.command-palette {
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(620px, calc(100vh - 120px));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(22, 22, 28, 0.98);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.command-palette-search {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.command-palette-search svg {
+  width: 15px;
+  height: 15px;
+  stroke: var(--text-tertiary);
+  fill: none;
+  stroke-width: 2;
+}
+
+.command-palette-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+
+.command-palette-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.command-palette-list {
+  max-height: 520px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.command-palette-item {
+  width: 100%;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 0 12px;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: left;
+}
+
+.command-palette-item:hover,
+.command-palette-item:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.command-palette-item kbd {
+  min-width: 0;
+  max-width: 180px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-empty {
+  padding: 28px 12px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.react-nav-shell .titlebar-tabs {
+  display: none;
+  align-items: flex-end;
+  align-self: stretch;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  gap: 0;
+  padding: 8px 4px 0 6px;
+  transition: padding-left var(--transition);
+}
+
+.react-nav-shell .titlebar-tabs.show {
+  display: flex;
+  overflow: visible;
+}
+
+.react-nav-shell .titlebar-tabs.notes-index-open {
+  padding-left: calc(var(--notes-index-width) + 6px);
+}
+
+.react-nav-shell .tab-group {
+  display: flex;
+  align-items: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(100% - 72px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.react-nav-shell .tab-group::-webkit-scrollbar {
+  display: none;
+}
+
+.react-nav-shell .tab {
+  height: 34px;
+  flex: 0 1 204px;
+  width: 204px;
+  min-width: 84px;
+  max-width: 292px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  border-radius: var(--radius-md, 8px) var(--radius-md, 8px) 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--experience-duration-fast, 120ms) ease;
+  position: relative;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.react-nav-shell .tab:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}
+
+.react-nav-shell .tab.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.react-nav-shell .tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: -2px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-tertiary);
+  opacity: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: all var(--experience-duration-fast, 120ms) ease;
+}
+
+.react-nav-shell .tab:hover .tab-close,
+.react-nav-shell .tab.active .tab-close {
+  opacity: 0.72;
+}
+
+.react-nav-shell .tab-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.react-nav-shell .tab-close svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+.react-nav-shell .tab-add-btn,
+.react-nav-shell .tab-split-btn {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  margin: 0 4px 3px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.react-nav-shell .tab-add-btn:hover,
+.react-nav-shell .tab-split-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .tab-add-btn svg,
+.react-nav-shell .tab-split-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+.react-nav-shell .notes-titlebar .tab-add-btn,
+.react-nav-shell .notes-titlebar .tab-split-btn {
+  color: var(--text-tertiary);
+  opacity: .46;
+}
+
+.react-nav-shell .notes-titlebar .tab-add-btn:hover,
+.react-nav-shell .notes-titlebar .tab-split-btn:hover {
+  opacity: 1;
+}
+
+.react-nav-shell .notes-titlebar .tab-close,
+.react-nav-shell .notes-titlebar .tab.active .tab-close {
+  opacity: .46;
+}
+
+.react-nav-shell .notes-titlebar .tab:hover .tab-close {
+  opacity: .72;
+}
+
+.react-nav-shell .notes-titlebar .tab-close:hover {
+  opacity: 1;
+}
+
+.react-nav-shell .notes-split-control {
+  position: relative;
+  flex: 0 0 36px;
+  align-self: stretch;
+  display: flex;
+  align-items: flex-end;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.react-nav-shell .notes-split-menu-react {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 90;
+  width: 142px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.react-nav-shell .notes-split-menu-react button {
+  width: 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.react-nav-shell .notes-split-menu-react button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .notes-split-menu-react svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.react-nav-shell .notes-titlebar-child-split-control {
+  flex: 0 0 30px;
+}
+
+.react-nav-shell .notes-titlebar-child-split-menu {
+  width: auto;
+  display: grid;
+  grid-template-columns: repeat(2, 30px);
+  gap: 2px;
+  padding: 4px;
+}
+
+.react-nav-shell .notes-titlebar-child-split-menu button {
+  width: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
+.react-nav-shell .content-wrap {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+}
+
+.react-nav-shell[data-route="notes"] .content-wrap {
+  z-index: auto;
+}
+
+.react-nav-shell .content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.react-nav-shell .dsh-native-surface-layout {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.react-nav-shell .dsh-native-surface-intent-error {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  max-width: min(480px, calc(100% - 32px));
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.react-nav-shell .dsh-native-surface-intent-error p {
+  margin: 0;
+}
+
+.react-nav-shell .dsh-native-surface-intent-error button {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.react-nav-shell .dsh-native-surface-mount {
+  position: relative;
+  flex: 1 1 auto;
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  min-height: 320px;
+  background: var(--bg-base);
+}
+
+.react-nav-shell .ai-personal-browser-sidebar {
+  width: 420px;
+  min-width: 420px;
+  height: 100%;
+  flex: 0 0 420px;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.react-nav-shell .lightseek-content-browser {
+  width: clamp(340px, 31vw, 420px);
+  min-width: 340px;
+  height: 100%;
+  flex: 0 0 clamp(340px, 31vw, 420px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .lightseek-content-browser-header {
+  padding: 18px 18px 12px;
+}
+
+.react-nav-shell .lightseek-content-browser-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.react-nav-shell .lightseek-content-browser-header p {
+  margin: 5px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.react-nav-shell .lightseek-content-browser-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 0 18px 12px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-base);
+}
+
+.react-nav-shell .lightseek-content-browser-tabs button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.react-nav-shell .lightseek-content-browser-tabs button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .lightseek-content-browser-tabs button.active {
+  background: var(--bg-elevated);
+  color: var(--accent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.react-nav-shell .lightseek-content-browser-tabs button:focus-visible,
+.react-nav-shell .lightseek-content-material:focus-visible,
+.react-nav-shell .lightseek-content-note:focus-visible,
+.react-nav-shell .lightseek-content-send:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: 0;
+}
+
+.react-nav-shell .lightseek-content-browser-search {
+  height: 36px;
+  margin: 0 18px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-base);
+  color: var(--text-tertiary);
+}
+
+.react-nav-shell .lightseek-content-browser-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 11%, transparent);
+}
+
+.react-nav-shell .lightseek-content-browser-search svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.react-nav-shell .lightseek-content-browser-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.react-nav-shell .lightseek-content-browser-body {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-rows: minmax(160px, 1fr) auto;
+  border-top: 1px solid var(--border);
+}
+
+.react-nav-shell .lightseek-content-browser-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.react-nav-shell .lightseek-content-material,
+.react-nav-shell .lightseek-content-note {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  font: inherit;
+}
+
+.react-nav-shell .lightseek-content-material {
+  padding: 5px;
+}
+
+.react-nav-shell .lightseek-content-material:hover,
+.react-nav-shell .lightseek-content-note:hover {
+  border-color: var(--border);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .lightseek-content-material.active,
+.react-nav-shell .lightseek-content-note.active {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.react-nav-shell .lightseek-content-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--bg-base);
+  color: var(--text-tertiary);
+}
+
+.react-nav-shell .lightseek-content-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.react-nav-shell .lightseek-content-material > span:last-child,
+.react-nav-shell .lightseek-content-note > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px 3px 3px;
+}
+
+.react-nav-shell .lightseek-content-material b,
+.react-nav-shell .lightseek-content-note b {
+  overflow: hidden;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.react-nav-shell .lightseek-content-material small,
+.react-nav-shell .lightseek-content-note small {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.react-nav-shell .lightseek-content-note {
+  grid-column: 1 / -1;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  padding: 5px 8px;
+}
+
+.react-nav-shell .lightseek-content-note-icon {
+  color: var(--accent);
+  font-size: 15px;
+}
+
+.react-nav-shell .lightseek-content-note > span:last-child {
+  padding: 0;
+}
+
+.react-nav-shell .lightseek-content-browser-preview {
+  position: relative;
+  min-height: 118px;
+  max-height: 230px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.react-nav-shell .lightseek-content-preview-media {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 9px;
+  background: var(--bg-base);
+  color: var(--text-tertiary);
+}
+
+.react-nav-shell .lightseek-content-preview-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.react-nav-shell .lightseek-content-preview-copy {
+  min-width: 0;
+}
+
+.react-nav-shell .lightseek-content-preview-copy b {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.react-nav-shell .lightseek-content-preview-copy p {
+  display: -webkit-box;
+  margin: 5px 0 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.react-nav-shell .lightseek-content-send {
+  grid-column: 1 / -1;
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--bg-base);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.react-nav-shell .lightseek-content-send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.react-nav-shell .lightseek-content-send:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.react-nav-shell .lightseek-content-status,
+.react-nav-shell .lightseek-content-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-align: center;
+}
+
+.react-nav-shell .lightseek-content-status {
+  color: var(--accent);
+}
+
+@media (max-width: 980px) {
+  .react-nav-shell .lightseek-content-browser {
+    width: 340px;
+    min-width: 340px;
+    flex-basis: 340px;
+  }
+}
+
+.react-nav-shell .dsh-native-surface-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+}
+
+.react-nav-shell .dsh-native-surface-placeholder-content {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.react-nav-shell .dsh-native-surface-loading-mark {
+  width: 26px;
+  height: 26px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 5px color-mix(in srgb, var(--accent) 4%, transparent);
+  animation: dsh-native-surface-loading 1.1s linear infinite;
+}
+
+.react-nav-shell .dsh-native-surface-placeholder.is-error {
+  color: var(--text-primary);
+}
+
+.react-nav-shell .dsh-native-surface-placeholder button {
+  min-width: 64px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.react-nav-shell .dsh-native-surface-placeholder button:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+@keyframes dsh-native-surface-loading {
+  to { transform: rotate(360deg); }
+}
+
+/* COMPAT-R1 outer recovery panel: visible only in the placeholder error
+   state, i.e. exactly when the DSH web page itself is not usable. */
+.react-nav-shell .dsh-plugin-compat-panel {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: 520px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised, var(--bg-base));
+  text-align: center;
+}
+
+.react-nav-shell .dsh-plugin-compat-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.react-nav-shell .dsh-plugin-compat-intro,
+.react-nav-shell .dsh-plugin-compat-limited {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.react-nav-shell .dsh-plugin-compat-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  width: 100%;
+}
+
+.react-nav-shell .dsh-plugin-compat-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.react-nav-shell .dsh-plugin-compat-name {
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+}
+
+.react-nav-shell .dsh-plugin-compat-outcome {
+  color: var(--text-secondary);
+}
+
+.react-nav-shell .dsh-plugin-compat-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.react-nav-shell .dsh-plugin-compat-panel button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.react-nav-shell .dsh-plugin-compat-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger, var(--text-primary));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-nav-shell :is(
+    .sidebar,
+    .sidebar-header,
+    .logo-mark,
+    .logo-text,
+  .sidebar-brand-toggle,
+  .sidebar-toggle-brand,
+  .sidebar-brand-toggle-icon,
+    .nav-section-title,
+    .nav-label,
+    .nav-badge,
+    .sidebar-toggle,
+    .toggle-text,
+    .titlebar-search
+  ) {
+    transition: none;
+    animation: none;
+  }
+
+  .react-nav-shell .dsh-native-surface-loading-mark {
+    animation: none;
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+}
+
+.react-nav-shell .content.standard-page {
+  padding: 24px;
+}
+
+.react-nav-shell .content.materials-mode,
+.react-nav-shell .content.notes-mode,
+.react-nav-shell .content.graph-mode,
+.react-nav-shell .content.ai-mode,
+.react-nav-shell .content.canvas-mode,
+.react-nav-shell .content.community-mode,
+.react-nav-shell .content.settings-mode,
+.react-nav-shell .content.favorites-mode,
+.react-nav-shell .content.tags-mode {
+  padding: 0;
+}
+
+.react-nav-shell .shell-page-fallback {
+  flex: 1;
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--theme-app-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.shell-folder-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--experience-overlay, rgba(0, 0, 0, .52));
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.shell-folder-dialog {
+  width: 320px;
+  padding: 16px;
+  border: 1px solid var(--experience-border, var(--border));
+  border-radius: var(--experience-radius, var(--radius-lg));
+  background: var(--experience-surface, var(--bg-surface));
+  box-shadow: var(--experience-shadow, 0 18px 54px rgba(0, 0, 0, .52));
+  animation: experienceDialogEnter var(--experience-duration-standard, 180ms) var(--experience-easing-standard, cubic-bezier(.2, .75, .25, 1)) both;
+}
+
+.shell-folder-dialog-title {
+  margin-bottom: 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.shell-folder-dialog input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--experience-border, var(--border));
+  border-radius: var(--radius-md, 8px);
+  outline: none;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  transition: border-color var(--experience-duration-fast, 120ms) ease;
+}
+
+.shell-folder-dialog input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-muted, rgba(124, 138, 255, 0.25));
+}
+
+.shell-folder-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.shell-folder-dialog-actions button {
+  height: 32px;
+  min-width: 64px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--experience-duration-fast, 120ms) ease;
+}
+
+.shell-folder-dialog-actions button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.shell-folder-dialog-actions button.primary {
+  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.shell-folder-dialog-actions button.primary:hover {
+  background: var(--accent-hover, color-mix(in srgb, var(--accent) 88%, white));
+}
+
+.react-nav-shell .materials-layout > .folder-sidebar-react {
+  display: none;
+}
+
+.react-nav-shell #page-materials,
+.react-nav-shell #page-notes,
+.react-nav-shell #page-graph,
+.react-nav-shell #page-settings,
+.react-nav-shell #page-tags,
+.react-nav-shell #page-ai,
+.react-nav-shell #page-community {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+  background: var(--bg-base);
+}
+
+.react-nav-shell #page-materials .materials-layout,
+.react-nav-shell #page-notes .notes-layout,
+.react-nav-shell #page-settings .settings-layout {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+.react-nav-shell #page-graph .graph-container {
+  flex: 1;
+  min-height: 0;
+}
+
+.react-nav-shell #page-materials .masonry-container {
+  padding: 32px;
+}
+
+.react-nav-shell #page-materials .masonry {
+  column-gap: 12px;
+}
+
+.react-nav-shell #page-materials .masonry-item {
+  margin-bottom: 12px;
+}
+
+.react-nav-shell #page-notes .notes-sidebar-with-folders .folder-sidebar-react {
+  display: none;
+}
+
+.react-nav-shell #page-notes .notes-sidebar {
+  width: 260px;
+}
+
+.react-nav-shell .ai-layout {
+  position: relative;
+  inset: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.react-nav-shell .content.canvas-mode {
+  overflow: hidden;
+}
+
+.react-nav-shell .content.canvas-mode > * {
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .react-nav-shell {
+    --notes-index-width: 220px;
+  }
+}
+
+@media (max-width: 1440px) {
+  .react-nav-shell .titlebar {
+    --titlebar-inline-end: 10px;
+  }
+
+  .react-nav-shell .materials-titlebar {
+    --titlebar-inline-start: 10px;
+    gap: 4px;
+  }
+
+  .react-nav-shell .materials-titlebar .zoom-slider input[type="range"] {
+    width: 80px;
+  }
+
+}
+
+@media (max-width: 1280px) {
+  .react-nav-shell .materials-titlebar .zoom-slider input[type="range"] {
+    width: 64px;
+  }
+
+
+  .react-nav-shell .materials-titlebar .titlebar-center .btn-group,
+  .react-nav-shell .titlebar-right {
+    gap: 3px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .react-nav-shell .materials-titlebar .workview-cycle { width: 32px; padding: 0; }
+  .react-nav-shell .materials-titlebar .workview-cycle span { display: none; }
+  .react-nav-shell .materials-titlebar .zoom-slider > svg {
+    display: none;
+  }
+
+  .react-nav-shell .materials-titlebar .zoom-slider input[type="range"] {
+    width: 56px;
+  }
+
+  .react-nav-shell .materials-titlebar .toolbar-sep {
+    margin-inline: 1px;
+  }
+}
+
+@media (max-width: 900px) {
+  .react-nav-shell .titlebar-search {
+    width: 150px;
+  }
+
+  .react-nav-shell .zoom-slider {
+    display: none;
+  }
+}
+
+.react-nav-shell .dsh-plugin-compat-settings {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.react-nav-shell .dsh-plugin-compat-settings-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.react-nav-shell .dsh-plugin-compat-settings-desc {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+/* Integrated workspace controls: pointer-only ordering keeps native file drops. */
+[data-control-id] { position: relative; touch-action: none; }
+[data-control-id].control-dragging { opacity: .4; }
+[data-control-id][data-control-drop]::after { content: ''; position: absolute; pointer-events: none; background: var(--accent); border-radius: 2px; z-index: 20; }
+[data-control-axis="vertical"] [data-control-drop="before"]::after { height: 2px; top: -2px; left: 6px; right: 6px; }
+[data-control-axis="vertical"] [data-control-drop="after"]::after { height: 2px; bottom: -2px; left: 6px; right: 6px; }
+[data-control-axis="horizontal"] [data-control-drop="before"]::after { width: 2px; left: -2px; top: 3px; bottom: 3px; }
+[data-control-axis="horizontal"] [data-control-drop="after"]::after { width: 2px; right: -2px; top: 3px; bottom: 3px; }
+.react-nav-shell .materials-feature-tools { display: flex; align-items: center; gap: 4px; }
+.integrated-layout-backdrop { position: fixed; inset: 0; z-index: 10050; display: grid; place-items: center; padding: 16px; background: var(--theme-overlay); }
+.integrated-layout-manager { box-sizing: border-box; width: min(520px, 100%); max-height: calc(100dvh - 48px); overflow: auto; border: 1px solid var(--theme-dialog-border); border-radius: 13px; padding: 20px; background: var(--theme-surface-panel); color: var(--text-primary); box-shadow: var(--theme-shadow-lg); }
+.integrated-layout-manager header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.integrated-layout-manager h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.integrated-layout-manager form { display: flex; gap: 8px; }
+.integrated-layout-manager input { min-width: 0; flex: 1; padding: 9px 11px; border: 1px solid var(--theme-border-strong); border-radius: 6px; background: var(--theme-surface-base); color: var(--text-primary); font: inherit; font-size: 12px; }
+.integrated-layout-manager button { flex: none; padding: 7px 11px; border: 1px solid var(--theme-border-subtle); border-radius: 6px; background: var(--theme-surface-raised); color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.integrated-layout-manager button:hover:not(:disabled) { background: var(--theme-selected); color: var(--accent); }
+.integrated-layout-manager button:disabled { opacity: .45; cursor: default; }
+.integrated-layout-manager :is(button,input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.integrated-layout-manager header button { border: 0; background: transparent; font-size: 20px; padding: 0 5px; }
+.integrated-layout-list { margin-top: 14px; max-height: 280px; overflow: auto; }
+.integrated-layout-row { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-top: 1px solid var(--theme-border-subtle); }
+.integrated-layout-details { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.integrated-layout-actions { display: flex; flex: none; gap: 6px; }
+.integrated-layout-details span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.integrated-layout-details small { color: var(--text-tertiary); white-space: nowrap; }
+.integrated-layout-confirm { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 5px; max-width: 75%; font-size: 11px; }
+.integrated-layout-confirm span { width: 100%; overflow-wrap: anywhere; text-align: right; }
+@media (max-width: 520px) { .integrated-layout-row { flex-wrap: wrap; } .integrated-layout-details { flex-basis: 100%; } .integrated-layout-confirm { max-width: 100%; } }
+.integrated-layout-error { margin: 12px 0 0; color: var(--rose); font-size: 12px; }
+.integrated-layout-manager footer { margin-top: 14px; font-size: 11px; color: var(--text-tertiary); }

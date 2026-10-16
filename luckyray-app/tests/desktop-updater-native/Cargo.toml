@@ -1,0 +1,26 @@
+[package]
+name = "luckyray-updater-policy-verification"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+minisign-verify = "=0.3.0"
+semver = "1"
+sha2="0.10"
+serde = {version="1",features=["derive"]}
+serde_json = "1"
+reqwest = {version="0.12",features=["stream"]}
+tokio = {version="1",features=["rt-multi-thread","time"]}
+futures-util="0.3"
+
+[lib]
+path = "lib.rs"
+
+[[bin]]
+name="luckyray-update-verify"
+path="../../src-tauri/src/release_tools/desktop-update-verify.rs"
+
+[dev-dependencies]
+minisign="=0.8.0"

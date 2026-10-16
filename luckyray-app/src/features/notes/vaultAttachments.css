@@ -1,0 +1,115 @@
+/* Scoped content in the existing Knowledge settings dialog; shared modal owns
+   overlay, dimensions, focus, dismissal and keyboard behavior. */
+.vault-attachment-settings { min-width:0; }
+.vault-attachment-rule { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:12px 0; border-bottom:1px solid var(--theme-border-subtle); font-size:12px; color:var(--text-secondary); }
+.vault-attachment-rule code { padding:4px 8px; border-radius:5px; background:var(--theme-surface-base); color:var(--text-primary); font-size:12px; }
+.vault-attachment-settings p { margin:7px 0; color:var(--text-secondary); font-size:11px; line-height:1.7; overflow-wrap:anywhere; }
+.vault-attachment-maintenance { margin-top:16px; border:1px solid var(--theme-border-strong); border-radius:9px; padding:12px; background:var(--theme-surface-base); }
+.vault-attachment-maintenance > summary { color:var(--text-secondary); font-size:12px; font-weight:600; cursor:pointer; padding:2px 0; line-height:1.6; }
+.vault-attachment-maintenance > summary span { display:block; margin-left:0; color:var(--text-secondary); font-size:10px; font-weight:400; }
+.vault-attachment-form { display:grid; gap:12px; padding-top:13px; }
+.vault-attachment-form label { display:grid; gap:6px; color:var(--text-secondary); font-size:11px; font-weight:550; }
+.vault-attachment-settings :is(input,select) { display:block; box-sizing:border-box; width:100%; min-height:36px; margin:0; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-surface); color:var(--text-primary); font:inherit; font-size:12px; }
+.vault-attachment-settings input::placeholder { color:var(--text-secondary); }
+.vault-attachment-settings button { display:inline-flex; align-items:center; justify-content:center; min-height:32px; padding:7px 11px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-elevated); color:var(--text-secondary); font:inherit; font-size:11px; cursor:pointer; }
+.vault-attachment-settings button:hover:not(:disabled) { background:var(--accent-muted); color:var(--accent); border-color:color-mix(in srgb,var(--accent) 40%,var(--border)); }
+.vault-attachment-settings button.primary { color:var(--accent); background:var(--accent-muted); border-color:color-mix(in srgb,var(--accent) 32%,var(--border)); }
+.vault-attachment-settings button:disabled { opacity:.45; cursor:default; }
+.vault-attachment-settings :is(button,input,select,summary):focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.vault-attachment-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; padding-top:13px; margin-top:12px; border-top:1px solid var(--border); }
+.vault-attachment-state { margin-top:14px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:color-mix(in srgb,var(--bg-surface) 65%,transparent); }
+.vault-attachment-state > strong { font-size:12px; font-weight:600; color:var(--text-secondary); }
+.vault-attachment-state-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12px; }
+.vault-attachment-state details { margin-top:9px; color:var(--text-secondary); font-size:11px; }
+.vault-attachment-state summary { cursor:pointer; }
+.vault-attachment-issues,.vault-attachment-files { list-style:none; padding:0; margin:10px 0 0; max-height:180px; overflow:auto; }
+.vault-attachment-issues li { display:grid; gap:3px; padding:8px 0; border-bottom:1px solid var(--border); font-size:11px; overflow-wrap:anywhere; }
+.vault-attachment-issues strong { font-weight:500; color:var(--text-secondary); }
+.vault-attachment-issues span { color:var(--text-secondary); }
+.vault-attachment-files li { display:flex; justify-content:space-between; gap:15px; padding:7px 0; border-bottom:1px solid var(--border); font-size:11px; }
+.vault-attachment-files li span:first-child { min-width:0; overflow-wrap:anywhere; }
+.vault-attachment-files li span:last-child { flex:none; color:var(--text-secondary); }
+.vault-attachment-settings p.vault-attachment-error { color:var(--rose); }
+.vault-attachment-rule select { flex:1 1 200px; width:auto; max-width:280px; }
+.notes-vault-dialog.attachment-import-dialog { width:min(480px,100%); }
+.attachment-import-dialog > .vault-attachment-actions { padding:14px 20px; margin:0; }
+.attachment-import-dialog > .editorial-dialog-body { padding:20px; overscroll-behavior:contain; }
+.attachment-import-dialog > .editorial-dialog-head { padding:18px 20px; border-bottom:1px solid var(--theme-border-strong); background:var(--theme-surface-raised); }
+.attachment-import-dialog .vault-attachment-actions button { min-height:34px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-elevated); color:var(--text-secondary); padding:7px 12px; cursor:pointer; }
+.attachment-import-dialog .vault-attachment-actions button.primary { color:var(--accent); background:var(--accent-muted); }
+.attachment-import-dialog .vault-attachment-actions button:disabled { opacity:.45; cursor:default; }
+.attachment-import-dialog .vault-attachment-actions button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.attachment-export-path { overflow-wrap:anywhere; }
+
+/* This confirmation keeps its existing modal isolation and running guards.
+   Only this dialog receives the wider, fixed-chrome V2 layout. */
+.vault-link-update-overlay {
+  padding: 24px;
+  background: var(--theme-overlay);
+}
+
+.modal-box-react.small.vault-link-update-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(480px, 100%);
+  max-height: min(560px, calc(100dvh - 48px));
+  border-color: var(--theme-dialog-border);
+  border-radius: var(--radius-lg);
+  background: var(--theme-surface-base);
+  box-shadow: var(--theme-shadow-lg);
+}
+
+.vault-link-update-dialog > .modal-header-react {
+  padding: 18px 20px;
+  background: var(--theme-surface-raised);
+}
+
+.vault-link-update-dialog .modal-title-react {
+  font-size: 15px;
+}
+
+.vault-link-update-dialog > .modal-body-react {
+  padding: 20px;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.vault-link-update-dialog .modal-body-react p {
+  margin: 0 0 12px;
+}
+
+.vault-link-update-dialog .modal-body-react p:last-child {
+  margin-bottom: 0;
+}
+
+.vault-link-update-dialog [role="alert"] {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--rose);
+  background: var(--danger-muted);
+}
+
+.vault-link-update-dialog > .notes-dialog-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--theme-border-strong);
+  background: var(--theme-surface-raised);
+}
+
+.vault-link-update-dialog button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 620px) {
+  .vault-link-update-overlay { padding: 12px; }
+  .modal-box-react.small.vault-link-update-dialog { max-height: calc(100dvh - 24px); }
+  .vault-attachment-rule { align-items: flex-start; gap: 8px; }
+  .vault-attachment-rule select { flex-basis: 100%; max-width: none; width: 100%; }
+  .vault-attachment-state-heading { flex-wrap: wrap; }
+  .vault-attachment-files li { flex-wrap: wrap; gap: 4px; }
+}

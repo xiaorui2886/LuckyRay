@@ -1,0 +1,45 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "apiVersion": 1,
+    "type": "script",
+    "entry": "main.js",
+    "minHostVersion": "1.9.2",
+    "requiredModules": [
+      "materials"
+    ],
+    "optionalModules": [
+      "knowledge"
+    ],
+    "id": "example.material-manifest",
+    "name": "素材使用清单",
+    "version": "1.0.2"
+  },
+  "resource": {
+    "code": "/// <reference path=\"../../index.d.ts\" />\n// Rule-based manifest of the materials authorized for this run. Written against the public SDK only.\nLuckyRay.register(async event => {\n  const data = await LuckyRay.call(\"data.get\");\n  const settings = data.settings && typeof data.settings === \"object\" ? data.settings : {};\n  const groupMode = settings.group === \"storage\" ? \"storage\" : \"kind\";\n  const titlePref = typeof settings.title === \"string\" && settings.title.trim() ? settings.title.trim().slice(0, 40) : \"素材使用清单\";\n\n  if (event.input.contribution === \"settings\") {\n    let shownGroup = groupMode;\n    let shownTitle = titlePref;\n    if (event.input.action === \"save\") {\n      const nextGroup = event.input.fields.group === \"storage\" ? \"storage\" : \"kind\";\n      const nextTitle = (event.input.fields.title || \"\").trim().slice(0, 40) || \"素材使用清单\";\n      await LuckyRay.call(\"data.set\", { ...data, revision: data.revision + 1, settings: { group: nextGroup, title: nextTitle } });\n      shownGroup = nextGroup;\n      shownTitle = nextTitle;\n    }\n    return {\n      title: \"素材清单设置\",\n      text: event.input.action === \"save\" ? \"清单偏好已保存。下次运行清单时生效。\" : \"设置只保存在本插件自己的数据里，不影响素材本身。\",\n      fields: [\n        { id: \"group\", label: \"分组方式（kind=按类型 / storage=按存储模式）\", value: shownGroup },\n        { id: \"title\", label: \"清单标题\", value: shownTitle }\n      ],\n      actions: [{ id: \"save\", label: \"保存清单偏好\" }]\n    };\n  }\n\n  const materials = await LuckyRay.call(\"materials.list\");\n  if (!Array.isArray(materials) || materials.length === 0) {\n    return { title: titlePref, text: \"本次未选择素材。请先在宿主中选择要授权的素材，再运行素材清单。缺少知识库权限不影响素材清单本身。\" };\n  }\n\n  const groups = new Map();\n  for (const material of materials) {\n    const key = groupMode === \"storage\" ? (material.storageMode || \"unknown\") : (material.kind || \"unknown\");\n    if (!groups.has(key)) groups.set(key, []);\n    groups.get(key).push(material);\n  }\n  const lines = [\"共 \" + materials.length + \" 项素材，按\" + (groupMode === \"storage\" ? \"存储模式\" : \"类型\") + \"分为 \" + groups.size + \" 组：\"];\n  for (const [key, list] of [...groups.entries()].sort((a, b) => b[1].length - a[1].length)) {\n    lines.push(\"【\" + key + \"】\" + list.length + \" 项\");\n    for (const material of list) lines.push(\"- \" + material.name + \"（\" + (material.mimeType || \"unknown\") + \"，\" + material.storageMode + \"，标签 \" + material.tagIds.length + \" 个）\");\n  }\n  if (lines.length > 100) {\n    const hidden = lines.length - 100;\n    lines.length = 100;\n    lines.push(\"…其余 \" + hidden + \" 行未展示（清单面板最多显示 100 行）。\");\n  }\n\n  const actions = [];\n  if (event.capabilities.includes(\"knowledge.create\") && event.objects.knowledge) {\n    actions.push({ id: \"note\", label: \"生成素材清单笔记\" });\n  }\n\n  if (event.input.action === \"note\") {\n    let note = null;\n    // Minute stamp in local time, filename-safe (no colon — the vault rejects ':' in titles):\n    // repeat runs each create their own note instead of colliding with the previous one.\n    const now = new Date();\n    const pad = (value) => String(value).padStart(2, \"0\");\n    const stamp = now.getFullYear() + \"-\" + pad(now.getMonth() + 1) + \"-\" + pad(now.getDate()) + \" \" + pad(now.getHours()) + \"-\" + pad(now.getMinutes());\n    const noteTitle = titlePref + \" \" + stamp;\n    try {\n      note = await LuckyRay.call(\"knowledge.create\", { title: noteTitle, content: \"# \" + noteTitle + \"\\n\\n\" + lines.join(\"\\n\") + \"\\n\" });\n      lines.push(\"已请求创建笔记《\" + note.title + \"》（\" + note.documentRef.relativePath + \"）；实际结果以“宿主确认的操作”为准。\");\n    } catch (error) {\n      const raw = String((error && error.message) || error);\n      let code = raw;\n      try { const parsed = JSON.parse(raw); if (parsed && parsed.code) code = String(parsed.code); } catch (ignored) { /* plain code */ }\n      lines.push(code === \"knowledge-name-conflict\" ? \"同名笔记已存在，未重复创建；可在“清单设置”里换个标题后再试。\" : \"笔记创建未完成：\" + code);\n    }\n    if (note) {\n      try {\n        await LuckyRay.call(\"data.set\", { ...data, revision: data.revision + 1, cache: { lastNote: { title: note.title, path: note.documentRef.relativePath, total: materials.length } } });\n      } catch (error) {\n        lines.push(\"笔记已创建，但“上次生成笔记”信息未能保存到插件数据：\" + String((error && error.message) || error));\n      }\n    }\n  } else if (data.cache && data.cache.lastNote) {\n    lines.push(\"上次生成笔记：\" + data.cache.lastNote.title + \"（共 \" + data.cache.lastNote.total + \" 项）\");\n  }\n\n  return { title: titlePref, text: lines.join(\"\\n\"), actions };\n});\n",
+    "requiredPermissions": [
+      "materials.read"
+    ],
+    "optionalPermissions": [
+      "knowledge.create"
+    ],
+    "dataVersion": 1,
+    "contributions": [
+      {
+        "id": "manifest",
+        "label": "生成素材清单",
+        "kind": "command"
+      },
+      {
+        "id": "manifest-menu",
+        "label": "素材清单面板",
+        "kind": "menu"
+      },
+      {
+        "id": "settings",
+        "label": "清单设置",
+        "kind": "settings"
+      }
+    ]
+  }
+}

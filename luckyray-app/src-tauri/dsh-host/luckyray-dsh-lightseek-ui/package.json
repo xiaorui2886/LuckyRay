@@ -1,0 +1,26 @@
+{
+  "name": "@luckyray/dsh-lightseek-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "client.js",
+  "exports": {
+    ".": "./client.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-brand-official"
+      ],
+      "immediately": true
+    }
+  },
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,23 @@
+{
+  "contentVersion": 1,
+  "bundleRevision": "2026-09-21.1",
+  "capabilities": {
+    "materialPreview": true,
+ "lshRemoteSurface": true,
+    "noteRead": true,
+    "noteWrite": true,
+    "noteChanges": true,
+    "noteAttachments": true,
+    "materialFavorite": true,
+    "materialTags": true,
+    "materialFolders": true,
+    "materialBatch": true
+  },
+  "limits": {
+    "pageSize": 100,
+    "noteBytes": 4194304,
+    "attachmentBytes": 67108864,
+    "chunkBytes": 262144,
+    "batchAssets": 100
+  }
+}

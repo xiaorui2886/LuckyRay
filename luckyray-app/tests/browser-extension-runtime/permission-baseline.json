@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "establishedBy": "BROWSER-EXT S1 (Issue #13) — permission/origin/content-script baseline snapshot",
+  "note": "Explicit S1 baseline gate: any future change to the extension permission surface MUST update this file explicitly (visible in the PR diff) and go through the corresponding permission/threat-model review. The runtime fixture asserts chrome.runtime.getManifest() against this baseline, and the on-disk browser-extension-prototype/manifest.json against this baseline too — not runtime-vs-disk self-comparison.",
+  "extensionId": "kjibmbcoioanaejehhfopjhdpnbkodla",
+  "origin": "chrome-extension://kjibmbcoioanaejehhfopjhdpnbkodla",
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "nativeMessaging",
+    "notifications",
+    "offscreen",
+    "scripting",
+    "storage",
+    "tabCapture",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "http://127.0.0.1/*",
+    "https://*/*"
+  ],
+  "optional_permissions": [
+    "cookies"
+  ],
+  "optional_host_permissions": [
+    "https://*.bilibili.com/*",
+    "https://*.pinterest.com/*",
+    "https://*.twitter.com/*",
+    "https://*.x.com/*",
+    "https://b23.tv/*",
+    "https://youtu.be/*",
+    "https://*.youtube.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start",
+      "world": "MAIN",
+      "js": ["page-media-probe.js"]
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start",
+      "js": ["extension-protocol.js", "appearance.js", "article-extractor.js", "page-capture.js", "content-script.js"]
+    }
+  ]
+}

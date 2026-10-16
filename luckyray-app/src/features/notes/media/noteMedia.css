@@ -1,0 +1,184 @@
+/* One media surface for live editing and reading; ordinary file cards stay separate. */
+.note-media,
+.lr-live-asset-card.note-media {
+  --note-media-max-height: min(70vh, 760px);
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 8px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  box-sizing: border-box;
+  overflow: visible;
+}
+.note-media.inline,
+.lr-live-asset-card.note-media.inline { display: inline-block; vertical-align: bottom; }
+
+/* Media selection is an edge, never a tint over the original image. */
+.lr-live-asset-card.note-media.selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: 0 0 0 2px var(--accent);
+  pointer-events: none;
+}
+.lr-live-asset-card.note-media,
+.lr-live-asset-card.note-media * { user-select: none; }
+.note-media[data-kind="image"],
+.lr-live-asset-card.note-media[data-kind="image"] {
+  width: min(100%, var(--note-media-intrinsic-width, 100%));
+}
+.note-media[data-kind="video"],
+.lr-live-asset-card.note-media[data-kind="video"] {
+  width: min(100%, calc(var(--note-media-max-height) * var(--note-media-ratio, 1.777778)));
+}
+.note-media > .note-media-viewport,
+.lr-live-asset-card.note-media > .lr-live-asset-preview {
+  position: relative;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  aspect-ratio: auto;
+  border-radius: inherit;
+  background: transparent;
+  overflow: hidden;
+}
+.note-media .note-media-viewport > img,
+.note-media .note-media-viewport > video,
+.lr-live-asset-card.note-media > .lr-live-asset-preview > img,
+.lr-live-asset-card.note-media > .lr-live-asset-preview > video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: var(--note-media-height, none);
+  object-fit: contain;
+  border-radius: inherit;
+}
+.note-media[data-kind="video"] video { max-height: min(var(--note-media-height, 100vh), var(--note-media-max-height)); }
+.note-media [data-reserved-image="true"] > [role="status"] {
+  position: absolute;
+  inset: 0;
+}
+.note-media video:fullscreen { width: 100vw; height: 100vh; max-width: none; max-height: none; object-fit: contain; background: #000; }
+.note-media .note-media-viewport > img[data-media-error="true"],
+.lr-live-asset-card.note-media > .lr-live-asset-preview[data-image-state="error"] > img { display: none; }
+/* Loading placeholder: never a dark slab. When a previous decode measured
+   this source, the remembered aspect reserves the exact shape (so no layout
+   jump and no big black card); only a genuinely cold, unmeasured source falls
+   back to a bounded, low-prominence surface. Errors keep a stable surface so
+   the message stays readable. */
+.note-media[data-media-loading="true"] > .note-media-viewport,
+.note-media .lr-live-asset-preview[data-image-state="loading"],
+.note-media .lr-live-asset-preview[data-image-state="error"],
+.note-media .lr-live-asset-preview[data-video-state="loading"],
+.note-media .lr-live-asset-preview[data-video-state="error"] {
+  aspect-ratio: var(--note-media-ratio, auto);
+  min-height: min(180px, 30vh);
+  background: color-mix(in srgb, var(--bg-elevated) 45%, transparent);
+  border: 1px solid var(--border, rgba(128, 128, 128, .18));
+  border-radius: 6px;
+}
+/* A measured placeholder is already the right shape and only waits for the
+   decode; keep it minimal so the hot path shows no heavy chrome. */
+.note-media[data-media-loading="true"] > .note-media-viewport,
+.note-media .lr-live-asset-preview[data-geometry="known"][data-image-state="loading"],
+.note-media .lr-live-asset-preview[data-geometry="known"][data-video-state="loading"] {
+  min-height: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .note-media[data-media-loading="true"] > .note-media-viewport,
+  .note-media .lr-live-asset-preview[data-image-state="loading"],
+  .note-media .lr-live-asset-preview[data-video-state="loading"] {
+    transition: background-color 160ms ease;
+  }
+}
+.note-media-status { display: block; padding: 16px; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.note-media > .note-media-actions,
+.lr-live-asset-card.note-media > .lr-live-asset-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 6px;
+  background: rgba(20,22,28,.82);
+  opacity: 0;
+  pointer-events: none;
+  transform: none;
+}
+.lr-live-asset-card.note-media > .lr-live-asset-caption {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: min(80%, 360px);
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: rgba(20, 22, 28, .8);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.25;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.lr-live-asset-card.note-media > .lr-live-asset-caption > span,
+.lr-live-asset-card.note-media > .lr-live-asset-caption > small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-live-asset-card.note-media > .lr-live-asset-caption > small {
+  color: rgba(255, 255, 255, .68);
+  font-size: 10px;
+}
+.lr-live-asset-card.note-media:hover > .lr-live-asset-caption,
+.lr-live-asset-card.note-media.selected > .lr-live-asset-caption,
+.lr-live-asset-card.note-media:focus-within > .lr-live-asset-caption {
+  opacity: 1;
+}
+.note-media:hover > .note-media-actions,
+.note-media:focus-within > .note-media-actions,
+.lr-live-asset-card.note-media:hover > .lr-live-asset-actions,
+.lr-live-asset-card.note-media:focus-within > .lr-live-asset-actions { opacity: 1; pointer-events: auto; }
+.note-media-actions > button,
+.lr-live-asset-card.note-media .lr-live-asset-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  opacity: 1;
+  cursor: pointer;
+}
+.note-media-actions > button:hover,
+.lr-live-asset-card.note-media .lr-live-asset-action:hover { background: rgba(255,255,255,.16); }
+.note-media-actions > button:focus-visible,
+.lr-live-asset-card.note-media .lr-live-asset-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.note-media-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+@media (hover: none) {
+  .note-media > .note-media-actions,
+  .lr-live-asset-card.note-media > .lr-live-asset-actions { opacity: 1; pointer-events: auto; }
+}

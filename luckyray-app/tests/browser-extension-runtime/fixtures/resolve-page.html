@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>LuckyRay resolver fixture</title>
+  <style>
+    body { font: 14px sans-serif; margin: 8px; }
+    #rv-wrap video { width: 300px; height: 170px; display: block; }
+  </style>
+</head>
+<body>
+  <!-- M1-S4 FIX-1 P1-2 fixture: one blob player with a supported resolver
+       page anchor inside ITS OWN ancestor chain. The page contains no other
+       video, so the anchor cannot leak into another session: only the
+       site-resolver item is savable -> needs-resolve. -->
+  <div id="rv-wrap">
+    <video id="rv-video" width="300" height="170" controls></video>
+    <a id="rv-link" href="https://www.youtube.com/watch?v=abcdefghij">视频来源页</a>
+  </div>
+  <script>
+    "use strict";
+    try {
+      const mediaSource = new MediaSource();
+      document.getElementById("rv-video").src = URL.createObjectURL(mediaSource);
+    } catch (_) {}
+    window.__lrResolvePage = true;
+  </script>
+</body>
+</html>
