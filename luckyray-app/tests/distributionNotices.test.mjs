@@ -33,6 +33,18 @@ test('SeaHash notice is original same-version license-only omission correction',
   assert.equal(hash(await readFile(new URL('LICENSE',base))),proof.licenseSha256);
   assert.match(await readFile(new URL('Cargo.toml',base),'utf8'),/^version\s*=\s*"4\.1\.0"/m);
 });
+test('frozen notice-label clarification preserves the actual independently granted MIT alternative',async()=>{
+  const base=new URL('deno-2.9.4/',root);
+  const index=JSON.parse(await readFile(new URL('INDEX.json',base),'utf8'));
+  const entry=index.packages.find(p=>p.name==='wasmparser'&&p.version==='0.244.0');
+  assert.equal(entry.license,'Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT');
+  assert.ok(entry.notices.some(p=>p.url==='https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/MIT.txt'));
+  const attribution=entry.notices.find(p=>p.path==='original-attributions.json');assert.ok(attribution);
+  const original=JSON.parse(await readFile(new URL(`bodies/${attribution.sha256}.txt`,base),'utf8'));
+  assert.equal(original.declaredLicense,entry.license);
+  const clarification=await readFile(new URL('../../docs/development/license-index-clarification.md',import.meta.url),'utf8');
+  assert.match(clarification,/actual alternative selected for distribution is\n\*\*MIT\*\*/);
+});
 test('formal resources include notices while projection is wired before the original authority gates',async()=>{
   const config=JSON.parse(await readFile(new URL('../src-tauri/tauri.conf.json',import.meta.url),'utf8'));
   assert.equal(config.bundle.resources['../third-party-notices/'],'third-party-notices/');

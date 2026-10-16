@@ -45,6 +45,12 @@ Third-party terms remain unchanged. Existing media/runtime corresponding-source
 materials remain required where applicable. This supplement does not relabel
 FFmpeg's GPL scope, MPL components or other third-party code as LuckyRay MIT.
 
+An informational index-label clarification for wasmparser0.244.0 is supplied
+with both frozen candidates: [actual independent MIT alternative](license-index-clarification.md).
+Its original grant and full MIT text were already present; the conservatively
+included LLVM exception is not an extra condition on that MIT alternative.
+Frozen installers and original notices are not edited in place.
+
 ## Focused checks
 
 ```powershell

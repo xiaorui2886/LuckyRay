@@ -17,3 +17,8 @@ test('real Windows PowerShell5 parser sees the exact approved Chinese-space dire
   const result=JSON.parse(execFileSync(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8',windowsHide:true}));
   assert.equal(result.nativeMajor,5);assert.equal(result.exactPath,true);assert.equal(result.helperExecuted,false);
 });
+test('real native process and TCP observation commands load before any trust/install action', {skip:process.platform!=='win32'},()=>{
+  const script="$ErrorActionPreference='Stop';$self=Get-CimInstance Win32_Process -Filter \"ProcessId=$PID\";if($self.ProcessId -ne $PID){throw 'native-process-observation-unavailable'};$command=Get-Command Get-NetTCPConnection -ErrorAction Stop;@{nativeMajor=$PSVersionTable.PSVersion.Major;ownProcessObserved=$true;tcpCommand=$command.Name;systemChanges=$false}|ConvertTo-Json -Compress";
+  const result=JSON.parse(execFileSync(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8',windowsHide:true}));
+  assert.equal(result.nativeMajor,5);assert.equal(result.ownProcessObserved,true);assert.equal(result.tcpCommand,'Get-NetTCPConnection');assert.equal(result.systemChanges,false);
+});
