@@ -1,0 +1,36 @@
+name: Update authority regression
+on:
+  push:
+    branches: [fix/ray-lsh-update-authority-20261016]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  remote-authority-policy:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Reproduce former guard failure, then verify exact production policy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $source='luckyray-app/src-tauri/src/dsh_update_remote_policy.rs'
+          $old=Join-Path $env:RUNNER_TEMP 'old-remote-gate.rs'
+          $text=Get-Content -LiteralPath $source -Raw
+          $fixed='!origin_configured && (!carrier_bound || authority_sync_acknowledged)'
+          if (-not $text.Contains($fixed)) { throw 'exact-policy-anchor-missing' }
+          [IO.File]::WriteAllText($old,$text.Replace($fixed,'!authority_sync_acknowledged'))
+          rustc --edition=2021 --test --crate-name old_remote_gate $old -o "$env:RUNNER_TEMP/old-remote-gate.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'old-policy-test-build-failed' }
+          & "$env:RUNNER_TEMP/old-remote-gate.exe" --exact tests::acknowledged_clear_is_not_an_active_remote_origin
+          if ($LASTEXITCODE -eq 0) { throw 'old-bug-not-reproduced' }
+          rustc --edition=2021 --test --crate-name fixed_remote_gate $source -o "$env:RUNNER_TEMP/fixed-remote-gate.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'fixed-policy-test-build-failed' }
+          & "$env:RUNNER_TEMP/fixed-remote-gate.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'fixed-policy-regression-failed' }
+          node --test luckyray-app/tests/dshDesktopUpdateLifecycle.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'existing-save-stop-lifecycle-regression' }
+# No installed package, CA, grants, secret access, or installer rebuild.

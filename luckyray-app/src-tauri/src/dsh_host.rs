@@ -1,3 +1,6 @@
+#[path = "dsh_update_remote_policy.rs"]
+mod update_remote_policy;
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
@@ -2193,7 +2196,11 @@ impl DshHostService {
         let _admission = self.start_admission.lock().unwrap();
         if self.shutting_down.load(Ordering::Acquire)
             || !self.last_teardown_settled.load(Ordering::Acquire)
-            || self.remote_authority_active.load(Ordering::Acquire) {
+            || !update_remote_policy::permits_update_reservation(
+                self.desired_remote_authority.lock().unwrap().is_some(),
+                self.surface_binding_generation.load(Ordering::Acquire) != 0,
+                self.remote_authority_active.load(Ordering::Acquire),
+            ) {
             return Err("update-lsh-not-quiescent");
         }
         let generation = self.generation.load(Ordering::Acquire);
@@ -2450,9 +2457,16 @@ impl DshHostService {
             },
         };
         self.surface_port.store(bootstrap.port, Ordering::Release);
-        let remote_pushed = self.push_remote_authority_locked(bootstrap.carrier_generation);
-        self.remote_authority_active
-            .store(remote_pushed, Ordering::Release);
+        {
+            // Publish the ACK against the same desired authority that was sent.
+            // Otherwise a stale open ACK can overwrite a later failed clear.
+            let _admission = self.start_admission.lock().unwrap();
+            if self.shutting_down.load(Ordering::Acquire) {
+                return Err("dsh-host-shutting-down".to_owned());
+            }
+            let remote_pushed = self.push_remote_authority_locked(bootstrap.carrier_generation);
+            self.remote_authority_active.store(remote_pushed, Ordering::Release);
+        }
         *self.surface_lease.lock().unwrap() = Some(lease);
         *self.surface_status.lock().unwrap() = status.clone();
         Ok((status, bootstrap))
@@ -2503,6 +2517,10 @@ impl DshHostService {
         host: Option<String>,
         gateway_generation: u64,
     ) -> Result<(), String> {
+        // Serialize changing the desired authority with update admission. A
+        // setter which passed an earlier external check cannot advertise a new
+        // origin after the update reserved an acknowledged, cleared carrier.
+        let _admission = self.start_admission.lock().unwrap();
         if self.shutting_down.load(Ordering::Acquire) {
             return Err("dsh-host-shutting-down".to_owned());
         }
@@ -2569,6 +2587,7 @@ impl DshHostService {
         device_id: &str,
         gateway_generation: u64,
     ) -> Result<DshRemoteSessionBootstrap, String> {
+        let _admission = self.start_admission.lock().unwrap();
         if self.shutting_down.load(Ordering::Acquire) {
             return Err("dsh-host-shutting-down".to_owned());
         }
@@ -2624,6 +2643,13 @@ impl DshHostService {
     /// which clears every carrier-side session/ref, or disable the relay until
     /// a later successful authority push clears them.
     pub(crate) fn drop_remote_sessions(&self, device_id: &str) -> Result<(), String> {
+        // A late single-device ACK must not overwrite a newer failed clear
+        // and falsely authorize a desktop update. Keep the entire revoke/rekey
+        // operation in the same ordering as authority setters and reservations.
+        let _admission = self.start_admission.lock().unwrap();
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err("dsh-host-shutting-down".to_owned());
+        }
         if !self.remote_surface_available() {
             return Ok(());
         }
@@ -3907,6 +3933,24 @@ pub(crate) mod tests {
         drop(retry);
         assert!(service.shutting_down.load(Ordering::Acquire), "real shutdown must not reopen admission");
         assert!(service.reserve_desktop_update_restart().is_err());
+    }
+
+    #[test]
+    fn desktop_update_reservation_distinguishes_clear_ack_from_configured_origin() {
+        let service = DshHostService::new(None, true);
+        service.publish(DshHostStage::BundledVerified, 0, None);
+        service.remote_authority_active.store(true, Ordering::Release);
+        let reservation = service.reserve_desktop_update_restart()
+            .expect("a successful clear ACK is not an active remote origin");
+        assert!(service.set_remote_surface_authority(Some("phone.example:443".into()), 1).is_err(),
+            "authority cannot be added after update admission");
+        drop(reservation);
+        *service.desired_remote_authority.lock().unwrap() = Some("phone.example:443".into());
+        for ack in [false, true] {
+            service.remote_authority_active.store(ack, Ordering::Release);
+            assert!(service.reserve_desktop_update_restart().is_err(),
+                "configured origins remain blocked even if synchronization failed");
+        }
     }
 
     #[test]
