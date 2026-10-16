@@ -50,6 +50,9 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 
 Tauri checks its declared resource paths even during `cargo check`, so run the
 two real staging commands above first; do not create empty resource directories.
+Keep `luckyray-app/.gitattributes`: sealed LSH metadata/notice files require LF.
+Windows `autocrlf` must not rewrite them. `tests/publicBuildInputs.test.mjs`
+checks this cheaply before assembling the runtime; the verification itself stays strict.
 The existing before-build entry also downloads public fixed-hash inputs, verifies the
 LSH closure, stages media, builds four owned sidecars and matching identity receipts,
 builds the frontend and runs readiness gates. Do not copy another build's receipts

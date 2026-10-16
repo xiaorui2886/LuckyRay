@@ -1,0 +1,9 @@
+dsh-host/.npmrc text eol=lf
+dsh-host/package.json text eol=lf
+dsh-host/pnpm-lock.yaml text eol=lf
+dsh-host/pnpm-workspace.yaml text eol=lf
+dsh-host/runtime-authority.json text eol=lf
+dsh-host/records/dependency-audit.json text eol=lf
+dsh-host/records/launch-manifest.json text eol=lf
+dsh-host/records/runtime-manifest.json text eol=lf
+dsh-host/records/THIRD-PARTY-NOTICES.txt text eol=lf

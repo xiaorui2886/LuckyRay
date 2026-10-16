@@ -33,7 +33,7 @@ jobs:
           pnpm exec tsc --noEmit
           pnpm build
       - name: Bounded signed-update and lifecycle behavior tests
-        run: node --test tests/desktopUpdateInstall.test.mjs tests/desktopUpdateManifest.test.mjs tests/dshDesktopUpdateLifecycle.test.mjs
+        run: node --test tests/publicBuildInputs.test.mjs tests/desktopUpdateInstall.test.mjs tests/desktopUpdateManifest.test.mjs tests/dshDesktopUpdateLifecycle.test.mjs
       - name: Public source boundaries
         working-directory: .
         run: node scripts/check-public-source.mjs
@@ -62,12 +62,18 @@ jobs:
           rustup toolchain install 1.95.0 --profile minimal
           rustup override set 1.95.0
           pnpm install --frozen-lockfile
-      - name: Full native library check with preload feature
+      - name: Check sealed Git checkout inputs before runtime assembly
+        run: node --test tests/publicBuildInputs.test.mjs
+      - name: Stage exact public media inputs
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-media-engine.ps1
           if ($LASTEXITCODE -ne 0) { throw 'public-media-input-staging-failed' }
+      - name: Stage and verify exact public LSH inputs
+        run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-dsh-package-runtime.ps1
           if ($LASTEXITCODE -ne 0) { throw 'public-lsh-input-staging-failed' }
+      - name: Full native library check with preload feature
+        run: |
           cargo check --locked --manifest-path src-tauri/Cargo.toml --lib --no-default-features --features browser-host-runtime,lsh-background-surface-preload
       - name: Public-reference trust parser and existing updater policy
         run: cargo test --locked --manifest-path tests/desktop-updater-native/Cargo.toml --lib
