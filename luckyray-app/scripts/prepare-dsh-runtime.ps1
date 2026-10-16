@@ -175,7 +175,14 @@ function Invoke-DshStageAuthorityGates {
   $verified = Invoke-AppOwnedNode -NodeExe $TrustedNodeExe -WorkingDirectory $repoRoot -PolicyRoot (Join-Path $PolicyRoot 'stage') -Arguments @(
     $supplyChainScript, $verifyCommand, '--authority', $authorityPath, '--records', $recordsDirectory, '--stage', $StageRoot
   )
-  if ($verified.ExitCode -ne 0) { throw 'dsh-stage-verification-failed' }
+  if ($verified.ExitCode -ne 0) {
+    # Log only an enumerated supply-chain code, never child output/credentials.
+    # Keep the existing fail-closed result and all verification assertions.
+    if ([string]$verified.StdErr -match '\b(dsh-[a-z0-9-]+)\b') {
+      Write-Warning ("dsh-stage-gate: " + $Matches[1])
+    }
+    throw 'dsh-stage-verification-failed'
+  }
   $native = Invoke-AppOwnedNode -NodeExe $TrustedNodeExe -WorkingDirectory $repoRoot -PolicyRoot (Join-Path $PolicyRoot 'native') -Arguments @(
     $supplyChainScript, 'native-probe', '--stage', $StageRoot
   )

@@ -7,10 +7,15 @@ the website are unchanged. See [updater validation](updater-validation.md).
 ## Layout and basic checks
 
 `luckyray-app/src` contains React/TypeScript, `src-tauri` the Rust/Tauri host,
-`browser-extension-prototype` Collector 1.9.6, and `packages` the optional MCP
+`browser-extension-prototype` the Collector snapshot, and `packages` the optional MCP
 connection code. `dsh-host` records the frozen public runtime inputs. `sdk/` is the
 existing public SDK. Native independent windows and the old standalone workspace
 experience remain withdrawn; do not reconnect historical internal entry points.
+
+The frozen desktop source's Collector manifest is 1.9.5. Comparing all 61 source
+files against the separately published Collector 1.9.6 ZIP shows only manifest
+version/name differences after CRLF normalization. No extension ZIP is replaced
+or new extension version claimed by this source export.
 
 Use Node.js **24.14.1** and pnpm **11.3.0**. From the repository root:
 
@@ -37,8 +42,8 @@ NSIS rejects resource source paths longer than 259 characters.
 ```powershell
 cd luckyray-app
 pnpm install --frozen-lockfile
-& .\scripts\prepare-media-engine.ps1
-& .\scripts\prepare-dsh-package-runtime.ps1
+& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\scripts\prepare-media-engine.ps1
+& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\scripts\prepare-dsh-package-runtime.ps1
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 & .\scripts\build-nsis.ps1 -LshBackgroundPreload
 ```
