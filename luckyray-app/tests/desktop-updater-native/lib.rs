@@ -37,3 +37,6 @@ mod store;
 
 #[path="../../src-tauri/src/desktop_app_update/feed.rs"]
 mod feed;
+
+#[path="../../src-tauri/src/dsh_update_remote_policy.rs"]
+mod dsh_update_remote_policy;

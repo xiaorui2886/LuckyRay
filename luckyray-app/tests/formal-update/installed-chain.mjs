@@ -9,6 +9,7 @@ import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {Transform} from 'node:stream';
+import {within,lineCollector} from './observation.mjs';
 
 if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_OS!=='Windows'||process.env.GITHUB_REPOSITORY!=='xiaorui2886/LuckyRay')throw Error('disposable-public-runner-only');
 const run=promisify(execFile), root='D:\\lr-formal-uat';
@@ -30,7 +31,7 @@ const requireCdpOwner=async expectedPid=>{
   await event('actual_cdp_owner',{expectedAppPid:expectedPid,...owner});
 };
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-const wait=async(label,fn,ms=90000)=>{const end=Date.now()+ms;while(Date.now()<end){const result=await fn();if(result)return result;await delay(300);}throw Error(label+' timed out');};
+const wait=async(label,fn,ms=90000)=>{const end=Date.now()+ms;while(Date.now()<end){const result=await within(label,fn,Math.max(1,end-Date.now()));if(result)return result;await delay(300);}throw Error(label+' timed out');};
 const B=resolve(process.env.B_INSTALLER);
 assert.equal(hash(await readFile(B)),spec.b.sha256);
 const mcpCatalog=JSON.parse(await readFile('src-tauri/community-mcp/catalog.json','utf8'));
@@ -77,9 +78,30 @@ const A=spawn(join(paths.install,'luckyray-app.exe'),[],{cwd:paths.install,windo
 let Startup=null,StartupExit=null;
 A.stdout.resume(); // Drain without logging; never let an unconsumed pipe block normal exit.
 const native=[];
-A.stderr.setEncoding('utf8');A.stderr.on('data',chunk=>{
-  for(const line of chunk.split(/\r?\n/))if(/^\[(dsh-update-exit|workspace)\]/.test(line)&&!/(token|key|credential|secret)/i.test(line))native.push({atUtc:new Date().toISOString(),line});
+const nativeLines=lineCollector(line=>{
+  if(/^\[(dsh-update-exit|workspace)\]/.test(line)&&!/(token|key|credential|secret)/i.test(line))native.push({receivedAtUtc:new Date().toISOString(),line});
 });
+A.stderr.setEncoding('utf8');A.stderr.on('data',chunk=>nativeLines.write(chunk));
+const stderrEnded=new Promise(resolve=>A.stderr.once('end',()=>{nativeLines.end();resolve();}));
+let installerObserver=null;
+const startInstallerObserver=async expectedLanguage=>{
+  const readyFile=join(root,'private/installer-observer.ready');
+  const cancelFile=join(root,'private/installer-observer.cancel');
+  const execution=run(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),[
+    '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(process.cwd(),'tests/formal-update/Observe-PassiveInstaller.ps1'),
+    '-ReadyFile',readyFile,'-CancelFile',cancelFile,'-ExpectedSha256',spec.b.sha256,
+    '-AllowedCache',join(paths.local,'com.luckyray.desktop/signed-desktop-update-v1'),
+    '-InstallRoot',paths.install,'-ExpectedLanguage',expectedLanguage,
+  ],{windowsHide:true,maxBuffer:131072});
+  const done=execution.then(result=>({result}),error=>({error}));
+  let settled=null;void done.then(value=>{settled=value;});
+  installerObserver={done,cancelFile,child:execution.child};
+  await wait('installer observer armed before trigger',async()=>{
+    if(settled)throw Error('installer observer exited before trigger: '+(settled.error?.message??'unexpected exit'));
+    return existsSync(readyFile)&&(await readFile(readyFile,'utf8'))==='READY';
+  },20000);
+  await event('installer_observer_ready',{beforeTrigger:true});
+};
 let AExit;
 A.on('exit',(code,signal)=>{AExit={atUtc:new Date().toISOString(),code,signal};void event('A_process_exit',AExit);});
 const connect=async()=>{
@@ -90,7 +112,7 @@ const connect=async()=>{
   return {browser,page};
 };
 let browser,page,stage='A_start';
-const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI__.core.invoke(command,args),{command,args});
+const invoke=(command,args={})=>within('invoke '+command,()=>page.evaluate(({command,args})=>window.__TAURI__.core.invoke(command,args),{command,args}),command==='community_mcp_action'&&args.input?.action==='install'?180000:15000);
 const observeLsh=async step=>{
   // Supported read-only lifecycle projections, not a manufactured idle ACK.
   const host=await invoke('dsh_host_status');
@@ -98,10 +120,10 @@ const observeLsh=async step=>{
   await event('actual_lsh_states',{step,host,surface});
   return {host,surface};
 };
-const snapshot=async name=>{
+const snapshot=async name=>within('snapshot '+name,async()=>{
   await writeFile(join(evidence,name+'.dom.txt'),await page.locator('body').innerText());
-  await page.screenshot({path:join(evidence,name+'.png'),fullPage:true});
-};
+  await page.screenshot({path:join(evidence,name+'.png'),fullPage:true,timeout:10000});
+},15000);
 const route=async name=>{await page.evaluate(name=>{location.hash='#'+name;},name);};
 const settings=async()=>{
   await route('settings');
@@ -203,6 +225,7 @@ try{
     }catch(error){ackObserverError=error.message;}finally{await diagnostics.send('Debugger.resume').catch(()=>{});}
   });
   await diagnostics.send('Debugger.setBreakpointOnFunctionCall',{objectId:target.result.objectId,condition:'arguments[0] === "workspace_window_command" && arguments[1]?.request?.op === "quitAck"'});
+  if(updateMode==='immediate')await startInstallerObserver(installerLanguage);
   stage='A_dirty_note';await route('notes');
   const title=page.getByText(/^FormalUpgradeSynthetic(?:\.md)?$/);await title.first().waitFor();await title.first().dblclick();
   const editor=page.locator('.cm-content[contenteditable="true"]:visible').first();await editor.waitFor();
@@ -253,9 +276,12 @@ try{
     }
     return false;
   },120000);assert.equal(AExit.code,0);assert.equal(AExit.signal,null);
+  await within('A stderr drained after exit',()=>stderrEnded,10000);
   assert.equal(ackObserverError,null);
   assert.ok(trace.some(row=>row.kind==='actual_frontend_quit_ack'&&row.saved===true&&row.atUtc<=AExit.atUtc));
-  assert.ok(native.some(row=>/lsh official saved=true stopped=true .*exit=0/.test(row.line)&&row.atUtc<=AExit.atUtc),'this same A run must receive real LSH saved/disposed/exit0 confirmation before app exit');
+  // These complete lines come from this A process's stderr, drained to EOF.
+  // Receipt time may lag process exit; it is not a product timestamp.
+  assert.ok(native.some(row=>/lsh official saved=true stopped=true .*exit=0/.test(row.line)),'this same A run must receive real LSH saved/disposed/exit0 confirmation before app exit');
   assert.equal(await readFile(notePath,'utf8'),expected);
   assert.ok((await stat(notePath)).mtimeMs<=Date.parse(AExit.atUtc));
   await event('disk_at_A_normal_exit',{completeTextEqual:true,bytes:Buffer.byteLength(expected),sha256:hash(expected)});
@@ -265,6 +291,7 @@ try{
     assert.equal(hash(await readFile(join(paths.install,'luckyray-app.exe'))),spec.a.installedExeSha256);
     // Only this separate scheduled scenario starts A again, as its UI promises.
     // B must still be reopened by the verified installer, never by the observer.
+    await startInstallerObserver(installerLanguage);
     Startup=spawn(join(paths.install,'luckyray-app.exe'),[],{cwd:paths.install,windowsHide:false,env:installedEnvironment});
     Startup.stdout.resume();Startup.stderr.resume();
     Startup.on('exit',(code,signal)=>{StartupExit={atUtc:new Date().toISOString(),code,signal};void event('scheduled_A_startup_handoff_exit',StartupExit);});
@@ -279,12 +306,14 @@ try{
     const value=JSON.parse(stdout||'[]');return Array.isArray(value)?value:[value];
   };
   const installerParentPid=Startup?.pid??A.pid;
-  const installer=await wait('actual verified installer child',async()=>(await getProcesses()).find(p=>p.ppid===installerParentPid&&p.exe?.toLowerCase().endsWith('luckyray-update.exe')));
-  const allowedCache=join(paths.local,'com.luckyray.desktop/signed-desktop-update-v1');
-  await event('installer_child',{...installer,sha256:hash(await readFile(installer.exe))});
-  assert.equal(hash(await readFile(installer.exe)),spec.b.sha256);
-  const confirmed=await run(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(process.cwd(),'tests/formal-update/Observe-PassiveInstaller.ps1'),'-InstallerPid',String(installer.pid),'-ExpectedSha256',spec.b.sha256,'-AllowedCache',allowedCache,'-InstallRoot',paths.install,'-ExpectedLanguage',installerLanguage],{windowsHide:true,timeout:240000,maxBuffer:131072});
-  const installerResult=JSON.parse(confirmed.stdout);assert.equal(installerResult.installerExitCode,0);
+  const observed=await within('passive installer observation',()=>installerObserver.done,210000);
+  if(observed.error)throw observed.error;
+  const installerResult=JSON.parse(observed.result.stdout);
+  assert.equal(installerResult.installerExitCode,0);
+  assert.equal(installerResult.parentPid,installerParentPid,'installer must be the actual triggering process child');
+  assert.equal(installerResult.installerSha256,spec.b.sha256);
+  assert.equal(installerResult.observerArmedBeforeTrigger,true);
+  const installer={pid:installerResult.installerPid};
   await event('installer_completed',installerResult);
   const BProcess=await wait('installer-owned automatic B reopen',async()=>(await getProcesses()).find(p=>p.exe?.toLowerCase()===join(paths.install,'luckyray-app.exe').toLowerCase()&&p.pid!==A.pid),120000);
   assert.equal(BProcess.ppid,installer.pid,'no manual launch may substitute for installer-owned reopen');
@@ -314,14 +343,27 @@ try{
   await writeFile(join(evidence,'RESULT.json'),JSON.stringify(final,null,2)+'\n');
   console.log(JSON.stringify({status:final.status,fullTextEqualAfterRestart:true,noManualBLaunch:true}));
 }catch(error){
+  // Persist the primary failure before optional diagnostics, which can hang
+  // when a renderer has gone away. Keep time for trust cleanup and upload.
+  const failure={status:'FAIL_OR_BLOCKED',stage,error:error.message,trace,productionDataTouched:false,noForcedApplicationTermination:true};
+  await writeFile(join(evidence,'RESULT.json'),JSON.stringify(failure,null,2)+'\n');
   await event('stopped',{stage,error:error.message});
-  try{if(page&&!page.isClosed())await observeLsh('stopped-'+stage);}catch{}
+  try{if(page&&!page.isClosed())await within('bounded stop diagnostics',()=>observeLsh('stopped-'+stage),12000);}catch{}
   try{if(page&&!page.isClosed())await snapshot('STOP-'+stage);}catch{}
-  await writeFile(join(evidence,'RESULT.json'),JSON.stringify({status:'FAIL_OR_BLOCKED',stage,error:error.message,trace,productionDataTouched:false,noForcedTermination:true},null,2)+'\n');
   process.exitCode=1;
 }finally{
   await writeFile(join(evidence,'native-quit-lines.json'),JSON.stringify(native,null,2)+'\n');
-  if(browser)await browser.close().catch(()=>{}); // CDP disconnect only; do not close/kill apps.
+  if(installerObserver){
+    await writeFile(installerObserver.cancelFile,'CANCEL OBSERVER ONLY');
+    try{await within('observer graceful stop',()=>installerObserver.done,15000);}
+    catch{
+      // This is only the read-only helper we spawned, never A, B, or NSIS.
+      installerObserver.child.kill();
+      installerObserver.child.stdout?.destroy();installerObserver.child.stderr?.destroy();installerObserver.child.unref();
+      await event('test_observer_only_terminated',{pid:installerObserver.child.pid,applicationProcessesUntouched:true});
+    }
+  }
+  if(browser)await within('CDP disconnect',()=>browser.close(),5000).catch(()=>{}); // CDP disconnect only; do not close/kill apps.
   A.stdout.unref?.();A.stderr.unref?.();A.unref();
   if(Startup){Startup.stdout.unref?.();Startup.stderr.unref?.();Startup.unref();}
   // Only this test's exact GitHub replay tunnels; never terminate app processes
