@@ -1,0 +1,44 @@
+[package]
+name = "fqdn"
+version = "0.5.2"
+authors = ["Xophe <christophe.dousson@orange.com>"]
+edition = "2021"
+license = "MIT"
+description = "FQDN (Fully Qualified Domain Name)"
+repository = "https://github.com/Orange-OpenSource/fqdn"
+documentation = "https://docs.rs/fqdn"
+keywords = ["fqdn","dns"]
+categories = ["data-structures"]
+
+[dependencies]
+# Activate punycode conversion (RFC3492 Punycode).
+punycode = { version = "0.4.1", optional = true }
+# Activate (de)serialization mechanism
+serde = { version = "1.0.219", features = ["std"], optional = true }
+
+[dev-dependencies]
+serde_json = "1.0.143"
+postcard = { version = "1.1.3", features = [ "use-std" ] }
+serde = { version = "1.0.219", features = ["derive"] }
+
+
+[features]
+# Activate all the features to conform to all RFC
+# RFC1035 accepts only digits, letters and '-' in FQDN, labels are 1 to 63 chars long,
+#         max length of FQDN including null label is 255 chars (i.e. 253 visible chars)
+# RFC952: labels cannot start or end with hyphens
+# RFC1123: labels can start with numbers (so there is no limitation about digit positions)
+strict-rfc = [
+    "domain-label-length-limited-to-63",
+    "domain-name-length-limited-to-255",
+    "domain-name-without-special-chars",
+    "domain-name-should-have-trailing-dot",
+    "domain-label-cannot-start-or-end-with-hyphen"
+]
+
+domain-name-length-limited-to-255 = []
+domain-label-length-limited-to-63 = []
+domain-name-without-special-chars = []
+domain-name-should-have-trailing-dot = []
+domain-label-cannot-start-or-end-with-hyphen = []
+

@@ -1452,7 +1452,7 @@ mod tests {
         assert_eq!(fs::read(scratch.path().join("synthetic-profile-sentinel")).unwrap(), b"new-profile-not-a-user-profile");
         assert_eq!(fs::read_dir(scratch.path().join("dsh-engine-updates/versions")).unwrap().count(), 1);
         let record = serde_json::json!({ "outcome": "NATIVE_OFFICIAL_ASSEMBLY_RETRY_REOPEN",
-            "root": prepared.root, "files": 25659, "elapsedMs": started.elapsed().as_millis(),
+            "root": prepared.root, "files": 25658, "elapsedMs": started.elapsed().as_millis(),
             "closureSha256": closure, "artifactSha256": admitted.candidate.artifact_sha256,
             "activated": false, "profileUntouched": true, "trust": "test-key-not-production" });
         fs::write(scratch.path().join("native-assembly-result.json"), serde_json::to_vec_pretty(&record).unwrap()).unwrap();

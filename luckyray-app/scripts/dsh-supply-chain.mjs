@@ -99,8 +99,8 @@ const EXPECTED_AUTHORITY = Object.freeze({
     sha256: "27879348455b15729c05aa9491710a7a4cbd252130a5137a6be809a4df2cb25b",
     packageCount: 591,
     stagedPackageCount: 516,
-    installedAuditSha256: "ba561d892c9037cb9a13572f92bdd36225659cc7dea377f7ef6a71aa45a59d13",
-    resolverGraphSha256: "f5ef1096cd3dc88f73c6fe7d01105b47f09b51488e41c340db6aa19821b3830e",
+    installedAuditSha256: "1101b53e0a4713f031247e6110e9e11c76375e17d6b2751aafcc411847c940e3",
+    resolverGraphSha256: "26b7346fa62a3ffde6364b957e2044d6d8cad5d0b8c5092e238f88cc430629fa",
     lockReconciliationSha256: "a36fbceae4aac3ff17f1f84d89e93d27b3a87c754ca58c85fff46013f030b503",
     releaseLayout: {
       schemaVersion: 1,
@@ -110,8 +110,8 @@ const EXPECTED_AUTHORITY = Object.freeze({
       resolverGraphEdgeCount: 0,
       maxNodeModulesRelativePathLength: 157,
       maxRelativePathLength: 175,
-      fileCount: 25659,
-      contentSha256: "1ddf49eb2c09ede017bf97f908d05e702a484221ee37e4822fb554db34f5bbbe",
+      fileCount: 25658,
+      contentSha256: "35e43f0fc3b627e74a5b53b14e19dc18f4e2e8c48ffa0e030df0b96eb1a5f98b",
       normalizedShimCount: 13,
       fixedEntryPoint: "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
       reparsePoints: 0,
@@ -745,6 +745,40 @@ async function packageRootsForLayout(nodeModulesRoot) {
   return portablePackageRoots(nodeModulesRoot);
 }
 
+// Upstream coverage-service configuration is development-only, not runtime input.
+// Pin the exact upstream bytes: never classify/probe its value or remove a new file
+// just because its name happens to match. Both layouts use this same projection.
+export async function projectDshDistributionMetadata({ nodeModulesRoot }) {
+  const canonicalRoot = await realpath(nodeModulesRoot);
+  const removals = [];
+  for (const packageRoot of await packageRootsForLayout(nodeModulesRoot)) {
+    const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+    if (manifest.name !== "debug" || manifest.version !== "2.6.9") continue;
+    const target = join(packageRoot, ".coveralls.yml");
+    let metadata;
+    try {
+      metadata = await lstat(target, { bigint: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1n
+      || !(await realpath(target)).startsWith(`${canonicalRoot}${sep}`)) {
+      throw new DshSupplyChainError("dsh-distribution-metadata-path-invalid");
+    }
+    const digest = sha256(await readFile(target));
+    if (digest !== "64e6b64f19837a76c30865579aabdde1a825729ae0204ba73ba6de77296ce18e") {
+      throw new DshSupplyChainError("dsh-distribution-metadata-hash-invalid");
+    }
+    removals.push({ target, name: manifest.name, version: manifest.version,
+      path: portablePath(relative(nodeModulesRoot, target)), sha256: digest });
+  }
+  // Validate the complete plan before mutating even this disposable build stage.
+  for (const removal of removals) await unlink(removal.target);
+  return Object.freeze({ schemaVersion: 1,
+    removed: removals.map(({ target: _target, ...receipt }) => receipt) });
+}
+
 async function collectPortableTree(root, current, result) {
   for (const entry of await readdir(current, { withFileTypes: true })) {
     const absolute = join(current, entry.name);
@@ -827,6 +861,7 @@ export async function projectPortableDshReleaseLayout({ stageRoot, expectedShimC
     await writeFile(absolute, normalized);
     normalizedShims.push(`host/node_modules/.bin/${entry.name}`);
   }
+  await projectDshDistributionMetadata({ nodeModulesRoot });
   for (const path of metadataFiles) await rm(join(nodeModulesRoot, path));
   await rm(pnpmRoot, { recursive: true });
   return Object.freeze({
@@ -1648,6 +1683,13 @@ async function runCli() {
     const result = await projectPortableDshReleaseLayout({
       stageRoot: option("--stage"),
       expectedShimCount: EXPECTED_AUTHORITY.dependencyClosure.releaseLayout.normalizedShimCount,
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  if (command === "project-distribution-metadata") {
+    const result = await projectDshDistributionMetadata({
+      nodeModulesRoot: join(option("--stage"), "host", "node_modules"),
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;

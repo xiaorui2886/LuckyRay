@@ -1,0 +1,89 @@
+{
+  "name": "swc_common",
+  "version": "17.0.1",
+  "declaredLicense": "Apache-2.0",
+  "authors": [
+    "강동윤 <kdy1997.dev@gmail.com>"
+  ],
+  "repository": "https://github.com/swc-project/swc.git",
+  "originalPublishedSourceNotices": [
+    {
+      "path": "src/errors/diagnostic.rs",
+      "lines": [
+        "// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/errors/diagnostic_builder.rs",
+      "lines": [
+        "// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/errors/emitter.rs",
+      "lines": [
+        "// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/errors/lock.rs",
+      "lines": [
+        "// Copyright 2016 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/errors/mod.rs",
+      "lines": [
+        "// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/errors/snippet.rs",
+      "lines": [
+        "// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/errors/styled_buffer.rs",
+      "lines": [
+        "// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/source_map.rs",
+      "lines": [
+        "// Copyright 2012 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/sync.rs",
+      "lines": [
+        "// Copyright 2017 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/syntax_pos/analyze_source_file.rs",
+      "lines": [
+        "// Copyright 2018 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    },
+    {
+      "path": "src/syntax_pos/hygiene.rs",
+      "lines": [
+        "// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT",
+        "// http://rust-lang.org/COPYRIGHT."
+      ]
+    }
+  ],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

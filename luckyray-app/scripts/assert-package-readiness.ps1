@@ -42,6 +42,7 @@ $expectedResources = [ordered]@{
   'dsh/' = 'deepseek-harness/'
   'dsh-host/' = 'dsh-host/'
   'media-engine/' = 'media-engine/'
+  '../third-party-notices/' = 'third-party-notices/'
 }
 $resourceProperties = @($tauri.bundle.resources.PSObject.Properties)
 if ($resourceProperties.Count -ne $expectedResources.Count) {
@@ -70,7 +71,11 @@ foreach ($relative in @(
   'dsh-host\runtime-authority.json',
   'dsh-host\records\dependency-audit.json',
   'dsh-host\records\launch-manifest.json',
-  'dsh-host\records\runtime-manifest.json'
+  'dsh-host\records\runtime-manifest.json',
+  'third-party-notices\README.md',
+  'third-party-notices\deno-2.9.4\INDEX.json',
+  'third-party-notices\deno-2.9.4\NATIVE-INDEX.json',
+  'third-party-notices\seahash-4.1.0\LICENSE'
 )) {
   Assert-File (Join-Path $repoRoot $relative) 'package-required-input-missing'
 }

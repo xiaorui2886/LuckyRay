@@ -1,0 +1,17 @@
+{
+  "name": "opentelemetry_sdk",
+  "version": "0.32.1",
+  "declaredLicense": "Apache-2.0",
+  "authors": [],
+  "repository": "https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-sdk",
+  "originalPublishedSourceNotices": [
+    {
+      "path": "allowed-external-types.toml",
+      "lines": [
+        "# Copyright The OpenTelemetry Authors",
+        "# SPDX-License-Identifier: Apache-2.0"
+      ]
+    }
+  ],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

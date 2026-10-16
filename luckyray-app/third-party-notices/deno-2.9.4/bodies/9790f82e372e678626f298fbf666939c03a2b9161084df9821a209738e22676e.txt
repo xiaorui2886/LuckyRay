@@ -1,0 +1,21 @@
+[package]
+name = "aead-gcm-stream"
+version = "0.4.0"
+edition = "2021"
+description = "Pure Rust implementaion of AES GCM cipher for data streams"
+license = "MIT"
+authors = ["Divy Srivastava <dj.srivastava23@gmail.com>"]
+
+[dependencies]
+aead = { version = "0.5", default-features = false }
+aes = { version = "0.8" }
+cipher = "0.4"
+ctr = "0.9"
+ghash = { version = "0.5", default-features = false }
+subtle = { version = "2", default-features = false }
+zeroize = { version = "1", optional = true, default-features = false }
+
+[dev-dependencies]
+aead = { version = "0.5", features = ["dev"], default-features = false }
+hex-literal = "0.3"
+hex = "0.4"

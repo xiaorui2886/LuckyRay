@@ -1,0 +1,13 @@
+{
+  "name": "dlopen2",
+  "version": "0.6.1",
+  "declaredLicense": "MIT",
+  "authors": [
+    "Szymon Wieloch <szymon.wieloch@gmail.com>",
+    "Ahmed Masud <ahmed.masud@saf.ai>",
+    "OpenByte <development.openbyte@gmail.com>"
+  ],
+  "repository": "https://github.com/OpenByteDev/dlopen2",
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

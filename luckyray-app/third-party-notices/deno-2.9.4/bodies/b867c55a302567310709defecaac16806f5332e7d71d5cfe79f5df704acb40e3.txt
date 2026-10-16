@@ -1,0 +1,11 @@
+{
+  "name": "cranelift-isle",
+  "version": "0.117.2",
+  "declaredLicense": "Apache-2.0 WITH LLVM-exception",
+  "authors": [
+    "The Cranelift Project Developers"
+  ],
+  "repository": "https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle",
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

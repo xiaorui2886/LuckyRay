@@ -1,0 +1,9 @@
+{
+  "name": "cranelift-assembler-x64",
+  "version": "0.117.2",
+  "declaredLicense": "Apache-2.0 WITH LLVM-exception",
+  "authors": [],
+  "repository": null,
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

@@ -1,0 +1,18 @@
+{
+  "name": "deno_tunnel",
+  "version": "0.8.1",
+  "declaredLicense": "MIT",
+  "authors": [
+    "the Deno authors"
+  ],
+  "repository": "https://github.com/denoland/deno_tunnel",
+  "originalPublishedSourceNotices": [
+    {
+      "path": "src/lib.rs",
+      "lines": [
+        "// Copyright 2018-2025 the Deno authors. MIT license."
+      ]
+    }
+  ],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

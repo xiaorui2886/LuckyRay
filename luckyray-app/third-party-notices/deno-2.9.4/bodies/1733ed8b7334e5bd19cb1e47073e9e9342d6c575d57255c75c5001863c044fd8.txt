@@ -1,0 +1,11 @@
+{
+  "name": "lazy-regex-proc_macros",
+  "version": "3.1.0",
+  "declaredLicense": "MIT",
+  "authors": [
+    "Canop <cano.petrole@gmail.com>"
+  ],
+  "repository": null,
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

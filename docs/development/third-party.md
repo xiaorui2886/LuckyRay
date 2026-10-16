@@ -33,7 +33,15 @@ their original locations; they are not automatically applicable to changed bytes
 
 ## Candidate binary gate
 
-Frozen A14/B15 require a separate privacy and license review before test-only
-public upload. Missing exact native corresponding-source or dependency materials
-block those attachments and installed acceptance. Do not remove functionality,
-fake a resource gate or use unreviewed private attachments as a shortcut.
+Frozen A14/B15 are retained historical inputs, not substituted or overwritten.
+The next A16/B17 test pair adds the [exact distribution projection and notice
+supplement](distribution-projection.md). Its formal runtime projection excludes
+one pinned upstream development CI configuration without modifying official
+runtime source; all original sealed-stage checks remain required.
+
+Version-bound Deno/V8 native/transitive notices and the SeaHash4.1.0 original
+license omission correction accompany the new pair. Existing source materials
+apply only where exact component versions/bytes are verified unchanged.
+Missing source/notice materials or new possible secrets still block attachments;
+source CI and signature checks do not replace two independent installed chains.
+Test-only prereleases must not become Latest or switch a stable update feed.

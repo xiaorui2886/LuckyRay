@@ -1,0 +1,9 @@
+{
+  "name": "sptr",
+  "version": "0.3.2",
+  "declaredLicense": "MIT OR Apache-2.0",
+  "authors": [],
+  "repository": "https://github.com/Gankra/sptr",
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}

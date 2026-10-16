@@ -10,12 +10,13 @@ import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {Transform} from 'node:stream';
 
-if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_OS!=='Windows')throw Error('disposable-runner-only');
+if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_OS!=='Windows'||process.env.GITHUB_REPOSITORY!=='xiaorui2886/LuckyRay')throw Error('disposable-public-runner-only');
 const run=promisify(execFile), root='D:\\lr-formal-uat';
 const paths=JSON.parse((await readFile(join(root,'private/paths.json'),'utf8')).replace(/^\uFEFF/,''));
 const tls=JSON.parse((await readFile(paths.tls,'utf8')).replace(/^\uFEFF/,''));
 const spec=JSON.parse(await readFile(process.env.UPGRADE_SPEC,'utf8'));
-assert.equal(spec.a.version,'1.9.12');assert.equal(spec.b.version,'1.9.13');
+assert.equal(spec.a.version,'1.9.16');assert.equal(spec.b.version,'1.9.17');
+assert.equal(spec.distributionReview.approved,true,'reviewed public test inputs required');
 const updateMode=process.env.UPGRADE_MODE||'immediate';
 assert.ok(['immediate','scheduled'].includes(updateMode));
 const evidence=join(root,'evidence'), trace=[];
@@ -60,8 +61,10 @@ const replay=httpsServer({pfx:await readFile(tls.pfx),passphrase:tls.password},a
   }else{res.writeHead(502);res.end();}
 });
 const proxy=httpServer((_req,res)=>{res.writeHead(502);res.end();});
+const replayTunnels=new Set();
 proxy.on('connect',(req,socket,head)=>{
   if(req.url!=='github.com:443'){socket.end('HTTP/1.1 502 Denied\r\n\r\n');return;}
+  replayTunnels.add(socket);socket.once('close',()=>replayTunnels.delete(socket));
   socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
   if(head.length)socket.unshift(head);
   replay.emit('connection',socket);
@@ -321,5 +324,8 @@ try{
   if(browser)await browser.close().catch(()=>{}); // CDP disconnect only; do not close/kill apps.
   A.stdout.unref?.();A.stderr.unref?.();A.unref();
   if(Startup){Startup.stdout.unref?.();Startup.stderr.unref?.();Startup.unref();}
-  proxy.closeAllConnections();proxy.close();replay.close();
+  // Only this test's exact GitHub replay tunnels; never terminate app processes
+  // or any real LSH/provider stream. Cleanup must not strand the CI job/CA.
+  for(const socket of replayTunnels)socket.destroy();
+  proxy.closeAllConnections();proxy.close();replay.closeAllConnections();replay.close();
 }

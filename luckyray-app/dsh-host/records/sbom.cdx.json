@@ -13805,7 +13805,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "e407fcfec94a357ca8c5ef09d7489c4b292b5664c6b371b8810a4a3c99f3bcbc"
+          "content": "e58fe6649697cddd3f427ff3f84367879ab8a6898a3372f1290e11a57ea8da75"
         }
       ],
       "licenses": [
@@ -13816,11 +13816,11 @@
       "properties": [
         {
           "name": "luckyray:file-count",
-          "value": "17"
+          "value": "16"
         },
         {
           "name": "luckyray:byte-count",
-          "value": "51243"
+          "value": "51197"
         },
         {
           "name": "luckyray:lifecycle-script-count",

@@ -1,0 +1,21 @@
+[package]
+name = "derive-io"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "derive macros for `std::io::{Read,Write}`, `tokio::io::{AsyncRead,AsyncWrite}` and more"
+readme = "./README.md"
+
+[features]
+default = ["std"]
+std = []
+tokio = ["dep:tokio"]
+
+[dependencies]
+derive-io-macros.workspace = true
+tokio = { version = "1", optional = true }
+
+[package.metadata.docs.rs]
+features = ["tokio"]

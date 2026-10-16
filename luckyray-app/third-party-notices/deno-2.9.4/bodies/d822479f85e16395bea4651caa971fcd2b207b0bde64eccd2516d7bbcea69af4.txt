@@ -1,0 +1,9 @@
+{
+  "name": "sys_traits_macros",
+  "version": "0.1.0",
+  "declaredLicense": "MIT",
+  "authors": [],
+  "repository": "https://github.com/dsherret/sys_traits",
+  "originalPublishedSourceNotices": [],
+  "provenance": "Original published crate archive verified against exact Deno2.9.4 Cargo.lock SHA-256. Authors metadata is attribution, not an invented copyright notice."
+}
