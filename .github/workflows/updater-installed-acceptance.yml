@@ -90,7 +90,7 @@ jobs:
           "MCP_INSTALLER=$component" >> $env:GITHUB_ENV
       - name: Check native observer encoding before certificate or installer actions
         working-directory: luckyray-app
-        run: node --test tests/formal-update/windows-native-encoding.test.mjs
+        run: node --test tests/formal-update/observation.test.mjs tests/formal-update/windows-native-encoding.test.mjs
       - name: Fresh approved disposable HTTPS scope
         env:
           APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
@@ -103,6 +103,7 @@ jobs:
           if (-not $installer.WaitForExit(180000) -or $installer.ExitCode -ne 0) { throw 'actual-A-install-failed' }
           if ((Get-Content -LiteralPath 'D:\lr-formal-uat\安装 空格\luckyray-install-complete.txt' -Raw).Trim() -cne 'com.luckyray.desktop|1.9.18') { throw 'actual-A-completion-invalid' }
       - name: One real EXE chain, no manual B launch or installer clicks
+        timeout-minutes: 12
         working-directory: luckyray-app
         env:
           UPGRADE_MODE: ${{ inputs.update_mode }}

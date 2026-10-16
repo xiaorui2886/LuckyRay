@@ -1,0 +1,30 @@
+name: Updater observer preflight
+on:
+  push:
+    branches: [fix/ray-updater-observers-20261016]
+    paths:
+      - 'luckyray-app/tests/formal-update/**'
+      - '.github/workflows/updater-observer-checks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  observer-tests:
+    if: github.repository == 'xiaorui2886/LuckyRay'
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Observer unit tests and native PowerShell parser only
+        shell: pwsh
+        run: |
+          node --check luckyray-app/tests/formal-update/installed-chain.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'chain-syntax-invalid' }
+          node --test luckyray-app/tests/formal-update/observation.test.mjs luckyray-app/tests/formal-update/windows-native-encoding.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'observer-tests-failed' }
+# No installation, certificate changes, credentials, updater dispatch, or build.
