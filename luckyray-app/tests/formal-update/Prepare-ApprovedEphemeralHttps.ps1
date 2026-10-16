@@ -1,6 +1,8 @@
-﻿$ErrorActionPreference='Stop'
+﻿param([Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$OwnerApprovalReference)
+$ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
-if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or $env:USERNAME -notlike 'runner*' -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'disposable-native-windows-powershell-only' }
+if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or $env:GITHUB_REPOSITORY -cne 'xiaorui2886/LuckyRay' -or $env:USERNAME -notlike 'runner*' -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'disposable-public-native-windows-powershell-only' }
+if ($OwnerApprovalReference -notmatch '\A[a-zA-Z0-9][a-zA-Z0-9._-]{3,79}\z') { throw 'fresh-owner-approval-reference-required' }
 # A Windows PowerShell child inherits PowerShell7's module search path in Actions.
 # Select only this native host's standard modules, in this child process only.
 $env:PSModulePath=$PSHOME+'\Modules'

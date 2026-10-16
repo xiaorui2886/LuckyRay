@@ -1,0 +1,110 @@
+name: Public frozen installer acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      update_mode:
+        description: One fresh independent continuous installed chain
+        type: choice
+        options: [immediate, scheduled]
+        default: immediate
+      ephemeral_trust_approved:
+        description: Owner explicitly approved this disposable machine's temporary CA/root and process proxy scope
+        type: boolean
+        default: false
+      approval_reference:
+        description: Non-secret reference to fresh approval, never a past-machine approval
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: frozen-upgrade-${{ inputs.update_mode }}
+  cancel-in-progress: false
+jobs:
+  installed-chain:
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.event_name == 'workflow_dispatch'
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Cheap fixed-input and permission preflight before system changes
+        env:
+          EPHEMERAL_APPROVED: ${{ inputs.ephemeral_trust_approved }}
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:USERNAME -notlike 'runner*' -or $env:RUNNER_OS -ne 'Windows') { throw 'standard-disposable-windows-runner-required' }
+          if ($env:EPHEMERAL_APPROVED -cne 'true' -or $env:APPROVAL_REFERENCE -notmatch '\A[a-zA-Z0-9][a-zA-Z0-9._-]{3,79}\z') { throw 'fresh-owner-trust-approval-required; no system change made' }
+          $root='D:\lr-formal-uat'
+          if (Test-Path -LiteralPath $root) { throw 'test-root-not-empty' }
+          if (Test-Path -LiteralPath "$env:APPDATA/com.luckyray.desktop") { throw 'existing-profile-refused' }
+          if (@(Get-Process luckyray-app -ErrorAction SilentlyContinue).Count) { throw 'existing-app-refused' }
+          $spec=Get-Content luckyray-app/tests/formal-update/frozen-inputs.json -Raw | ConvertFrom-Json
+          if ($spec.distributionReview.approved -ne $true) { throw 'test-input-distribution-review-incomplete; no install or certificate import' }
+          New-Item -ItemType Directory -Path "$root/private","$root/evidence" | Out-Null
+          foreach ($name in @('a','b')) {
+            $entry=$spec.$name
+            $file="$root/private/LuckyRay_$($entry.version)_x64-setup.exe"
+            Invoke-WebRequest -Uri $entry.testInputUrl -OutFile $file
+            if ((Get-Item -LiteralPath $file).Length -ne $entry.bytes -or (Get-FileHash -LiteralPath $file).Hash.ToLowerInvariant() -cne $entry.sha256) { throw 'frozen-installer-bytes-mismatch' }
+            [IO.File]::WriteAllText("$file.sig",$entry.signature,[Text.Encoding]::ASCII)
+          }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Public verification tool and frozen production signatures
+        env:
+          CARGO_BUILD_JOBS: '2'
+          CARGO_TARGET_DIR: D:/lr-public-updater-tools
+        run: |
+          $ErrorActionPreference='Stop'
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup override set 1.95.0
+          cargo build --locked --manifest-path luckyray-app/tests/desktop-updater-native/Cargo.toml --bin luckyray-update-verify
+          if ($LASTEXITCODE -ne 0) { throw 'public-verifier-build-failed' }
+          $spec=Get-Content luckyray-app/tests/formal-update/frozen-inputs.json -Raw | ConvertFrom-Json
+          foreach ($name in @('a','b')) {
+            $entry=$spec.$name
+            $file="D:\lr-formal-uat\private\LuckyRay_$($entry.version)_x64-setup.exe"
+            & 'D:\lr-public-updater-tools\debug\luckyray-update-verify.exe' $file "$file.sig" 'luckyray-app/src-tauri/src/desktop_app_update/trust.json' $entry.version
+            if ($LASTEXITCODE -ne 0) { throw 'actual-production-signature-invalid' }
+          }
+          $catalog=Get-Content luckyray-app/src-tauri/community-mcp/catalog.json -Raw | ConvertFrom-Json
+          $component='D:\lr-formal-uat\private\unchanged-mcp.zip'
+          Invoke-WebRequest -Uri $catalog.artifactUrl -OutFile $component
+          if ((Get-FileHash -LiteralPath $component).Hash.ToLowerInvariant() -cne $catalog.artifactSha256) { throw 'public-component-hash-mismatch' }
+          npm install --prefix "$env:RUNNER_TEMP/lr-ui-tools" --ignore-scripts --no-audit --no-fund playwright-core@1.56.1
+          if ($LASTEXITCODE -ne 0) { throw 'ui-tools-failed' }
+          "UI_TOOLS=$env:RUNNER_TEMP/lr-ui-tools" >> $env:GITHUB_ENV
+          "UPGRADE_SPEC=$env:GITHUB_WORKSPACE/luckyray-app/tests/formal-update/frozen-inputs.json" >> $env:GITHUB_ENV
+          "B_INSTALLER=D:\lr-formal-uat\private\LuckyRay_1.9.15_x64-setup.exe" >> $env:GITHUB_ENV
+          "MCP_INSTALLER=$component" >> $env:GITHUB_ENV
+      - name: Fresh approved disposable HTTPS scope
+        env:
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File luckyray-app/tests/formal-update/Prepare-ApprovedEphemeralHttps.ps1 -OwnerApprovalReference $env:APPROVAL_REFERENCE
+          if ($LASTEXITCODE -ne 0) { throw 'approved-https-scope-failed; no bypass' }
+      - name: Install exact A once in Chinese and space directory
+        run: |
+          $installer=Start-Process -FilePath 'D:\lr-formal-uat\private\LuckyRay_1.9.14_x64-setup.exe' -ArgumentList @('/S','/D=D:\lr-formal-uat\安装 空格') -WindowStyle Hidden -PassThru
+          if (-not $installer.WaitForExit(180000) -or $installer.ExitCode -ne 0) { throw 'actual-A-install-failed' }
+          if ((Get-Content -LiteralPath 'D:\lr-formal-uat\安装 空格\luckyray-install-complete.txt' -Raw).Trim() -cne 'com.luckyray.desktop|1.9.14') { throw 'actual-A-completion-invalid' }
+      - name: One real EXE chain, no manual B launch or installer clicks
+        working-directory: luckyray-app
+        env:
+          UPGRADE_MODE: ${{ inputs.update_mode }}
+        run: node tests/formal-update/installed-chain.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: installed-${{ inputs.update_mode }}-synthetic-evidence
+          path: D:/lr-formal-uat/evidence/*
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
