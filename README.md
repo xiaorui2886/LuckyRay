@@ -9,12 +9,24 @@
 **[唯一官网 · luckyray.me](https://luckyray.me)** · [下载 Windows 版](https://luckyray.me/atelier/edition/download) · [浏览器插件](https://luckyray.me/atelier/edition/collector) · [使用文档](https://luckyray.me/atelier/edition/docs)
 
 [![Release](https://img.shields.io/github/v/release/xiaorui2886/LuckyRay?style=flat-square&color=806399&label=release)](https://github.com/xiaorui2886/LuckyRay/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-806399?style=flat-square)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows_x64-31343b?style=flat-square)
 [![Website](https://img.shields.io/badge/official-luckyray.me-806399?style=flat-square)](https://luckyray.me)
 
 **简体中文** · [English](README.en.md)
 
 </div>
+
+## 开源了，一起把整理与创作连接起来
+
+LuckyRay 自有源码以 **[MIT](LICENSE)** 开放，欢迎阅读、修改和贡献。第三方组件遵循各自许可。
+
+- **想直接使用？** [官网下载稳定版](https://luckyray.me/atelier/edition/download)，无需自行编译。
+- **想参与开发？** [构建与测试](docs/development/README.md) · [贡献指南](CONTRIBUTING.md) · [浏览源码](luckyray-app/)
+- **想写插件？** [插件 SDK](sdk/README.zh-CN.md) · [提交插件](catalog/SUBMISSION.md)
+
+当前源码包含 **1.9.15 自动更新验收候选**；当前正式桌面版为 **1.9.7**。源码 CI 通过不代表安装升级验收完成，请以[候选验证状态](docs/development/updater-validation.md)和正式 Release 为准。
+
 
 ## 好的参考，不该止步于收藏夹
 
@@ -52,13 +64,13 @@
 
 ## 从这里开始
 
-**当前正式版：LuckyRay 1.9.6 + Collector 1.9.6** · 2026-10-11
+**当前正式版：LuckyRay 1.9.7 + Collector 1.9.6** · 2026-10-16
 
 | 你要做什么 | 入口 |
 | :--- | :--- |
-| **开始使用桌面端** | [官网下载页](https://luckyray.me/atelier/edition/download) · [直接下载 Windows x64 安装包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.6/LuckyRay_1.9.6_x64-setup.exe) |
-| **安装或更新浏览器插件** | [Collector 安装说明](https://luckyray.me/atelier/edition/collector) · [直接下载扩展 ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.6/LuckyRay-Collector-1.9.6.zip) |
-| **查看这次改进了什么** | [新版更新说明](https://luckyray.me/atelier/edition/changelog) · [发行包与校验值](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) |
+| **开始使用桌面端** | [官网下载页](https://luckyray.me/atelier/edition/download) · [直接下载 Windows x64 安装包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.7/LuckyRay_1.9.7_x64-setup.exe) |
+| **安装或更新浏览器插件** | [Collector 安装说明](https://luckyray.me/atelier/edition/collector) · [直接下载扩展 ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.7/LuckyRay-Collector-1.9.6.zip) |
+| **查看这次改进了什么** | [新版更新说明](https://luckyray.me/atelier/edition/changelog) · [发行包与校验值](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.7) |
 
 1. **打开桌面端**：适用于 Windows 10/11 x64。安装前阅读[安装与校验说明](docs/downloads.md)，重要资料保持独立备份。
 2. **留下第一份参考**：导入一张图片，写一篇笔记，或在画布中整理一个小想法。
@@ -69,7 +81,7 @@
 
 - 当前桌面安装器未进行 Authenticode 签名。请核对官方 SHA-256，并保留发行说明中链接的第三方材料包与桌面组件补充包。
 - Collector 是独立扩展包，需手动加载或更新；更新桌面端不会自动更新浏览器扩展。
-- 应用内目前支持检查版本与下载安装包，完整自动更新尚未包含在本版。
+- 当前正式版请通过官网下载并手动安装更新；完整自动更新正在候选版本中验收，尚未对正式渠道启用。
 - Android 仍在测试；macOS、Linux、iOS 尚未发布。不要把开发中的功能当作当前安装包能力。
 - 网页采集受站点结构、访问权限和 DRM 等限制，并非所有网站和媒体都支持。
 
