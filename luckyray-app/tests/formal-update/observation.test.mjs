@@ -35,7 +35,7 @@ test('installer observation is armed before either actual trigger and binds its 
   assert.ok(chain.indexOf("await writeFile(join(evidence,'RESULT.json'),JSON.stringify(failure")<chain.indexOf("within('bounded stop diagnostics'"));
   const helper=readFileSync(new URL('./Observe-PassiveInstaller.ps1',import.meta.url),'utf8');
   assert.ok(helper.indexOf('$null=$candidate.Handle')<helper.indexOf('$candidateOwner=Get-CimInstance'));
-  assert.ok(helper.indexOf('$candidateOwner=Get-CimInstance')<helper.indexOf('Get-FileHash'));
+  assert.ok(helper.indexOf('$candidateOwner=Get-CimInstance')<helper.indexOf('(Get-ObservedFileSha256 $owner.ExecutablePath)'));
   assert.match(helper,/installer-owner-hash-mismatch/);
   assert.match(helper,/installer-language-not-inherited/);
 });

@@ -12,11 +12,19 @@ function Get-ObservedExecutablePath($Candidate) {
   if ($null -eq $module) { return $null }
   return $module.FileName
 }
+function Get-ObservedFileSha256([string]$Path) {
+  $stream=[IO.File]::OpenRead($Path)
+  $sha=[Security.Cryptography.SHA256]::Create()
+  try { return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
+  finally { $sha.Dispose(); $stream.Dispose() }
+}
 $ErrorActionPreference='Stop' 
 Set-StrictMode -Version Latest
+$env:PSModulePath=$PSHOME+'\Modules'
 [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or $env:USERNAME -notlike 'runner*') { throw 'disposable-hosted-runner-only' }
 if ([IO.Path]::GetFullPath($InstallRoot) -cne 'D:\lr-formal-uat\安装 空格') { throw 'unexpected-install-root' }
+$InstallRoot=[IO.Path]::GetFullPath($InstallRoot)
 $privateRoot='D:\lr-formal-uat\private'
 foreach ($file in @($ReadyFile,$CancelFile)) {
   if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($file)) -cne $privateRoot) { throw 'observer-control-outside-private-root' }
@@ -56,7 +64,7 @@ if (-not $owner.ExecutablePath.StartsWith($AllowedCache+'\',[StringComparison]::
 # Record identity while alive, including its parent. Validate parent in the
 # caller against the actual A / scheduled-start PID, never by process name.
 @{installerPid=$InstallerPid;parentPid=$owner.ParentProcessId;exe=$owner.ExecutablePath;observedAtUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress | Set-Content -LiteralPath 'D:\lr-formal-uat\evidence\installer-start.json' -Encoding utf8
-if ((Get-FileHash -LiteralPath $owner.ExecutablePath).Hash.ToLowerInvariant() -cne $ExpectedSha256) { throw 'installer-owner-hash-mismatch' }
+if ((Get-ObservedFileSha256 $owner.ExecutablePath) -cne $ExpectedSha256) { throw 'installer-owner-hash-mismatch' }
 foreach ($option in @('/P','/UPDATE','/R')) {
   if ($owner.CommandLine -cnotmatch ('(?:^|\s)'+[regex]::Escape($option)+'(?:\s|$)')) { throw "official-install-option-missing:$option" }
 }
@@ -76,8 +84,11 @@ while ([DateTime]::UtcNow -lt $deadline) {
 $process.Refresh()
 $exited=$process.HasExited
 $code=if($exited){$process.ExitCode}else{$null}
-$language=[string](Get-ItemProperty -LiteralPath 'HKCU:\Software\luckyray\LuckyRay').'Installer Language'
-$result=@{installerPid=$InstallerPid;parentPid=$owner.ParentProcessId;installerExitCode=$code;processExited=$exited;languagePromptObserved=$languagePrompt;storedLanguage=$language;expectedLanguage=$ExpectedLanguage;originalDirectory=$InstallRoot;installerSha256=$ExpectedSha256;observerArmedBeforeTrigger=$true;officialPassiveArgumentsVerified=$true;uiAutomationActions=0;manualInstallerLaunch=$false;securityPromptsBypassed=$false;observations=$observations}
+$language=$null
+$languageReadError=$null
+try { $language=[string](Get-ItemProperty -LiteralPath 'HKCU:\Software\luckyray\LuckyRay').'Installer Language' }
+catch { $languageReadError=$_.Exception.Message }
+$result=@{installerPid=$InstallerPid;parentPid=$owner.ParentProcessId;installerExitCode=$code;processExited=$exited;languagePromptObserved=$languagePrompt;storedLanguage=$language;languageReadError=$languageReadError;expectedLanguage=$ExpectedLanguage;originalDirectory=$InstallRoot;installerSha256=$ExpectedSha256;observerArmedBeforeTrigger=$true;officialPassiveArgumentsVerified=$true;uiAutomationActions=0;manualInstallerLaunch=$false;securityPromptsBypassed=$false;observations=$observations}
 $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'D:\lr-formal-uat\evidence\passive-installer-observation.json' -Encoding utf8
 if ($languagePrompt) { throw 'BLOCKED: product displayed a language prompt; no UI workaround attempted' }
 if (-not $exited) { throw 'BLOCKED: installer did not finish without input; no blind click or termination' }

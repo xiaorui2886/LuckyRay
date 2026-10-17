@@ -26,8 +26,8 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const event=async(kind,value={})=>{const row={atUtc:new Date().toISOString(),kind,...value};trace.push(row);await appendFile(join(evidence,'timeline.jsonl'),JSON.stringify(row)+'\n');};
 const requireCdpOwner=async expectedPid=>{
   assert.ok(Number.isSafeInteger(expectedPid));
-  const script="$owners=@(Get-NetTCPConnection -LocalPort 9391 -State Listen -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique); if($owners.Count -ne 1){throw 'cdp-owner-not-unique'}; $chain=@(); $lrProbePid=$owners[0]; for($i=0;$i -lt 8 -and $lrProbePid -gt 0;$i++){ $p=Get-CimInstance Win32_Process -Filter \"ProcessId=$lrProbePid\"; if(-not $p){break};$chain+=[int]$p.ProcessId;$lrProbePid=[int]$p.ParentProcessId }; @{listenerPid=$owners[0];parentChain=$chain}|ConvertTo-Json -Compress";
-  const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:32768});
+  const script="$ErrorActionPreference='Stop';$env:PSModulePath=$PSHOME+'\\Modules';$owners=@(Get-NetTCPConnection -LocalPort 9391 -State Listen -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique); if($owners.Count -ne 1){throw 'cdp-owner-not-unique'}; $chain=@(); $lrProbePid=$owners[0]; for($i=0;$i -lt 8 -and $lrProbePid -gt 0;$i++){ $p=Get-CimInstance Win32_Process -Filter \"ProcessId=$lrProbePid\"; if(-not $p){break};$chain+=[int]$p.ProcessId;$lrProbePid=[int]$p.ParentProcessId }; @{listenerPid=$owners[0];parentChain=$chain}|ConvertTo-Json -Compress";
+  const {stdout}=await run(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:32768});
   const owner=JSON.parse(stdout);assert.ok(owner.parentChain.includes(expectedPid),'CDP must belong to this actual installed process');
   await event('actual_cdp_owner',{expectedAppPid:expectedPid,...owner});
 };
@@ -159,8 +159,8 @@ try{
   const reference=note.documentRef;
   const notePath=join(root,'vault',reference.relativePath);
   assert.equal(await readFile(notePath,'utf8'),base);
-  const languageScript="[string](Get-ItemProperty -LiteralPath 'HKCU:\\Software\\luckyray\\LuckyRay').'Installer Language'";
-  const installerLanguage=(await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',languageScript],{windowsHide:true,encoding:'utf8'})).stdout.trim();
+  const languageScript="$ErrorActionPreference='Stop';$env:PSModulePath=$PSHOME+'\\Modules';[string](Get-ItemProperty -LiteralPath 'HKCU:\\Software\\luckyray\\LuckyRay').'Installer Language'";
+  const installerLanguage=(await run(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',languageScript],{windowsHide:true,encoding:'utf8',timeout:15000})).stdout.trim();
   assert.ok(['1033','2052'].includes(installerLanguage),'silent first install persisted its actual NSIS language');
   await event('A_installer_language',{storedLanguage:installerLanguage});
   // A new synthetic, materials/notes-only grant through the existing explicit
@@ -303,7 +303,7 @@ try{
 
   stage='installer_handoff';
   const getProcesses=async()=>{
-    const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); @(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('LuckyRay-update.exe','luckyray-app.exe') } | ForEach-Object { [pscustomobject]@{pid=$_.ProcessId;ppid=$_.ParentProcessId;exe=$_.ExecutablePath} }) | ConvertTo-Json -Compress"],{windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:32768});
+    const {stdout}=await run(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop';$env:PSModulePath=$PSHOME+'\\Modules';[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); @(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('LuckyRay-update.exe','luckyray-app.exe') } | ForEach-Object { [pscustomobject]@{pid=$_.ProcessId;ppid=$_.ParentProcessId;exe=$_.ExecutablePath} }) | ConvertTo-Json -Compress"],{windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:32768});
     const value=JSON.parse(stdout||'[]');return Array.isArray(value)?value:[value];
   };
   const installerParentPid=Startup?.pid??A.pid;
