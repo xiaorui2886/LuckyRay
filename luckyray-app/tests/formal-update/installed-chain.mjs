@@ -75,6 +75,15 @@ await new Promise(r=>proxy.listen(0,'127.0.0.1',r));
 const proxyUrl='http://127.0.0.1:'+proxy.address().port;
 const {chromium}=await import(pathToFileURL(join(process.env.UI_TOOLS,'node_modules/playwright-core/index.mjs')));
 const installedEnvironment={...process.env,HTTPS_PROXY:proxyUrl,HTTP_PROXY:proxyUrl,https_proxy:proxyUrl,http_proxy:proxyUrl,NO_PROXY:'127.0.0.1,localhost',no_proxy:'127.0.0.1,localhost',WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9391'};
+// NSIS RunAsUser may reconstruct the user's environment instead of inheriting
+// this Node process's overrides. Configure only the explicitly approved runner.
+try {
+  if(process.env.RELAUNCH_ENV_APPROVED!=='true')throw Error('fresh-user-environment-approval-required');
+  await run(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),[
+    '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(process.cwd(),'tests/formal-update/Manage-ApprovedRelaunchEnvironment.ps1'),
+    '-Mode','Prepare','-ProxyUrl',proxyUrl,'-OwnerApprovalReference',process.env.APPROVAL_REFERENCE||'',
+  ],{windowsHide:true,encoding:'utf8',timeout:30000,maxBuffer:32768});
+}catch(error){proxy.closeAllConnections();proxy.close();replay.closeAllConnections();replay.close();throw error;}
 const A=spawn(join(paths.install,'luckyray-app.exe'),[],{cwd:paths.install,windowsHide:false,env:installedEnvironment});
 let Startup=null,StartupExit=null;
 A.stdout.resume(); // Drain without logging; never let an unconsumed pipe block normal exit.
@@ -85,6 +94,7 @@ const nativeLines=lineCollector(line=>{
 A.stderr.setEncoding('utf8');A.stderr.on('data',chunk=>nativeLines.write(chunk));
 const stderrEnded=new Promise(resolve=>A.stderr.once('end',()=>{nativeLines.end();resolve();}));
 let installerObserver=null;
+let BProcess=null;
 const startInstallerObserver=async expectedLanguage=>{
   const readyFile=join(root,'private/installer-observer.ready');
   const cancelFile=join(root,'private/installer-observer.cancel');
@@ -316,12 +326,14 @@ try{
   assert.equal(installerResult.observerArmedBeforeTrigger,true);
   const installer={pid:installerResult.installerPid};
   await event('installer_completed',installerResult);
-  const BProcess=await wait('installer-owned automatic B reopen',async()=>(await getProcesses()).find(p=>p.exe?.toLowerCase()===join(paths.install,'luckyray-app.exe').toLowerCase()&&p.pid!==A.pid),120000);
+  BProcess=await wait('installer-owned automatic B reopen',async()=>(await getProcesses()).find(p=>p.exe?.toLowerCase()===join(paths.install,'luckyray-app.exe').toLowerCase()&&p.pid!==A.pid),120000);
   assert.equal(BProcess.ppid,installer.pid,'no manual launch may substitute for installer-owned reopen');
   assert.equal((await readFile(join(paths.install,'luckyray-install-complete.txt'),'utf8')).trim(),'com.luckyray.desktop|'+spec.b.version);
   assert.equal(hash(await readFile(join(paths.install,'luckyray-app.exe'))),spec.b.installedExeSha256);
   assert.equal(existsSync(join(paths.install,'luckyray-install-in-progress.txt')),false);
   assert.equal(await readFile(notePath,'utf8'),expected);
+  await event('B_automatic_process_and_disk_verified',{...BProcess,installerPid:installer.pid,exeSha256:spec.b.installedExeSha256,installedVersion:spec.b.version,completeMarkerVerified:true,inProgressMarkerAbsent:true,fullNoteEqual:true});
+  stage='B_interface_reconnect';
   ({browser,page}=await connect());await requireCdpOwner(BProcess.pid);await snapshot('B-automatically-reopened');
   const reopened=await invoke('knowledge_read_document',{documentRef:reference});
   assert.equal(reopened.content,expected);assert.deepEqual(reopened.documentRef,reference);assert.ok(reopened.revision);
@@ -351,6 +363,13 @@ try{
   const failure={status:'FAIL_OR_BLOCKED',stage,error:error.message,trace,productionDataTouched:false,noForcedApplicationTermination:true};
   await writeFile(join(evidence,'RESULT.json'),JSON.stringify(failure,null,2)+'\n');
   await event('stopped',{stage,error:error.message});
+  if(BProcess){
+    try{
+      const script="$ErrorActionPreference='Stop';$env:PSModulePath=$PSHOME+'\\Modules';[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false);$rows=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -in @('luckyray-app.exe','msedgewebview2.exe')} | ForEach-Object {[pscustomobject]@{pid=$_.ProcessId;ppid=$_.ParentProcessId;name=$_.Name;exe=$_.ExecutablePath;debugFlagPresent=([string]$_.CommandLine).Contains('--remote-debugging-port=9391')}});$tcp=@(Get-NetTCPConnection -LocalPort 9391 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique);@{processes=$rows;cdpListenerPids=$tcp}|ConvertTo-Json -Compress -Depth 5";
+      const {stdout}=await run(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:65536});
+      await event('B_reconnect_diagnostics',JSON.parse(stdout));
+    }catch(diagnosticError){await event('B_reconnect_diagnostics_unavailable',{error:diagnosticError.message});}
+  }
   try{if(page&&!page.isClosed())await within('bounded stop diagnostics',()=>observeLsh('stopped-'+stage),12000);}catch{}
   try{if(page&&!page.isClosed())await snapshot('STOP-'+stage);}catch{}
   process.exitCode=1;

@@ -11,6 +11,10 @@ on:
         description: Owner explicitly approved this disposable machine's temporary CA/root and process proxy scope
         type: boolean
         default: false
+      relaunch_environment_approved:
+        description: Owner approved temporary runner-user debug and loopback proxy variables, removed after this run
+        type: boolean
+        default: false
       approval_reference:
         description: Non-secret reference to fresh approval, never a past-machine approval
         type: string
@@ -35,10 +39,12 @@ jobs:
       - name: Cheap fixed-input and permission preflight before system changes
         env:
           EPHEMERAL_APPROVED: ${{ inputs.ephemeral_trust_approved }}
+          RELAUNCH_ENV_APPROVED: ${{ inputs.relaunch_environment_approved }}
           APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
         run: |
           $ErrorActionPreference='Stop'
           if ($env:USERNAME -notlike 'runner*' -or $env:RUNNER_OS -ne 'Windows') { throw 'standard-disposable-windows-runner-required' }
+          if ($env:RELAUNCH_ENV_APPROVED -cne 'true') { throw 'fresh-owner-user-environment-approval-required; no system change made' }
           if ($env:EPHEMERAL_APPROVED -cne 'true' -or $env:APPROVAL_REFERENCE -notmatch '\A[a-zA-Z0-9][a-zA-Z0-9._-]{3,79}\z') { throw 'fresh-owner-trust-approval-required; no system change made' }
           $root='D:\lr-formal-uat'
           if (Test-Path -LiteralPath $root) { throw 'test-root-not-empty' }
@@ -92,7 +98,7 @@ jobs:
           "MCP_INSTALLER=$component" >> $env:GITHUB_ENV
       - name: Check native observer encoding before certificate or installer actions
         working-directory: luckyray-app
-        run: node --test tests/formal-update/input-contract.test.mjs tests/formal-update/observation.test.mjs tests/formal-update/windows-native-encoding.test.mjs
+        run: node --test tests/formal-update/input-contract.test.mjs tests/formal-update/observation.test.mjs tests/formal-update/windows-native-encoding.test.mjs tests/formal-update/relaunch-environment.test.mjs
       - name: Fresh approved disposable HTTPS scope
         env:
           APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
@@ -109,7 +115,18 @@ jobs:
         working-directory: luckyray-app
         env:
           UPGRADE_MODE: ${{ inputs.update_mode }}
+          RELAUNCH_ENV_APPROVED: ${{ inputs.relaunch_environment_approved }}
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
         run: node tests/formal-update/installed-chain.mjs
+      - name: Remove only owned temporary runner-user relaunch variables
+        if: always()
+        env:
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+        run: |
+          if (Test-Path -LiteralPath 'D:\lr-formal-uat\private\relaunch-environment.json') {
+            & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File luckyray-app/tests/formal-update/Manage-ApprovedRelaunchEnvironment.ps1 -Mode Remove -OwnerApprovalReference $env:APPROVAL_REFERENCE
+            if ($LASTEXITCODE -ne 0) { throw 'approved-relaunch-environment-cleanup-failed' }
+          }
       - name: Remove only this approved disposable machine's test certificates and proxy configuration
         if: always()
         env:

@@ -39,3 +39,21 @@ test('installer observation is armed before either actual trigger and binds its 
   assert.match(helper,/installer-owner-hash-mismatch/);
   assert.match(helper,/installer-language-not-inherited/);
 });
+test('automatic B identity is persisted before its independent interface reconnect',()=>{
+  const chain=readFileSync(new URL('./installed-chain.mjs',import.meta.url),'utf8');
+  const checkpoint=chain.indexOf("await event('B_automatic_process_and_disk_verified'");
+  assert.ok(checkpoint>chain.indexOf("assert.equal(BProcess.ppid,installer.pid"));
+  assert.ok(checkpoint>chain.indexOf("assert.equal(hash(await readFile(join(paths.install,'luckyray-app.exe')))"));
+  assert.ok(checkpoint<chain.indexOf("stage='B_interface_reconnect'"));
+  assert.match(chain,/B_reconnect_diagnostics/);
+});
+test('temporary relaunch environment requires separate approval and always-cleanup',()=>{
+  const chain=readFileSync(new URL('./installed-chain.mjs',import.meta.url),'utf8');
+  const workflow=readFileSync(new URL('../../../.github/workflows/updater-installed-acceptance.yml',import.meta.url),'utf8');
+  assert.ok(chain.indexOf("fresh-user-environment-approval-required")<chain.indexOf('const A=spawn'));
+  assert.ok(chain.indexOf("'-Mode','Prepare'")<chain.indexOf('const A=spawn'));
+  assert.match(workflow,/relaunch_environment_approved:[\s\S]*?default: false/);
+  assert.match(workflow,/Remove only owned temporary runner-user relaunch variables\s+if: always\(\)/);
+  assert.match(workflow,/-Mode Remove -OwnerApprovalReference/);
+  assert.match(workflow,/approved-relaunch-environment-cleanup-failed/);
+});
