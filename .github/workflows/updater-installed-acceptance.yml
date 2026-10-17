@@ -1,4 +1,4 @@
-name: Public frozen installer acceptance
+name: Retired A16-B17 installer acceptance (do not run)
 on:
   workflow_dispatch:
     inputs:
@@ -22,7 +22,10 @@ concurrency:
   cancel-in-progress: false
 jobs:
   installed-chain:
-    if: github.repository == 'xiaorui2886/LuckyRay' && github.event_name == 'workflow_dispatch'
+    # Retired 2026-10-17: obsolete test releases and download assets were removed.
+    # Preserve historical source only; see docs/releases/retired-test-releases-20261017.json.
+    # Current test/release branches are separate and unchanged by this retirement.
+    if: ${{ false }}
     runs-on: windows-2022
     timeout-minutes: 25
     defaults:
