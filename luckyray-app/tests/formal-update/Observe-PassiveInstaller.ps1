@@ -6,7 +6,13 @@
   [Parameter(Mandatory=$true)][string]$InstallRoot,
   [Parameter(Mandatory=$true)][ValidateSet('1033','2052')][string]$ExpectedLanguage
 )
-$ErrorActionPreference='Stop'
+function Get-ObservedExecutablePath($Candidate) {
+  # A newly-created process can have a handle before its main module exists.
+  $module=$Candidate.MainModule
+  if ($null -eq $module) { return $null }
+  return $module.FileName
+}
+$ErrorActionPreference='Stop' 
 Set-StrictMode -Version Latest
 [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or $env:USERNAME -notlike 'runner*') { throw 'disposable-hosted-runner-only' }
@@ -28,12 +34,19 @@ while ([DateTime]::UtcNow -lt $deadline -and -not $process) {
   foreach ($candidate in [Diagnostics.Process]::GetProcessesByName('LuckyRay-update')) {
     try {
       $null=$candidate.Handle
-      $candidatePath=$candidate.MainModule.FileName
+      $candidatePath=Get-ObservedExecutablePath $candidate
+      if ([string]::IsNullOrWhiteSpace($candidatePath)) { $candidate.Dispose(); continue }
       if (-not $candidatePath.StartsWith($AllowedCache+'\',[StringComparison]::OrdinalIgnoreCase)) { $candidate.Dispose(); continue }
+      $candidateOwner=Get-CimInstance Win32_Process -Filter "ProcessId=$($candidate.Id)" -OperationTimeoutSec 5
+      if ($null -eq $candidateOwner -or [string]::IsNullOrWhiteSpace($candidateOwner.ExecutablePath) -or [string]::IsNullOrWhiteSpace($candidateOwner.CommandLine)) { $candidate.Dispose(); continue }
       $process=$candidate
-      $owner=Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)" -OperationTimeoutSec 5
+      $owner=$candidateOwner
       break
     } catch [System.InvalidOperationException] { $candidate.Dispose(); $process=$null; $owner=$null }
+      catch [System.ComponentModel.Win32Exception] {
+        $candidate.Dispose(); $process=$null; $owner=$null
+        if ($_.Exception.NativeErrorCode -notin @(6,299)) { throw }
+      }
   }
   if (-not $process) { Start-Sleep -Milliseconds 40 }
 }
