@@ -15,7 +15,7 @@ export function validateFrozenInputs(spec) {
     const entry=spec[name];assert.equal(entry.version,version);
     assert.equal(entry.purpose,name==='a'?'patched-test-bootstrap':'release-candidate');
     assert.match(entry.sha256,/^[a-f0-9]{64}$/);assert.match(entry.installedExeSha256,/^[a-f0-9]{64}$/);
-    assert.match(entry.publicSourceCommit,/^[a-f0-9]{40}$/);
+    assert.match(entry.reviewedPublicFixCommit,/^[a-f0-9]{40}$/);
     assert.ok(Number.isSafeInteger(entry.bytes)&&entry.bytes>0&&entry.bytes<1024*1024*1024);
     assert.equal(entry.testInputUrl,`https://github.com/xiaorui2886/LuckyRay/releases/download/${TEST_RELEASE}/LuckyRay_${version}_x64-setup.exe`);
     assert.equal(entry.manifest.version,version);

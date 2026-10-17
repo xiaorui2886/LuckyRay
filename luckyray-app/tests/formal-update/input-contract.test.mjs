@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateFrozenInputs,TEST_RELEASE} from './check-frozen-inputs.mjs';
-const entry=(version,purpose)=>({version,purpose,bytes:123,sha256:'a'.repeat(64),installedExeSha256:'b'.repeat(64),publicSourceCommit:'c'.repeat(40),signature:'synthetic-shape-only-'.repeat(10),testInputUrl:`https://github.com/xiaorui2886/LuckyRay/releases/download/${TEST_RELEASE}/LuckyRay_${version}_x64-setup.exe`,manifest:{version,platforms:{'windows-x86_64-nsis':{url:`https://github.com/xiaorui2886/LuckyRay/releases/download/v${version}/LuckyRay_${version}_x64-setup.exe`,signature:'synthetic-shape-only-'.repeat(10)}}}});
+const entry=(version,purpose)=>({version,purpose,bytes:123,sha256:'a'.repeat(64),installedExeSha256:'b'.repeat(64),reviewedPublicFixCommit:'c'.repeat(40),signature:'synthetic-shape-only-'.repeat(10),testInputUrl:`https://github.com/xiaorui2886/LuckyRay/releases/download/${TEST_RELEASE}/LuckyRay_${version}_x64-setup.exe`,manifest:{version,platforms:{'windows-x86_64-nsis':{url:`https://github.com/xiaorui2886/LuckyRay/releases/download/v${version}/LuckyRay_${version}_x64-setup.exe`,signature:'synthetic-shape-only-'.repeat(10)}}}});
 const fixture=()=>({schemaVersion:2,bootstrapIsPublishedStable:false,testRelease:TEST_RELEASE,distributionReview:{approved:true},a:entry('1.9.7','patched-test-bootstrap'),b:entry('1.9.8','release-candidate')});
 test('isolated transport and strict production URL remain separate',()=>{
  const s=fixture();assert.equal(validateFrozenInputs(s).status,'PASS_FIXED_REVIEWED_PUBLIC_INPUTS');
