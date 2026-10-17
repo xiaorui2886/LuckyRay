@@ -26,13 +26,13 @@ const LAUNCH_BYTES: &[u8] = include_bytes!(concat!(env!("LUCKYRAY_ISSUE189_OLD_D
 const RUNTIME_BYTES: &[u8] = include_bytes!(concat!(env!("LUCKYRAY_ISSUE189_OLD_DSH_HOST"), "/records/runtime-manifest.json"));
 
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const AUTHORITY_SHA256: &str = "75cbb9b7c935980bc46ae00a62b7b30880c4408be32a5698b82e3261d1042632";
+const AUTHORITY_SHA256: &str = "06f190a054ce8ca9b6bb2ffdd82a7e142c80fdff67f27e91ce2d0af1a3a7eecc";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const AUDIT_SHA256: &str = "db28fa51bbea382dc8b8caf29964e31b4848600682d95be47d6e9db4e8e670c1";
+const AUDIT_SHA256: &str = "46ab2f2a13d69c8b9a0f9a84514e02adf48bc690f39f2eb840795cf93d435492";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
 const LAUNCH_SHA256: &str = "7282c882d5bd5de8e5a714b9629a16f307fe7df96671f471203773cc51c94886";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const RUNTIME_SHA256: &str = "5fcc250740c1195c61e110088892169ae11223207658e773a8d02f57ad05d556";
+const RUNTIME_SHA256: &str = "70009af5a63b8ad2b41bd5bc56b4b521ad3c0985ad88dfc51929f4a0d2803793";
 #[cfg(feature = "issue189-frozen-old-fixture")]
 const AUTHORITY_SHA256: &str = "c0c4b4bec0ce5b86f759b970c722f7fc82073cdbd678593ec03eaf61a4d49c04";
 #[cfg(feature = "issue189-frozen-old-fixture")]

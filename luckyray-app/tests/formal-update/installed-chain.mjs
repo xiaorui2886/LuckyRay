@@ -15,7 +15,7 @@ const run=promisify(execFile), root='D:\\lr-formal-uat';
 const paths=JSON.parse((await readFile(join(root,'private/paths.json'),'utf8')).replace(/^\uFEFF/,''));
 const tls=JSON.parse((await readFile(paths.tls,'utf8')).replace(/^\uFEFF/,''));
 const spec=JSON.parse(await readFile(process.env.UPGRADE_SPEC,'utf8'));
-assert.equal(spec.a.version,'1.9.16');assert.equal(spec.b.version,'1.9.17');
+assert.equal(spec.a.version,'1.9.18');assert.equal(spec.b.version,'1.9.19');
 assert.equal(spec.distributionReview.approved,true,'reviewed public test inputs required');
 const updateMode=process.env.UPGRADE_MODE||'immediate';
 assert.ok(['immediate','scheduled'].includes(updateMode));

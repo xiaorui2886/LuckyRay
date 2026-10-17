@@ -38,6 +38,7 @@ test('frozen notice-label clarification preserves the actual independently grant
   const index=JSON.parse(await readFile(new URL('INDEX.json',base),'utf8'));
   const entry=index.packages.find(p=>p.name==='wasmparser'&&p.version==='0.244.0');
   assert.equal(entry.license,'Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT');
+  assert.equal(entry.selectedLicense,'MIT','new candidates must carry the corrected informational label');
   assert.ok(entry.notices.some(p=>p.url==='https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/MIT.txt'));
   const attribution=entry.notices.find(p=>p.path==='original-attributions.json');assert.ok(attribution);
   const original=JSON.parse(await readFile(new URL(`bodies/${attribution.sha256}.txt`,base),'utf8'));

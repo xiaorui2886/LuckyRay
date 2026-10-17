@@ -70,8 +70,10 @@ jobs:
           $ErrorActionPreference='Stop'
           rustup toolchain install 1.95.0 --profile minimal
           rustup override set 1.95.0
-          cargo build --locked --manifest-path luckyray-app/tests/desktop-updater-native/Cargo.toml --bin luckyray-update-verify
+          cargo build --locked --manifest-path luckyray-app/tests/desktop-updater-native/Cargo.toml --bin luckyray-update-verify --bin luckyray-runtime-record-verify
           if ($LASTEXITCODE -ne 0) { throw 'public-verifier-build-failed' }
+          & 'D:\lr-public-updater-tools\debug\luckyray-runtime-record-verify.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'native-embedded-runtime-admission-invalid-before-system-changes' }
           $spec=Get-Content luckyray-app/tests/formal-update/frozen-inputs.json -Raw | ConvertFrom-Json
           foreach ($name in @('a','b')) {
             $entry=$spec.$name
@@ -87,7 +89,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'ui-tools-failed' }
           "UI_TOOLS=$env:RUNNER_TEMP/lr-ui-tools" >> $env:GITHUB_ENV
           "UPGRADE_SPEC=$env:GITHUB_WORKSPACE/luckyray-app/tests/formal-update/frozen-inputs.json" >> $env:GITHUB_ENV
-          "B_INSTALLER=D:\lr-formal-uat\private\LuckyRay_1.9.17_x64-setup.exe" >> $env:GITHUB_ENV
+          "B_INSTALLER=D:\lr-formal-uat\private\LuckyRay_1.9.19_x64-setup.exe" >> $env:GITHUB_ENV
           "MCP_INSTALLER=$component" >> $env:GITHUB_ENV
       - name: Check native observer encoding before certificate or installer actions
         working-directory: luckyray-app
@@ -100,9 +102,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'approved-https-scope-failed; no bypass' }
       - name: Install exact A once in Chinese and space directory
         run: |
-          $installer=Start-Process -FilePath 'D:\lr-formal-uat\private\LuckyRay_1.9.16_x64-setup.exe' -ArgumentList @('/S','/D=D:\lr-formal-uat\安装 空格') -WindowStyle Hidden -PassThru
+          $installer=Start-Process -FilePath 'D:\lr-formal-uat\private\LuckyRay_1.9.18_x64-setup.exe' -ArgumentList @('/S','/D=D:\lr-formal-uat\安装 空格') -WindowStyle Hidden -PassThru
           if (-not $installer.WaitForExit(180000) -or $installer.ExitCode -ne 0) { throw 'actual-A-install-failed' }
-          if ((Get-Content -LiteralPath 'D:\lr-formal-uat\安装 空格\luckyray-install-complete.txt' -Raw).Trim() -cne 'com.luckyray.desktop|1.9.16') { throw 'actual-A-completion-invalid' }
+          if ((Get-Content -LiteralPath 'D:\lr-formal-uat\安装 空格\luckyray-install-complete.txt' -Raw).Trim() -cne 'com.luckyray.desktop|1.9.18') { throw 'actual-A-completion-invalid' }
       - name: One real EXE chain, no manual B launch or installer clicks
         working-directory: luckyray-app
         env:

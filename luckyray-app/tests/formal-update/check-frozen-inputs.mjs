@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 const spec=JSON.parse(readFileSync(new URL('./frozen-inputs.json',import.meta.url),'utf8'));
 assert.equal(spec.schemaVersion,1);
 assert.equal(spec.distributionReview.approved,true,'distribution review must finish before a runner changes trust or installs');
-for(const [name,version]of [['a','1.9.16'],['b','1.9.17']]){
+for(const [name,version]of [['a','1.9.18'],['b','1.9.19']]){
  const entry=spec[name];assert.equal(entry.version,version);
  assert.match(entry.sha256,/^[a-f0-9]{64}$/);assert.match(entry.installedExeSha256,/^[a-f0-9]{64}$/);
  assert.match(entry.publicSourceCommit,/^[a-f0-9]{40}$/);

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const nativeHost = readFileSync(new URL("../src-tauri/src/dsh_host.rs", import.meta.url), "utf8");
+const nativeRuntimeSeal = readFileSync(new URL("../src-tauri/src/dsh_runtime_seal.rs", import.meta.url), "utf8");
 const assetRoot = new URL("../src-tauri/dsh-host/", import.meta.url);
 const bindings = [
   ["HOST_SCRIPT_SHA256", "luckyray-dsh-host.mjs"],
@@ -43,6 +44,30 @@ for (const [name, path, kind] of bindings) {
   test(`native asset pin matches the packaged source: ${name}`, () => {
     const bytes = readFileSync(new URL(path, assetRoot));
     assert.equal(kind === "binary" ? sha256(bytes) : normalizedDigest(bytes), pin(name), path);
+  });
+}
+
+// The runtime descriptor also verifies four compile-time record seals before
+// any preload can start. A generated closure/audit change must update these
+// exact pins as well as the Node staging authority; host/client pins alone do
+// not cover this admission path.
+for (const [name, path] of [
+  ["AUTHORITY", "runtime-authority.json"],
+  ["AUDIT", "records/dependency-audit.json"],
+  ["LAUNCH", "records/launch-manifest.json"],
+  ["RUNTIME", "records/runtime-manifest.json"],
+]) {
+  test(`native embedded runtime record pin matches generated source: ${name}`, () => {
+    const expected = nativeRuntimeSeal.match(new RegExp(`const ${name}_SHA256: &str =\\s*"([a-f0-9]{64})";`))?.[1];
+    assert.ok(expected, `missing production record pin: ${name}`);
+    assert.ok(nativeRuntimeSeal.includes(`include_bytes!("../../dsh-host/${path}")`));
+    const bytes = readFileSync(new URL(`../dsh-host/${path}`, import.meta.url));
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    assert.equal(text.startsWith("\uFEFF"), false, "Rust rejects a record BOM");
+    const normalized = text.replaceAll("\r\n", "\n");
+    assert.equal(normalized.includes("\r"), false, "Rust rejects bare record CR");
+    assert.equal(sha256(Buffer.from(normalized)), expected, path);
+    assert.notEqual(sha256(Buffer.from(normalized + "\n")), expected, "unbound record changes remain rejected");
   });
 }
 
