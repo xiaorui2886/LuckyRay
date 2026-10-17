@@ -1,0 +1,305 @@
+{
+  "archivedAt": "2026-10-17",
+  "disposition": "Retired obsolete test releases. Owner approved deletion of these four release records and their 26 uploaded assets. Git tags and source history are retained. This archive preserves descriptions and public asset metadata, not executable bytes. Original release/download URLs below are historical and are expected to stop serving after cleanup.",
+  "reason": "1.9.16/17 had a known native-admission/preload blocker; 1.9.18/19 did not complete installed-upgrade acceptance. Superseded by the separate test-updater-1.9.8-20261017 reference and formal v1.9.8 release.",
+  "preserved": [
+    "v1.9.8",
+    "test-updater-1.9.8-20261017",
+    "all source tags",
+    "all other releases and third-party source materials"
+  ],
+  "workflow": "The main branch legacy updater-installed-acceptance workflow is retired with an unconditional false job guard. Its old frozen-inputs record remains historical, not runnable download guidance. This does not modify current test or release branches.",
+  "dependencyNotes": [
+    "v1.9.19 referred to the v1.9.18 combined notice ZIP and distribution notes; both releases are retired together.",
+    "v1.9.16/17 historical frozen-inputs referenced their installer and notice URLs.",
+    "Existing v1.9.4/v1.9.5 third-party corresponding-source/material archives remain untouched."
+  ],
+  "releases": [
+    {
+      "id": 415124868,
+      "tag": "v1.9.19",
+      "name": "LuckyRay 1.9.19 TEST ONLY — upgrade acceptance incomplete",
+      "target_commitish": "57c0dcab8c9534976b0b97a45380ec379c573eed",
+      "prerelease": true,
+      "created_at": "2026-10-16T14:49:42Z",
+      "published_at": "2026-10-16T15:52:00Z",
+      "html_url": "https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.19",
+      "body": "# LuckyRay 1.9.19 — TEST ONLY, not Latest\n\nThis is the unchanged frozen B19 installer for isolated updater acceptance.\nThe A18 → B19 immediate and scheduled installed upgrade chains remain **not\naccepted / pending**. Publishing these attachments is not a successful upgrade\ntest or a stable release. Do not replace a daily-use installation for testing.\n\n- Corresponding public product source:\n  [57c0dcab8c9534976b0b97a45380ec379c573eed](https://github.com/xiaorui2886/LuckyRay/commit/57c0dcab8c9534976b0b97a45380ec379c573eed).\n- Installer SHA-256:\n  `099c1a3da14d955236acaad532b36d67a021d6a68ccdf25f16c8be733b24477d`.\n- The existing official updater signature is supplied unchanged. This installer\n  is **not Windows Authenticode signed**; updater signatures and Windows signing\n  are different. Do not bypass OS security prompts.\n- The five attachments are the frozen installer, its signature, public input\n  record, test manifest and checksums. `TEST-UPDATE-MANIFEST.json` is only a test\n  attachment, **not** production `latest.json`.\n- Exact-version third-party notices are included inside the installer. Shared\n  supplementary materials are already available with A18 and are reused here:\n  [notice ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/LuckyRay-1.9.18-1.9.19-third-party-notices.zip)\n  (SHA-256 `b1270c7d098f2a95cbce2fc11bd39a246f819220306afa4c7edf2d447ba984d9`)\n  and [distribution notes](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/DISTRIBUTION-NOTES-A18-B19.md).\n\nThis upload does not rebuild or re-sign either package, run tests, change source,\nupdate the website, move Latest or switch the production update feed.\n",
+      "assets": [
+        {
+          "id": 647805147,
+          "name": "LuckyRay_1.9.19_x64-setup.exe",
+          "size": 200787769,
+          "digest": "sha256:099c1a3da14d955236acaad532b36d67a021d6a68ccdf25f16c8be733b24477d",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.19/LuckyRay_1.9.19_x64-setup.exe",
+          "download_count_at_archive": 3
+        },
+        {
+          "id": 647808683,
+          "name": "LuckyRay_1.9.19_x64-setup.exe.sig",
+          "size": 420,
+          "digest": "sha256:ecafab31a08fb6d902e001a9ca6fa99e7daca9317569fd1ec859617acff27eed",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.19/LuckyRay_1.9.19_x64-setup.exe.sig",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647808746,
+          "name": "PUBLIC-TEST-INPUT.json",
+          "size": 1602,
+          "digest": "sha256:f585a5a7166606f092e293dde3f024dbb062260cdb77a2daefc6e55398378bd3",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.19/PUBLIC-TEST-INPUT.json",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647808878,
+          "name": "SHA256SUMS.txt",
+          "size": 377,
+          "digest": "sha256:fc12f3d708567a2d02f2573166681a006b54b1e24b53e043a2215d36f65da527",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.19/SHA256SUMS.txt",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647808837,
+          "name": "TEST-UPDATE-MANIFEST.json",
+          "size": 783,
+          "digest": "sha256:d4726464c91cb362241f188dd7f553b1bec731fcad995446860295f20c057c67",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.19/TEST-UPDATE-MANIFEST.json",
+          "download_count_at_archive": 2
+        }
+      ]
+    },
+    {
+      "id": 415091397,
+      "tag": "v1.9.18",
+      "name": "LuckyRay 1.9.18 TEST ONLY — upgrade acceptance pending",
+      "target_commitish": "fae63809f6e322e99dfd0abbe51cdcb47199c211",
+      "prerelease": true,
+      "created_at": "2026-10-16T14:11:37Z",
+      "published_at": "2026-10-16T15:18:22Z",
+      "html_url": "https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.18",
+      "body": "# TEST ONLY — repaired updater acceptance candidates, not stable\n\nThis non-latest pre-release is for isolated Windows updater acceptance with\nsynthetic data. **Neither independent repaired installed chain is accepted yet.**\nIt does not change the website, stable download, Latest Release or production\n`latest.json`. Do not install it over a daily-use installation for testing.\n\nRepaired pair: A **1.9.18** → B **1.9.19**. The first A16 installed attempt failed\nbefore update discovery because generated runtime records and three native\ncompile-time hashes were inconsistent. The original integrity checks correctly\nrefused startup. A16/B17 remain unchanged historical test assets with a known\nblocker; these new candidates synchronize the exact record pins and add normal\nbuild and original-native-admission gates. Official LSH remains 0.1.7-rc.2.\n\nThe packages include exact-version Deno 2.9.4 / V8 and SeaHash 4.1.0 notices, the\nformal exact-hash upstream CI-config exclusion, and corrected independent MIT\nlicense metadata. Original license texts and third-party rights are preserved.\nSee the accompanying distribution notes and notice indexes for scope/provenance,\nincluding the explicit treatment of original archives without a standalone\nlicense file. LuckyRay's MIT does not relicense third-party components.\n\nEach candidate's exact installer size/SHA-256, corresponding public product\nsource and signature verification identity are in `PUBLIC-TEST-INPUT.json` and\n`SHA256SUMS.txt`. `TEST-UPDATE-MANIFEST.json` is a test attachment, **not** a\nproduction feed. The unchanged official updater key verifies installer\nsignatures; the installers are **not Windows Authenticode signed**. Do not bypass\nOS security prompts.\n\nThe combined new notice ZIP and `DISTRIBUTION-NOTES-A18-B19.md` accompany both\ncandidates. Existing unchanged media corresponding-source/build materials remain\navailable separately, with their original exact versions and scope:\n\n- [Desktop third-party materials](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-third-party-materials.zip)\n  SHA-256 `055418e72a27e83592545a63fa95930c2b2223cd2f1f0c25ba2ba2eb58fa06a0`.\n- [Desktop third-party supplement](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-desktop-third-party-supplement.zip)\n  SHA-256 `bf84f934be36d0ad19b912e31c3ee9f48307fc9cedb0af810a1e976f7c130a45`.\n\nThis includes the GPL media-suite boundary and corresponding source/patch/build\nmaterials; it is not a claim that every media component is LGPL. Collector stays\n1.9.6 and the optional Community MCP component stays 0.1.1; no automatic browser\nextension installation/update or broader codec/model compatibility is claimed.\n\nImmediate and scheduled installed upgrade results will be linked after actual\nindependent runs. Source CI, static extraction or component tests alone are not a\nreal installed upgrade pass. Real IME and the unchanged live production feed are\nnot proven by a controlled disposable HTTPS test environment.\n",
+      "assets": [
+        {
+          "id": 647718519,
+          "name": "DISTRIBUTION-NOTES-A18-B19.md",
+          "size": 1903,
+          "digest": "sha256:cac6b3abfc04dae380f9d6a9baa6cb60a49c9c977eae227d0d95563705dd2034",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/DISTRIBUTION-NOTES-A18-B19.md",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647718329,
+          "name": "LuckyRay-1.9.18-1.9.19-third-party-notices.zip",
+          "size": 1571176,
+          "digest": "sha256:b1270c7d098f2a95cbce2fc11bd39a246f819220306afa4c7edf2d447ba984d9",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/LuckyRay-1.9.18-1.9.19-third-party-notices.zip",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647713810,
+          "name": "LuckyRay_1.9.18_x64-setup.exe",
+          "size": 200830221,
+          "digest": "sha256:40eedb0a84a763adf6390654d5acb8206399e8728a19ec391c968da5485777b8",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/LuckyRay_1.9.18_x64-setup.exe",
+          "download_count_at_archive": 3
+        },
+        {
+          "id": 647718072,
+          "name": "LuckyRay_1.9.18_x64-setup.exe.sig",
+          "size": 420,
+          "digest": "sha256:1399e6234c9963ea8b6cbb488821f908fc49dbe3cb5e813426daaea6a0ed6294",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/LuckyRay_1.9.18_x64-setup.exe.sig",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647718110,
+          "name": "PUBLIC-TEST-INPUT.json",
+          "size": 1602,
+          "digest": "sha256:d2ae29d662dd529af004e264f6af6190411e99076d19130e318f6afd4d39dce9",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/PUBLIC-TEST-INPUT.json",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647718276,
+          "name": "SHA256SUMS.txt",
+          "size": 377,
+          "digest": "sha256:2af808d83052159476ed068883ff28494563c1431df348d9930ff7b5ac63b250",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/SHA256SUMS.txt",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647718202,
+          "name": "TEST-UPDATE-MANIFEST.json",
+          "size": 783,
+          "digest": "sha256:defaf23da772cf3112678802d4fe333cf55b90ae75c9f15d938f600d42069bd4",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.18/TEST-UPDATE-MANIFEST.json",
+          "download_count_at_archive": 2
+        }
+      ]
+    },
+    {
+      "id": 415001749,
+      "tag": "v1.9.17",
+      "name": "LuckyRay 1.9.17 TEST ONLY — known preload blocker",
+      "target_commitish": "e57eab76c40eb96cf47dc3f00549d0f6d6a9224b",
+      "prerelease": true,
+      "created_at": "2026-10-16T13:09:42Z",
+      "published_at": "2026-10-16T13:38:28Z",
+      "html_url": "https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.17",
+      "body": "> **KNOWN BLOCKER / DO NOT USE AS A RELEASE CANDIDATE:** The first real installed\n> acceptance run stopped before update discovery because the generated runtime\n> records and three native compile-time record hashes were inconsistent. LSH\n> correctly refused startup. Neither continuous upgrade chain is accepted for\n> these bytes. The native admission check remains strict; a corrected immutable\n> candidate pair is being prepared. These historical test assets are retained\n> unchanged, not silently replaced. Stable downloads and the production feed\n> are unaffected.\n\n\n# TEST ONLY — signed updater acceptance candidates\n\n仅供隔离 Windows 自动升级验收，**不是稳定版，不是 Latest，不进入正式更新源**。\n请勿覆盖日常安装、Main 或真实资料。候选使用正式应用标识与更新信任；本轮\n仅在独立一次性测试机中建立合成资料和授权。升级验收完成之前，不宣称正式发布。\n\nTest-only, non-latest Windows updater inputs. Do not install over a daily copy\nor real profile. Two independent continuous installed chains are required;\nsource checks, package signatures and static inspection are not substitutes.\n\n## Candidate changes\n\n- Precisely omit an upstream debug2.6.9 coverage-service CI configuration during\n  formal staging. Original runtime source/entrypoints and LSH0.1.7-rc.2 remain.\n  Existing exact integrity, native-module and resolver checks remain mandatory.\n- Bundle version-bound Deno2.9.4/V8150.2.0 native/transitive notices and the\n  original same-version SeaHash4.1.0 license omission correction. Preserve\n  existing copyright/licensing and corresponding-source obligations.\n- Reuse the existing safe save/LSH retirement, inherited install language and\n  automatic reopen implementation for real upgrade acceptance. No new UI or\n  unrelated feature is introduced.\n\nInstaller update signatures use the existing approved Minisign/Tauri trust.\n**Windows Authenticode: NotSigned.** Update signing is not Windows code signing.\nNo production private key is uploaded. The public update feed, stable release,\nwebsite and existing signed A14/B15 historical candidates are unchanged.\n\n## Required unchanged third-party source materials\n\nThe following exact public archives remain applicable only to the unchanged\ncomponents documented by the candidate inventory. Keep them with redistributed\ncopies, alongside the new bundled notice supplement:\n\n- [Runtime/media/LibreOffice materials](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-third-party-materials.zip)\n  — SHA-256 `055418e72a27e83592545a63fa95930c2b2223cd2f1f0c25ba2ba2eb58fa06a0`.\n- [Desktop dependency/source supplement](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-desktop-third-party-supplement.zip)\n  — SHA-256 `bf84f934be36d0ad19b912e31c3ee9f48307fc9cedb0af810a1e976f7c130a45`.\n\nThe FFmpeg tool/DLL suite has GPL-3.0-or-later scope, with its original LGPL and\ndependency texts, exact corresponding-source index, patches, build and relink\nmaterials retained. This does not relabel the independent LuckyRay host. MPL\nsource availability and original third-party license rights remain unchanged.\n\nCollector1.9.6 and optional Community MCP0.1.1 are unchanged and not repackaged\nor automatically enabled by this desktop candidate.\n\n## Notice index clarification\n\nKeep the attached `LICENSE-CLARIFICATION-A16-B17.md` with these candidates.\nFor wasmparser0.244.0 the exact original OR grant independently permits MIT;\nthe informational index accidentally appends an unnecessary LLVM-exception\nlabel to that choice. Full original grant/attribution and MIT text are present.\nThe separate clarification makes the actual MIT choice explicit without\nchanging any frozen installer/signature or original third-party rights.\n",
+      "assets": [
+        {
+          "id": 647442379,
+          "name": "LICENSE-CLARIFICATION-A16-B17.md",
+          "size": 1602,
+          "digest": "sha256:b191c4b7bedf82202276f5147fbca3af077f8f953f69fa2fb46d4d6984a4d629",
+          "content_type": "text/markdown; charset=utf-8",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/LICENSE-CLARIFICATION-A16-B17.md",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647442384,
+          "name": "LuckyRay-1.9.16-1.9.17-third-party-notices.zip",
+          "size": 1478033,
+          "digest": "sha256:45c4f0a98bd036a16498d40572ef51da53f1097140105a0070f886ec6b3bb93a",
+          "content_type": "application/zip",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/LuckyRay-1.9.16-1.9.17-third-party-notices.zip",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647442325,
+          "name": "LuckyRay_1.9.17_x64-setup.exe",
+          "size": 200879178,
+          "digest": "sha256:d08b12e354c969a977665f76e6b8c900d4e12166b9d983d376f3a0534eba534e",
+          "content_type": "application/x-msdownload",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/LuckyRay_1.9.17_x64-setup.exe",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647442328,
+          "name": "LuckyRay_1.9.17_x64-setup.exe.sig",
+          "size": 420,
+          "digest": "sha256:0befa9762941f61496f2775b2d98999990b3c672d27508de7cfca425679edf4e",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/LuckyRay_1.9.17_x64-setup.exe.sig",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647442330,
+          "name": "PUBLIC-TEST-INPUT.json",
+          "size": 1468,
+          "digest": "sha256:dc1bb77f6f1e3bc094823e16be1ea0a20e8c28b9e56db439e447096726dc38d9",
+          "content_type": "application/json",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/PUBLIC-TEST-INPUT.json",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647442327,
+          "name": "SHA256SUMS.txt",
+          "size": 377,
+          "digest": "sha256:18cc15140a2819c99f3abea5e895b588501da13e2718fcd61f798423b813308f",
+          "content_type": "text/plain; charset=utf-8",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/SHA256SUMS.txt",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647442326,
+          "name": "TEST-UPDATE-MANIFEST.json",
+          "size": 783,
+          "digest": "sha256:356469f43e2b13f55df505114d3f4010b057ae6538f73200578d4fbfe6a3c964",
+          "content_type": "application/json",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.17/TEST-UPDATE-MANIFEST.json",
+          "download_count_at_archive": 1
+        }
+      ]
+    },
+    {
+      "id": 414968878,
+      "tag": "v1.9.16",
+      "name": "LuckyRay 1.9.16 TEST ONLY — known preload blocker",
+      "target_commitish": "aafb4d5f672fbcb203404b01de6dde7a6911b463",
+      "prerelease": true,
+      "created_at": "2026-10-16T12:49:51Z",
+      "published_at": "2026-10-16T13:04:22Z",
+      "html_url": "https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.16",
+      "body": "> **KNOWN BLOCKER / DO NOT USE AS A RELEASE CANDIDATE:** The first real installed\n> acceptance run stopped before update discovery because the generated runtime\n> records and three native compile-time record hashes were inconsistent. LSH\n> correctly refused startup. Neither continuous upgrade chain is accepted for\n> these bytes. The native admission check remains strict; a corrected immutable\n> candidate pair is being prepared. These historical test assets are retained\n> unchanged, not silently replaced. Stable downloads and the production feed\n> are unaffected.\n\n\n# TEST ONLY — signed updater acceptance candidates\n\n仅供隔离 Windows 自动升级验收，**不是稳定版，不是 Latest，不进入正式更新源**。\n请勿覆盖日常安装、Main 或真实资料。候选使用正式应用标识与更新信任；本轮\n仅在独立一次性测试机中建立合成资料和授权。升级验收完成之前，不宣称正式发布。\n\nTest-only, non-latest Windows updater inputs. Do not install over a daily copy\nor real profile. Two independent continuous installed chains are required;\nsource checks, package signatures and static inspection are not substitutes.\n\n## Candidate changes\n\n- Precisely omit an upstream debug2.6.9 coverage-service CI configuration during\n  formal staging. Original runtime source/entrypoints and LSH0.1.7-rc.2 remain.\n  Existing exact integrity, native-module and resolver checks remain mandatory.\n- Bundle version-bound Deno2.9.4/V8150.2.0 native/transitive notices and the\n  original same-version SeaHash4.1.0 license omission correction. Preserve\n  existing copyright/licensing and corresponding-source obligations.\n- Reuse the existing safe save/LSH retirement, inherited install language and\n  automatic reopen implementation for real upgrade acceptance. No new UI or\n  unrelated feature is introduced.\n\nInstaller update signatures use the existing approved Minisign/Tauri trust.\n**Windows Authenticode: NotSigned.** Update signing is not Windows code signing.\nNo production private key is uploaded. The public update feed, stable release,\nwebsite and existing signed A14/B15 historical candidates are unchanged.\n\n## Required unchanged third-party source materials\n\nThe following exact public archives remain applicable only to the unchanged\ncomponents documented by the candidate inventory. Keep them with redistributed\ncopies, alongside the new bundled notice supplement:\n\n- [Runtime/media/LibreOffice materials](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-third-party-materials.zip)\n  — SHA-256 `055418e72a27e83592545a63fa95930c2b2223cd2f1f0c25ba2ba2eb58fa06a0`.\n- [Desktop dependency/source supplement](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.4/LuckyRay-1.9.4-desktop-third-party-supplement.zip)\n  — SHA-256 `bf84f934be36d0ad19b912e31c3ee9f48307fc9cedb0af810a1e976f7c130a45`.\n\nThe FFmpeg tool/DLL suite has GPL-3.0-or-later scope, with its original LGPL and\ndependency texts, exact corresponding-source index, patches, build and relink\nmaterials retained. This does not relabel the independent LuckyRay host. MPL\nsource availability and original third-party license rights remain unchanged.\n\nCollector1.9.6 and optional Community MCP0.1.1 are unchanged and not repackaged\nor automatically enabled by this desktop candidate.\n\n## Notice index clarification\n\nKeep the attached `LICENSE-CLARIFICATION-A16-B17.md` with these candidates.\nFor wasmparser0.244.0 the exact original OR grant independently permits MIT;\nthe informational index accidentally appends an unnecessary LLVM-exception\nlabel to that choice. Full original grant/attribution and MIT text are present.\nThe separate clarification makes the actual MIT choice explicit without\nchanging any frozen installer/signature or original third-party rights.\n",
+      "assets": [
+        {
+          "id": 647436267,
+          "name": "LICENSE-CLARIFICATION-A16-B17.md",
+          "size": 1602,
+          "digest": "sha256:b191c4b7bedf82202276f5147fbca3af077f8f953f69fa2fb46d4d6984a4d629",
+          "content_type": "text/markdown; charset=utf-8",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/LICENSE-CLARIFICATION-A16-B17.md",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647351856,
+          "name": "LuckyRay-1.9.16-1.9.17-third-party-notices.zip",
+          "size": 1478033,
+          "digest": "sha256:45c4f0a98bd036a16498d40572ef51da53f1097140105a0070f886ec6b3bb93a",
+          "content_type": "application/zip",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/LuckyRay-1.9.16-1.9.17-third-party-notices.zip",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647351789,
+          "name": "LuckyRay_1.9.16_x64-setup.exe",
+          "size": 200819722,
+          "digest": "sha256:22e84ff8349c7d52ec78e7fcb411dd864958714a5877af117bdd3bb0efae548d",
+          "content_type": "application/x-msdownload",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/LuckyRay_1.9.16_x64-setup.exe",
+          "download_count_at_archive": 2
+        },
+        {
+          "id": 647351815,
+          "name": "LuckyRay_1.9.16_x64-setup.exe.sig",
+          "size": 420,
+          "digest": "sha256:50e9f43a4c22aedc559fa4d9f5b842d5192c5b5fff9c0e9a32bd1ce98665929b",
+          "content_type": "application/octet-stream",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/LuckyRay_1.9.16_x64-setup.exe.sig",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647351787,
+          "name": "PUBLIC-TEST-INPUT.json",
+          "size": 1468,
+          "digest": "sha256:14275824bdda44c6cdfce5c99eebdf5b5dc8f873870dcc1b89f7fbaa6578096d",
+          "content_type": "application/json",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/PUBLIC-TEST-INPUT.json",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647351802,
+          "name": "SHA256SUMS.txt",
+          "size": 377,
+          "digest": "sha256:8f7d7fc12dcea683f070f7f3743de1b8502e5ef64a3ae4bd22f2de48512b96d0",
+          "content_type": "text/plain; charset=utf-8",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/SHA256SUMS.txt",
+          "download_count_at_archive": 1
+        },
+        {
+          "id": 647351788,
+          "name": "TEST-UPDATE-MANIFEST.json",
+          "size": 783,
+          "digest": "sha256:fb3e2a8fbd595bd057c0d527f968ac22ae7436a67a11c55e390c10805646350b",
+          "content_type": "application/json",
+          "browser_download_url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.16/TEST-UPDATE-MANIFEST.json",
+          "download_count_at_archive": 1
+        }
+      ]
+    }
+  ]
+}
