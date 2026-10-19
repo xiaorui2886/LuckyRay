@@ -1,0 +1,66 @@
+name: Original 1.9.8 storage subprocess diagnostic - no CA
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dsh-installed-storage-diagnostic
+  cancel-in-progress: false
+jobs:
+  original-storage:
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018'
+    runs-on: windows-2022
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Guard fresh disposable runner and compile read-only metadata observer
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows' -or $env:USERNAME -notlike 'runner*') { throw 'standard-disposable-windows-only' }
+          if ((Test-Path -LiteralPath 'D:\lr-formal-uat') -or (Test-Path -LiteralPath "$env:APPDATA/com.luckyray.desktop") -or @(Get-Process luckyray-app -ErrorAction SilentlyContinue).Count) { throw 'fresh-runner-required' }
+          New-Item -ItemType Directory -Path 'D:\lr-formal-uat\private','D:\lr-formal-uat\evidence' | Out-Null
+          node --check luckyray-app/tests/dsh-installed-upgrade/diagnose-storage.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'diagnostic-syntax-invalid' }
+          & "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /platform:x64 /reference:System.Management.dll /reference:System.Web.Extensions.dll /out:D:\lr-formal-uat\private\StorageProcessObserver.exe luckyray-app/tests/dsh-installed-upgrade/StorageProcessObserver.cs
+          if ($LASTEXITCODE -ne 0) { throw 'diagnostic-compile-failed' }
+      - name: Acquire unchanged original public 1.9.8 and install once
+        run: |
+          $ErrorActionPreference='Stop'
+          $setup='D:\lr-formal-uat\private\LuckyRay_1.9.8_x64-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.8/LuckyRay_1.9.8_x64-setup.exe' -OutFile $setup
+          if ((Get-Item -LiteralPath $setup).Length -ne 200811896 -or (Get-FileHash -LiteralPath $setup).Hash.ToLowerInvariant() -cne '2aa1d70187b706e523c576ddbdde2e981a84c31a59e9c003e155d1e766aa5a7e') { throw 'original-published-installer-identity-invalid' }
+          $installer=Start-Process -FilePath $setup -ArgumentList @('/S','/D=D:\lr-formal-uat\安装 空格') -WindowStyle Hidden -PassThru
+          if (-not $installer.WaitForExit(180000) -or $installer.ExitCode -ne 0) { throw 'original-install-failed' }
+          if ((Get-Content -LiteralPath 'D:\lr-formal-uat\安装 空格\luckyray-install-complete.txt' -Raw).Trim() -cne 'com.luckyray.desktop|1.9.8') { throw 'original-install-identity-invalid' }
+          npm install --prefix "$env:RUNNER_TEMP/lr-ui-tools" --ignore-scripts --no-audit --no-fund playwright-core@1.56.1
+          if ($LASTEXITCODE -ne 0) { throw 'public-ui-observer-install-failed' }
+          "UI_TOOLS=$env:RUNNER_TEMP/lr-ui-tools" >> $env:GITHUB_ENV
+      - name: Observe only real initialize subprocess and same-byte controls - no upgrade
+        working-directory: luckyray-app
+        run: |
+          node tests/dsh-installed-upgrade/diagnose-storage.mjs *> 'D:\lr-formal-uat\evidence\storage-diagnostic.log'
+          if ($LASTEXITCODE -ne 0) { throw 'bounded-diagnostic-stopped-see-encrypted-evidence' }
+      - name: Encrypt synthetic diagnostic evidence to existing local-only recipient
+        if: always()
+        working-directory: luckyray-app
+        run: |
+          if (Test-Path -LiteralPath 'D:\lr-formal-uat\evidence') {
+            node tests/dsh-installed-upgrade/encrypt-evidence.mjs tests/dsh-installed-upgrade/recipient-public.pem
+            if ($LASTEXITCODE -ne 0) { throw 'diagnostic-encryption-failed-no-plaintext-upload' }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: storage-diagnostic-encrypted-evidence
+          path: D:/lr-formal-uat/encrypted/*.encrypted.json
+          if-no-files-found: ignore
+          retention-days: 3
+          compression-level: 0

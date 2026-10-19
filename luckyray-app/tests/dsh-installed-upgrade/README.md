@@ -65,3 +65,40 @@ evidence is reused separately. A syntax check, crypto unit test, installer exit
 code or `webview-created` alone is not an installed upgrade PASS. Do not change
 guards, manufacture a GitHub environment locally, or launch B manually to make
 this observer pass.
+
+## Focused original-version storage diagnostic (no CA)
+
+`storage-initialize-diagnostic.yml` is a separate, owner-dispatched standard
+Windows job. It downloads only the exact original public 1.9.8 and does not
+request a private transfer, credential, temporary trust or update proxy. Existing
+formal-signature evidence for those unchanged original bytes is reused; neither
+upgrade is started by this diagnostic.
+
+The native test observer uses Toolhelp process snapshots for a child of this
+one actual installed A PID. It validates the exact initialize-only argument
+vector before recording it. Read-only, bounded x64 process-parameter inspection
+is image/path checked; it records cwd and the three standard-handle types/pipe
+metadata, never environment values or stream content. No debug privilege, audit
+policy, code injection, debugger attach or security disablement is used.
+Native process exit status is read through a held query/synchronize handle, not
+inferred from a vanished process or another round's logs.
+
+Same-byte direct controls keep the actual helper, cwd and ordinary process
+environment, comparing immediately closed versus open stdin. A separately
+labelled instrumented initialize-only copy gives supplementary stage markers;
+it never replaces the installed helper and is not same-byte acceptance proof.
+One independently observed retry is allowed only for this same initialize
+timeout, in the same original app process. The product's 20-second limit and
+all signature/integrity/authentication checks remain unchanged. Only the new
+owned direct-control helper can be terminated at its existing 20-second bound;
+the observer never terminates the app or its actual child.
+
+The process-parameter inspection follows Microsoft's documented PEB/process
+query approach with explicit x64 layout/image checks; internal offsets are not
+treated as portable product APIs. Relevant primary references:
+[PEB](https://learn.microsoft.com/en-us/windows/win32/api/winternl/ns-winternl-peb),
+[Microsoft process-query example](https://github.com/microsoft/vscode-windows-process-tree/blob/main/src/process_commandline.cc),
+[pipe metadata](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-getnamedpipeinfo).
+
+Evidence returns under the existing separate test-return encryption public key.
+No plaintext screenshot/trace, private key or synthetic credential is uploaded.
