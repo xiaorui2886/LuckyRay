@@ -22,9 +22,10 @@ async function processes(){
   const rows=JSON.parse(stdout||'[]');return Array.isArray(rows)?rows:[rows];
 }
 const MAX_SYNTHETIC_SESSION_BYTES=8*1024*1024;
-async function originalSessions(home){
+export async function originalSessions(home,sessionId){
+  assert.match(sessionId,/^session-[a-z0-9-]+$/);
   const found=[];
-  async function visit(dir){for(const entry of await readdir(dir,{withFileTypes:true})){const file=join(dir,entry.name);if(entry.isDirectory())await visit(file);else if(/^session(?:\.v[0-9]+)?\.jsonl(?:\.zstd)?$/.test(entry.name)){const bytes=await readFile(file);assert.ok(bytes.length<=MAX_SYNTHETIC_SESSION_BYTES);found.push({file,sha256:hash(bytes),bytes:bytes.length});assert.ok(found.length<=8,'bounded synthetic session generations');}}}
+  async function visit(dir){for(const entry of await readdir(dir,{withFileTypes:true})){const file=join(dir,entry.name);if(entry.isDirectory())await visit(file);else if(basename(dir)===sessionId&&/^session(?:\.v[0-9]+)?\.jsonl(?:\.zstd)?$/.test(entry.name)){const bytes=await readFile(file);assert.ok(bytes.length<=MAX_SYNTHETIC_SESSION_BYTES);found.push({file,sha256:hash(bytes),bytes:bytes.length});assert.ok(found.length<=8,'bounded synthetic session generations');}}}
   await visit(join(home,'sessions'));return found;
 }
 export async function readOfficialSession(runtime,home,id){
@@ -46,11 +47,17 @@ export function assertSessionPrefixes(originalBytes,currentBytes,original,curren
   assert.ok(current.events.length>=original.events.length,'original event history cannot be truncated');
   assert.deepEqual(current.events.slice(0,original.events.length),original.events,'every original official decoded event must remain an exact prefix');
 }
+// Official 0.2.1 persists semantic draft snapshots; earlier versions used strings.
+// This fixture types plain text only, so references and slash-command must be absent.
+export function plainDraftMatches(value,text){
+  if(typeof value==='string')return value===text;
+  return value!==null&&typeof value==='object'&&value.text===text&&Array.isArray(value.references)&&value.references.length===0&&value.command===undefined;
+}
 export function assertSessionGenerations(originals,current){
   assert.deepEqual(current.map(row=>row.file).sort(),originals.map(row=>row.file).sort(),'unexpected or ambiguous session generation');
 }
 async function assertOriginals(fixture,{runtime,root,index,event}){
-  const currentFiles=await originalSessions(fixture.home);
+  const currentFiles=await originalSessions(fixture.home,fixture.sessionId);
   // Capture bounded synthetic bytes and decoded history BEFORE preservation assertions.
   for(let i=0;i<currentFiles.length;i++)await writeFile(join(root,'evidence',`SESSION-after-${index}-${i}.zstd`),await readFile(currentFiles[i].file));
   const current=await readOfficialSession(runtime,fixture.home,fixture.sessionId);
@@ -229,7 +236,7 @@ export async function seedOldInstalledSession({root,paths,spec,event}){
   await mkdir(join(home,'storages'),{recursive:true});
   const workspace={unit:{name:'workspace',version:2},global:{initialized:true,workspaceIds:['installed-upgrade'],archivedSessionIds:[]},tables:{workspaces:{'installed-upgrade':{path:join(home,'workspace'),title:workspaceTitle,sessionIds:[sessionId],createdAt:new Date(0).toISOString(),updatedAt:new Date(0).toISOString()}}}};
   await writeFile(join(home,'storages/workspace.json'),JSON.stringify(workspace));
-  const originals=await originalSessions(home);assert.equal(originals.length,1);
+  const originals=await originalSessions(home,sessionId);assert.equal(originals.length,1);
   for(let i=0;i<originals.length;i++){originals[i].snapshot=join(root,'evidence',`SESSION-before-${i}.zstd`);await writeFile(originals[i].snapshot,await readFile(originals[i].file));}
   assert.equal(basename(originals[0].file),'session.v4.jsonl.zstd','both frozen official engines use V4; no custom migration permitted');
   const sessionSnapshot=join(root,'evidence','SESSION-before.json');
@@ -338,7 +345,7 @@ export async function runDshInstalledUpgrade(context){
   const draft='DSH-INSTALLED-UPGRADE-DRAFT-20261018 中文 text only';
   await editor.click();await surface.keyboard.insertText(draft);
   assert.equal((await editor.innerText()).trim(),draft);await snap('B-real-unsent-draft',surface);
-  await wait('official draft persisted before normal quit',()=>surface.evaluate(({id,draft})=>{try{return JSON.parse(localStorage.getItem('dsh.conversation.'+id))?.draft===draft;}catch{return false;}},{id:oldFixture.sessionId,draft}));
+  await wait('official draft persisted before normal quit',async()=>plainDraftMatches(await surface.evaluate(id=>{try{return JSON.parse(localStorage.getItem('dsh.conversation.'+id))?.draft;}catch{return null;}},oldFixture.sessionId),draft));
   const normal=await actualApp();await invoke('close_window');
   await wait('normal host close for draft restart',async()=>!(await processes()).some(p=>p.pid===normal.pid),180000);
   await wait('previous draft-test CDP listener released',async()=>{try{await fetch('http://127.0.0.1:9391/json/version');return false;}catch{return true;}},45000);
@@ -370,9 +377,14 @@ export async function runDshInstalledUpgrade(context){
   const sidebar=page.getByRole('complementary',{name:/^(LightSeek 内容浏览侧栏|LightSeek content browser sidebar)$/});await sidebar.waitFor();
   await sidebar.getByRole('button',{name:'添加到输入框：'+materialFixture.asset.name,exact:true}).click();
   await wait('real material original binary upload',async()=>uploaded.find(r=>r.sessionId===oldFixture.sessionId&&r.name===materialFixture.asset.name&&r.status===200&&r.ok)&&await storedOriginal(pdf));
+  await sidebar.getByRole('status').filter({hasText:/^(已放入 LightSeek 输入框|Added to the LightSeek draft)$/}).waitFor({timeout:120000});
+  await sidebar.locator('.lightseek-content-browser-body[aria-busy="false"]').waitFor();
   await sidebar.getByRole('tab',{name:/^(知识库|Knowledge)$/}).click();
+  await sidebar.getByRole('status').waitFor({state:'hidden'}); // Tab change clears the prior addition status.
   await sidebar.getByRole('button',{name:/^添加到输入框：FormalUpgradeSynthetic(?:\.md)?$/}).click();
   await wait('real knowledge original binary upload',async()=>uploaded.find(r=>r.sessionId===oldFixture.sessionId&&r.name===basename(notePath)&&r.status===200&&r.ok)&&await storedOriginal(Buffer.from(expected)));
+  await sidebar.getByRole('status').filter({hasText:/^(已放入 LightSeek 输入框|Added to the LightSeek draft)$/}).waitFor({timeout:120000});
+  await sidebar.locator('.lightseek-content-browser-body[aria-busy="false"]').waitFor();
   assert.equal((await editor.innerText()).trim(),draft,'original unsent text stays intact after both additions');
   assert.equal(await readFile(notePath,'utf8'),expected);
   await snap('B-original-file-sidebars',page);await snap('B-original-files-official-composer',surface);
@@ -380,7 +392,7 @@ export async function runDshInstalledUpgrade(context){
   await event('original_files_sidebar_pass',{uploaded,originals:[{sha256:hash(pdf),bytes:pdf.length},{sha256:hash(expected),bytes:Buffer.byteLength(expected)}],modelSubmitCalled:false,existingDraftPreserved:true});
   if(policy.mode==='dsh-only'){
     await editor.click();await editor.press('Control+A');await editor.press('Backspace');
-    await wait('cleared official composer draft persisted',()=>surface.evaluate(id=>{try{return JSON.parse(localStorage.getItem('dsh.conversation.'+id))?.draft==='';}catch{return false;}},oldFixture.sessionId));
+    await wait('cleared official composer draft persisted',async()=>plainDraftMatches(await surface.evaluate(id=>{try{return JSON.parse(localStorage.getItem('dsh.conversation.'+id))?.draft;}catch{return null;}},oldFixture.sessionId),''));
     const clearing=await actualApp();await invoke('close_window');
     await wait('normal close after clear',async()=>!(await processes()).some(p=>p.pid===clearing.pid),180000);
     assert.equal(clearing.pid,reopened.pid);await wait('cleared draft process exit result',()=>reopenedExit);

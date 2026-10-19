@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
+import {readFile,writeFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import * as crypto from 'node:crypto';
 import {createHash} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
-import {continueKnownTestingNotice,clickEngineRestart,assertSessionPrefixes,assertSessionGenerations} from './engine-chain.mjs';
+import {continueKnownTestingNotice,clickEngineRestart,assertSessionPrefixes,assertSessionGenerations,originalSessions,plainDraftMatches} from './engine-chain.mjs';
 import {preservationPolicy} from './preservation-policy.mjs';
 const read=name=>readFile(new URL(name,import.meta.url),'utf8');
 
@@ -266,4 +266,50 @@ test('session evidence is captured before assertions with official read-only dec
   assert.ok(block.indexOf('SESSION-after-')<block.indexOf('assertSessionGenerations'));
   assert.match(block,/historical session generation must retain its exact bytes/);
   assert.match(source,/originalSessionBytePrefixPreserved:true,originalSessionEventPrefixPreserved:true/);
+});
+
+
+test('generation discovery is scoped to the exact original session, not unrelated host sessions',async()=>{
+  const home=await mkdtemp(join(tmpdir(),'dsh-target-generation-'));
+  const target=join(home,'sessions','project','session-target');
+  const unrelated=join(home,'sessions','project','session-ordinary-host');
+  try{
+    await mkdir(target,{recursive:true});await mkdir(unrelated,{recursive:true});
+    await writeFile(join(target,'session.v4.jsonl.zstd'),'original');
+    const before=await originalSessions(home,'session-target');assert.equal(before.length,1);
+    await writeFile(join(unrelated,'session.v4.jsonl.zstd'),'ordinary independent session');
+    await writeFile(join(unrelated,'session.v5.jsonl.zstd'),'another independent generation');
+    assertSessionGenerations(before,await originalSessions(home,'session-target'));
+    await writeFile(join(target,'session.v5.jsonl.zstd'),'unexpected target generation');
+    assert.throws(()=>assertSessionGenerations(before,[...before,{file:join(target,'session.v5.jsonl.zstd')}]));
+    assert.throws(()=>assertSessionGenerations(before,[]));
+    const ambiguous=await originalSessions(home,'session-target');assert.equal(ambiguous.length,2);assert.throws(()=>assertSessionGenerations(before,ambiguous));
+    await rm(join(target,'session.v5.jsonl.zstd'));await rm(join(target,'session.v4.jsonl.zstd'));
+    assert.throws(()=>assertSessionGenerations(before,[]));assert.equal((await originalSessions(home,'session-target')).length,0);
+  }finally{await rm(home,{recursive:true,force:true});}
+});
+
+
+test('plain composer persistence accepts official semantic snapshots and legacy strings only with matching content',async()=>{
+  for(const text of ['typed 中文 draft','']){
+    assert.equal(plainDraftMatches(text,text),true);
+    assert.equal(plainDraftMatches({text,references:[]},text),true);
+    for(const value of [undefined,null,{},'different',{text:'different',references:[]},{text},{text,references:[{source:'file'}]},{text,references:[],command:{token:'/help'}}])assert.equal(plainDraftMatches(value,text),false);
+  }
+  const source=await read('engine-chain.mjs');
+  assert.equal((source.match(/async\(\)=>plainDraftMatches\(await surface.evaluate/g)||[]).length,2);
+  assert.match(source,/real composer draft restored after ordinary reopen/);
+  assert.match(source,/cleared draft must not resurrect/);
+  assert.doesNotMatch(source,/localStorage\.setItem/);
+});
+
+
+test('both original-file additions await real sidebar completion and clear stale tab status',async()=>{
+  const source=await read('engine-chain.mjs');
+  const block=source.split("await wait('real material original binary upload'")[1].split("await event('original_files_sidebar_pass'")[0];
+  assert.equal((block.match(/Added to the LightSeek draft/g)||[]).length,2);
+  assert.equal((block.match(/aria-busy="false"/g)||[]).length,2);
+  assert.ok(block.indexOf('Added to the LightSeek draft')<block.indexOf("getByRole('tab'"));
+  assert.ok(block.indexOf("getByRole('status').waitFor({state:'hidden'})")<block.indexOf('FormalUpgradeSynthetic'));
+  assert.ok(block.lastIndexOf('Added to the LightSeek draft')>block.indexOf('real knowledge original binary upload'));
 });
