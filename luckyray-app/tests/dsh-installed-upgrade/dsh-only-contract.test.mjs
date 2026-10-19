@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import * as crypto from 'node:crypto';
 import {createHash} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
-import {continueKnownTestingNotice} from './engine-chain.mjs';
+import {continueKnownTestingNotice,clickEngineRestart} from './engine-chain.mjs';
 import {preservationPolicy} from './preservation-policy.mjs';
 const read=name=>readFile(new URL(name,import.meta.url),'utf8');
 
@@ -189,4 +189,29 @@ test('first-start navigation is exact, idempotent, and never starts credentials 
   assert.match(helper,/workspace:installed-upgrade/);assert.match(helper,/Open sidebar/);
   assert.match(helper,/Unrecognized dialog; no automatic action permitted/);
   assert.match(source,/const row=await revealOldSession\(surface,oldFixture,\{snap,event\}\)/);
+});
+
+
+test('restart observer accepts exact emitted confirmation but never requires a browser dialog',async()=>{
+  for(const mode of ['no-dialog','known-dialog','unknown-dialog','exit-failed']){
+    let listener,accepted=0,observed=0,removed=0;const events=[];
+    const dialog={type:()=> 'confirm',message:()=>mode==='unknown-dialog'?'Accept unrelated terms':'LuckyRay will quit normally and reopen automatically to finish the engine switch. Save changes on other pages first. Restart now?',accept:async()=>{accepted++;}};
+    const page={on:(name,fn)=>{assert.equal(name,'dialog');listener=fn;},off:(name,fn)=>{assert.equal(fn,listener);removed++;},getByRole:(role,options)=>({click:async()=>{
+      assert.equal(role,'button');assert.match('Restart LuckyRay and finish update',options.name);
+      if(mode.includes('dialog')&&mode!=='no-dialog')listener(dialog);
+      await Promise.resolve();await Promise.resolve();
+    }})};
+    const run=()=>clickEngineRestart(page,{canRestart:true,event:async(_name,data)=>events.push(data),observeExit:async()=>{observed++;if(mode==='exit-failed')throw Error('nonzero exit');}});
+    if(mode==='unknown-dialog'||mode==='exit-failed'){await assert.rejects(run);assert.equal(events.length,0);assert.equal(accepted,0);}
+    else {await run();assert.equal(observed,1);assert.equal(accepted,mode==='known-dialog'?1:0);assert.equal(events[0].browserConfirmationCount,accepted);}
+    assert.equal(removed,1);
+  }
+});
+
+test('automatic reopen opens actual old session before frozen coordinator health verification',async()=>{
+  const source=await read('engine-chain.mjs');
+  const reopen=source.split("engine_product_reopen_observed_before_cdp")[1];
+  assert.ok(reopen.indexOf('surface=await lshPage();await oldSession(surface)')<reopen.indexOf("pending engine local health check"));
+  assert.match(reopen,/new engine session open before health check/);
+  assert.doesNotMatch(source,/waitForEvent\('dialog'/);
 });

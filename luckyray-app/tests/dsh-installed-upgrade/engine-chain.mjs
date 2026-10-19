@@ -130,6 +130,31 @@ export async function revealOldSession(surface,fixture,hooks){
   },45000);
 }
 
+// Frozen B uses the Tauri dialog init script's async window.confirm override.
+// Observe real dialogs if emitted, but normal product exit is the required signal.
+export async function clickEngineRestart(page,{canRestart,event,observeExit}){
+  const messages=canRestart?[
+    '将正常退出 LuckyRay 并自动重新打开以完成引擎切换。请先保存其他页面的更改。现在重启？',
+    'LuckyRay will quit normally and reopen automatically to finish the engine switch. Save changes on other pages first. Restart now?'
+  ]:[
+    '将先完成切换准备，再正常退出并自动重新打开。请先结束 LightSeek 会话和远程任务、保存其他页面更改；未发送的草稿请先自行保存，退出过程不会自动发送。现在重启？',
+    'The switch is prepared first, then LuckyRay quits normally and reopens automatically. Finish LightSeek sessions and remote tasks, save changes elsewhere, and save any unsent draft yourself (quitting never sends it). Restart now?'
+  ];
+  let dialogError,dialogCount=0;const pending=[];
+  const listener=dialog=>{pending.push((async()=>{
+    assert.equal(dialog.type(),'confirm');assert.ok(messages.includes(dialog.message()),'only the exact engine restart confirmation is permitted');
+    dialogCount++;assert.equal(dialogCount,1);await dialog.accept();
+  })().catch(error=>{dialogError=error;}));};
+  page.on('dialog',listener);
+  try{
+    await page.getByRole('button',{name:/^(重启软件并完成更新|Restart LuckyRay and finish update)$/}).click();
+    if(dialogError)throw dialogError;
+    await observeExit();
+    await Promise.all(pending);if(dialogError)throw dialogError;
+    await event('engine_restart_ui_observed',{browserConfirmationCount:dialogCount,normalExitVerified:true});
+  }finally{page.off('dialog',listener);}
+}
+
 export async function seedInstalledMaterial({root,invoke,event}){
   runner();
   const pdf=Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n');
@@ -244,15 +269,18 @@ export async function runDshInstalledUpgrade(context){
   await wait('engine download assembly seal and staging',async()=>{const s=await invoke('dsh_engine_update_status');if(['prepare_failed','recovery_required','untrusted','check_failed'].includes(s.phase))throw Error('real engine prepare stopped: '+s.phase);return s.phase==='restart_required'&&(s.canRestart||s.canPrepareExit);},1200000);
   const prepared=await invoke('dsh_engine_update_status');await event('engine_download_verified_staged',{status:prepared});await snap('B-engine-verified-ready');
   const before=await actualApp();
-  const dialog=page.waitForEvent('dialog',{timeout:10000}).then(async d=>{assert.equal(d.type(),'confirm');await d.accept();});
-  await page.getByRole('button',{name:/^(重启软件并完成更新|Restart LuckyRay and finish update)$/}).click();await dialog;
-  await wait('engine updater normal old process exit',async()=>!(await processes()).some(p=>p.pid===before.pid),180000);
-  if(policy.mode==='dsh-only')await context.requireInitialNormalExit(before.pid);
+  await clickEngineRestart(page,{canRestart:prepared.canRestart,event,observeExit:async()=>{
+    await wait('engine updater normal old process exit',async()=>!(await processes()).some(p=>p.pid===before.pid),180000);
+    if(policy.mode==='dsh-only')await context.requireInitialNormalExit(before.pid);
+  }});
   const auto=await wait('product-owned automatic host reopen after engine switch',async()=>(await processes()).find(p=>p.exe?.toLowerCase()===join(paths.install,'luckyray-app.exe').toLowerCase()&&p.pid!==before.pid),180000);
   await event('engine_product_reopen_observed_before_cdp',{...auto,exeSha256:hash(await readFile(auto.exe)),expectedHostVersion:spec.b.version,uiVersion:'NOT_YET_VERIFIED'});
   ({browser,page}=await connect());await requireCdpOwner(auto.pid);
   assert.equal(hash(await readFile(join(paths.install,'luckyray-app.exe'))),spec.b.installedExeSha256);
   assert.equal(await page.evaluate(()=>window.__TAURI__.app.getVersion()),spec.b.version);
+  // Frozen coordinator.verify_activated_health requires a real SessionOpen surface.
+  surface=await lshPage();await oldSession(surface);
+  await wait('new engine session open before health check',async()=>{const s=await invoke('dsh_native_surface_status');return s.ready&&s.stage==='session-open';});
   await settingsAI();
   await wait('pending engine local health check',async()=>{const s=await invoke('dsh_engine_update_status');if(s.phase==='switch_incomplete'||s.phase==='verification_failed')throw Error('engine switch health refused: '+s.phase);return s.canVerify||s.phase==='healthy';},180000);
   if((await invoke('dsh_engine_update_status')).canVerify){await page.getByRole('button',{name:/^(完成本机健康检查|Verify local engine health)$/}).click();}
