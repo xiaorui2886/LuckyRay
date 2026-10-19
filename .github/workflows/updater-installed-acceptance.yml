@@ -2,6 +2,10 @@ name: One-off installed desktop then DSH upgrade
 on:
   workflow_dispatch:
     inputs:
+      storage_only:
+        type: boolean
+        default: false
+        description: Focus only on original 1.9.8 storage subprocess; no CA, proxy, grant or upgrade
       ephemeral_trust_approved:
         type: boolean
         default: false
@@ -16,8 +20,11 @@ concurrency:
   group: dsh-installed-20261018-one-off
   cancel-in-progress: false
 jobs:
+  storage-diagnostic:
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only == true
+    uses: ./.github/workflows/storage-initialize-diagnostic.yml
   installed-chain:
-    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018'
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only != true
     environment: dsh-installed-20261018
     runs-on: windows-2022
     timeout-minutes: 45

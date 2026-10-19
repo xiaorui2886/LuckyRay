@@ -72,3 +72,11 @@ test('fixture failure stops before trust actions and only encrypted evidence is 
   assert.match(workflow,/old-fixture-precondition-failed-before-CA-no-authorization-bypass/);
   assert.match(workflow,/path: D:\/lr-formal-uat\/encrypted\/\*\.encrypted\.json/);
 });
+test('storage-only dispatch cannot enter the CA/proxy/upgrade job or inherit a Secret',async()=>{
+  const workflow=await readFile(new URL('../../../.github/workflows/updater-installed-acceptance.yml',import.meta.url),'utf8');
+  const diagnostic=await readFile(new URL('../../../.github/workflows/storage-initialize-diagnostic.yml',import.meta.url),'utf8');
+  assert.match(workflow,/storage-diagnostic:[\s\S]*?inputs\.storage_only == true/);
+  assert.match(workflow,/installed-chain:[\s\S]*?inputs\.storage_only != true/);
+  assert.match(diagnostic,/workflow_call:/);
+  assert.doesNotMatch(diagnostic,/secrets\.|secrets:|environment:|Prepare-ApprovedEphemeralHttps|New-SelfSignedCertificate|Import-Certificate/);
+});
