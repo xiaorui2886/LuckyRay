@@ -61,7 +61,7 @@ test('synthetic evidence is recoverable only with the separate recipient key',()
 test('observer keeps genuine runner, actual installed versions and normal quit boundaries',async()=>{
   const engine=await readFile(new URL('./engine-chain.mjs',import.meta.url),'utf8'),chain=await readFile(new URL('./chain.mjs',import.meta.url),'utf8'),prepare=await readFile(new URL('./prepare-fixture.mjs',import.meta.url),'utf8');
   assert.match(engine,/JSON\.parse\(localStorage\.getItem\('dsh.sessions.current'\)\)\?\.sessionId/);
-  assert.match(engine,/assertOriginals\(oldFixture\)/);assert.match(engine,/old installed engine|old engine running/);
+  assert.match(engine,/assertOriginals\(oldFixture,/);assert.match(engine,/old installed engine|old engine running/);
   assert.match(engine,/await invoke\('close_window'\)/);assert.match(engine,/\.keyboard\.insertText\(draft\)/);
   assert.doesNotMatch(engine,/localStorage\.setItem|process\.kill|\.kill\(/);
   assert.match(chain,/process\.env\.GITHUB_ACTIONS!=='true'/);assert.match(chain,/spec\.a\.version,'1\.9\.8'/);assert.match(chain,/spec\.b\.version,'1\.9\.9'/);

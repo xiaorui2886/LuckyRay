@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import * as crypto from 'node:crypto';
 import {createHash} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
-import {continueKnownTestingNotice,clickEngineRestart} from './engine-chain.mjs';
+import {continueKnownTestingNotice,clickEngineRestart,assertSessionPrefixes,assertSessionGenerations} from './engine-chain.mjs';
 import {preservationPolicy} from './preservation-policy.mjs';
 const read=name=>readFile(new URL(name,import.meta.url),'utf8');
 
@@ -47,7 +47,7 @@ test('DSH-only driver reuses genuine engine UI chain and cannot label desktop in
   assert.match(source,/runDshInstalledUpgrade\(\{evidenceMode:'dsh-only'/);
   assert.match(source,/requireCdpOwner\(B.pid\)/);assert.match(source,/PASS_DSH_ONLY_INSTALLED_ENGINE_UPGRADE/);
   assert.doesNotMatch(source,/desktop_application_update|spec\.a\.|originalGrant|originalAuthorityBytes|formal_manifest_request|formal_artifact_request/);
-  for(const code of ['await policy.verify(invoke)','await assertOriginals(oldFixture)','await identity(spec.engine.fromVersion)','await identity(spec.engine.version)','await preserved()','cleared draft must not resurrect'])assert.ok(engine.includes(code));
+  for(const code of ['await policy.verify(invoke)','await assertOriginals(oldFixture,','await identity(spec.engine.fromVersion)','await identity(spec.engine.version)','await preserved()','cleared draft must not resurrect'])assert.ok(engine.includes(code));
   assert.doesNotMatch(engine,/localStorage\.setItem|process\.kill|\.kill\(/);
 });
 test('inline DSH-only job verifies B only, retains signature and encrypted evidence gates',async()=>{
@@ -239,4 +239,31 @@ test('fixture captures complete settings only after ordinary frozen host AI hydr
     assert.equal(clicks,1);
   }
   assert.match(await read('engine-chain.mjs'),/assert.deepEqual\(await page.evaluate\(\(\)=>JSON.parse\(localStorage.getItem\('luckyray-settings-v1'\)\)\),settingsBefore\)/);
+});
+
+
+test('official V4 append preserves exact bytes and event prefixes; mutation/truncation fail',()=>{
+  const bytes=Buffer.from('original-complete-zstd-frames');
+  const original={header:{id:'synthetic-session',version:4},events:[{type:'user/message',seq:0,data:{text:'original'}},{type:'assistant/message',seq:1,data:{text:'retained'}}]};
+  const current=structuredClone(original);current.events.push({type:'session/end-seed',seq:2,data:{}});
+  const appended=Buffer.concat([bytes,Buffer.from('new-complete-frame')]);
+  assertSessionPrefixes(bytes,appended,original,current);
+  assert.throws(()=>assertSessionPrefixes(bytes,appended.subarray(0,bytes.length-1),original,current));
+  const modified=Buffer.from(appended);modified[0]^=1;assert.throws(()=>assertSessionPrefixes(bytes,modified,original,current));
+  const changed=structuredClone(current);changed.events[0].data.text='lost';assert.throws(()=>assertSessionPrefixes(bytes,appended,original,changed));
+  const truncated=structuredClone(original);truncated.events.pop();assert.throws(()=>assertSessionPrefixes(bytes,appended,original,truncated));
+  const identity=structuredClone(current);identity.header.id='other';assert.throws(()=>assertSessionPrefixes(bytes,appended,original,identity));
+  assertSessionGenerations([{file:'session.v4.jsonl.zstd'}],[{file:'session.v4.jsonl.zstd'}]);
+  assert.throws(()=>assertSessionGenerations([{file:'session.v4.jsonl.zstd'}],[{file:'session.v4.jsonl.zstd'},{file:'session.v5.jsonl.zstd'}]));
+  assert.throws(()=>assertSessionGenerations([{file:'session.v4.jsonl.zstd'}],[]));
+});
+
+test('session evidence is captured before assertions with official read-only decoding',async()=>{
+  const source=await read('engine-chain.mjs');
+  assert.match(source,/sessionPersistence.open\(id,'read'\)/);
+  assert.match(source,/MAX_SYNTHETIC_SESSION_BYTES=8\*1024\*1024/);
+  const block=source.split('async function assertOriginals')[1].split('// Exact official')[0];
+  assert.ok(block.indexOf('SESSION-after-')<block.indexOf('assertSessionGenerations'));
+  assert.match(block,/historical session generation must retain its exact bytes/);
+  assert.match(source,/originalSessionBytePrefixPreserved:true,originalSessionEventPrefixPreserved:true/);
 });

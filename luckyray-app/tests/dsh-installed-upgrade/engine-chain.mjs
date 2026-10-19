@@ -21,12 +21,50 @@ async function processes(){
   const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,encoding:'utf8',timeout:15000,env:installedApplicationEnvironment(process.env,null)});
   const rows=JSON.parse(stdout||'[]');return Array.isArray(rows)?rows:[rows];
 }
+const MAX_SYNTHETIC_SESSION_BYTES=8*1024*1024;
 async function originalSessions(home){
   const found=[];
-  async function visit(dir){for(const entry of await readdir(dir,{withFileTypes:true})){const file=join(dir,entry.name);if(entry.isDirectory())await visit(file);else if(/^session\.v[34]\.jsonl\.zstd$/.test(entry.name))found.push({file,sha256:hash(await readFile(file))});}}
+  async function visit(dir){for(const entry of await readdir(dir,{withFileTypes:true})){const file=join(dir,entry.name);if(entry.isDirectory())await visit(file);else if(/^session(?:\.v[0-9]+)?\.jsonl(?:\.zstd)?$/.test(entry.name)){const bytes=await readFile(file);assert.ok(bytes.length<=MAX_SYNTHETIC_SESSION_BYTES);found.push({file,sha256:hash(bytes),bytes:bytes.length});assert.ok(found.length<=8,'bounded synthetic session generations');}}}
   await visit(join(home,'sessions'));return found;
 }
-async function assertOriginals(fixture){for(const file of fixture.originals)assert.equal(hash(await readFile(file.file)),file.sha256,'original old-engine session generation must retain its exact bytes');}
+export async function readOfficialSession(runtime,home,id){
+  const load=name=>import(pathToFileURL(join(runtime,'host/node_modules',name,'lib/index.js')));
+  const {Context}=await load('@deepseek-ai/cordis');
+  const persistence=await load('@deepseek-ai/dsh-session-persistence-jsonl');
+  const ctx=new Context();
+  try{
+    await ctx.plugin(persistence.default??persistence,{root:join(home,'sessions')});
+    const handle=await ctx.sessionPersistence.open(id,'read');
+    try{const {events}=await handle.read();const value={header:handle.header,events};assert.ok(Buffer.byteLength(JSON.stringify(value))<=MAX_SYNTHETIC_SESSION_BYTES);return JSON.parse(JSON.stringify(value));}
+    finally{await handle.close();}
+  }finally{await ctx.fiber.dispose();}
+}
+export function assertSessionPrefixes(originalBytes,currentBytes,original,current){
+  assert.ok(currentBytes.length>=originalBytes.length,'original session cannot be truncated');
+  assert.deepEqual(currentBytes.subarray(0,originalBytes.length),originalBytes,'exact original compressed session bytes must remain a prefix');
+  assert.deepEqual(current.header,original.header,'original session identity/header must remain unchanged');
+  assert.ok(current.events.length>=original.events.length,'original event history cannot be truncated');
+  assert.deepEqual(current.events.slice(0,original.events.length),original.events,'every original official decoded event must remain an exact prefix');
+}
+export function assertSessionGenerations(originals,current){
+  assert.deepEqual(current.map(row=>row.file).sort(),originals.map(row=>row.file).sort(),'unexpected or ambiguous session generation');
+}
+async function assertOriginals(fixture,{runtime,root,index,event}){
+  const currentFiles=await originalSessions(fixture.home);
+  // Capture bounded synthetic bytes and decoded history BEFORE preservation assertions.
+  for(let i=0;i<currentFiles.length;i++)await writeFile(join(root,'evidence',`SESSION-after-${index}-${i}.zstd`),await readFile(currentFiles[i].file));
+  const current=await readOfficialSession(runtime,fixture.home,fixture.sessionId);
+  await writeFile(join(root,'evidence',`SESSION-after-${index}.json`),JSON.stringify(current,null,2));
+  assertSessionGenerations(fixture.originals,currentFiles);
+  const original=JSON.parse(await readFile(fixture.sessionSnapshot,'utf8'));
+  for(const file of fixture.originals){
+    const before=await readFile(file.snapshot),after=await readFile(file.file);
+    assert.equal(hash(before),file.sha256,'captured baseline identity');
+    if(basename(file.file)==='session.v4.jsonl.zstd')assertSessionPrefixes(before,after,original,current);
+    else assert.equal(hash(after),file.sha256,'historical session generation must retain its exact bytes');
+  }
+  await event('original_session_prefix_preserved',{sessionId:fixture.sessionId,originalEvents:original.events.length,currentEvents:current.events.length,appended:current.events.slice(original.events.length).map(({type,seq})=>({type,seq})),files:currentFiles});
+}
 
 // Exact official 0.1.7 / 0.2.1 informational notices; old notice also captured live.
 // Never reuse this action for auth, legal agreements, or unknown modal content.
@@ -192,7 +230,11 @@ export async function seedOldInstalledSession({root,paths,spec,event}){
   const workspace={unit:{name:'workspace',version:2},global:{initialized:true,workspaceIds:['installed-upgrade'],archivedSessionIds:[]},tables:{workspaces:{'installed-upgrade':{path:join(home,'workspace'),title:workspaceTitle,sessionIds:[sessionId],createdAt:new Date(0).toISOString(),updatedAt:new Date(0).toISOString()}}}};
   await writeFile(join(home,'storages/workspace.json'),JSON.stringify(workspace));
   const originals=await originalSessions(home);assert.equal(originals.length,1);
-  const fixture={home,sessionId,workspaceTitle,originals};
+  for(let i=0;i<originals.length;i++){originals[i].snapshot=join(root,'evidence',`SESSION-before-${i}.zstd`);await writeFile(originals[i].snapshot,await readFile(originals[i].file));}
+  assert.equal(basename(originals[0].file),'session.v4.jsonl.zstd','both frozen official engines use V4; no custom migration permitted');
+  const sessionSnapshot=join(root,'evidence','SESSION-before.json');
+  await writeFile(sessionSnapshot,JSON.stringify(await readOfficialSession(runtime,home,sessionId),null,2));
+  const fixture={home,sessionId,workspaceTitle,originals,sessionSnapshot};
   await writeFile(join(root,'evidence/OLD-ENGINE-SESSION.json'),JSON.stringify({version:pkg.version,sessionId,provider:'deterministic loopback only; no real model',originals},null,2));
   await event('old_installed_engine_fixture',{version:pkg.version,sessionId,sessionGenerations:originals.length,realModelCalled:false});
   return fixture;
@@ -203,6 +245,7 @@ export async function runDshInstalledUpgrade(context){
   const {root,paths,spec,event,oldFixture,materialFixture,connect,requireCdpOwner,settingsBefore,notePath,expected,originalGrant,originalAuthorityBytes,authorityFingerprints,installedEnvironment}=context;
   const policy=preservationPolicy(context);
   let {browser,page}=context;
+  let selectedRuntime,preservationIndex=0;
   const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI__.core.invoke(command,args),{command,args});
   const snap=async(name,surface=page)=>{await surface.screenshot({path:join(root,'evidence',name+'.png'),fullPage:true});await writeFile(join(root,'evidence',name+'.dom.txt'),await surface.locator('body').innerText());};
   const actualApp=async()=>{const apps=(await processes()).filter(p=>p.exe?.toLowerCase()===join(paths.install,'luckyray-app.exe').toLowerCase());assert.equal(apps.length,1);return apps[0];};
@@ -213,6 +256,7 @@ export async function runDshInstalledUpgrade(context){
     for(const child of owned){const runtime=resolve(child.exe,'../..');const file=join(runtime,'host/node_modules/@deepseek-ai/dsh/package.json');if(existsSync(file)){const pkg=JSON.parse(await readFile(file,'utf8'));actual.push({...child,runtime,version:pkg.version,nodeSha256:hash(await readFile(child.exe))});}}
     assert.ok(actual.length>0,'owned running Node image must identify the actual selected engine');
     assert.ok(actual.every(p=>p.version===expectedVersion));
+    selectedRuntime=actual[0].runtime;
     const status=await invoke('dsh_engine_update_status');assert.equal(status.currentVersion,expectedVersion);assert.equal(status.sourceClass,'production');
     await event('actual_selected_engine',{appPid:app.pid,hostVersion:await page.evaluate(()=>window.__TAURI__.app.getVersion()),status,runtimes:actual});
     return {app,status,runtimes:actual};
@@ -252,7 +296,7 @@ export async function runDshInstalledUpgrade(context){
       const note=await invoke('knowledge_read_document',{documentRef:context.documentRef});
       assert.equal(note.content,expected);assert.deepEqual(note.documentRef,context.documentRef);
     }
-    await assertOriginals(oldFixture);
+    await assertOriginals(oldFixture,{runtime:selectedRuntime,root,index:preservationIndex++,event});
     await verifyInstalledMaterial(invoke,materialFixture);
   }
   try{
@@ -350,7 +394,7 @@ export async function runDshInstalledUpgrade(context){
     await preserved();await identity(spec.engine.version);await snap('B-cleared-draft-stays-empty',surface);
     await event('cleared_draft_restart_pass',{ordinaryReopenPid:clearedReopen.pid});
   }
-  const result={from:spec.engine.fromVersion,to:spec.engine.version,descriptorSha256:spec.engine.descriptorSha256,automaticReopen:true,oldSessionVisible:true,originalSessionBytesPreserved:true,...policy.result,preUpgradeMaterialIdPreserved:materialFixture.asset.id,realDraftAfterRestart:true,originalMaterialAndNoteBytes:true,profile:paths.profile,sourceClass:'production'};
+  const result={from:spec.engine.fromVersion,to:spec.engine.version,descriptorSha256:spec.engine.descriptorSha256,automaticReopen:true,oldSessionVisible:true,originalSessionBytePrefixPreserved:true,originalSessionEventPrefixPreserved:true,...policy.result,preUpgradeMaterialIdPreserved:materialFixture.asset.id,realDraftAfterRestart:true,originalMaterialAndNoteBytes:true,profile:paths.profile,sourceClass:'production'};
   await writeFile(join(root,'evidence/ENGINE-RESULT.json'),JSON.stringify(result,null,2)+'\n');
   await browser.close();return result;
   }catch(error){
