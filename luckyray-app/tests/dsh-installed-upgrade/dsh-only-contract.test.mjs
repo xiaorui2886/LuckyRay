@@ -49,8 +49,8 @@ test('DSH-only driver reuses genuine engine UI chain and cannot label desktop in
   for(const code of ['await policy.verify(invoke)','await assertOriginals(oldFixture)','await identity(spec.engine.fromVersion)','await identity(spec.engine.version)','await preserved()','cleared draft must not resurrect'])assert.ok(engine.includes(code));
   assert.doesNotMatch(engine,/localStorage\.setItem|process\.kill|\.kill\(/);
 });
-test('separate workflow verifies B only, retains signature and encrypted evidence gates',async()=>{
-  const workflow=await read('../../../.github/workflows/dsh-only-installed-acceptance.yml');
+test('inline DSH-only job verifies B only, retains signature and encrypted evidence gates',async()=>{
+  const workflow=(await read('../../../.github/workflows/updater-installed-acceptance.yml')).split('  dsh-only:')[1].split('  storage-diagnostic:')[0];
   assert.match(workflow,/test\/dsh021-only-ray-20261019/);assert.match(workflow,/foreach \(\$name in @\('b'\)\)/);
   assert.match(workflow,/luckyray-update-verify.exe/);assert.match(workflow,/verify-inputs.mjs/);assert.match(workflow,/-FilePath \$env:B_INSTALLER/);
   assert.match(workflow,/recipient-identity-invalid/);assert.match(workflow,/reviewed-evidence-recipient-required-before-test/);
@@ -86,13 +86,16 @@ test('DSH-only updater exit checks real child exit status before automatic reope
 test('registered workflow routes explicit DSH-only to a separate job without full-chain fallback',async()=>{
   const entry=await read('../../../.github/workflows/updater-installed-acceptance.yml');
   assert.match(entry,/inputs.dsh_only == true && inputs.storage_only != true/);
-  assert.match(entry,/uses: .\/.github\/workflows\/dsh-only-installed-acceptance.yml/);
+  const job=entry.split('  dsh-only:')[1].split('  storage-diagnostic:')[0];
+  assert.match(job,/environment: dsh-only-ray-20261019/);assert.match(job,/runs-on: windows-2022/);
+  assert.match(job,/PRIVATE_TRANSFER_DOWNLOAD_URL: \$\{\{ secrets.DSH_ONLY_TRANSFER_20261019 \}\}/);
+  assert.doesNotMatch(job,/uses: \.\/\.github\/workflows|secrets: inherit/);
   assert.equal((entry.match(/inputs.dsh_only != true/g)||[]).length,2);
-  assert.match(await read('../../../.github/workflows/dsh-only-installed-acceptance.yml'),/workflow_call:/);
+  assert.doesNotMatch(entry,/dsh-only-installed-acceptance.yml|workflow_call:/);
 });
 
 test('actual recipient preflight accepts escaped or literal PEM newlines and rejects private keys or wrong identity',async()=>{
-  const workflow=await read('../../../.github/workflows/dsh-only-installed-acceptance.yml');
+  const workflow=(await read('../../../.github/workflows/updater-installed-acceptance.yml')).split('  dsh-only:')[1].split('  storage-diagnostic:')[0];
   const script=workflow.match(/^\s*node -e "(const c=require\('node:crypto'\).*?)"$/m)?.[1];assert.ok(script);
   const {publicKey}=crypto.generateKeyPairSync('rsa',{modulusLength:2048});
   const pem=publicKey.export({type:'spki',format:'pem'});

@@ -34,12 +34,142 @@ concurrency:
 jobs:
   dsh-only:
     if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-only-ray-20261019' && inputs.dsh_only == true && inputs.storage_only != true
-    uses: ./.github/workflows/dsh-only-installed-acceptance.yml
-    with:
-      ephemeral_trust_approved: ${{ inputs.ephemeral_trust_approved }}
-      approval_reference: ${{ inputs.approval_reference }}
-      recipient_public_pem: ${{ inputs.recipient_public_pem }}
-      recipient_sha256: ${{ inputs.recipient_sha256 }}
+    environment: dsh-only-ray-20261019
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Cheap isolation and observer preflight before downloads or certificate actions
+        env:
+          EPHEMERAL_APPROVED: ${{ inputs.ephemeral_trust_approved }}
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+          EVIDENCE_RECIPIENT_PEM: ${{ inputs.recipient_public_pem }}
+          EVIDENCE_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:USERNAME -notlike 'runner*' -or $env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'standard-disposable-windows-runner-required' }
+          if ($env:EPHEMERAL_APPROVED -cne 'true' -or $env:APPROVAL_REFERENCE -notmatch '\A[a-zA-Z0-9][a-zA-Z0-9._-]{3,79}\z') { throw 'fresh-owner-trust-approval-required' }
+          $root='D:\lr-formal-uat'
+          if (Test-Path -LiteralPath $root) { throw 'existing-test-root-refused' }
+          if (Test-Path -LiteralPath "$env:APPDATA/com.luckyray.desktop") { throw 'existing-profile-refused' }
+          if (@(Get-Process luckyray-app -ErrorAction SilentlyContinue).Count) { throw 'existing-app-refused' }
+          if (Test-Path -LiteralPath "$env:LOCALAPPDATA/com.luckyray.desktop") { throw 'existing-local-profile-refused' }
+          New-Item -ItemType Directory -Path "$root/private","$root/evidence" | Out-Null
+          node -e "const c=require('node:crypto'),fs=require('node:fs');const p=process.env.EVIDENCE_RECIPIENT_PEM.replace(/\\n/g,'\n');if(!/^-----BEGIN PUBLIC KEY-----/.test(p)||p.includes('PRIVATE KEY'))throw Error('public-recipient-only');const k=c.createPublicKey(p);if(k.asymmetricKeyType!=='rsa'||k.asymmetricKeyDetails.modulusLength<2048||c.createHash('sha256').update(k.export({type:'spki',format:'der'})).digest('hex')!==process.env.EVIDENCE_RECIPIENT_SHA256)throw Error('recipient-identity-invalid');fs.writeFileSync('D:/lr-formal-uat/private/recipient-public.pem',p,{flag:'wx'});"
+          if ($LASTEXITCODE -ne 0) { throw 'reviewed-evidence-recipient-required-before-test' }
+          node --check luckyray-app/tests/dsh-installed-upgrade/dsh-only.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'observer-syntax-invalid' }
+          node --check luckyray-app/tests/dsh-installed-upgrade/engine-chain.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'engine-observer-syntax-invalid' }
+          node --check luckyray-app/tests/dsh-installed-upgrade/prepare-dsh-only.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'fixture-observer-syntax-invalid' }
+          node --test luckyray-app/tests/dsh-installed-upgrade/harness-contract.test.mjs luckyray-app/tests/dsh-installed-upgrade/dsh-only-contract.test.mjs luckyray-app/tests/formal-update/windows-native-encoding.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'cheap-observer-check-failed' }
+      - name: Download single reviewed transfer using this step's temporary environment Secret only
+        working-directory: luckyray-app
+        env:
+          PRIVATE_TRANSFER_DOWNLOAD_URL: ${{ secrets.DSH_ONLY_TRANSFER_20261019 }}
+        run: node tests/dsh-installed-upgrade/download-transfer.mjs
+      - name: Safely extract fixed input bytes and verify formal DSH signature before system changes
+        working-directory: luckyray-app
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected=Get-Content tests/dsh-installed-upgrade/expected.json -Raw|ConvertFrom-Json
+          $archive='D:\lr-formal-uat\private\transfer.zip'
+          if ((Get-FileHash -LiteralPath $archive).Hash.ToLowerInvariant() -cne $expected.transferSha256) { throw 'transfer-on-disk-hash-invalid' }
+          $zip=[IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $total=0L
+            if ($zip.Entries.Count -gt 1024) { throw 'transfer-entry-budget-invalid' }
+            foreach ($entry in $zip.Entries) {
+              if ($entry.FullName -cnotmatch '\Ainput/[A-Za-z0-9_./-]+\z' -or $entry.FullName.Split('/') -contains '..' -or ($entry.ExternalAttributes -shr 16 -band 0xF000) -eq 0xA000) { throw 'transfer-entry-path-invalid' }
+              $total+=$entry.Length
+              if ($total -gt 800MB -or $entry.Length -gt 300MB) { throw 'transfer-byte-budget-invalid' }
+            }
+            [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip,'D:\lr-formal-uat\private')
+          } finally { $zip.Dispose() }
+          node tests/dsh-installed-upgrade/verify-inputs.mjs 'D:\lr-formal-uat\private\input' *> 'D:\lr-formal-uat\evidence\input-verification.log'
+          if ($LASTEXITCODE -ne 0) { throw 'fixed-reviewed-input-verification-failed' }
+      - name: Verify frozen B signature using unchanged public native verification source
+        working-directory: luckyray-app
+        env:
+          CARGO_BUILD_JOBS: '2'
+          CARGO_TARGET_DIR: D:/lr-public-updater-tools
+        run: |
+          $ErrorActionPreference='Stop'
+          $spec=Get-Content 'D:\lr-formal-uat\private\input\spec.json' -Raw|ConvertFrom-Json
+          rustup toolchain install 1.95.0 --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'public-verifier-toolchain-failed' }
+          rustup override set 1.95.0
+          cargo build --locked --manifest-path tests/desktop-updater-native/Cargo.toml --bin luckyray-update-verify
+          if ($LASTEXITCODE -ne 0) { throw 'public-verifier-build-failed' }
+          foreach ($name in @('b')) {
+            $entry=$spec.$name
+            $file="D:\lr-formal-uat\private\input\$($entry.file)"
+            & 'D:\lr-public-updater-tools\debug\luckyray-update-verify.exe' $file "$file.sig" 'src-tauri/src/desktop_app_update/trust.json' $entry.version >> 'D:\lr-formal-uat\evidence\desktop-signatures.log'
+            if ($LASTEXITCODE -ne 0) { throw 'unchanged-production-signature-invalid' }
+          }
+          npm install --prefix "$env:RUNNER_TEMP/lr-ui-tools" --ignore-scripts --no-audit --no-fund playwright-core@1.56.1
+          if ($LASTEXITCODE -ne 0) { throw 'public-ui-tool-install-failed' }
+          "UI_TOOLS=$env:RUNNER_TEMP/lr-ui-tools" >> $env:GITHUB_ENV
+          "UPGRADE_SPEC=D:\lr-formal-uat\private\input\spec.json" >> $env:GITHUB_ENV
+          "B_INSTALLER=D:\lr-formal-uat\private\input\$($spec.b.file)" >> $env:GITHUB_ENV
+      - name: Directly install frozen B once to a fresh Chinese and space directory
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer=Start-Process -FilePath $env:B_INSTALLER -ArgumentList @('/S','/D=D:\lr-formal-uat\安装 空格') -WindowStyle Hidden -PassThru
+          if (-not $installer.WaitForExit(180000) -or $installer.ExitCode -ne 0) { throw 'direct-B-install-failed' }
+          if ((Get-Content -LiteralPath 'D:\lr-formal-uat\安装 空格\luckyray-install-complete.txt' -Raw).Trim() -cne 'com.luckyray.desktop|1.9.9') { throw 'direct-B-install-completion-invalid' }
+          @{install='D:\lr-formal-uat\安装 空格';profile="$env:APPDATA/com.luckyray.desktop";local=$env:LOCALAPPDATA;tls='D:\lr-formal-uat\private\tls.json'} | ConvertTo-Json | Set-Content 'D:\lr-formal-uat\private\paths.json' -Encoding utf8
+      - name: Prepare DSH-only old-engine synthetic data without MCP proxy or CA then quit normally
+        working-directory: luckyray-app
+        run: |
+          node tests/dsh-installed-upgrade/prepare-dsh-only.mjs *> 'D:\lr-formal-uat\evidence\fixture-observer.log'
+          if ($LASTEXITCODE -ne 0) { throw 'dsh-only-fixture-precondition-failed-before-CA-no-authorization-bypass' }
+      - name: This approved disposable runner's temporary update-file HTTPS trust
+        env:
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File luckyray-app/tests/formal-update/Prepare-ApprovedEphemeralHttps.ps1 -OwnerApprovalReference $env:APPROVAL_REFERENCE
+          if ($LASTEXITCODE -ne 0) { throw 'approved-HTTPS-scope-failed-no-bypass' }
+      - name: DSH-only genuine in-software engine upgrade and preservation
+        working-directory: luckyray-app
+        run: |
+          node tests/dsh-installed-upgrade/dsh-only.mjs *> 'D:\lr-formal-uat\evidence\installed-observer.log'
+          if ($LASTEXITCODE -ne 0) { throw 'dsh-only-chain-stopped-see-encrypted-evidence-no-manual-repair' }
+      - name: Always remove only this run's CA and test configuration
+        if: always()
+        env:
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+        run: |
+          if (Test-Path -LiteralPath 'D:\lr-formal-uat\private\test-certificates.json') {
+            & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File luckyray-app/tests/formal-update/Remove-ApprovedEphemeralHttps.ps1 -OwnerApprovalReference $env:APPROVAL_REFERENCE
+            if ($LASTEXITCODE -ne 0) { throw 'approved-test-configuration-cleanup-failed' }
+          }
+      - name: Encrypt evidence only to the preflight-verified recipient
+        if: always()
+        working-directory: luckyray-app
+        run: |
+          if ((Test-Path -LiteralPath 'D:\lr-formal-uat\evidence') -and (Test-Path -LiteralPath 'D:\lr-formal-uat\private\recipient-public.pem')) {
+            node tests/dsh-installed-upgrade/encrypt-evidence.mjs 'D:\lr-formal-uat\private\recipient-public.pem'
+            if ($LASTEXITCODE -ne 0) { throw 'evidence-encryption-failed-no-plaintext-upload' }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dsh-only-encrypted-evidence
+          path: D:/lr-formal-uat/encrypted/*.encrypted.json
+          if-no-files-found: ignore
+          retention-days: 3
+          compression-level: 0
   storage-diagnostic:
     if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only == true && inputs.dsh_only != true
     uses: ./.github/workflows/storage-initialize-diagnostic.yml

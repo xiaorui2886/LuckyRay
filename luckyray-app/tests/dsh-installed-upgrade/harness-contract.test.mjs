@@ -77,7 +77,7 @@ test('observer keeps genuine runner, actual installed versions and normal quit b
   assert.match(chain,/B_preupgrade_material_preserved/);assert.match(engine,/verifyInstalledMaterial\(invoke,materialFixture\)/);
 });
 test('fixture failure stops before trust actions and only encrypted evidence is uploaded',async()=>{
-  const workflow=await readFile(new URL('../../../.github/workflows/updater-installed-acceptance.yml',import.meta.url),'utf8');
+  const workflow=(await readFile(new URL('../../../.github/workflows/updater-installed-acceptance.yml',import.meta.url),'utf8')).split('  installed-chain:')[1];
   const fixture=workflow.indexOf('- name: Prepare same old version synthetic data');
   const trust=workflow.indexOf('- name: This approved disposable runner');
   assert.ok(fixture>0&&trust>fixture);

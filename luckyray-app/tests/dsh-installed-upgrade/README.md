@@ -123,7 +123,7 @@ and the original workflow retain their full-chain assertions. The shared engine
 helper defaults to `full-integration`; explicit `dsh-only` rejects all grant
 parameters and refuses existing community MCP state. No grant is manufactured.
 
-The new `.github/workflows/dsh-only-installed-acceptance.yml` is restricted to
+The inline `dsh-only` job in `.github/workflows/updater-installed-acceptance.yml` is restricted to
 owner manual dispatch on `test/dsh021-only-ray-20261019`, a standard disposable
 Windows runner and its separate environment. It directly installs the exact
 frozen signed B 1.9.9 after existing native signature verification. It does not
@@ -172,6 +172,8 @@ contract checks as an installer, signed engine upgrade or release PASS.
 
 The already-registered `updater-installed-acceptance.yml` is also the dispatch
 entry on the isolated new branch: select `dsh_only=true`, `storage_only=false`.
-It calls the separate DSH-only reusable workflow. Original desktop and storage
-jobs explicitly exclude DSH-only; their prior branches and assertions remain.
+It runs the DSH-only job directly in its named environment, so its one temporary
+Secret is resolved without a reusable-workflow boundary or secret inheritance.
+Original desktop and storage jobs explicitly exclude DSH-only; their prior
+branches and assertions remain.
 No default/main branch modification is needed for workflow registration.
