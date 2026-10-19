@@ -28,6 +28,39 @@ async function originalSessions(home){
 }
 async function assertOriginals(fixture){for(const file of fixture.originals)assert.equal(hash(await readFile(file.file)),file.sha256,'original old-engine session generation must retain its exact bytes');}
 
+// Exact official 0.1.7-rc.2 informational notice, verified against captured UI.
+// Never reuse this action for auth, legal agreements, or unknown modal content.
+const testingNotices=[
+  {
+    "title": "Internal Testing Notice",
+    "body": "DeepSeek Harness 0.1 remains in testing for Harness developers. Many areas need further improvement, and we welcome feedback from the developer community. DeepSeek Harness's core plugins and foundational APIs will continue to evolve rapidly over the coming months.\n\nWe look forward to exploring the limits of intelligence with developers around the world, building on open-source, open, reusable, and composable infrastructure. We welcome Harness developers everywhere to join the DSH plugin ecosystem.",
+    "button": "Continue"
+  },
+  {
+    "title": "内测声明",
+    "body": "DeepSeek Harness 目前的 0.1 版本仍处在面向 Harness 开发者进行测试的阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者的反馈建议。预计 DeepSeek Harness 的核心插件以及基础 API 都会在接下来的一段时间内快速迭代、持续演化。\n\n我们期待与全球开发者一起，在开源、开放、可复用、可组合的基础设施之上，共同探索智能上限。欢迎全球 Harness 开发者加入 DSH 插件生态。",
+    "button": "继续"
+  }
+];
+const normalizedNotice=text=>text.replace(/\s+/g,' ').trim();
+export async function continueKnownTestingNotice(surface,{snap,event}){
+  for(const notice of testingNotices){
+    const dialog=surface.getByRole('dialog',{name:notice.title,exact:true});
+    if(!await dialog.isVisible())continue;
+    await snap('testing-notice-before',surface);
+    assert.equal(normalizedNotice(await dialog.innerText()),normalizedNotice(notice.title+' '+notice.body+' '+notice.button),'known notice content must match exactly');
+    assert.equal(await dialog.locator('input,select,textarea,a,[role="checkbox"]').count(),0,'notice must not request credentials, agreement, or navigation');
+    assert.equal(await dialog.getByRole('button').count(),1,'known notice has exactly one action');
+    const proceed=dialog.getByRole('button',{name:notice.button,exact:true});
+    await proceed.click();
+    await dialog.waitFor({state:'hidden',timeout:15000});
+    await snap('testing-notice-after',surface);
+    await event('known_testing_notice_continued',{title:notice.title,ordinaryUiClick:true});
+    return true;
+  }
+  return false;
+}
+
 export async function seedInstalledMaterial({root,invoke,event}){
   runner();
   const pdf=Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n');
@@ -102,6 +135,7 @@ export async function runDshInstalledUpgrade(context){
     });
   }
   async function oldSession(surface){
+    await continueKnownTestingNotice(surface,{snap,event});
     const row=surface.locator('[data-row-key="session:'+oldFixture.sessionId+'"]');
     if(!await row.isVisible().catch(()=>false)){
       const workspace=surface.getByRole('treeitem').filter({hasText:oldFixture.workspaceTitle}).first();

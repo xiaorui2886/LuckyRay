@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import * as crypto from 'node:crypto';
 import {createHash} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
+import {continueKnownTestingNotice} from './engine-chain.mjs';
 import {preservationPolicy} from './preservation-policy.mjs';
 const read=name=>readFile(new URL(name,import.meta.url),'utf8');
 
@@ -140,4 +141,39 @@ test('observation-only dispatch cannot enter CA or engine steps and only reads a
   assert.match(prepare,/PASS_DSH_ONLY_SURFACE_OBSERVED_WITHOUT_CA/);
   assert.match(workflow.split('  installed-chain:')[1],/inputs.dsh_observe_only != true/);
   assert.match(prepare,/installedApplicationEnvironment\(process.env,null\)/);
+});
+
+const knownNoticeFixtures=[
+  {
+    "title": "Internal Testing Notice",
+    "body": "DeepSeek Harness 0.1 remains in testing for Harness developers. Many areas need further improvement, and we welcome feedback from the developer community. DeepSeek Harness's core plugins and foundational APIs will continue to evolve rapidly over the coming months.\n\nWe look forward to exploring the limits of intelligence with developers around the world, building on open-source, open, reusable, and composable infrastructure. We welcome Harness developers everywhere to join the DSH plugin ecosystem.",
+    "button": "Continue"
+  },
+  {
+    "title": "内测声明",
+    "body": "DeepSeek Harness 目前的 0.1 版本仍处在面向 Harness 开发者进行测试的阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者的反馈建议。预计 DeepSeek Harness 的核心插件以及基础 API 都会在接下来的一段时间内快速迭代、持续演化。\n\n我们期待与全球开发者一起，在开源、开放、可复用、可组合的基础设施之上，共同探索智能上限。欢迎全球 Harness 开发者加入 DSH 插件生态。",
+    "button": "继续"
+  }
+];
+
+test('only exact official testing notice is continued through its one real UI action',async()=>{
+  function surfaceFor(notice,{present=true,text,controls=0,buttons=1,staysVisible=false}={}){
+    const state={visible:present,clicks:0,snapshots:[],events:[]};
+    const dialog={isVisible:async()=>state.visible,innerText:async()=>text??notice.title+'\n'+notice.body+'\n'+notice.button,
+      locator:()=>({count:async()=>controls}),getByRole:(_role,options)=>options?{click:async()=>{assert.equal(options.name,notice.button);assert.equal(options.exact,true);state.clicks++;if(!staysVisible)state.visible=false;}}:{count:async()=>buttons},
+      waitFor:async options=>{assert.equal(options.state,'hidden');assert.equal(state.visible,false);}};
+    const surface={getByRole:(role,options)=>{assert.equal(role,'dialog');assert.equal(options.exact,true);return options.name===notice.title?dialog:{isVisible:async()=>false};}};
+    return {state,surface,hooks:{snap:async name=>state.snapshots.push(name),event:async name=>state.events.push(name)}};
+  }
+  for(const notice of knownNoticeFixtures){
+    const f=surfaceFor(notice);assert.equal(await continueKnownTestingNotice(f.surface,f.hooks),true);
+    assert.equal(f.state.clicks,1);assert.deepEqual(f.state.snapshots,['testing-notice-before','testing-notice-after']);
+    assert.equal(await continueKnownTestingNotice(f.surface,f.hooks),false);assert.equal(f.state.clicks,1);
+    for(const options of [{text:notice.title+' Accept terms Continue'},{controls:1},{buttons:2}]){
+      const bad=surfaceFor(notice,options);await assert.rejects(()=>continueKnownTestingNotice(bad.surface,bad.hooks));assert.equal(bad.state.clicks,0);
+    }
+    const stuck=surfaceFor(notice,{staysVisible:true});await assert.rejects(()=>continueKnownTestingNotice(stuck.surface,stuck.hooks));assert.equal(stuck.state.events.length,0);
+    const absent=surfaceFor(notice,{present:false});assert.equal(await continueKnownTestingNotice(absent.surface,absent.hooks),false);assert.equal(absent.state.clicks,0);
+  }
+  let unknownClicks=0;assert.equal(await continueKnownTestingNotice({getByRole:()=>({isVisible:async()=>false,click:async()=>unknownClicks++})},{snap:async()=>{},event:async()=>{}}),false);assert.equal(unknownClicks,0);
 });
