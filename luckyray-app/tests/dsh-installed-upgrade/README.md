@@ -9,6 +9,8 @@ The single continuous scenario is:
 1. Install the immutable original public desktop 1.9.8. Create an old session
    with its actual old engine and a deterministic loopback provider (no paid
    model), a synthetic Markdown note, settings, and a materials/notes-only grant.
+   Import one synthetic material before either upgrade and keep its library,
+   record identity, registered source and file bytes throughout both legs.
 2. Discover and download the formally signed desktop 1.9.9 through the installed
    UI, edit a note through the real editor, request immediate update, observe
    normal save/exit and the official passive installer, and require installer-

@@ -9,7 +9,7 @@ import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {Transform} from 'node:stream';
-import {runDshInstalledUpgrade, seedOldInstalledSession} from './engine-chain.mjs';
+import {runDshInstalledUpgrade, seedOldInstalledSession, seedInstalledMaterial, verifyInstalledMaterial} from './engine-chain.mjs';
 import {installedApplicationEnvironment} from './runner-environment.mjs';
 import {installedPaths} from './installed-paths.mjs';
 
@@ -159,6 +159,7 @@ try{
   const reference=note.documentRef;
   const notePath=join(root,'vault',reference.relativePath);
   assert.equal(await readFile(notePath,'utf8'),base);
+  const materialFixture=await seedInstalledMaterial({root,invoke,event});
   const languageScript="[string](Get-ItemProperty -LiteralPath 'HKCU:\\Software\\luckyray\\LuckyRay').'Installer Language'";
   const installerLanguage=(await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',languageScript],{windowsHide:true,encoding:'utf8'})).stdout.trim();
   assert.ok(['1033','2052'].includes(installerLanguage),'silent first install persisted its actual NSIS language');
@@ -171,7 +172,7 @@ try{
   grantStatus=await invoke('community_mcp_status');
   assert.equal(grantStatus.version,mcpCatalog.version);
   await invoke('community_mcp_action',{input:{action:'authorize',revision:grantStatus.revision,confirmed:true,
-    libraryId:grantStatus.libraries[0].id,vaultId:grantStatus.vaults[0].id}});
+    libraryId:materialFixture.libraryId,vaultId:grantStatus.vaults[0].id}});
   grantStatus=await invoke('community_mcp_status');assert.equal(grantStatus.authorized,true);
   const originalGrant=grantStatus.grant;
   const mcpRoot=join(paths.local,'com.luckyray.desktop/community-web-mcp-v1');
@@ -318,12 +319,17 @@ try{
   const afterGrant=await invoke('community_mcp_status');
   assert.equal(afterGrant.authorized,true);assert.deepEqual(afterGrant.grant,originalGrant);
   assert.deepEqual(await authorityFingerprints(),originalAuthorityBytes);
+  await verifyInstalledMaterial(invoke,materialFixture);
+  await route('materials');
+  await page.getByText(/^Installed-upgrade-original(?:\.pdf)?$/).first().waitFor({state:'visible',timeout:45000});
+  await snapshot('B-preserved-original-material');
+  await event('B_preupgrade_material_preserved',{libraryId:materialFixture.libraryId,assetId:materialFixture.asset.id,name:materialFixture.asset.name,sha256:materialFixture.sha256,visibleInLibrary:true});
   await event('synthetic_authority_after_automatic_reopen',{sameGrant:true,sameStoredBytes:true,grantSha256:hash(JSON.stringify(afterGrant.grant))});
   await event('B_readback',{pid:BProcess.pid,exeSha256:spec.b.installedExeSha256,documentRef:reopened.documentRef,revision:reopened.revision,settingsSha256:hash(JSON.stringify(settingsBefore)),fullTextSha256:hash(expected)});
   assert.equal(await page.evaluate(()=>window.__TAURI__.app.getVersion()),spec.b.version);
   await event('desktop_chain_pass',{versions:[spec.a.version,spec.b.version],noManualBLaunch:true,fullTextEqualAfterRestart:true,settingsPreserved:true,syntheticGrantPreserved:true});
   stage='B_engine_upgrade';
-  const engineResult=await runDshInstalledUpgrade({root,paths,spec,event,oldFixture,browser,page,connect,requireCdpOwner,settingsBefore,notePath,expected,originalGrant,originalAuthorityBytes,authorityFingerprints,installedEnvironment});
+  const engineResult=await runDshInstalledUpgrade({root,paths,spec,event,oldFixture,materialFixture,browser,page,connect,requireCdpOwner,settingsBefore,notePath,expected,originalGrant,originalAuthorityBytes,authorityFingerprints,installedEnvironment});
   const final={status:'PASS_INSTALLED_DESKTOP_THEN_DSH_UPGRADE',versions:[spec.a.version,spec.b.version],engineResult,updateMode,testSourceSha:process.env.GITHUB_SHA,runUrl:`https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,source:spec,APid:A.pid,AExit,installer:installerResult,BProcess,profile:paths.profile,install:paths.install,fullTextEqualAfterRestart:true,pendingDraftAtPreclick:beforeClick!==expected,settingsPreserved:true,syntheticGrantPreserved:true,noManualBLaunch:true,realLshSavedAndExitedBeforeApp:true,formalTrustUnchanged:true,productionFeedAvailability:'NOT_RUN: approved exact-URL HTTPS replay, public feeds unchanged',externalWebTunnel:'NOT_RUN',realIME:'NOT_RUN: prior real local draft evidence reused, not manufactured by CI',installerUi:'Official passive installer; stored language inherited. No test installer clicks or security bypass.'};
   await writeFile(join(evidence,'RESULT.json'),JSON.stringify(final,null,2)+'\n');
   console.log(JSON.stringify({status:final.status,fullTextEqualAfterRestart:true,noManualBLaunch:true}));

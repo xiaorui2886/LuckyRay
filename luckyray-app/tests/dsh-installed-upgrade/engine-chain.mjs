@@ -25,6 +25,27 @@ async function originalSessions(home){
 }
 async function assertOriginals(fixture){for(const file of fixture.originals)assert.equal(hash(await readFile(file.file)),file.sha256,'original old-engine session generation must retain its exact bytes');}
 
+export async function seedInstalledMaterial({root,invoke,event}){
+  runner();
+  const pdf=Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n');
+  const file=join(root,'Installed-upgrade-original.pdf');await writeFile(file,pdf,{flag:'wx'});
+  const registry=await invoke('material_library_command',{request:{libraryId:null,action:{op:'registry',include_hidden:false}}});
+  const imported=await invoke('material_library_command',{request:{libraryId:registry.activeId,action:{op:'importPaths',paths:[file],options:{folderId:null,storageMode:'linked',managedLibraryDir:null}}}});
+  assert.equal(imported.failedCount,0);assert.equal(imported.assets.length,1);
+  const row=imported.assets[0];
+  const asset=Object.fromEntries(['id','name','originalPath','libraryPath','storageMode','sizeBytes','contentHash'].map(key=>[key,row[key]]));
+  assert.equal(asset.storageMode,'linked');assert.equal(asset.name,'Installed-upgrade-original.pdf');
+  const fixture={libraryId:registry.activeId,asset,file,sha256:hash(pdf),bytes:pdf.length};
+  await event('A_existing_material_created',{libraryId:fixture.libraryId,assetId:asset.id,name:asset.name,sha256:fixture.sha256,bytes:fixture.bytes});
+  return fixture;
+}
+export async function verifyInstalledMaterial(invoke,fixture){
+  const rows=await invoke('material_library_command',{request:{libraryId:fixture.libraryId,action:{op:'get',ids:[fixture.asset.id]}}});
+  assert.equal(rows.length,1,'the pre-upgrade material record must remain in its original library');
+  for(const [key,value]of Object.entries(fixture.asset))assert.deepEqual(rows[0][key],value,'original material field: '+key);
+  const bytes=await readFile(fixture.file);assert.equal(bytes.length,fixture.bytes);assert.equal(hash(bytes),fixture.sha256);
+}
+
 export async function seedOldInstalledSession({root,paths,spec,event}){
   runner();
   const runtime=join(paths.install,'deepseek-harness');
@@ -49,7 +70,7 @@ export async function seedOldInstalledSession({root,paths,spec,event}){
 
 export async function runDshInstalledUpgrade(context){
   runner();
-  const {root,paths,spec,event,oldFixture,connect,requireCdpOwner,settingsBefore,notePath,expected,originalGrant,originalAuthorityBytes,authorityFingerprints,installedEnvironment}=context;
+  const {root,paths,spec,event,oldFixture,materialFixture,connect,requireCdpOwner,settingsBefore,notePath,expected,originalGrant,originalAuthorityBytes,authorityFingerprints,installedEnvironment}=context;
   let {browser,page}=context;
   const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI__.core.invoke(command,args),{command,args});
   const snap=async(name,surface=page)=>{await surface.screenshot({path:join(root,'evidence',name+'.png'),fullPage:true});await writeFile(join(root,'evidence',name+'.dom.txt'),await surface.locator('body').innerText());};
@@ -95,6 +116,7 @@ export async function runDshInstalledUpgrade(context){
     const grant=await invoke('community_mcp_status');assert.equal(grant.authorized,true);assert.deepEqual(grant.grant,originalGrant);
     assert.deepEqual(await authorityFingerprints(),originalAuthorityBytes);
     await assertOriginals(oldFixture);
+    await verifyInstalledMaterial(invoke,materialFixture);
   }
   await wait('old engine running in upgraded host',async()=>{const s=await invoke('dsh_native_surface_status');return s.ready&&s.stage==='session-open'&&s.ownedDirectProcessCount===2;});
   await identity(spec.engine.fromVersion);await preserved();
@@ -145,11 +167,8 @@ export async function runDshInstalledUpgrade(context){
   // Necessary original-file smoke: material PDF and canonical Markdown note.
   // Setup uses the ordinary catalog API; the additions themselves are real
   // sidebar clicks and official binary-upload requests. Nothing is submitted.
-  const pdf=Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n');
-  const file=join(root,'Installed-upgrade-original.pdf');await writeFile(file,pdf);
-  const registry=await invoke('material_library_command',{request:{libraryId:null,action:{op:'registry',include_hidden:false}}});
-  const imported=await invoke('material_library_command',{request:{libraryId:registry.activeId,action:{op:'importPaths',paths:[file],options:{folderId:null,storageMode:'linked',managedLibraryDir:null}}}});
-  assert.equal(imported.failedCount,0);assert.equal(imported.assets.length,1);
+  await verifyInstalledMaterial(invoke,materialFixture);
+  const pdf=await readFile(materialFixture.file);
   const uploaded=[],forbidden=[];
   surface.on('request',req=>{try{const url=new URL(req.url());if(req.method()==='POST'&&/^\/api\/session\//.test(url.pathname)&&/(prompt|submit|steer|reply)/i.test(url.pathname))forbidden.push(url.pathname);}catch{}});
   surface.on('response',async response=>{try{const request=response.request(),url=new URL(request.url());if(request.method()==='POST'&&url.pathname==='/api/session/uploadFileBinary'){const body=await response.json();uploaded.push({sessionId:url.searchParams.get('sessionId'),name:url.searchParams.get('name'),status:response.status(),ok:body.ok===true});}}catch{}});
@@ -160,8 +179,8 @@ export async function runDshInstalledUpgrade(context){
   }
   await page.getByRole('button',{name:/^(打开素材与知识库侧栏|Open Materials and Knowledge sidebar)$/}).click();
   const sidebar=page.getByRole('complementary',{name:/^(LightSeek 内容浏览侧栏|LightSeek content browser sidebar)$/});await sidebar.waitFor();
-  await sidebar.getByRole('button',{name:'添加到输入框：'+imported.assets[0].name,exact:true}).click();
-  await wait('real material original binary upload',async()=>uploaded.find(r=>r.sessionId===oldFixture.sessionId&&r.name===imported.assets[0].name&&r.status===200&&r.ok)&&await storedOriginal(pdf));
+  await sidebar.getByRole('button',{name:'添加到输入框：'+materialFixture.asset.name,exact:true}).click();
+  await wait('real material original binary upload',async()=>uploaded.find(r=>r.sessionId===oldFixture.sessionId&&r.name===materialFixture.asset.name&&r.status===200&&r.ok)&&await storedOriginal(pdf));
   await sidebar.getByRole('tab',{name:/^(知识库|Knowledge)$/}).click();
   await sidebar.getByRole('button',{name:/^添加到输入框：FormalUpgradeSynthetic(?:\.md)?$/}).click();
   await wait('real knowledge original binary upload',async()=>uploaded.find(r=>r.sessionId===oldFixture.sessionId&&r.name===basename(notePath)&&r.status===200&&r.ok)&&await storedOriginal(Buffer.from(expected)));
@@ -170,7 +189,7 @@ export async function runDshInstalledUpgrade(context){
   await snap('B-original-file-sidebars',page);await snap('B-original-files-official-composer',surface);
   assert.deepEqual(forbidden,[],'no actual submit/prompt request may be made');
   await event('original_files_sidebar_pass',{uploaded,originals:[{sha256:hash(pdf),bytes:pdf.length},{sha256:hash(expected),bytes:Buffer.byteLength(expected)}],modelSubmitCalled:false,existingDraftPreserved:true});
-  const result={from:spec.engine.fromVersion,to:spec.engine.version,descriptorSha256:spec.engine.descriptorSha256,automaticReopen:true,oldSessionVisible:true,originalSessionBytesPreserved:true,settingsAndGrantPreserved:true,realDraftAfterRestart:true,originalMaterialAndNoteBytes:true,profile:paths.profile,sourceClass:'production'};
+  const result={from:spec.engine.fromVersion,to:spec.engine.version,descriptorSha256:spec.engine.descriptorSha256,automaticReopen:true,oldSessionVisible:true,originalSessionBytesPreserved:true,settingsAndGrantPreserved:true,preUpgradeMaterialIdPreserved:materialFixture.asset.id,realDraftAfterRestart:true,originalMaterialAndNoteBytes:true,profile:paths.profile,sourceClass:'production'};
   await writeFile(join(root,'evidence/ENGINE-RESULT.json'),JSON.stringify(result,null,2)+'\n');
   await browser.close();return result;
 }

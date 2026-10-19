@@ -48,4 +48,6 @@ test('observer keeps genuine runner, actual installed versions and normal quit b
   assert.doesNotMatch(engine,/localStorage\.setItem|process\.kill|\.kill\(/);
   assert.match(chain,/process\.env\.GITHUB_ACTIONS!=='true'/);assert.match(chain,/spec\.a\.version,'1\.9\.8'/);assert.match(chain,/spec\.b\.version,'1\.9\.9'/);
   assert.match(chain,/installer-owned automatic B reopen/);assert.match(chain,/runDshInstalledUpgrade/);
+  assert.ok(chain.indexOf('const materialFixture=await seedInstalledMaterial')<chain.indexOf("stage='A_download'"));
+  assert.match(chain,/B_preupgrade_material_preserved/);assert.match(engine,/verifyInstalledMaterial\(invoke,materialFixture\)/);
 });
