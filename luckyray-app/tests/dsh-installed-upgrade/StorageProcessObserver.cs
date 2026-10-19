@@ -95,18 +95,21 @@ class StorageProcessObserver {
     try {var values=new string[count];for(int i=0;i<count;i++)values[i]=Marshal.PtrToStringUni(Marshal.ReadIntPtr(pointer,i*IntPtr.Size));return values;}finally{LocalFree(pointer);}
   }
   static string[] SafeArguments(int pid,string image,string helper,string directory) {
-    using(var result=new ManagementObjectSearcher("SELECT CommandLine,ExecutablePath FROM Win32_Process WHERE ProcessId="+pid)) {
-      foreach(ManagementObject item in result.Get()) {
-        if(!String.Equals((string)item["ExecutablePath"],image,StringComparison.OrdinalIgnoreCase))throw new Exception("unexpected-child-image");
-        string[] actual=Argv((string)item["CommandLine"]);
+    IntPtr process=OpenProcess(0x0400|0x0010,false,pid);
+    if(process==IntPtr.Zero)throw new Exception("child-commandline-query-unavailable");
+    try {
+        Basic basic=new Basic();int returned;
+        if(IntPtr.Size!=8||NtQueryInformationProcess(process,0,ref basic,Marshal.SizeOf(typeof(Basic)),out returned)!=0)throw new Exception("child-commandline-layout-unavailable");
+        long address=BitConverter.ToInt64(Read(process,basic.peb.ToInt64()+0x20,8),0);
+        var parameters=Read(process,address,128);
+        if(!String.Equals(Path.GetFullPath(UString(process,parameters,0x60)),Path.GetFullPath(image),StringComparison.OrdinalIgnoreCase))throw new Exception("unexpected-child-image");
+        string[] actual=Argv(UString(process,parameters,0x70));
         string[] wanted=new[]{image,"-NoProfile","-NonInteractive","-File",helper,"-Directory",directory,"-Action","initialize","-Name","tunnel-key"};
         if(actual.Length!=wanted.Length||actual.Where((v,i)=>!String.Equals(
           new[]{0,4,6}.Contains(i)?Path.GetFullPath(v):v,
           new[]{0,4,6}.Contains(i)?Path.GetFullPath(wanted[i]):wanted[i],StringComparison.OrdinalIgnoreCase)).Any())throw new Exception("non-initialize-arguments-not-recorded");
         return actual;
-      }
-    }
-    throw new Exception("child-commandline-unavailable");
+    }finally{CloseHandle(process);}
   }
   static string Quote(string text) {
     var result=new StringBuilder("\"");int slashes=0;

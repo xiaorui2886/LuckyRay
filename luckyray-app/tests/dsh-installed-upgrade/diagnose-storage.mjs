@@ -17,13 +17,14 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 assert.equal(hash(await readFile(join(install,'luckyray-app.exe'))),'59797b20a9b74abd3beb7c4e285b667698ae6a4b05073cdf12a29b4c0bf32304');
 assert.equal(existsSync(join(root,'private/test-certificates.json')),false);
 const environment=installedApplicationEnvironment(process.env,null),events=[];
+const moduleEnvironment={...environment,PSModulePath:join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/Modules')};
 assert.equal(Object.keys(environment).some(k=>/proxy|token|secret/i.test(k)),false);
 const event=async(kind,data={})=>{const row={atUtc:new Date().toISOString(),kind,...data};events.push(row);await appendFile(join(evidence,'storage-diagnostic-timeline.jsonl'),JSON.stringify(row)+'\n');};
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(label,fn,ms=120000){const end=Date.now()+ms;while(Date.now()<end){const value=await fn();if(value)return value;await delay(300);}throw Error(label+' timed out');}
 const {chromium}=await import(pathToFileURL(join(process.env.UI_TOOLS,'node_modules/playwright-core/index.mjs')));
 const A=spawn(join(install,'luckyray-app.exe'),[],{cwd:install,env:environment,windowsHide:false});
-A.stdout.resume();A.stderr.resume();let appExit,browser,page,monitor,monitorExit,stage='original_A_start';
+A.stdout.resume();A.stderr.resume();let appExit,fixedA,fixedExit,browser,page,monitor,monitorExit,stage='original_A_start';
 A.on('exit',(code,signal)=>{appExit={code,signal,atUtc:new Date().toISOString()};});
 const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI__.core.invoke(command,args),{command,args});
 try{
@@ -63,18 +64,21 @@ try{
   const cwd=sample.data.snapshot.workingDirectory;
   await event('exact_actual_helper_checked',{sha256:hash(helperBytes),bytes:helperBytes.length,actualWorkingDirectory:cwd,directoryExists:existsSync(directory),credentialFiles:existsSync(directory)?(await readdir(directory)).filter(f=>f.endsWith('.dpapi')).length:0});
   stage='same_bytes_same_cwd_control';
-  for(const mode of ['closed','open']){
+  for(const mode of ['closed']){
     const target=join(root,'private','direct-'+mode);
     await run(observer,['control',native,helper,target,cwd,mode,join(evidence,'direct-storage-controls.jsonl')],{cwd:root,env:environment,windowsHide:true,timeout:30000,maxBuffer:65536});
   }
+  await run(observer,['control',native,helper,join(root,'private/direct-native-modules'),cwd,'closed',join(evidence,'direct-native-module-control.jsonl')],{cwd:root,env:moduleEnvironment,windowsHide:true,timeout:30000,maxBuffer:65536});
   // Instrument a separate initialize-only diagnostic copy, never the installed
   // helper or signed package. Its stages are supplementary, not same-byte proof.
   stage='separate_stage_control';
   let instrumented=helperBytes.toString('utf8');
   const insert=(text,needle,addition)=>{assert.equal(text.split(needle).length,2);return text.replace(needle,needle+addition);};
   instrumented=insert(instrumented,"$ErrorActionPreference='Stop'", "\r\n$lrClock=[Diagnostics.Stopwatch]::StartNew()\r\nfunction LRStage([string]$name){[Console]::Error.WriteLine('LR_STAGE:'+$name+':'+$lrClock.ElapsedMilliseconds)}\r\nLRStage 'script_entry'");
+  instrumented=instrumented.replace('[Console]::InputEncoding=New-Object Text.UTF8Encoding($false)',
+    "LRStage 'before_utf8_new_object'\r\n  $lrUtf8=New-Object Text.UTF8Encoding($false)\r\n  LRStage 'after_utf8_new_object'\r\n  [Console]::InputEncoding=$lrUtf8\r\n  LRStage 'input_encoding'");
+  instrumented=instrumented.replace("LRStage 'script_entry'", "LRStage 'script_entry'\r\n[IO.File]::WriteAllText('"+join(evidence,'control-calculated-module-path.txt')+"',$env:PSModulePath)");
   for(const [needle,name]of [
-    ['[Console]::InputEncoding=New-Object Text.UTF8Encoding($false)','input_encoding'],
     ['[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)','output_encoding'],
     ["Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -ErrorAction Stop",'security_module'],
     ['$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User','current_sid'],
@@ -84,31 +88,40 @@ try{
   instrumented=instrumented.replace("if($Action -eq 'initialize'){exit 0}","if($Action -eq 'initialize'){LRStage 'acl_verified';exit 0}");
   const stageFile=join(root,'private/initialize-stages.ps1');await writeFile(stageFile,instrumented,{flag:'wx'});
   await run(observer,['control',native,stageFile,join(root,'private/direct-stages'),cwd,'stages',join(evidence,'stage-storage-control.jsonl')],{cwd:root,env:environment,windowsHide:true,timeout:30000,maxBuffer:65536});
+  // Keep separate calculated-path receipts for the isolated diagnostic copies.
+  const defaultPath=await readFile(join(evidence,'control-calculated-module-path.txt'),'utf8');
+  await run(observer,['control',native,stageFile,join(root,'private/direct-stages-native'),cwd,'stages',join(evidence,'stage-native-module-control.jsonl')],{cwd:root,env:moduleEnvironment,windowsHide:true,timeout:30000,maxBuffer:65536});
+  const nativePath=await readFile(join(evidence,'control-calculated-module-path.txt'),'utf8');
+  await writeFile(join(evidence,'control-calculated-module-path-default.txt'),defaultPath,{flag:'wx'});
+  await event('module_path_control_difference',{changedEnvironmentKeys:['PSModulePath'],configuredNativeModulePath:moduleEnvironment.PSModulePath,defaultCalculatedPath:defaultPath,nativeCalculatedPath:nativePath,noExecutionPolicyOrTrustChange:true});
   await event('instrumented_control_identity',{originalUnchanged:hash(await readFile(helper))===hash(helperBytes),separateScriptSha256:hash(instrumented),notAcceptanceHelper:true});
-  // One targeted retry in this same original process can distinguish a stable
-  // failure from first-use effects; it does not retry either upgrade or change
-  // any product timeout/credential. Observe this child independently as well.
-  if(installError?.includes('client-check-timeout')){
-    stage='same_original_app_one_retry';
-    const retryReady=join(root,'private/storage-observer-retry.ready');monitorExit=undefined;
-    monitor=spawn(observer,['monitor',String(A.pid),helper,directory,native,join(evidence,'actual-storage-child-retry.jsonl'),retryReady],{cwd:root,env:environment,windowsHide:true});
-    monitor.stdout.resume();monitor.stderr.on('data',b=>{observerErrorBytes+=b.length;});monitor.on('exit',(code,signal)=>{monitorExit={code,signal};});
-    await wait('retry child metadata observer ready',()=>{if(monitorExit)throw Error('retry observer stopped before action:'+monitorExit.code);return existsSync(retryReady);},15000);
-    const retryStatus=await invoke('community_mcp_status');assert.equal(retryStatus.authorized,false);
-    const retryStart=Date.now();let retryError=null;
-    try{await invoke('community_mcp_action',{input:{action:'install',revision:retryStatus.revision}});}catch(error){retryError=error.message;}
-    await event('same_original_app_retry_result',{durationMs:Date.now()-retryStart,error:retryError,successful:retryError===null});
-    await wait('retry metadata observer exit',()=>monitorExit,45000);assert.equal(monitorExit.code,0);
-  }
-  await page.screenshot({path:join(evidence,'original-A-after-diagnostic.png'),fullPage:true});
-  stage='normal_diagnostic_exit';await invoke('close_window');
+  stage='normal_baseline_exit';await invoke('close_window');
   await wait('normal original app exit',()=>appExit,120000);assert.equal(appExit.code,0);assert.equal(appExit.signal,null);
-  await writeFile(join(evidence,'STORAGE-DIAGNOSTIC-RESULT.json'),JSON.stringify({status:'DIAGNOSTIC_CAPTURE_COMPLETE_NOT_UPGRADE_ACCEPTANCE',runId:process.env.GITHUB_RUN_ID,source:process.env.GITHUB_SHA,originalVersion:'1.9.8',appPid:A.pid,appExit,installActionError:installError,observerExit:monitorExit,observerErrorBytes,actualWorkingDirectory:cwd,helperSha256:hash(helperBytes),testCaCreated:false,proxyConfigured:false,authorizationIssued:false,installedExeChanged:false,desktopUpgrade:'NOT_RUN',engineUpgrade:'NOT_RUN'},null,2)+'\n');
+  await browser.close();await wait('baseline CDP released',async()=>{try{await fetch('http://127.0.0.1:9391/json/version');return false;}catch{return true;}},45000);
+  stage='same_original_A_native_module_environment';
+  fixedA=spawn(join(install,'luckyray-app.exe'),[],{cwd:install,env:moduleEnvironment,windowsHide:false});fixedA.stdout.resume();fixedA.stderr.resume();fixedA.on('exit',(code,signal)=>{fixedExit={code,signal,atUtc:new Date().toISOString()};});
+  await wait('same original A CDP reopened',async()=>{try{return(await fetch('http://127.0.0.1:9391/json/version')).ok;}catch{return false;}});
+  browser=await chromium.connectOverCDP('http://127.0.0.1:9391');page=await wait('same original A renderer',()=>browser.contexts().flatMap(c=>c.pages()).find(p=>/tauri\.localhost|^tauri:\/\//.test(p.url())));await page.waitForFunction(()=>Boolean(window.__TAURI__?.core?.invoke));
+  const fixedOwner=JSON.parse((await run(native,['-NoProfile','-NonInteractive','-Command',ownership],{windowsHide:true,timeout:15000,encoding:'utf8'})).stdout);assert.ok(fixedOwner.ancestors.includes(fixedA.pid));assert.equal(await page.evaluate(()=>window.__TAURI__.app.getVersion()),'1.9.8');
+  assert.equal(win32.normalize(await page.evaluate(()=>window.__TAURI__.path.appLocalDataDir())),local);
+  await wait('old preload ready with test module path',async()=>{const s=await invoke('dsh_native_surface_status');return s.ready&&s.stage==='session-open';});
+  const fixedReady=join(root,'private/storage-observer-fixed.ready');monitorExit=undefined;
+  monitor=spawn(observer,['monitor',String(fixedA.pid),helper,directory,native,join(evidence,'actual-storage-child-native-modules.jsonl'),fixedReady],{cwd:root,env:moduleEnvironment,windowsHide:true});monitor.stdout.resume();monitor.stderr.on('data',b=>{observerErrorBytes+=b.length;});monitor.on('exit',(code,signal)=>{monitorExit={code,signal};});
+  await wait('fixed actual child observer ready',()=>{if(monitorExit)throw Error('fixed observer stopped before action');return existsSync(fixedReady);},15000);
+  const fixedStatus=await invoke('community_mcp_status');assert.equal(fixedStatus.authorized,false);const fixedStart=Date.now();let fixedInstallError=null;
+  try{await invoke('community_mcp_action',{input:{action:'install',revision:fixedStatus.revision}});}catch(error){fixedInstallError=error.message;}
+  await event('same_original_A_native_modules_result',{pid:fixedA.pid,durationMs:Date.now()-fixedStart,error:fixedInstallError,successful:fixedInstallError===null,changedEnvironmentKeys:['PSModulePath'],sameProfile:true,...fixedOwner});
+  await wait('fixed actual child observer exit',()=>monitorExit,45000);assert.equal(monitorExit.code,0);
+  assert.equal(hash(await readFile(helper)),hash(helperBytes));assert.equal(hash(await readFile(join(install,'luckyray-app.exe'))),'59797b20a9b74abd3beb7c4e285b667698ae6a4b05073cdf12a29b4c0bf32304');
+  await page.screenshot({path:join(evidence,'same-original-A-native-modules.png'),fullPage:true});
+  stage='normal_fixed_diagnostic_exit';await invoke('close_window');await wait('normal fixed original exit',()=>fixedExit,120000);assert.equal(fixedExit.code,0);assert.equal(fixedExit.signal,null);
+  await writeFile(join(evidence,'STORAGE-DIAGNOSTIC-RESULT.json'),JSON.stringify({status:'MODULE_PATH_DIFFERENTIAL_CAPTURE_NOT_UPGRADE_ACCEPTANCE',runId:process.env.GITHUB_RUN_ID,source:process.env.GITHUB_SHA,originalVersion:'1.9.8',appPid:A.pid,appExit,fixedAppPid:fixedA.pid,fixedExit,installActionError:installError,fixedInstallError,observerExit:monitorExit,observerErrorBytes,actualWorkingDirectory:cwd,helperSha256:hash(helperBytes),testCaCreated:false,proxyConfigured:false,authorizationIssued:false,installedExeChanged:false,desktopUpgrade:'NOT_RUN',engineUpgrade:'NOT_RUN'},null,2)+'\n');
 }catch(error){
   await event('diagnostic_stopped',{stage,error:error.message});
   await writeFile(join(evidence,'STORAGE-DIAGNOSTIC-RESULT.json'),JSON.stringify({status:'FAIL_DIAGNOSTIC_CAPTURE',stage,error:error.message,noForcedAppTermination:true,testCaCreated:false,desktopUpgrade:'NOT_RUN',engineUpgrade:'NOT_RUN'},null,2)+'\n');process.exitCode=1;
 }finally{
   if(browser)await browser.close().catch(()=>{});
   A.stdout.unref?.();A.stderr.unref?.();A.unref();
+  if(fixedA){fixedA.stdout.unref?.();fixedA.stderr.unref?.();fixedA.unref();}
   if(monitor){monitor.stdout.unref?.();monitor.stderr.unref?.();monitor.unref();}
 }
