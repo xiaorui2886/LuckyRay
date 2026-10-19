@@ -48,6 +48,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'observer-syntax-invalid' }
           node --check luckyray-app/tests/dsh-installed-upgrade/engine-chain.mjs
           if ($LASTEXITCODE -ne 0) { throw 'engine-observer-syntax-invalid' }
+          node --check luckyray-app/tests/dsh-installed-upgrade/prepare-fixture.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'fixture-observer-syntax-invalid' }
           node --test luckyray-app/tests/dsh-installed-upgrade/harness-contract.test.mjs luckyray-app/tests/formal-update/windows-native-encoding.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'cheap-observer-check-failed' }
       - name: Download single reviewed transfer using this step's temporary environment Secret only
@@ -107,19 +109,24 @@ jobs:
           "UI_TOOLS=$env:RUNNER_TEMP/lr-ui-tools" >> $env:GITHUB_ENV
           "UPGRADE_SPEC=D:\lr-formal-uat\private\input\spec.json" >> $env:GITHUB_ENV
           "B_INSTALLER=D:\lr-formal-uat\private\input\$($spec.b.file)" >> $env:GITHUB_ENV
-          "MCP_INSTALLER=$component" >> $env:GITHUB_ENV
-      - name: This approved disposable runner's temporary update-file HTTPS trust
-        env:
-          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
-        run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File luckyray-app/tests/formal-update/Prepare-ApprovedEphemeralHttps.ps1 -OwnerApprovalReference $env:APPROVAL_REFERENCE
-          if ($LASTEXITCODE -ne 0) { throw 'approved-HTTPS-scope-failed-no-bypass' }
       - name: Install exact public old version once to a fresh Chinese and space directory
         run: |
           $ErrorActionPreference='Stop'
           $installer=Start-Process -FilePath 'D:\lr-formal-uat\private\input\LuckyRay_1.9.8_x64-setup.exe' -ArgumentList @('/S','/D=D:\lr-formal-uat\安装 空格') -WindowStyle Hidden -PassThru
           if (-not $installer.WaitForExit(180000) -or $installer.ExitCode -ne 0) { throw 'original-A-install-failed' }
           if ((Get-Content -LiteralPath 'D:\lr-formal-uat\安装 空格\luckyray-install-complete.txt' -Raw).Trim() -cne 'com.luckyray.desktop|1.9.8') { throw 'original-A-install-completion-invalid' }
+          @{install='D:\lr-formal-uat\安装 空格';profile="$env:APPDATA/com.luckyray.desktop";local=$env:LOCALAPPDATA;tls='D:\lr-formal-uat\private\tls.json'} | ConvertTo-Json | Set-Content 'D:\lr-formal-uat\private\paths.json' -Encoding utf8
+      - name: Prepare same old version synthetic data and scoped grant without proxy or CA then quit normally
+        working-directory: luckyray-app
+        run: |
+          node tests/dsh-installed-upgrade/prepare-fixture.mjs *> 'D:\lr-formal-uat\evidence\fixture-observer.log'
+          if ($LASTEXITCODE -ne 0) { throw 'old-fixture-precondition-failed-before-CA-no-authorization-bypass' }
+      - name: This approved disposable runner's temporary update-file HTTPS trust
+        env:
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File luckyray-app/tests/formal-update/Prepare-ApprovedEphemeralHttps.ps1 -OwnerApprovalReference $env:APPROVAL_REFERENCE
+          if ($LASTEXITCODE -ne 0) { throw 'approved-HTTPS-scope-failed-no-bypass' }
       - name: Continuous real installed desktop then in-software engine upgrade
         working-directory: luckyray-app
         run: |

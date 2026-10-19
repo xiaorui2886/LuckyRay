@@ -11,6 +11,14 @@ The single continuous scenario is:
    model), a synthetic Markdown note, settings, and a materials/notes-only grant.
    Import one synthetic material before either upgrade and keep its library,
    record identity, registered source and file bytes throughout both legs.
+   This preparation runs **without proxy or temporary CA**, after the original
+   engine's background readiness is observed. The optional official MCP package
+   is acquired through its ordinary public download/verification flow; the new
+   synthetic grant uses the existing explicit consent API. Use the actual UI
+   to select normal exit (rather than its tray default), then quit normally.
+   If preparation fails, stop before any certificate action. Reopen the same A,
+   same profile and grant only after preparing the approved update-file replay;
+   this separately labelled fixture reopen is not an automatic-update result.
 2. Discover and download the formally signed desktop 1.9.9 through the installed
    UI, edit a note through the real editor, request immediate update, observe
    normal save/exit and the official passive installer, and require installer-
@@ -33,6 +41,7 @@ only on this specifically approved disposable machine and removed in an
 children. Credential-bearing requests and other hosts/paths are rejected. The
 independent upstream-discovery API is not impersonated; this test does not claim
 that the live public feeds have been published or are available.
+MCP downloads are not proxied or replayed in the continuous update phase.
 
 The private input ZIP is transferred with a short-lived download URL in an
 environment Secret restricted to this branch. No private repository token or

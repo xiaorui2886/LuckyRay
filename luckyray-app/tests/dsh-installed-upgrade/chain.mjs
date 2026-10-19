@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFile,writeFile,appendFile,stat,mkdir} from 'node:fs/promises';
+import {readFile,writeFile,appendFile,stat} from 'node:fs/promises';
 import {createReadStream,existsSync} from 'node:fs';
 import {createServer as httpServer} from 'node:http';
 import {createServer as httpsServer} from 'node:https';
@@ -9,7 +9,7 @@ import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {Transform} from 'node:stream';
-import {runDshInstalledUpgrade, seedOldInstalledSession, seedInstalledMaterial, verifyInstalledMaterial} from './engine-chain.mjs';
+import {runDshInstalledUpgrade, verifyInstalledMaterial} from './engine-chain.mjs';
 import {installedApplicationEnvironment} from './runner-environment.mjs';
 import {installedPaths} from './installed-paths.mjs';
 
@@ -18,8 +18,14 @@ const run=promisify(execFile), root='D:\\lr-formal-uat';
 const paths=installedPaths(JSON.parse((await readFile(join(root,'private/paths.json'),'utf8')).replace(/^\uFEFF/,'')));
 const tls=JSON.parse((await readFile(paths.tls,'utf8')).replace(/^\uFEFF/,''));
 const spec=JSON.parse(await readFile(process.env.UPGRADE_SPEC,'utf8'));
+const fixture=JSON.parse(await readFile(join(root,'private/fixture.json'),'utf8'));
 assert.equal(spec.a.version,'1.9.8');assert.equal(spec.b.version,'1.9.9');
 assert.equal(spec.reviewedPrivateTransfer,true,'reviewed immutable private test inputs required');
+assert.equal(fixture.schema,1);assert.equal(fixture.preparedWithVersion,spec.a.version);
+assert.equal(fixture.preparedExeSha256,spec.a.installedExeSha256);
+assert.equal(fixture.profile,paths.profile);assert.equal(fixture.install,paths.install);
+assert.equal(fixture.preparationExit.code,0);assert.equal(fixture.preparationExit.signal,null);
+const {oldFixture,materialFixture,base,reference,notePath,installerLanguage,originalGrant,originalAuthorityBytes}=fixture;
 const updateMode=process.env.UPGRADE_MODE||'immediate';
 assert.ok(['immediate','scheduled'].includes(updateMode));
 const evidence=join(root,'evidence'), trace=[];
@@ -36,10 +42,6 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const wait=async(label,fn,ms=90000)=>{const end=Date.now()+ms;while(Date.now()<end){const result=await fn();if(result)return result;await delay(300);}throw Error(label+' timed out');};
 const B=resolve(process.env.B_INSTALLER);
 assert.equal(hash(await readFile(B)),spec.b.sha256);
-const mcpCatalog=JSON.parse(await readFile('src-tauri/community-mcp/catalog.json','utf8'));
-const mcpZip=resolve(process.env.MCP_INSTALLER);
-assert.equal(hash(await readFile(mcpZip)),mcpCatalog.artifactSha256);
-const mcpPath=new URL(mcpCatalog.artifactUrl).pathname;
 let servedManifest=spec.b.manifest;
 assert.equal(spec.b.manifest.version,spec.b.version);
 const BPath=new URL(spec.b.manifest.platforms['windows-x86_64-nsis'].url).pathname;
@@ -68,11 +70,6 @@ const replay=httpsServer({pfx:await readFile(tls.pfx),passphrase:tls.password},a
     const manifest=JSON.stringify(servedManifest);
     await event('formal_manifest_request',{path,version:servedManifest.version});
     res.writeHead(200,{'content-type':'application/json','content-length':Buffer.byteLength(manifest)});res.end(manifest);
-  }else if(path===mcpPath){
-    // Unchanged, previously verified optional component: install only to seed
-    // this run's original synthetic grant, not a repeat full MCP acceptance.
-    await event('unchanged_mcp_component_request',{sha256:mcpCatalog.artifactSha256});
-    res.writeHead(200,{'content-type':'application/zip','content-length':(await stat(mcpZip)).size});createReadStream(mcpZip).pipe(res);
   }else if(path===BPath){
     await event('formal_artifact_request',{path,sha256:spec.b.sha256});
     // Controlled network pacing only, to observe real progress in the UI.
@@ -94,7 +91,6 @@ await new Promise(r=>proxy.listen(0,'127.0.0.1',r));
 const proxyUrl='http://127.0.0.1:'+proxy.address().port;
 const {chromium}=await import(pathToFileURL(join(process.env.UI_TOOLS,'node_modules/playwright-core/index.mjs')));
 const installedEnvironment=installedApplicationEnvironment(process.env,proxyUrl);
-const oldFixture=await seedOldInstalledSession({root,paths,spec,event});
 const A=spawn(join(paths.install,'luckyray-app.exe'),[],{cwd:paths.install,windowsHide:false,env:installedEnvironment});
 let Startup=null,StartupExit=null;
 A.stdout.resume(); // Drain without logging; never let an unconsumed pipe block normal exit.
@@ -134,6 +130,10 @@ const settings=async()=>{
   const entry=page.locator('.settings-update-entry');await entry.waitFor();
   if(await entry.getAttribute('aria-expanded')!=='true')await entry.click();
 };
+const mcpRoot=join(paths.local,'com.luckyray.desktop/community-web-mcp-v1');
+const authorityFingerprints=async()=>Object.fromEntries(await Promise.all(['settings.json','connection.json','private/credential.dpapi'].map(async file=>{
+  const path=join(mcpRoot,file);return [file,existsSync(path)?hash(await readFile(path)):null];
+})));
 try{
   ({browser,page}=await connect());
   await requireCdpOwner(A.pid);
@@ -144,44 +144,24 @@ try{
   // reload could restart startup preparation and is not ordinary app startup.
   await snapshot('A-initial');
   await observeLsh('original-startup-no-renderer-reload');
-  await route('settings');
-  await page.locator('#settings-nav').getByRole('button',{name:/^(通用|General)$/}).click();
-  await page.getByRole('button',{name:/^(简体中文|Simplified Chinese)$/}).click();
-  await page.getByRole('button',{name:'紧凑',exact:true}).click();
+  assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('luckyray-settings-v1'))),fixture.settingsBefore);
+  assert.equal(fixture.settingsBefore['general.onClose'],'exit');
   const initial=await invoke('desktop_application_update',{action:'status'});
   assert.notEqual(initial.phase,'disabled');
-  await mkdir(join(root,'vault'));
-  const vault=await invoke('create_notes_vault',{rootPath:join(root,'vault')});
-  const activation=await invoke('knowledge_activate_current_ui_source');
-  const base='# FormalUpgradeSynthetic\n\nBase body 中文 😀.\n';
-  const note=await invoke('knowledge_create_document',{input:{title:'FormalUpgradeSynthetic',content:base},sourceEpoch:activation.sourceEpoch});
-  assert.equal(note.content,base);
-  const reference=note.documentRef;
-  const notePath=join(root,'vault',reference.relativePath);
+  const originalNote=await invoke('knowledge_read_document',{documentRef:reference});
+  assert.equal(originalNote.content,base);assert.deepEqual(originalNote.documentRef,reference);
   assert.equal(await readFile(notePath,'utf8'),base);
-  const materialFixture=await seedInstalledMaterial({root,invoke,event});
+  await verifyInstalledMaterial(invoke,materialFixture);
   const languageScript="[string](Get-ItemProperty -LiteralPath 'HKCU:\\Software\\luckyray\\LuckyRay').'Installer Language'";
-  const installerLanguage=(await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',languageScript],{windowsHide:true,encoding:'utf8'})).stdout.trim();
+  assert.equal((await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',languageScript],{windowsHide:true,encoding:'utf8'})).stdout.trim(),installerLanguage);
   assert.ok(['1033','2052'].includes(installerLanguage),'silent first install persisted its actual NSIS language');
   await event('A_installer_language',{storedLanguage:installerLanguage});
-  // A new synthetic, materials/notes-only grant through the existing explicit
-  // consent API. No real grant is copied, no tunnel/Agent permission is added.
-  let grantStatus=await invoke('community_mcp_status');
-  assert.equal(grantStatus.phase,'absent','each continuous chain starts with its own clean synthetic profile');
-  await invoke('community_mcp_action',{input:{action:'install',revision:grantStatus.revision}});
-  grantStatus=await invoke('community_mcp_status');
-  assert.equal(grantStatus.version,mcpCatalog.version);
-  await invoke('community_mcp_action',{input:{action:'authorize',revision:grantStatus.revision,confirmed:true,
-    libraryId:materialFixture.libraryId,vaultId:grantStatus.vaults[0].id}});
-  grantStatus=await invoke('community_mcp_status');assert.equal(grantStatus.authorized,true);
-  const originalGrant=grantStatus.grant;
-  const mcpRoot=join(paths.local,'com.luckyray.desktop/community-web-mcp-v1');
-  const authorityFingerprints=async()=>Object.fromEntries(await Promise.all(['settings.json','connection.json','private/credential.dpapi'].map(async file=>{
-    const path=join(mcpRoot,file);return [file,existsSync(path)?hash(await readFile(path)):null];
-  })));
-  const originalAuthorityBytes=await authorityFingerprints();
+  const grantStatus=await invoke('community_mcp_status');assert.equal(grantStatus.authorized,true);
+  assert.deepEqual(grantStatus.grant,originalGrant);
+  assert.deepEqual(await authorityFingerprints(),originalAuthorityBytes);
   assert.ok(Object.values(originalAuthorityBytes).every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)),
     'settings, connection and encrypted credential must all actually exist before preservation can be claimed');
+  await event('same_A_fixture_reopened_before_discovery',{pid:A.pid,preparationExit:fixture.preparationExit,notAnUpdaterReopen:true});
   await event('synthetic_authority_before_update',{grantSha256:hash(JSON.stringify(originalGrant)),files:originalAuthorityBytes});
   stage='A_warm_session_open';
   await wait('actual warm background preload before update',async()=>{

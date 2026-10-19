@@ -27,6 +27,12 @@ test('installed app receives Windows basics and the approved process proxy, neve
   assert.throws(()=>installedApplicationEnvironment({},'https://external.invalid'));
   assert.throws(()=>installedApplicationEnvironment({},'http://user:password@127.0.0.1:12345'));
 });
+test('no-proxy fixture preparation excludes inherited proxy and CI settings',()=>{
+  const environment=installedApplicationEnvironment({SystemRoot:'C:\\Windows',HTTP_PROXY:'http://not-approved.invalid',https_proxy:'http://not-approved.invalid',ALL_PROXY:'http://not-approved.invalid',ACTIONS_RUNTIME_TOKEN:'synthetic-only',PSModulePath:'C:\\foreign-modules'},null);
+  assert.equal(environment.SystemRoot,'C:\\Windows');
+  assert.equal(Object.keys(environment).some(name=>/proxy|token|module/i.test(name)),false);
+  assert.equal(environment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,'--remote-debugging-port=9391');
+});
 
 test('synthetic evidence is recoverable only with the separate recipient key',()=>{
   const {publicKey,privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});
@@ -41,13 +47,28 @@ test('synthetic evidence is recoverable only with the separate recipient key',()
   key.fill(0);
 });
 test('observer keeps genuine runner, actual installed versions and normal quit boundaries',async()=>{
-  const engine=await readFile(new URL('./engine-chain.mjs',import.meta.url),'utf8'),chain=await readFile(new URL('./chain.mjs',import.meta.url),'utf8');
+  const engine=await readFile(new URL('./engine-chain.mjs',import.meta.url),'utf8'),chain=await readFile(new URL('./chain.mjs',import.meta.url),'utf8'),prepare=await readFile(new URL('./prepare-fixture.mjs',import.meta.url),'utf8');
   assert.match(engine,/JSON\.parse\(localStorage\.getItem\('dsh.sessions.current'\)\)\?\.sessionId/);
   assert.match(engine,/assertOriginals\(oldFixture\)/);assert.match(engine,/old installed engine|old engine running/);
   assert.match(engine,/await invoke\('close_window'\)/);assert.match(engine,/\.keyboard\.insertText\(draft\)/);
   assert.doesNotMatch(engine,/localStorage\.setItem|process\.kill|\.kill\(/);
   assert.match(chain,/process\.env\.GITHUB_ACTIONS!=='true'/);assert.match(chain,/spec\.a\.version,'1\.9\.8'/);assert.match(chain,/spec\.b\.version,'1\.9\.9'/);
   assert.match(chain,/installer-owned automatic B reopen/);assert.match(chain,/runDshInstalledUpgrade/);
-  assert.ok(chain.indexOf('const materialFixture=await seedInstalledMaterial')<chain.indexOf("stage='A_download'"));
+  assert.match(prepare,/const materialFixture=await seedInstalledMaterial/);
+  assert.match(prepare,/installedApplicationEnvironment\(process.env,null\)/);
+  assert.match(prepare,/getByRole\('combobox'\)\.selectOption\('exit'\)/);
+  assert.ok(prepare.indexOf("stage='protected_storage_initialize_and_official_component_install'")>prepare.indexOf("await wait('original background preload fully ready"));
+  assert.match(prepare,/await invoke\('close_window'\)/);
+  assert.doesNotMatch(prepare,/process\.kill|\.kill\(|localStorage\.setItem/);
+  assert.match(chain,/fixture\.preparedExeSha256,spec\.a\.installedExeSha256/);
+  assert.doesNotMatch(chain,/unchanged_mcp_component_request|mcpPath|action:'install'|action:'authorize'/);
   assert.match(chain,/B_preupgrade_material_preserved/);assert.match(engine,/verifyInstalledMaterial\(invoke,materialFixture\)/);
+});
+test('fixture failure stops before trust actions and only encrypted evidence is uploaded',async()=>{
+  const workflow=await readFile(new URL('../../../.github/workflows/updater-installed-acceptance.yml',import.meta.url),'utf8');
+  const fixture=workflow.indexOf('- name: Prepare same old version synthetic data');
+  const trust=workflow.indexOf('- name: This approved disposable runner');
+  assert.ok(fixture>0&&trust>fixture);
+  assert.match(workflow,/old-fixture-precondition-failed-before-CA-no-authorization-bypass/);
+  assert.match(workflow,/path: D:\/lr-formal-uat\/encrypted\/\*\.encrypted\.json/);
 });

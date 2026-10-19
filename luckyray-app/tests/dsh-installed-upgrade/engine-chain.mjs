@@ -154,6 +154,7 @@ export async function runDshInstalledUpgrade(context){
   await wait('official draft persisted before normal quit',()=>surface.evaluate(({id,draft})=>{try{return JSON.parse(localStorage.getItem('dsh.conversation.'+id))?.draft===draft;}catch{return false;}},{id:oldFixture.sessionId,draft}));
   const normal=await actualApp();await invoke('close_window');
   await wait('normal host close for draft restart',async()=>!(await processes()).some(p=>p.pid===normal.pid),180000);
+  await wait('previous draft-test CDP listener released',async()=>{try{await fetch('http://127.0.0.1:9391/json/version');return false;}catch{return true;}},45000);
   // The updater's automatic reopen has already been proved above. This is a
   // separately labelled ordinary user reopen to verify an unsent text draft.
   const reopened=spawn(join(paths.install,'luckyray-app.exe'),[],{cwd:paths.install,windowsHide:false,env:installedEnvironment});
