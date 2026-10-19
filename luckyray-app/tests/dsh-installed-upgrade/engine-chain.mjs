@@ -28,9 +28,10 @@ async function originalSessions(home){
 }
 async function assertOriginals(fixture){for(const file of fixture.originals)assert.equal(hash(await readFile(file.file)),file.sha256,'original old-engine session generation must retain its exact bytes');}
 
-// Exact official 0.1.7-rc.2 informational notice, verified against captured UI.
+// Exact official 0.1.7 / 0.2.1 informational notices; old notice also captured live.
 // Never reuse this action for auth, legal agreements, or unknown modal content.
 const testingNotices=[
+{"title": "Preview Notice", "body": "DeepSeek Harness 0.2 is still in preview, and many areas need continued improvement and refinement. We welcome feedback and suggestions from all developers and users. The new desktop app now targets a broad range of users, while developer-related advanced features can be enabled in the settings. DeepSeek Harness’s product features and plugin APIs are expected to continue rapid iteration and evolution, and will gradually stabilize over time.\n\nWe look forward to exploring the limits of intelligence together with users and developers around the world, building on open-source, reusable, and composable infrastructure. We welcome everyone to bring their ideas to life with DeepSeek Harness and participate in the community to enrich the plugin ecosystem.", "button": "Continue"},{"title": "预览版说明", "body": "DeepSeek Harness 目前的 0.2 版本仍处于预览阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者和用户的反馈建议。现在，新的桌面端面向广泛用户，开发者相关的进阶功能可在配置中开启使用。预计 DeepSeek Harness 的产品功能以及插件 API 都会继续快速迭代、持续演化，并逐渐趋于稳定。\n\n我们期待与全球用户和开发者一起，在开源、可复用、可组合的基础设施之上，共同探索智能上限。欢迎大家用 DeepSeek Harness 将想法变成现实，与社区一起丰富插件生态。", "button": "继续"},
   {
     "title": "Internal Testing Notice",
     "body": "DeepSeek Harness 0.1 remains in testing for Harness developers. Many areas need further improvement, and we welcome feedback from the developer community. DeepSeek Harness's core plugins and foundational APIs will continue to evolve rapidly over the coming months.\n\nWe look forward to exploring the limits of intelligence with developers around the world, building on open-source, open, reusable, and composable infrastructure. We welcome Harness developers everywhere to join the DSH plugin ecosystem.",
@@ -59,6 +60,74 @@ export async function continueKnownTestingNotice(surface,{snap,event}){
     return true;
   }
   return false;
+}
+
+// Source-backed first-start actions only. Never enter credentials or start sign-in.
+const apiPrompts=[
+  {title:'Add an API key to get started',body:'Configure the official DeepSeek provider to start building.',key:'API key',later:'Configure later',save:'Save and continue'},
+  {title:'添加一个 API Key 开始使用',body:'配置 DeepSeek 官方模型，即可开始使用。',key:'API 密钥',later:'稍后配置',save:'保存并继续'}
+];
+const accountPrompts=[
+  {title:'Get started',body:'Sign in to your DeepSeek account or add an API Key to get started. Your projects and files are stored locally.',key:'Add API Key',signIn:'Sign in',close:'Close'},
+  {title:'开始使用',body:'登录 DeepSeek 账号，或添加 API Key，即可开始使用。你的项目和文件保存在本地。',key:'添加 API Key',signIn:'登录',close:'关闭'}
+];
+export async function deferKnownCredentialPrompt(surface,{snap,event}){
+  for(const prompt of apiPrompts){
+    const dialog=surface.getByRole('dialog',{name:prompt.title,exact:true});
+    if(!await dialog.isVisible())continue;
+    await snap('api-setup-before',surface);
+    assert.equal(normalizedNotice(await dialog.innerText()),normalizedNotice([prompt.title,prompt.body,prompt.key,prompt.later,prompt.save].join(' ')));
+    assert.equal(await dialog.locator('input').count(),1);
+    const key=dialog.locator('input[type="password"]');
+    assert.equal(await key.count(),1);assert.equal(await key.inputValue(),'');
+    assert.equal(await key.getAttribute('aria-label'),prompt.key);
+    assert.equal(await dialog.locator('select,textarea,a,[role="checkbox"]').count(),0);
+    assert.equal(await dialog.getByRole('button').count(),2);
+    assert.equal(await dialog.getByRole('button',{name:prompt.save,exact:true}).isDisabled(),true);
+    await dialog.getByRole('button',{name:prompt.later,exact:true}).click();
+    await dialog.waitFor({state:'hidden',timeout:15000});
+    await snap('api-setup-after',surface);
+    await event('known_api_setup_deferred',{title:prompt.title,credentialEntered:false});return true;
+  }
+  // 0.2.1 web-app enables settings-account. Only the idle choice is closable here.
+  for(const prompt of accountPrompts){
+    const dialog=surface.getByRole('dialog',{name:prompt.title,exact:true});
+    if(!await dialog.isVisible())continue;
+    await snap('account-choice-before',surface);
+    assert.equal(normalizedNotice(await dialog.innerText()),normalizedNotice([prompt.title,prompt.body,prompt.key,prompt.signIn].join(' ')));
+    assert.equal(await dialog.locator('input,select,textarea,a,[role="checkbox"]').count(),0);
+    assert.equal(await dialog.getByRole('button').count(),3);
+    assert.equal(await dialog.getByRole('button',{name:prompt.signIn,exact:true}).count(),1);
+    assert.equal(await dialog.getByRole('button',{name:prompt.key,exact:true}).count(),1);
+    await dialog.getByRole('button',{name:prompt.close,exact:true}).click();
+    await dialog.waitFor({state:'hidden',timeout:15000});
+    await snap('account-choice-after',surface);
+    await event('known_idle_account_choice_closed',{title:prompt.title,authenticationStarted:false});return true;
+  }
+  return false;
+}
+export async function revealOldSession(surface,fixture,hooks){
+  // Each completed step can mount the next asynchronously; poll until the real row is usable.
+  return wait('known onboarding and old session navigation',async()=>{
+    if(await continueKnownTestingNotice(surface,hooks))return false;
+    if(await deferKnownCredentialPrompt(surface,hooks))return false;
+    if(await surface.locator('[role="dialog"]:visible').count()){
+      await hooks.snap('unrecognized-onboarding',surface);
+      throw Error('Unrecognized dialog; no automatic action permitted');
+    }
+    for(const name of ['Open sidebar','打开侧边栏']){
+      const open=surface.getByRole('button',{name,exact:true});
+      if(await open.isVisible()){await open.click();return false;}
+    }
+    const workspace=surface.locator('[role="treeitem"][data-row-key="workspace:installed-upgrade"]');
+    if(!await workspace.isVisible())return false;
+    assert.ok((await workspace.innerText()).includes(fixture.workspaceTitle));
+    const expanded=await workspace.getAttribute('aria-expanded');
+    if(expanded==='false'){await workspace.click();return false;}
+    assert.equal(expanded,'true','only the known expanded fixture workspace is accepted');
+    const row=surface.locator('[role="treeitem"][data-row-key="session:'+fixture.sessionId+'"]');
+    return await row.isVisible()?row:false;
+  },45000);
 }
 
 export async function seedInstalledMaterial({root,invoke,event}){
@@ -135,13 +204,7 @@ export async function runDshInstalledUpgrade(context){
     });
   }
   async function oldSession(surface){
-    await continueKnownTestingNotice(surface,{snap,event});
-    const row=surface.locator('[data-row-key="session:'+oldFixture.sessionId+'"]');
-    if(!await row.isVisible().catch(()=>false)){
-      const workspace=surface.getByRole('treeitem').filter({hasText:oldFixture.workspaceTitle}).first();
-      if(await workspace.isVisible().catch(()=>false))await workspace.click();
-    }
-    await row.waitFor({state:'visible',timeout:45000});
+    const row=await revealOldSession(surface,oldFixture,{snap,event});
     if(policy.mode==='dsh-only'){
       // The old engine's mask is a shared Modal primitive, not proof of onboarding.
       // Observe the actual dialog; never dismiss, confirm, or force through it.

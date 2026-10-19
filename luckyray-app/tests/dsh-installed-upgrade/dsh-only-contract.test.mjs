@@ -177,3 +177,16 @@ test('only exact official testing notice is continued through its one real UI ac
   }
   let unknownClicks=0;assert.equal(await continueKnownTestingNotice({getByRole:()=>({isVisible:async()=>false,click:async()=>unknownClicks++})},{snap:async()=>{},event:async()=>{}}),false);assert.equal(unknownClicks,0);
 });
+
+test('first-start navigation is exact, idempotent, and never starts credentials or collapses workspace',async()=>{
+  const source=await read('engine-chain.mjs');
+  const helper=source.split('export async function deferKnownCredentialPrompt')[1].split('export async function seedInstalledMaterial')[0];
+  assert.match(helper,/key.inputValue\(\),''/);assert.match(helper,/isDisabled\(\),true/);
+  assert.match(helper,/name:prompt.later,exact:true\}\).click/);
+  assert.match(helper,/name:prompt.close,exact:true\}\).click/);
+  assert.doesNotMatch(helper,/\.fill\(|name:prompt.(save|signIn|key),exact:true\}\).click/);
+  assert.match(helper,/expanded==='false'\)\{await workspace.click/);
+  assert.match(helper,/workspace:installed-upgrade/);assert.match(helper,/Open sidebar/);
+  assert.match(helper,/Unrecognized dialog; no automatic action permitted/);
+  assert.match(source,/const row=await revealOldSession\(surface,oldFixture,\{snap,event\}\)/);
+});
