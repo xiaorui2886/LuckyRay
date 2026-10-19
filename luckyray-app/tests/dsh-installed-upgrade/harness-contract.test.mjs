@@ -19,19 +19,31 @@ test('prepared mixed-separator paths retain the exact installer and original run
 });
 
 test('installed app receives Windows basics and the approved process proxy, never CI credentials',()=>{
-  const environment=installedApplicationEnvironment({SystemRoot:'C:\\Windows',Path:'C:\\Windows\\System32',APPDATA:'D:\\synthetic\\Roaming',ACTIONS_RUNTIME_TOKEN:'synthetic-runtime-secret',GITHUB_TOKEN:'synthetic-repo-secret',PRIVATE_TRANSFER_DOWNLOAD_URL:'synthetic-transfer-secret',NODE_OPTIONS:'--require unreviewed.js'},'http://127.0.0.1:12345');
+  const environment=installedApplicationEnvironment({SystemRoot:'C:\\Windows',ProgramFiles:'C:\\Program Files',Path:'C:\\Windows\\System32',APPDATA:'D:\\synthetic\\Roaming',ACTIONS_RUNTIME_TOKEN:'synthetic-runtime-secret',GITHUB_TOKEN:'synthetic-repo-secret',PRIVATE_TRANSFER_DOWNLOAD_URL:'synthetic-transfer-secret',NODE_OPTIONS:'--require unreviewed.js'},'http://127.0.0.1:12345');
   assert.equal(environment.SystemRoot,'C:\\Windows');assert.equal(environment.APPDATA,'D:\\synthetic\\Roaming');
   assert.equal(environment.HTTPS_PROXY,'http://127.0.0.1:12345');
   assert.equal(environment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,'--remote-debugging-port=9391');
   for(const name of ['ACTIONS_RUNTIME_TOKEN','GITHUB_TOKEN','PRIVATE_TRANSFER_DOWNLOAD_URL','NODE_OPTIONS'])assert.equal(environment[name],undefined);
-  assert.throws(()=>installedApplicationEnvironment({},'https://external.invalid'));
-  assert.throws(()=>installedApplicationEnvironment({},'http://user:password@127.0.0.1:12345'));
+  const native={SystemRoot:'C:\\Windows',ProgramFiles:'C:\\Program Files'};
+  assert.throws(()=>installedApplicationEnvironment(native,'https://external.invalid'),/test-process-loopback-proxy-required/);
+  assert.throws(()=>installedApplicationEnvironment(native,'http://user:password@127.0.0.1:12345'),/test-process-loopback-proxy-required/);
 });
 test('no-proxy fixture preparation excludes inherited proxy and CI settings',()=>{
-  const environment=installedApplicationEnvironment({SystemRoot:'C:\\Windows',HTTP_PROXY:'http://not-approved.invalid',https_proxy:'http://not-approved.invalid',ALL_PROXY:'http://not-approved.invalid',ACTIONS_RUNTIME_TOKEN:'synthetic-only',PSModulePath:'C:\\foreign-modules'},null);
+  const environment=installedApplicationEnvironment({SystemRoot:'C:\\Windows',ProgramFiles:'C:\\Program Files',HTTP_PROXY:'http://not-approved.invalid',https_proxy:'http://not-approved.invalid',ALL_PROXY:'http://not-approved.invalid',ACTIONS_RUNTIME_TOKEN:'synthetic-only',PSModulePath:'C:\\foreign-modules'},null);
   assert.equal(environment.SystemRoot,'C:\\Windows');
-  assert.equal(Object.keys(environment).some(name=>/proxy|token|module/i.test(name)),false);
+  assert.equal(Object.keys(environment).some(name=>/proxy|token/i.test(name)),false);
+  assert.equal(environment.PSModulePath,'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules;C:\\Program Files\\WindowsPowerShell\\Modules');
+  assert.equal(environment.PSModulePath.includes('foreign-modules'),false);
   assert.equal(environment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,'--remote-debugging-port=9391');
+});
+test('native module search is explicit, ordered, case-insensitive and never inherited from CI',()=>{
+  const source={SYSTEMROOT:'D:\\Windows',PROGRAMFILES:'D:\\Program Files',PSModulePath:'Z:\\unreviewed'};
+  const environment=installedApplicationEnvironment(source,null);
+  assert.equal(environment.PSModulePath,'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules;D:\\Program Files\\WindowsPowerShell\\Modules');
+  assert.equal(source.PSModulePath,'Z:\\unreviewed','do not modify caller or machine environment');
+  assert.throws(()=>installedApplicationEnvironment({SystemRoot:'C:\\Windows'},null),/native-module-directories-required/);
+  assert.throws(()=>installedApplicationEnvironment({SystemRoot:'\\\\remote\\Windows',ProgramFiles:'C:\\Program Files'},null),/native-module-directories-required/);
+  assert.throws(()=>installedApplicationEnvironment({SystemRoot:'C:\\Windows;Z:\\foreign',ProgramFiles:'C:\\Program Files'},null),/native-module-directories-required/);
 });
 
 test('synthetic evidence is recoverable only with the separate recipient key',()=>{

@@ -17,6 +17,9 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 assert.equal(hash(await readFile(join(install,'luckyray-app.exe'))),'59797b20a9b74abd3beb7c4e285b667698ae6a4b05073cdf12a29b4c0bf32304');
 assert.equal(existsSync(join(root,'private/test-certificates.json')),false);
 const environment=installedApplicationEnvironment(process.env,null),events=[];
+// Preserve the previously failing baseline even after the continuous harness
+// adopts the verified native module path. This affects this diagnostic only.
+delete environment.PSModulePath;
 // Windows PowerShell prepends its shared path if absent. Include it explicitly
 // after PSHOME so this comparison actually preserves the intended order.
 const moduleEnvironment={...environment,PSModulePath:join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/Modules')+';'+join(process.env.ProgramFiles,'WindowsPowerShell/Modules')};

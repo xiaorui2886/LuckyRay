@@ -55,6 +55,18 @@ DPAPI-protected on the operator machine, outside repositories and result assets.
 TLS keys, credentials and temporary download URLs are never evidence inputs.
 The installed processes receive an explicit Windows environment allowlist, not
 Actions runtime credentials, repository tokens or the transfer Secret.
+Their process-local `PSModulePath` is explicitly Windows native modules first,
+then the shared Windows PowerShell module directory. Both paths derive from
+validated Windows installation directories, not inherited CI/module values.
+The original 1.9.8 helper otherwise rebuilt a hosted-image module search path
+and exceeded its unchanged 20-second bound on first `New-Object` loading.
+Run `39190789416` compared the same helper bytes/cwd/pipes: default search timed
+out, ordered native search completed in 392 ms, and the unchanged original app
+completed component installation after a normal same-profile reopen in 3.26 s.
+The actual-app comparison also followed separate native-module diagnostic
+controls; it does not claim an independent cold-cache measurement. The direct
+same-byte ordered control succeeded before those instrumented controls.
+No helper, original installer, execution policy, timeout or grant was patched.
 Preparation paths are normalized at the observer's JSON input boundary. The
 exact installer directory, process ownership, language and automatic-reopen
 assertions are unchanged; Windows separator differences cannot cause a false
