@@ -27,7 +27,9 @@ $ca=New-SelfSignedCertificate -Type Custom -Subject 'CN=LuckyRay disposable CI u
 $certificateState.caThumbprint=$ca.Thumbprint
 RecordCertificates
 Stage 'create-github-leaf'
-$leaf=New-SelfSignedCertificate -Type Custom -Subject 'CN=github.com' -DnsName github.com -Signer $ca -CertStoreLocation Cert:\CurrentUser\My -KeyUsage DigitalSignature,KeyEncipherment -TextExtension @('2.5.29.19={text}ca=FALSE','2.5.29.37={text}1.3.6.1.5.5.7.3.1') -NotAfter $expiry
+# Exact update-file hosts only. The replay server additionally requires an
+# immutable full URL and rejects credentials. No login/provider traffic.
+$leaf=New-SelfSignedCertificate -Type Custom -Subject 'CN=github.com' -DnsName github.com,raw.githubusercontent.com,registry.npmjs.org,nodejs.org -Signer $ca -CertStoreLocation Cert:\CurrentUser\My -KeyUsage DigitalSignature,KeyEncipherment -TextExtension @('2.5.29.19={text}ca=FALSE','2.5.29.37={text}1.3.6.1.5.5.7.3.1') -NotAfter $expiry
 $certificateState.leafThumbprint=$leaf.Thumbprint
 RecordCertificates
 Stage 'export-public-ca'

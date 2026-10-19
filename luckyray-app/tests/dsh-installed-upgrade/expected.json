@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "transferSha256": "3836aca88b08d85609ecb587d659423d4c07e1cbc61552fd0b562f87777e9363",
+  "transferBytes": 392496350,
+  "specSha256": "c1f7a3c39cd31f7d941fcaac75cbdbc48ebd01dc7b863550f440962d6849a083",
+  "bSha256": "b1b2a875e69143ae29970ff2ef11a7ff91f6457d933f40ac02b4872629d690da",
+  "enginePayloadSha256": "938e644f80b40ef314a72868a2b201616c533e7b3ee7d48bab180e569102bf18",
+  "engineEnvelopeSha256": "aa5436485b26e3b06baa4c70b10241ddfdde253446c0bc68ee6d6f128e6cab1f",
+  "inputFileCount": 568,
+  "officialPackageCount": 561
+}
