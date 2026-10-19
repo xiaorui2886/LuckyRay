@@ -6,6 +6,7 @@
   [Parameter(Mandatory=$true)][ValidateSet('1033','2052')][string]$ExpectedLanguage
 )
 $ErrorActionPreference='Stop'
+Import-Module ([IO.Path]::Combine($PSHOME,'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
 Set-StrictMode -Version Latest
 [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or $env:USERNAME -notlike 'runner*') { throw 'disposable-hosted-runner-only' }
