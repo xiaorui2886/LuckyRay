@@ -3,7 +3,9 @@ import test from 'node:test';
 import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import * as crypto from 'node:crypto';
 import {createHash} from 'node:crypto';
+import {runInNewContext} from 'node:vm';
 import {preservationPolicy} from './preservation-policy.mjs';
 const read=name=>readFile(new URL(name,import.meta.url),'utf8');
 
@@ -87,4 +89,25 @@ test('registered workflow routes explicit DSH-only to a separate job without ful
   assert.match(entry,/uses: .\/.github\/workflows\/dsh-only-installed-acceptance.yml/);
   assert.equal((entry.match(/inputs.dsh_only != true/g)||[]).length,2);
   assert.match(await read('../../../.github/workflows/dsh-only-installed-acceptance.yml'),/workflow_call:/);
+});
+
+test('actual recipient preflight accepts escaped or literal PEM newlines and rejects private keys or wrong identity',async()=>{
+  const workflow=await read('../../../.github/workflows/dsh-only-installed-acceptance.yml');
+  const script=workflow.match(/^\s*node -e "(const c=require\('node:crypto'\).*?)"$/m)?.[1];assert.ok(script);
+  const {publicKey}=crypto.generateKeyPairSync('rsa',{modulusLength:2048});
+  const pem=publicKey.export({type:'spki',format:'pem'});
+  const sha=crypto.createHash('sha256').update(publicKey.export({type:'spki',format:'der'})).digest('hex');
+  const execute=(input,digest=sha)=>{
+    const writes=[];
+    runInNewContext(script,{process:{env:{EVIDENCE_RECIPIENT_PEM:input,EVIDENCE_RECIPIENT_SHA256:digest}},require:name=>{
+      if(name==='node:crypto')return crypto;
+      assert.equal(name,'node:fs');return {writeFileSync:(...args)=>writes.push(args)};
+    }});
+    assert.equal(writes.length,1);assert.equal(writes[0][0],'D:/lr-formal-uat/private/recipient-public.pem');
+    assert.equal(writes[0][1],pem);assert.equal(writes[0][2].flag,'wx');
+  };
+  execute(pem);execute(pem.replaceAll('\n','\\n'));
+  assert.throws(()=>execute(pem,'0'.repeat(64)),/recipient-identity-invalid/);
+  assert.throws(()=>execute(pem.replace('PUBLIC KEY','PRIVATE KEY')),/public-recipient-only/);
+  assert.throws(()=>execute(pem+'PRIVATE KEY'),/public-recipient-only/);
 });

@@ -73,7 +73,7 @@ jobs:
           if (@(Get-Process luckyray-app -ErrorAction SilentlyContinue).Count) { throw 'existing-app-refused' }
           if (Test-Path -LiteralPath "$env:LOCALAPPDATA/com.luckyray.desktop") { throw 'existing-local-profile-refused' }
           New-Item -ItemType Directory -Path "$root/private","$root/evidence" | Out-Null
-          node -e "const c=require('node:crypto'),fs=require('node:fs');const p=process.env.EVIDENCE_RECIPIENT_PEM;if(!/^-----BEGIN PUBLIC KEY-----/.test(p)||p.includes('PRIVATE KEY'))throw Error('public-recipient-only');const k=c.createPublicKey(p);if(k.asymmetricKeyType!=='rsa'||k.asymmetricKeyDetails.modulusLength<2048||c.createHash('sha256').update(k.export({type:'spki',format:'der'})).digest('hex')!==process.env.EVIDENCE_RECIPIENT_SHA256)throw Error('recipient-identity-invalid');fs.writeFileSync('D:/lr-formal-uat/private/recipient-public.pem',p,{flag:'wx'});"
+          node -e "const c=require('node:crypto'),fs=require('node:fs');const p=process.env.EVIDENCE_RECIPIENT_PEM.replace(/\\n/g,'\n');if(!/^-----BEGIN PUBLIC KEY-----/.test(p)||p.includes('PRIVATE KEY'))throw Error('public-recipient-only');const k=c.createPublicKey(p);if(k.asymmetricKeyType!=='rsa'||k.asymmetricKeyDetails.modulusLength<2048||c.createHash('sha256').update(k.export({type:'spki',format:'der'})).digest('hex')!==process.env.EVIDENCE_RECIPIENT_SHA256)throw Error('recipient-identity-invalid');fs.writeFileSync('D:/lr-formal-uat/private/recipient-public.pem',p,{flag:'wx'});"
           if ($LASTEXITCODE -ne 0) { throw 'reviewed-evidence-recipient-required-before-test' }
           node --check luckyray-app/tests/dsh-installed-upgrade/dsh-only.mjs
           if ($LASTEXITCODE -ne 0) { throw 'observer-syntax-invalid' }
