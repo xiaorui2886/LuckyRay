@@ -114,3 +114,30 @@ test('actual recipient preflight accepts escaped or literal PEM newlines and rej
   assert.throws(()=>execute(pem.replace('PUBLIC KEY','PRIVATE KEY')),/public-recipient-only/);
   assert.throws(()=>execute(pem+'PRIVATE KEY'),/public-recipient-only/);
 });
+
+test('modal diagnosis observes real dialogs without dismissal and preserves engine failure evidence',async()=>{
+  const source=await read('engine-chain.mjs');
+  assert.ok(source.indexOf("snap('DSH-only-before-session-click',surface)")<source.indexOf('await row.click();'));
+  assert.match(source,/visibleDialogs:dialogs/);
+  assert.match(source,/\[role="dialog"\]:visible/);
+  assert.match(source,/ENGINE-STOP-/);assert.match(source,/engine_failure_surface_capture/);
+  assert.match(source,/captured\.screenshot=true/);assert.match(source,/captured\.dom=true/);
+  assert.match(source,/throw error;/);
+  assert.doesNotMatch(source,/force:true|\.press\('Escape'\)|\.remove\(|pointer-events:\s*none/);
+});
+
+test('observation-only dispatch cannot enter CA or engine steps and only reads actual LSH UI',async()=>{
+  const workflow=await read('../../../.github/workflows/updater-installed-acceptance.yml');
+  const job=workflow.split('  dsh-only:')[1].split('  storage-diagnostic:')[0];
+  assert.match(workflow,/dsh_observe_only:\n\s+type: boolean\n\s+default: false/);
+  assert.match(job,/temporary update-file HTTPS trust\n\s+if: inputs.dsh_observe_only != true/);
+  assert.match(job,/genuine in-software engine upgrade and preservation\n\s+if: inputs.dsh_observe_only != true/);
+  assert.match(job,/DSH_OBSERVE_ONLY: \$\{\{ inputs.dsh_observe_only \}\}/);
+  const prepare=await read('prepare-dsh-only.mjs');
+  const observe=prepare.split("if(process.env.DSH_OBSERVE_ONLY==='true'){")[1].split("stage='normal_preparation_quit'")[0];
+  assert.match(observe,/OBSERVE-LSH-before-session-click/);assert.match(observe,/visibleDialogs:dialogs/);
+  assert.doesNotMatch(observe,/\.click\(|\.press\(|\.accept\(|runDshInstalledUpgrade|proxyUrl|Prepare-ApprovedEphemeralHttps/);
+  assert.match(prepare,/PASS_DSH_ONLY_SURFACE_OBSERVED_WITHOUT_CA/);
+  assert.match(workflow.split('  installed-chain:')[1],/inputs.dsh_observe_only != true/);
+  assert.match(prepare,/installedApplicationEnvironment\(process.env,null\)/);
+});

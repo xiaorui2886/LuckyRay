@@ -2,6 +2,10 @@ name: One-off installed desktop then DSH upgrade
 on:
   workflow_dispatch:
     inputs:
+      dsh_observe_only:
+        type: boolean
+        default: false
+        description: DSH-only surface observation before CA; skip trust proxy and engine upgrade
       dsh_only:
         type: boolean
         default: false
@@ -49,6 +53,7 @@ jobs:
           node-version: '24.14.1'
       - name: Cheap isolation and observer preflight before downloads or certificate actions
         env:
+          DSH_OBSERVE_ONLY: ${{ inputs.dsh_observe_only }}
           EPHEMERAL_APPROVED: ${{ inputs.ephemeral_trust_approved }}
           APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
           EVIDENCE_RECIPIENT_PEM: ${{ inputs.recipient_public_pem }}
@@ -56,7 +61,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           if ($env:USERNAME -notlike 'runner*' -or $env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'standard-disposable-windows-runner-required' }
-          if ($env:EPHEMERAL_APPROVED -cne 'true' -or $env:APPROVAL_REFERENCE -notmatch '\A[a-zA-Z0-9][a-zA-Z0-9._-]{3,79}\z') { throw 'fresh-owner-trust-approval-required' }
+          if ($env:DSH_OBSERVE_ONLY -cne 'true' -and ($env:EPHEMERAL_APPROVED -cne 'true' -or $env:APPROVAL_REFERENCE -notmatch '\A[a-zA-Z0-9][a-zA-Z0-9._-]{3,79}\z')) { throw 'fresh-owner-trust-approval-required' }
           $root='D:\lr-formal-uat'
           if (Test-Path -LiteralPath $root) { throw 'existing-test-root-refused' }
           if (Test-Path -LiteralPath "$env:APPDATA/com.luckyray.desktop") { throw 'existing-profile-refused' }
@@ -130,17 +135,21 @@ jobs:
           if ((Get-Content -LiteralPath 'D:\lr-formal-uat\安装 空格\luckyray-install-complete.txt' -Raw).Trim() -cne 'com.luckyray.desktop|1.9.9') { throw 'direct-B-install-completion-invalid' }
           @{install='D:\lr-formal-uat\安装 空格';profile="$env:APPDATA/com.luckyray.desktop";local=$env:LOCALAPPDATA;tls='D:\lr-formal-uat\private\tls.json'} | ConvertTo-Json | Set-Content 'D:\lr-formal-uat\private\paths.json' -Encoding utf8
       - name: Prepare DSH-only old-engine synthetic data without MCP proxy or CA then quit normally
+        env:
+          DSH_OBSERVE_ONLY: ${{ inputs.dsh_observe_only }}
         working-directory: luckyray-app
         run: |
           node tests/dsh-installed-upgrade/prepare-dsh-only.mjs *> 'D:\lr-formal-uat\evidence\fixture-observer.log'
           if ($LASTEXITCODE -ne 0) { throw 'dsh-only-fixture-precondition-failed-before-CA-no-authorization-bypass' }
       - name: This approved disposable runner's temporary update-file HTTPS trust
+        if: inputs.dsh_observe_only != true
         env:
           APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File luckyray-app/tests/formal-update/Prepare-ApprovedEphemeralHttps.ps1 -OwnerApprovalReference $env:APPROVAL_REFERENCE
           if ($LASTEXITCODE -ne 0) { throw 'approved-HTTPS-scope-failed-no-bypass' }
       - name: DSH-only genuine in-software engine upgrade and preservation
+        if: inputs.dsh_observe_only != true
         working-directory: luckyray-app
         run: |
           node tests/dsh-installed-upgrade/dsh-only.mjs *> 'D:\lr-formal-uat\evidence\installed-observer.log'
@@ -174,7 +183,7 @@ jobs:
     if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only == true && inputs.dsh_only != true
     uses: ./.github/workflows/storage-initialize-diagnostic.yml
   installed-chain:
-    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only != true && inputs.dsh_only != true
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only != true && inputs.dsh_only != true && inputs.dsh_observe_only != true
     environment: dsh-installed-20261018
     runs-on: windows-2022
     timeout-minutes: 45

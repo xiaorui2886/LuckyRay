@@ -107,7 +107,15 @@ export async function runDshInstalledUpgrade(context){
       const workspace=surface.getByRole('treeitem').filter({hasText:oldFixture.workspaceTitle}).first();
       if(await workspace.isVisible().catch(()=>false))await workspace.click();
     }
-    await row.waitFor({state:'visible',timeout:45000});await row.click();
+    await row.waitFor({state:'visible',timeout:45000});
+    if(policy.mode==='dsh-only'){
+      // The old engine's mask is a shared Modal primitive, not proof of onboarding.
+      // Observe the actual dialog; never dismiss, confirm, or force through it.
+      await snap('DSH-only-before-session-click',surface);
+      const dialogs=await surface.locator('[role="dialog"]:visible').evaluateAll(nodes=>nodes.map(node=>({title:node.getAttribute('aria-label'),text:node.innerText})));
+      await event('old_session_click_preflight',{sessionId:oldFixture.sessionId,visibleDialogs:dialogs});
+    }
+    await row.click();
     await surface.getByText('LUCKYRAY_DSH_NATIVE_PROBE',{exact:true}).first().waitFor({timeout:45000});
     await surface.getByText('DSH_NATIVE_ACCEPTED',{exact:true}).first().waitFor();
     await wait('official selected session',()=>surface.evaluate(id=>{try{return JSON.parse(localStorage.getItem('dsh.sessions.current'))?.sessionId===id;}catch{return false;}},oldFixture.sessionId));
@@ -125,6 +133,7 @@ export async function runDshInstalledUpgrade(context){
     await assertOriginals(oldFixture);
     await verifyInstalledMaterial(invoke,materialFixture);
   }
+  try{
   await wait('old engine running in upgraded host',async()=>{const s=await invoke('dsh_native_surface_status');return s.ready&&s.stage==='session-open'&&s.ownedDirectProcessCount===2;});
   await identity(spec.engine.fromVersion);await preserved();
   let surface=await lshPage();await oldSession(surface);await snap('B-old-engine-old-session',surface);
@@ -219,4 +228,19 @@ export async function runDshInstalledUpgrade(context){
   const result={from:spec.engine.fromVersion,to:spec.engine.version,descriptorSha256:spec.engine.descriptorSha256,automaticReopen:true,oldSessionVisible:true,originalSessionBytesPreserved:true,...policy.result,preUpgradeMaterialIdPreserved:materialFixture.asset.id,realDraftAfterRestart:true,originalMaterialAndNoteBytes:true,profile:paths.profile,sourceClass:'production'};
   await writeFile(join(root,'evidence/ENGINE-RESULT.json'),JSON.stringify(result,null,2)+'\n');
   await browser.close();return result;
+  }catch(error){
+    // Capture current reconnect surfaces before outer cleanup disconnects them.
+    // These files stay in the existing encrypted-only evidence pipeline.
+    let index=0;
+    for(const candidate of browser.contexts().flatMap(c=>c.pages())){
+      let allowed=candidate===page;
+      try{const url=new URL(candidate.url());allowed ||= url.protocol==='http:'&&url.hostname==='127.0.0.1';}catch{}
+      if(!allowed||candidate.isClosed())continue;
+      const name='ENGINE-STOP-'+index++;const captured={name,screenshot:false,dom:false};
+      try{await candidate.screenshot({path:join(root,'evidence',name+'.png'),fullPage:true,timeout:5000});captured.screenshot=true;}catch{}
+      try{await writeFile(join(root,'evidence',name+'.dom.txt'),await candidate.locator('body').innerText({timeout:5000}));captured.dom=true;}catch{}
+      await event('engine_failure_surface_capture',captured).catch(()=>{});
+    }
+    throw error;
+  }
 }

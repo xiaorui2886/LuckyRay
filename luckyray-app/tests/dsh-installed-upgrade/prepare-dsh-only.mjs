@@ -78,6 +78,23 @@ try{
   assert.ok(['1033','2052'].includes(installerLanguage));
   await policy.verify();
   await verifyInstalledMaterial(invoke,materialFixture);await snapshot('FIXTURE-B-DSH-only-no-proxy');
+  if(process.env.DSH_OBSERVE_ONLY==='true'){
+    stage='observe_actual_LSH_without_CA';
+    await page.evaluate(()=>{location.hash='#ai';});
+    const surface=await wait('actual LSH surface for observation only',async()=>{
+      for(const candidate of browser.contexts().flatMap(c=>c.pages())){
+        let url;try{url=new URL(candidate.url());}catch{continue;}
+        if(url.protocol!=='http:'||url.hostname!=='127.0.0.1')continue;
+        if(await candidate.locator('[contenteditable="true"]:visible,[role="dialog"]:visible').count())return candidate;
+      }
+      return false;
+    });
+    await surface.screenshot({path:join(evidence,'OBSERVE-LSH-before-session-click.png'),fullPage:true});
+    await writeFile(join(evidence,'OBSERVE-LSH-before-session-click.dom.txt'),await surface.locator('body').innerText());
+    const dialogs=await surface.locator('[role="dialog"]:visible').evaluateAll(nodes=>nodes.map(node=>({title:node.getAttribute('aria-label'),text:node.innerText})));
+    await event('actual_LSH_observation_only',{visibleDialogs:dialogs,sessionClicked:false,modalDismissed:false,certificateActionsPerformed:false,engineUpgrade:'NOT_RUN'});
+    await snapshot('OBSERVE-host-before-normal-quit');
+  }
   stage='normal_preparation_quit';
   await invoke('close_window');
   await wait('original B normal fixture-preparation quit',()=>BExit);assert.equal(BExit.code,0);assert.equal(BExit.signal,null);
@@ -86,6 +103,7 @@ try{
   await policy.verify();
   const fixture={schema:1,preparedWithVersion:spec.b.version,preparedExeSha256:spec.b.installedExeSha256,profile:paths.profile,install:paths.install,oldFixture,materialFixture,base,reference,notePath,settingsBefore,installerLanguage,evidenceMode:'dsh-only',preparationExit:BExit};
   await writeFile(join(root,'private/dsh-only-fixture.json'),JSON.stringify(fixture,null,2)+'\n',{flag:'wx'});
+  if(process.env.DSH_OBSERVE_ONLY==='true')await writeFile(join(evidence,'OBSERVATION-RESULT.json'),JSON.stringify({status:'PASS_DSH_ONLY_SURFACE_OBSERVED_WITHOUT_CA',normalExit:BExit,modalDismissed:false,sessionClicked:false,engineUpgrade:'NOT_RUN',certificateActionsPerformed:false,proxyConfigured:false},null,2)+'\n');
   await writeFile(join(evidence,'FIXTURE-RESULT.json'),JSON.stringify({status:'PASS_DSH_ONLY_OLD_ENGINE_FIXTURE_PREPARED_WITHOUT_PROXY',version:spec.b.version,pid:B.pid,normalExit:BExit,profile:paths.profile,communityMcpAuthorization:'NOT_APPLICABLE_TO_DSH_ONLY',certificateActionsPerformed:false,automaticUpdateClaimed:false},null,2)+'\n');
 }catch(error){
   await event('fixture_stopped',{stage,error:error.message});
