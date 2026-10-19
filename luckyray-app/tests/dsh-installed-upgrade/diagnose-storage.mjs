@@ -17,7 +17,9 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 assert.equal(hash(await readFile(join(install,'luckyray-app.exe'))),'59797b20a9b74abd3beb7c4e285b667698ae6a4b05073cdf12a29b4c0bf32304');
 assert.equal(existsSync(join(root,'private/test-certificates.json')),false);
 const environment=installedApplicationEnvironment(process.env,null),events=[];
-const moduleEnvironment={...environment,PSModulePath:join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/Modules')};
+// Windows PowerShell prepends its shared path if absent. Include it explicitly
+// after PSHOME so this comparison actually preserves the intended order.
+const moduleEnvironment={...environment,PSModulePath:join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/Modules')+';'+join(process.env.ProgramFiles,'WindowsPowerShell/Modules')};
 assert.equal(Object.keys(environment).some(k=>/proxy|token|secret/i.test(k)),false);
 const event=async(kind,data={})=>{const row={atUtc:new Date().toISOString(),kind,...data};events.push(row);await appendFile(join(evidence,'storage-diagnostic-timeline.jsonl'),JSON.stringify(row)+'\n');};
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
@@ -95,6 +97,10 @@ try{
   await writeFile(join(evidence,'control-calculated-module-path-default.txt'),defaultPath,{flag:'wx'});
   await event('module_path_control_difference',{changedEnvironmentKeys:['PSModulePath'],configuredNativeModulePath:moduleEnvironment.PSModulePath,defaultCalculatedPath:defaultPath,nativeCalculatedPath:nativePath,noExecutionPolicyOrTrustChange:true});
   await event('instrumented_control_identity',{originalUnchanged:hash(await readFile(helper))===hash(helperBytes),separateScriptSha256:hash(instrumented),notAcceptanceHelper:true});
+  const explicit=insert(instrumented,'try {',"\r\n LRStage 'before_explicit_utility'\r\n Import-Module ([IO.Path]::Combine($PSHOME,'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop\r\n LRStage 'explicit_utility_imported'\r\n Import-Module ([IO.Path]::Combine($PSHOME,'Modules/Microsoft.PowerShell.Management/Microsoft.PowerShell.Management.psd1')) -ErrorAction Stop\r\n LRStage 'explicit_management_imported'");
+  const explicitFile=join(root,'private/initialize-explicit-module-control.ps1');await writeFile(explicitFile,explicit,{flag:'wx'});
+  await run(observer,['control',native,explicitFile,join(root,'private/direct-explicit-modules'),cwd,'stages',join(evidence,'explicit-native-module-control.jsonl')],{cwd:root,env:moduleEnvironment,windowsHide:true,timeout:30000,maxBuffer:65536});
+  await event('separate_explicit_module_control',{notInstalledHelper:true,scriptSha256:hash(explicit),nativeModuleWarmupAttempted:true,noGlobalEnvironmentOrPolicyChange:true});
   stage='normal_baseline_exit';await invoke('close_window');
   await wait('normal original app exit',()=>appExit,120000);assert.equal(appExit.code,0);assert.equal(appExit.signal,null);
   await browser.close();await wait('baseline CDP released',async()=>{try{await fetch('http://127.0.0.1:9391/json/version');return false;}catch{return true;}},45000);
@@ -110,7 +116,7 @@ try{
   await wait('fixed actual child observer ready',()=>{if(monitorExit)throw Error('fixed observer stopped before action');return existsSync(fixedReady);},15000);
   const fixedStatus=await invoke('community_mcp_status');assert.equal(fixedStatus.authorized,false);const fixedStart=Date.now();let fixedInstallError=null;
   try{await invoke('community_mcp_action',{input:{action:'install',revision:fixedStatus.revision}});}catch(error){fixedInstallError=error.message;}
-  await event('same_original_A_native_modules_result',{pid:fixedA.pid,durationMs:Date.now()-fixedStart,error:fixedInstallError,successful:fixedInstallError===null,changedEnvironmentKeys:['PSModulePath'],sameProfile:true,...fixedOwner});
+  await event('same_original_A_native_modules_result',{pid:fixedA.pid,durationMs:Date.now()-fixedStart,error:fixedInstallError,successful:fixedInstallError===null,changedEnvironmentKeys:['PSModulePath'],separateNativeModuleWarmupAttempted:true,sameProfile:true,...fixedOwner});
   await wait('fixed actual child observer exit',()=>monitorExit,45000);assert.equal(monitorExit.code,0);
   assert.equal(hash(await readFile(helper)),hash(helperBytes));assert.equal(hash(await readFile(join(install,'luckyray-app.exe'))),'59797b20a9b74abd3beb7c4e285b667698ae6a4b05073cdf12a29b4c0bf32304');
   await page.screenshot({path:join(evidence,'same-original-A-native-modules.png'),fullPage:true});

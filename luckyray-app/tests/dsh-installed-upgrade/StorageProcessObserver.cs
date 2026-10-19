@@ -163,7 +163,7 @@ class StorageProcessObserver {
       if(mode!="open")child.StandardInput.Close();
       Task output=Task.Factory.StartNew(()=>{byte[] b=new byte[4096];int n;while((n=child.StandardOutput.BaseStream.Read(b,0,b.Length))>0){Interlocked.Add(ref stdoutBytes,n);}Array.Clear(b,0,b.Length);});
       Task error=Task.Factory.StartNew(()=>{byte[] b=new byte[4096];int n;while((n=child.StandardError.BaseStream.Read(b,0,b.Length))>0){Interlocked.Add(ref stderrBytes,n);if(mode=="stages"){
-        var text=Encoding.UTF8.GetString(b,0,n);foreach(string line in text.Split('\n'))if(System.Text.RegularExpressions.Regex.IsMatch(line.Trim(),"^LR_STAGE:[a-z_]+:[0-9]+$"))Row(file,"instrumented_control_stage",new {marker=line.Trim(),elapsedMs=clock.ElapsedMilliseconds});
+        var text=Encoding.UTF8.GetString(b,0,n);foreach(string line in text.Split('\n'))if(System.Text.RegularExpressions.Regex.IsMatch(line.Trim(),"^LR_STAGE:[a-z0-9_]+:[0-9]+$"))Row(file,"instrumented_control_stage",new {marker=line.Trim(),elapsedMs=clock.ElapsedMilliseconds});
       }}Array.Clear(b,0,b.Length);});
       Row(file,"direct_control_metadata",Snapshot(child,image));
       bool timeout=!child.WaitForExit((int)Math.Max(0,20000-clock.ElapsedMilliseconds));
