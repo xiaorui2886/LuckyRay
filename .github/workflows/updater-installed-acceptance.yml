@@ -2,6 +2,18 @@ name: One-off installed desktop then DSH upgrade
 on:
   workflow_dispatch:
     inputs:
+      dsh_only:
+        type: boolean
+        default: false
+        description: Separate frozen-B engine-only scope; does not pass desktop or MCP integration
+      recipient_public_pem:
+        type: string
+        required: false
+        description: Required for DSH-only; reviewed RSA public evidence recipient only
+      recipient_sha256:
+        type: string
+        required: false
+        description: Required for DSH-only; reviewed recipient SPKI DER SHA256
       storage_only:
         type: boolean
         default: false
@@ -20,11 +32,19 @@ concurrency:
   group: dsh-installed-20261018-one-off
   cancel-in-progress: false
 jobs:
+  dsh-only:
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-only-ray-20261019' && inputs.dsh_only == true && inputs.storage_only != true
+    uses: ./.github/workflows/dsh-only-installed-acceptance.yml
+    with:
+      ephemeral_trust_approved: ${{ inputs.ephemeral_trust_approved }}
+      approval_reference: ${{ inputs.approval_reference }}
+      recipient_public_pem: ${{ inputs.recipient_public_pem }}
+      recipient_sha256: ${{ inputs.recipient_sha256 }}
   storage-diagnostic:
-    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only == true
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only == true && inputs.dsh_only != true
     uses: ./.github/workflows/storage-initialize-diagnostic.yml
   installed-chain:
-    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only != true
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.actor == 'xiaorui2886' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/dsh021-installed-20261018' && inputs.storage_only != true && inputs.dsh_only != true
     environment: dsh-installed-20261018
     runs-on: windows-2022
     timeout-minutes: 45

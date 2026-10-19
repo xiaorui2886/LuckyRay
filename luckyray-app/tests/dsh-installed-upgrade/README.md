@@ -114,3 +114,64 @@ treated as portable product APIs. Relevant primary references:
 
 Evidence returns under the existing separate test-return encryption public key.
 No plaintext screenshot/trace, private key or synthetic credential is uploaded.
+
+## Separate DSH-only acceptance (Ray, 2026-10-19)
+
+This is a separate acceptance scope, not a replacement for the unfinished full
+1.9.8 -> 1.9.9 desktop/MCP integration chain. `chain.mjs`, `prepare-fixture.mjs`
+and the original workflow retain their full-chain assertions. The shared engine
+helper defaults to `full-integration`; explicit `dsh-only` rejects all grant
+parameters and refuses existing community MCP state. No grant is manufactured.
+
+The new `.github/workflows/dsh-only-installed-acceptance.yml` is restricted to
+owner manual dispatch on `test/dsh021-only-ray-20261019`, a standard disposable
+Windows runner and its separate environment. It directly installs the exact
+frozen signed B 1.9.9 after existing native signature verification. It does not
+download/install A or the community MCP component. B must still contain the real
+0.1.7-rc.2 engine. No version bump, product rebuild or signing occurs.
+
+`prepare-dsh-only.mjs` runs before CA/proxy preparation. It reuses the genuine
+old-engine probe and material import helpers and normal note/settings APIs on a
+fresh synthetic profile, then quits normally. Probe-created conversation and
+synthetic workspace metadata are not real-user conversation-input evidence.
+`dsh-only.mjs` then reuses the real engine UI download/verify/stage/restart/health
+flow, owned Node identity, frozen host identity and original-session byte checks.
+It verifies note API content, settings, material identity, draft restore, original
+file additions to the correct composer and cleared draft non-resurrection. It
+never submits a real model prompt. A pre-CDP event captures the product's reopened
+process before connection is attempted. Manual repair cannot replace that reopen.
+
+Only `PASS_DSH_ONLY_INSTALLED_ENGINE_UPGRADE` may be reported for this path.
+Desktop A-to-B stays `NOT_RUN`, community MCP authorization stays
+`NOT_APPLICABLE_TO_DSH_ONLY`. Production feed availability, real IME and external
+web tunnel stay unverified. Success here is not release approval.
+
+Before a real dispatch, obtain this run's approval for its temporary LocalMachine
+CA and exact-URL process proxy, and provision the reviewed transfer through
+`DSH_ONLY_TRANSFER_20261019` in the separate environment. The workflow's boolean
+and reference record approval; they do not grant it. Preserve the existing
+transfer/spec/DSH signature and closure verification without rebuilding inputs.
+Supply a reviewed RSA public key and its SPKI DER SHA256 in the two required
+recipient inputs; retain the matching private key outside the runner. The old
+recipient cannot be assumed available. Public recipient validation precedes the
+test; uploads are encrypted-only, with no plaintext fallback. No private key is
+read, created or uploaded by this driver. Existing CA cleanup runs on failure;
+the controller must additionally remove the temporary Secret/environment and
+verify expiry of the same transfer URL, retaining any unresolved gap.
+
+Cheap local checks (not installed-engine acceptance):
+
+    node --test tests/dsh-installed-upgrade/harness-contract.test.mjs tests/dsh-installed-upgrade/dsh-only-contract.test.mjs tests/formal-update/windows-native-encoding.test.mjs
+    node --check tests/dsh-installed-upgrade/dsh-only.mjs
+    node --check tests/dsh-installed-upgrade/prepare-dsh-only.mjs
+    node --check tests/dsh-installed-upgrade/engine-chain.mjs
+    node --check tests/dsh-installed-upgrade/preservation-policy.mjs
+
+Windows-native observer tests skip on other platforms. Do not interpret local
+contract checks as an installer, signed engine upgrade or release PASS.
+
+The already-registered `updater-installed-acceptance.yml` is also the dispatch
+entry on the isolated new branch: select `dsh_only=true`, `storage_only=false`.
+It calls the separate DSH-only reusable workflow. Original desktop and storage
+jobs explicitly exclude DSH-only; their prior branches and assertions remain.
+No default/main branch modification is needed for workflow registration.

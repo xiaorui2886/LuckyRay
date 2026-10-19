@@ -9,13 +9,16 @@ import {createHash} from 'node:crypto';
 import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 
+import {installedApplicationEnvironment} from './runner-environment.mjs';
+import {preservationPolicy} from './preservation-policy.mjs';
+
 const run=promisify(execFile),hash=b=>createHash('sha256').update(b).digest('hex');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(label,fn,ms=120000){const until=Date.now()+ms;while(Date.now()<until){const value=await fn();if(value)return value;await delay(400);}throw Error(label+' timed out');}
 function runner(){assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_OS,'Windows');assert.equal(process.env.GITHUB_REPOSITORY,'xiaorui2886/LuckyRay');}
 async function processes(){
   const script='[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); @(Get-CimInstance Win32_Process | Where-Object {$_.Name -in @("luckyray-app.exe","node.exe")} | ForEach-Object {[pscustomobject]@{pid=$_.ProcessId;ppid=$_.ParentProcessId;exe=$_.ExecutablePath}})|ConvertTo-Json -Compress';
-  const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,encoding:'utf8',timeout:15000});
+  const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,encoding:'utf8',timeout:15000,env:installedApplicationEnvironment(process.env,null)});
   const rows=JSON.parse(stdout||'[]');return Array.isArray(rows)?rows:[rows];
 }
 async function originalSessions(home){
@@ -71,6 +74,7 @@ export async function seedOldInstalledSession({root,paths,spec,event}){
 export async function runDshInstalledUpgrade(context){
   runner();
   const {root,paths,spec,event,oldFixture,materialFixture,connect,requireCdpOwner,settingsBefore,notePath,expected,originalGrant,originalAuthorityBytes,authorityFingerprints,installedEnvironment}=context;
+  const policy=preservationPolicy(context);
   let {browser,page}=context;
   const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI__.core.invoke(command,args),{command,args});
   const snap=async(name,surface=page)=>{await surface.screenshot({path:join(root,'evidence',name+'.png'),fullPage:true});await writeFile(join(root,'evidence',name+'.dom.txt'),await surface.locator('body').innerText());};
@@ -113,8 +117,11 @@ export async function runDshInstalledUpgrade(context){
   async function preserved(){
     assert.equal(await readFile(notePath,'utf8'),expected);
     assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('luckyray-settings-v1'))),settingsBefore);
-    const grant=await invoke('community_mcp_status');assert.equal(grant.authorized,true);assert.deepEqual(grant.grant,originalGrant);
-    assert.deepEqual(await authorityFingerprints(),originalAuthorityBytes);
+    await policy.verify(invoke);
+    if(policy.mode==='dsh-only'){
+      const note=await invoke('knowledge_read_document',{documentRef:context.documentRef});
+      assert.equal(note.content,expected);assert.deepEqual(note.documentRef,context.documentRef);
+    }
     await assertOriginals(oldFixture);
     await verifyInstalledMaterial(invoke,materialFixture);
   }
@@ -134,7 +141,9 @@ export async function runDshInstalledUpgrade(context){
   const dialog=page.waitForEvent('dialog',{timeout:10000}).then(async d=>{assert.equal(d.type(),'confirm');await d.accept();});
   await page.getByRole('button',{name:/^(重启软件并完成更新|Restart LuckyRay and finish update)$/}).click();await dialog;
   await wait('engine updater normal old process exit',async()=>!(await processes()).some(p=>p.pid===before.pid),180000);
+  if(policy.mode==='dsh-only')await context.requireInitialNormalExit(before.pid);
   const auto=await wait('product-owned automatic host reopen after engine switch',async()=>(await processes()).find(p=>p.exe?.toLowerCase()===join(paths.install,'luckyray-app.exe').toLowerCase()&&p.pid!==before.pid),180000);
+  await event('engine_product_reopen_observed_before_cdp',{...auto,exeSha256:hash(await readFile(auto.exe)),expectedHostVersion:spec.b.version,uiVersion:'NOT_YET_VERIFIED'});
   ({browser,page}=await connect());await requireCdpOwner(auto.pid);
   assert.equal(hash(await readFile(join(paths.install,'luckyray-app.exe'))),spec.b.installedExeSha256);
   assert.equal(await page.evaluate(()=>window.__TAURI__.app.getVersion()),spec.b.version);
@@ -158,6 +167,7 @@ export async function runDshInstalledUpgrade(context){
   // The updater's automatic reopen has already been proved above. This is a
   // separately labelled ordinary user reopen to verify an unsent text draft.
   const reopened=spawn(join(paths.install,'luckyray-app.exe'),[],{cwd:paths.install,windowsHide:false,env:installedEnvironment});
+  let reopenedExit;reopened.on('exit',(code,signal)=>{reopenedExit={code,signal};});
   reopened.stdout.resume();reopened.stderr.resume();reopened.stdout.unref?.();reopened.stderr.unref?.();reopened.unref();
   ({browser,page}=await connect());await requireCdpOwner(reopened.pid);
   surface=await lshPage();editor=await oldSession(surface);
@@ -190,7 +200,23 @@ export async function runDshInstalledUpgrade(context){
   await snap('B-original-file-sidebars',page);await snap('B-original-files-official-composer',surface);
   assert.deepEqual(forbidden,[],'no actual submit/prompt request may be made');
   await event('original_files_sidebar_pass',{uploaded,originals:[{sha256:hash(pdf),bytes:pdf.length},{sha256:hash(expected),bytes:Buffer.byteLength(expected)}],modelSubmitCalled:false,existingDraftPreserved:true});
-  const result={from:spec.engine.fromVersion,to:spec.engine.version,descriptorSha256:spec.engine.descriptorSha256,automaticReopen:true,oldSessionVisible:true,originalSessionBytesPreserved:true,settingsAndGrantPreserved:true,preUpgradeMaterialIdPreserved:materialFixture.asset.id,realDraftAfterRestart:true,originalMaterialAndNoteBytes:true,profile:paths.profile,sourceClass:'production'};
+  if(policy.mode==='dsh-only'){
+    await editor.click();await editor.press('Control+A');await editor.press('Backspace');
+    await wait('cleared official composer draft persisted',()=>surface.evaluate(id=>{try{return JSON.parse(localStorage.getItem('dsh.conversation.'+id))?.draft==='';}catch{return false;}},oldFixture.sessionId));
+    const clearing=await actualApp();await invoke('close_window');
+    await wait('normal close after clear',async()=>!(await processes()).some(p=>p.pid===clearing.pid),180000);
+    assert.equal(clearing.pid,reopened.pid);await wait('cleared draft process exit result',()=>reopenedExit);
+    assert.equal(reopenedExit.code,0);assert.equal(reopenedExit.signal,null);
+    await wait('clear-test CDP listener released',async()=>{try{await fetch('http://127.0.0.1:9391/json/version');return false;}catch{return true;}},45000);
+    const clearedReopen=spawn(join(paths.install,'luckyray-app.exe'),[],{cwd:paths.install,windowsHide:false,env:installedEnvironment});
+    clearedReopen.stdout.resume();clearedReopen.stderr.resume();clearedReopen.stdout.unref?.();clearedReopen.stderr.unref?.();clearedReopen.unref();
+    ({browser,page}=await connect());await requireCdpOwner(clearedReopen.pid);
+    surface=await lshPage();editor=await oldSession(surface);
+    assert.equal((await editor.innerText()).trim(),'','cleared draft must not resurrect');
+    await preserved();await identity(spec.engine.version);await snap('B-cleared-draft-stays-empty',surface);
+    await event('cleared_draft_restart_pass',{ordinaryReopenPid:clearedReopen.pid});
+  }
+  const result={from:spec.engine.fromVersion,to:spec.engine.version,descriptorSha256:spec.engine.descriptorSha256,automaticReopen:true,oldSessionVisible:true,originalSessionBytesPreserved:true,...policy.result,preUpgradeMaterialIdPreserved:materialFixture.asset.id,realDraftAfterRestart:true,originalMaterialAndNoteBytes:true,profile:paths.profile,sourceClass:'production'};
   await writeFile(join(root,'evidence/ENGINE-RESULT.json'),JSON.stringify(result,null,2)+'\n');
   await browser.close();return result;
 }
