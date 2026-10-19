@@ -44,6 +44,10 @@ DPAPI-protected on the operator machine, outside repositories and result assets.
 TLS keys, credentials and temporary download URLs are never evidence inputs.
 The installed processes receive an explicit Windows environment allowlist, not
 Actions runtime credentials, repository tokens or the transfer Secret.
+Preparation paths are normalized at the observer's JSON input boundary. The
+exact installer directory, process ownership, language and automatic-reopen
+assertions are unchanged; Windows separator differences cannot cause a false
+directory-mismatch result.
 
 Existing component, compatibility, cancellation, real local IME and broader MCP
 evidence is reused separately. A syntax check, crypto unit test, installer exit

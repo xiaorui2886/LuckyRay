@@ -11,10 +11,11 @@ import {createHash} from 'node:crypto';
 import {Transform} from 'node:stream';
 import {runDshInstalledUpgrade, seedOldInstalledSession} from './engine-chain.mjs';
 import {installedApplicationEnvironment} from './runner-environment.mjs';
+import {installedPaths} from './installed-paths.mjs';
 
 if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_OS!=='Windows'||process.env.GITHUB_REPOSITORY!=='xiaorui2886/LuckyRay')throw Error('disposable-public-runner-only');
 const run=promisify(execFile), root='D:\\lr-formal-uat';
-const paths=JSON.parse((await readFile(join(root,'private/paths.json'),'utf8')).replace(/^\uFEFF/,''));
+const paths=installedPaths(JSON.parse((await readFile(join(root,'private/paths.json'),'utf8')).replace(/^\uFEFF/,'')));
 const tls=JSON.parse((await readFile(paths.tls,'utf8')).replace(/^\uFEFF/,''));
 const spec=JSON.parse(await readFile(process.env.UPGRADE_SPEC,'utf8'));
 assert.equal(spec.a.version,'1.9.8');assert.equal(spec.b.version,'1.9.9');
