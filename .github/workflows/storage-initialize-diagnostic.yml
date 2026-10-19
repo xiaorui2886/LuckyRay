@@ -30,7 +30,8 @@ jobs:
           New-Item -ItemType Directory -Path 'D:\lr-formal-uat\private','D:\lr-formal-uat\evidence' | Out-Null
           node --check luckyray-app/tests/dsh-installed-upgrade/diagnose-storage.mjs
           if ($LASTEXITCODE -ne 0) { throw 'diagnostic-syntax-invalid' }
-          & "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /platform:x64 /reference:System.Management.dll /reference:System.Web.Extensions.dll /out:D:\lr-formal-uat\private\StorageProcessObserver.exe luckyray-app/tests/dsh-installed-upgrade/StorageProcessObserver.cs
+          $observerSource=(Resolve-Path -LiteralPath 'luckyray-app\tests\dsh-installed-upgrade\StorageProcessObserver.cs').Path
+          & "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /platform:x64 /reference:System.Management.dll /reference:System.Web.Extensions.dll /out:D:\lr-formal-uat\private\StorageProcessObserver.exe $observerSource
           if ($LASTEXITCODE -ne 0) { throw 'diagnostic-compile-failed' }
       - name: Acquire unchanged original public 1.9.8 and install once
         run: |
