@@ -215,3 +215,28 @@ test('automatic reopen opens actual old session before frozen coordinator health
   assert.match(reopen,/new engine session open before health check/);
   assert.doesNotMatch(source,/waitForEvent\('dialog'/);
 });
+
+test('fixture captures complete settings only after ordinary frozen host AI hydration and rejects other changes',async()=>{
+  const prepare=await read('prepare-dsh-only.mjs');
+  const block=prepare.slice(prepare.indexOf('  const settingsBeforeAi='),prepare.indexOf("  assert.equal(settingsBefore['general.language']"));
+  assert.ok(block.includes("name:'AI',exact:true"));
+  for(const unexpected of [false,true]){
+    let current={'ai.baseUrl':'https://api.deepseek.com','ai.maxTokens':2000,'general.language':'zh-CN','general.density':'compact','general.onClose':'exit'};
+    let clicks=0,events=0;
+    const windowScope={localStorage:{getItem:key=>{assert.equal(key,'luckyray-settings-v1');return JSON.stringify(current);}}};
+    const page={evaluate:async fn=>runInNewContext('('+fn.toString()+')()',windowScope),locator:selector=>{
+      assert.equal(selector,'#settings-nav');return {getByRole:(role,options)=>({click:async()=>{
+        assert.equal(role,'button');assert.equal(options.name,'AI');clicks++;
+        current={...current,'ai.baseUrl':'https://api.deepseek.com/v1','ai.maxTokens':2048};
+        if(unexpected)current['general.density']='comfortable';
+      }})};
+    }};
+    const execute=()=>runInNewContext('(async()=>{'+block+';return settingsBefore;})()',{
+      page,assert:{equal:assert.equal,deepEqual:(actual,expected,message)=>assert.deepEqual(JSON.parse(JSON.stringify(actual)),JSON.parse(JSON.stringify(expected)),message)},Buffer,hash:()=> 'hash',spec:{engine:{fromVersion:'0.1.7-rc.2'}},event:async()=>events++,wait:async(_name,fn)=>assert.equal(await fn(),true)
+    });
+    if(unexpected){await assert.rejects(execute);assert.equal(events,0);}
+    else {const baseline=await execute();assert.equal(baseline['ai.maxTokens'],2048);assert.equal(baseline['general.density'],'compact');assert.equal(events,1);}
+    assert.equal(clicks,1);
+  }
+  assert.match(await read('engine-chain.mjs'),/assert.deepEqual\(await page.evaluate\(\(\)=>JSON.parse\(localStorage.getItem\('luckyray-settings-v1'\)\)\),settingsBefore\)/);
+});

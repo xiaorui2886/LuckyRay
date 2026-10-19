@@ -61,7 +61,20 @@ try{
   // close requests really exercise normal quit rather than hiding the window.
   await page.locator('.setting-row').filter({has:page.locator('.setting-label').filter({hasText:'关闭窗口时'})}).getByRole('combobox').selectOption('exit');
   await wait('normal-exit UI preference persisted',()=>page.evaluate(()=>JSON.parse(localStorage.getItem('luckyray-settings-v1'))?.['general.onClose']==='exit'));
+  // Frozen B's AI tab hydrates bridge defaults (/v1, 2048) over the initial
+  // General-page placeholders. Complete that ordinary UI initialization before
+  // freezing the full preservation baseline, while the old engine still runs.
+  const settingsBeforeAi=await page.evaluate(()=>JSON.parse(localStorage.getItem('luckyray-settings-v1')));
+  assert.equal(settingsBeforeAi['ai.baseUrl'],'https://api.deepseek.com');
+  assert.equal(settingsBeforeAi['ai.maxTokens'],2000);
+  await page.locator('#settings-nav').getByRole('button',{name:'AI',exact:true}).click();
+  await wait('frozen host AI bridge settings initialized',()=>page.evaluate(()=>{
+    const saved=JSON.parse(localStorage.getItem('luckyray-settings-v1'));
+    return saved?.['ai.baseUrl']==='https://api.deepseek.com/v1'&&saved?.['ai.maxTokens']===2048;
+  }));
   const settingsBefore=await page.evaluate(()=>JSON.parse(localStorage.getItem('luckyray-settings-v1')));
+  assert.deepEqual(settingsBefore,{...settingsBeforeAi,'ai.baseUrl':'https://api.deepseek.com/v1','ai.maxTokens':2048},'only frozen host default hydration may precede baseline capture');
+  await event('fixture_settings_initialized_before_baseline',{initialization:'ordinary AI tab bridge hydration',engineVersion:spec.engine.fromVersion,fullSettingsSha256:hash(Buffer.from(JSON.stringify(settingsBefore)))});
   assert.equal(settingsBefore['general.language'],'zh-CN');assert.equal(settingsBefore['general.density'],'compact');
   stage='synthetic_note_and_material';
   await mkdir(join(root,'vault'));
