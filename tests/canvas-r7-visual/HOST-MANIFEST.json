@@ -1,0 +1,50 @@
+{
+  "scope": "synthetic-webview2-host-only",
+  "files": [
+    {
+      "path": "webview2/Host/Host.csproj",
+      "bytes": 430,
+      "sha256": "dc99446bc0e7e8f8ec624e460d1307a6aa5f8862db1c5af706470fcc79c97213"
+    },
+    {
+      "path": "webview2/Host/Program.cs",
+      "bytes": 5541,
+      "sha256": "ff02125b26109e13f7165328217676163c7b18c38efdbff08dd89885111f4eeb"
+    },
+    {
+      "path": "webview2/Host/packages.lock.json",
+      "bytes": 267,
+      "sha256": "a0f8d29a6ddcb4ce413f38bea37c6cfc00dad6faf09826cfe1fc2c5b9a2e2e2d"
+    },
+    {
+      "path": "webview2/NuGet.Config",
+      "bytes": 333,
+      "sha256": "419336a24f3fd1f2f805610cd574f575f920f241b8300313a419ce5490c76626"
+    },
+    {
+      "path": "webview2/fixture.html",
+      "bytes": 941,
+      "sha256": "9ce2b2260f1f49ff596e7c0e478da126698d04e11ff8b73ee3a60fd4fe2b2d8f"
+    },
+    {
+      "path": "webview2/global.json",
+      "bytes": 54,
+      "sha256": "9969992897aee36fbc62db0976390d87b1275dc0d7c6fcb937a7f81a316f97dc"
+    },
+    {
+      "path": "webview2/run.ps1",
+      "bytes": 8638,
+      "sha256": "c365866859803cf0f217c37d21bc343d14ea21ef1c011323d4c554d3730c9738"
+    },
+    {
+      "path": "webview2/server.cjs",
+      "bytes": 1369,
+      "sha256": "fc82b22cb89f0d48ca1bcff1e3be97e0ecf62ea604c0c50f2c1dbd3d0ec44e55"
+    },
+    {
+      "path": "webview2/test.cjs",
+      "bytes": 5426,
+      "sha256": "3ee52557a23f0001a9920a86f747a4ce949ad7ee1d75cc0f70c86429a6128558"
+    }
+  ]
+}

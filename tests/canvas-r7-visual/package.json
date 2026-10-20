@@ -6,13 +6,16 @@
   "description": "Synthetic browser fixture for exact LuckyRay canvas production components; no native bridge or model requests.",
   "scripts": {
     "test:agent": "node tests/canvasAgentR7Ui.browser.cjs",
-    "test:creative": "node tests/canvasCreativeR7Ui.browser.cjs"
+    "test:creative": "node tests/canvasCreativeR7Ui.browser.cjs",
+    "test:crop": "node tests/canvasImageCropR7Ui.browser.cjs",
+    "test:results": "node tests/canvasAgentResultR7dUi.browser.cjs"
   },
   "dependencies": {
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "vite": "7.3.7",
     "playwright": "1.56.1",
-    "@tauri-apps/api": "2.12.4"
+    "@tauri-apps/api": "2.12.4",
+    "@xyflow/react": "12.12.0"
   }
 }

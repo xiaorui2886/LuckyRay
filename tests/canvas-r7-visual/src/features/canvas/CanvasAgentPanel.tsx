@@ -49,6 +49,9 @@ export type CanvasAgentPanelProps = {
   /** Resolve false or reject if nothing was applied; successful plans cannot be applied twice. */
   onApply: (plan: CanvasAgentPlan, generate: boolean) => unknown | Promise<unknown>;
   onLocate: (nodeId: string) => void;
+  /** Live results verified against this canvas by the integration boundary. */
+  executionNodeIds?: readonly string[];
+  onLocateExecution?: (execution: CanvasAgentExecution, nodeId?: string) => void;
   onRemoveContext: (id: string) => void;
   onPickContext?: () => void;
   pickingContext?: boolean;
@@ -86,6 +89,17 @@ function AgentIcon({ kind }: { kind: IconKind }) {
                               : kind === 'warning' ? <><path d="m12 3 10 18H2ZM12 9v5" /><circle cx="12" cy="17.5" r=".5" /></>
                                 : <path d="M5 6h14M5 12h14M5 18h9" />}
   </svg>;
+}
+
+function ExecutionLocateButton({ label, tooltip, disabled, onClick }: {
+  label: string; tooltip: string; disabled: boolean; onClick: () => void;
+}) {
+  const id = useId();
+  return <span className="canvas-agent-result-locate">
+    <button type="button" className="canvas-r1-agent-icon-button" disabled={disabled}
+      aria-label={label} aria-describedby={id} onClick={onClick}><AgentIcon kind="locate" /></button>
+    <span id={id} role="tooltip" className="canvas-agent-result-tooltip">{tooltip}</span>
+  </span>;
 }
 
 function ContextThumbnail({ chip }: { chip: CanvasAgentContextChip }) {
@@ -234,6 +248,7 @@ function CanvasAgentPanelContent({
   canvasName, snapshot, contextChips, execution, busy, error, english = false,
   models, selectedModel, onSelectModel, modelsError, modelSelectionUnavailable, modelSelectionLocked,
   availability = 'ready', availabilityMessage, draftKey, formatError, onSend, onCancel, onApply, onLocate,
+  executionNodeIds = [], onLocateExecution,
   onRemoveContext, onPickContext, pickingContext = false, onRefresh, onNewConversation, rotationPending=false, onCollapsedChange,
   diagnostic, conversations = snapshot?.conversations || [], historyLoading = false, historyError, onLoadConversations, onSelectConversation,
 }: CanvasAgentPanelProps & { diagnostic: RefObject<CanvasAgentDiagnostic> }) {
@@ -463,6 +478,8 @@ function CanvasAgentPanelContent({
     draft: english ? 'On canvas' : '已放入画布', queued: english ? 'Queued' : '等待生成', running: english ? 'Generating' : '生成中',
     succeeded: english ? 'Completed' : '已完成', failed: english ? 'Failed' : '失败', cancelled: english ? 'Cancelled' : '已取消',
   })[status];
+  const liveExecutionIds = new Set(executionNodeIds);
+  const canLocateResults = !!onLocateExecution && liveExecutionIds.size > 0;
 
   return <aside ref={panel} className={`canvas-r1-agent-panel nodrag nopan nowheel${collapsed ? ' is-collapsed' : ''}`}
     aria-label={english ? 'Canvas Agent' : '画布 Agent'}
@@ -539,11 +556,17 @@ function CanvasAgentPanelContent({
           <p className="canvas-r1-agent-plan-note">{applied ? english ? 'Continue refining in the canvas, or ask for a new plan.' : '可以继续在画布中调整，也可以提出新的创作要求。' : english ? 'Add editable nodes, or generate with your configured canvas models.' : '先放入可编辑节点，或使用画布已配置的模型开始生成。'}</p>
         </section>}
         {execution && <section className="canvas-r1-agent-execution" aria-label={english ? 'Canvas execution' : '画布执行结果'}>
-          <div className="canvas-r1-agent-section-heading"><strong>{english ? 'On your canvas' : '画布上的创作'}</strong><span role="status">{execution.status === 'draft' ? english ? 'Ready to edit' : '可继续编辑' : execution.status === 'running' ? english ? `${completedCount}/${execution.steps.length} complete` : `${completedCount}/${execution.steps.length} 已完成` : execution.status === 'failed' ? english ? 'Needs attention' : '有步骤未完成' : execution.status === 'cancelled' ? english ? 'Cancelled' : '已取消' : english ? 'Completed' : '已完成'}</span></div>
+          <div className="canvas-r1-agent-section-heading"><strong>{english ? 'On your canvas' : '画布上的创作'}</strong><span role="status">{execution.status === 'draft' ? english ? 'Ready to edit' : '可继续编辑' : execution.status === 'running' ? english ? `${completedCount}/${execution.steps.length} complete` : `${completedCount}/${execution.steps.length} 已完成` : execution.status === 'failed' ? english ? 'Needs attention' : '有步骤未完成' : execution.status === 'cancelled' ? english ? 'Cancelled' : '已取消' : english ? 'Completed' : '已完成'}</span>
+            <ExecutionLocateButton label={english ? 'Select and locate all results' : '选中并定位全部结果'} disabled={!canLocateResults}
+              tooltip={canLocateResults ? english ? `Select and locate ${liveExecutionIds.size} result nodes` : `选中并定位 ${liveExecutionIds.size} 个结果节点` : english ? 'No results are available to locate' : '当前暂无可定位的结果'}
+              onClick={() => onLocateExecution?.(execution)} />
+          </div>
           <ol>{execution.steps.map(step => <li key={step.id} className={`canvas-r1-agent-execution-step is-${step.status}`}>
             <span className="canvas-r1-agent-execution-icon"><AgentIcon kind={step.status === 'succeeded' ? 'check' : step.status === 'failed' ? 'warning' : step.kind} /></span>
             <div><strong>{step.title}</strong><span className="canvas-r1-agent-step-status">{statusName(step.status)}</span>{step.error && <p role="status">{displayError(step.error)}</p>}</div>
-            <button type="button" className="canvas-r1-agent-icon-button" disabled={!step.nodeId} aria-label={english ? `Locate ${step.title}` : `定位 ${step.title}`} title={english ? 'Locate on canvas' : '在画布中定位'} onClick={() => onLocate(step.nodeId)}><AgentIcon kind="locate" /></button>
+            <ExecutionLocateButton label={english ? `Locate ${step.title}` : `定位 ${step.title}`} disabled={!onLocateExecution || !liveExecutionIds.has(step.nodeId)}
+              tooltip={liveExecutionIds.has(step.nodeId) ? english ? 'Locate on canvas' : '在画布中定位' : english ? 'This result is not available to locate' : '此结果暂不可定位'}
+              onClick={() => onLocateExecution?.(execution, step.nodeId)} />
           </li>)}</ol>
         </section>}
         {snapshot?.status === 'cancelled' && !working && <p className="canvas-r1-agent-inline-status" role="status">{english ? 'Stopped. You can revise your request and continue.' : '已停止。你可以调整要求，继续创作。'}</p>}

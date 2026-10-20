@@ -43,3 +43,35 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 6
+
+  webview2:
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.ref == 'refs/heads/qa/canvas-r7-visual-20261021'
+    name: Windows WebView2 synthetic UI
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.14.1
+      - name: Install locked fixture dependencies without package scripts
+        working-directory: tests/canvas-r7-visual
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify public input audit
+        working-directory: tests/canvas-r7-visual
+        run: node audit-inputs.mjs
+      - name: Existing-runtime-only WebView2 test
+        shell: pwsh
+        run: ./tests/canvas-r7-visual/webview2/run.ps1
+      - name: Upload native and browser evidence, including blocked status
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: canvas-r7-webview2
+          path: tests/canvas-r7-visual/output/webview2/
+          if-no-files-found: error
+          retention-days: 7

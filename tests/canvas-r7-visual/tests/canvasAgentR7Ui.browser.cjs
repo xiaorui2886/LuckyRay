@@ -54,13 +54,15 @@ const checks = [];
           }
           throw new Error('Theme finite animations did not settle');
         };
-        let timeout;
+        let timeout, failure;
         try { await Promise.race([settle(),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Theme commit exceeded 1000ms')),1000);})]); }
+        catch(error) { failure=String(error?.message||error); }
         finally { clearTimeout(timeout); }
-        return {theme,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,animations:recorded};
+        return {failure,theme,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,animations:recorded};
       },theme);
       themeTransitions.push(observation);
       fs.writeFileSync(path.join(out,'theme-transition-diagnostics.json'),JSON.stringify(themeTransitions,null,2));
+      assert.equal(observation.failure,undefined,'theme finite transitions must settle within 1000ms');
     };
     const historicalMark = page.locator('.canvas-agent-turn-mark .canvas-agent-orb-black-hole').first();
     assert.deepEqual(await historicalMark.evaluate(el => ({width:getComputedStyle(el).width,height:getComputedStyle(el).height})), {width:'88px',height:'64px'});
