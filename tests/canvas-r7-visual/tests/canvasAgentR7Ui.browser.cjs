@@ -33,6 +33,35 @@ const checks = [];
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('.canvas-agent-turn').waitFor();
     const settleFinite = locator => locator.evaluate(async el=>{await Promise.all(el.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})));});
+    // Style reads create CSS transitions; two rAF callbacks alone can precede that flush.
+    // In particular the shared reduced-motion rule sets a nonzero .01ms duration
+    // even on elements whose default transition-property is all.
+    const themeTransitions = [];
+    const commitTheme = async theme => {
+      const observation = await page.evaluate(async theme => {
+        document.documentElement.dataset.theme = theme;
+        const flush = () => { for (const selector of ['html','.canvas-r1-agent-panel','.canvas-agent-user-bubble','.canvas-r1-agent-composer']) { const el=document.querySelector(selector); if(el) { const style=getComputedStyle(el); void style.color; void style.backgroundColor; } } };
+        const recorded = [];
+        const settle = async () => {
+          for(let pass=0;pass<4;pass++) {
+            flush();
+            const animations=document.documentElement.getAnimations({subtree:true}).filter(animation=>animation.effect?.getTiming().iterations!==Infinity && ['running','pending'].includes(animation.playState));
+            for(const animation of animations) recorded.push({type:animation.constructor.name,property:animation.transitionProperty||null,name:animation.animationName||null,duration:animation.effect?.getTiming().duration,target:animation.effect?.target?.className?.toString().slice(0,150)||''});
+            await Promise.all(animations.map(animation=>animation.finished.catch(()=>{})));
+            await new Promise(resolve=>requestAnimationFrame(resolve));
+            flush();
+            if(!document.documentElement.getAnimations({subtree:true}).some(animation=>animation.effect?.getTiming().iterations!==Infinity && animation.playState==='running')) return;
+          }
+          throw new Error('Theme finite animations did not settle');
+        };
+        let timeout;
+        try { await Promise.race([settle(),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Theme commit exceeded 1000ms')),1000);})]); }
+        finally { clearTimeout(timeout); }
+        return {theme,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,animations:recorded};
+      },theme);
+      themeTransitions.push(observation);
+      fs.writeFileSync(path.join(out,'theme-transition-diagnostics.json'),JSON.stringify(themeTransitions,null,2));
+    };
     const historicalMark = page.locator('.canvas-agent-turn-mark .canvas-agent-orb-black-hole').first();
     assert.deepEqual(await historicalMark.evaluate(el => ({width:getComputedStyle(el).width,height:getComputedStyle(el).height})), {width:'88px',height:'64px'});
     assert.ok((await historicalMark.boundingBox()).width > 30, 'historical mark must not inherit the old 14px generic SVG rule');
@@ -133,17 +162,20 @@ const checks = [];
     // Exercise repeated theme changes while real fixture streaming ticks rerender the panel.
     await page.getByRole('button',{name:'流式推理',exact:true}).click();
     const themeChecks=[];
+    for(const motion of ['no-preference','reduce']){
+    await page.emulateMedia({reducedMotion:motion});
     for(const width of [780,1440]){
       await page.setViewportSize({width,height:width===780?540:900});
       for(const theme of ['light','dark','light','dark']){
-        await page.evaluate(async theme=>{document.documentElement.dataset.theme=theme;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));},theme);
+        await commitTheme(theme);
         const state=await page.evaluate(()=>Object.fromEntries(['html','.canvas-r1-agent-panel','.canvas-agent-user-bubble','.canvas-r1-agent-composer'].map(selector=>{const style=getComputedStyle(document.querySelector(selector));return [selector,{color:style.color,background:style.backgroundColor,surface:style.getPropertyValue('--theme-surface-panel').trim(),hover:style.getPropertyValue('--theme-hover').trim()}];})));
-        themeChecks.push({width,theme,state});
+        themeChecks.push({motion,width,theme,state});
         fs.writeFileSync(path.join(out,'theme-cycle-computed.json'),JSON.stringify(themeChecks,null,2));
         const foreground=theme==='light'?'rgb(24, 25, 31)':'rgb(240, 240, 242)';
         for(const selector of ['html','.canvas-r1-agent-panel','.canvas-agent-user-bubble','.canvas-r1-agent-composer']) assert.equal(state[selector].color,foreground,`${width} ${theme} ${selector} foreground`);
         assert.equal(state['.canvas-agent-user-bubble'].background,theme==='light'?'rgb(232, 234, 240)':'rgb(34, 34, 40)');
         assert.equal(state['.canvas-r1-agent-panel'].surface,theme==='light'?'#f0f1f4':'#111114');
+        await page.screenshot({path:path.join(out,`theme-cycle-${motion}-${width}-${theme}-${themeChecks.length}.png`)});
         const sourceLength=await page.locator('.canvas-agent-model-reasoning p').last().textContent().then(text=>text.length);
         await page.waitForFunction(length=>{const el=document.querySelector('.canvas-agent-model-reasoning p');return el&&el.textContent.length>length;},sourceLength);
         assert.equal(await page.locator('.canvas-r1-agent-panel').evaluate(el=>getComputedStyle(el).color),foreground,'stream rerender preserves selected theme');
@@ -153,11 +185,12 @@ const checks = [];
         await page.keyboard.press('Escape');
       }
     }
+    }
     fs.writeFileSync(path.join(out,'theme-cycle-computed.json'),JSON.stringify(themeChecks,null,2));
     await page.getByRole('button',{name:'完整对话',exact:true}).click();
     await page.setViewportSize({width:780,height:540});
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.evaluate(async () => { document.documentElement.dataset.theme = 'light'; await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))); });
+    await commitTheme('light');
     const themeState = await page.evaluate(() => {
       const colors = selector => { const el=document.querySelector(selector); const style=getComputedStyle(el); return {color:style.color,background:style.backgroundColor,surface:style.getPropertyValue('--theme-surface-panel').trim()}; };
       return {theme:document.documentElement.dataset.theme,root:colors('html'),panel:colors('.canvas-r1-agent-panel'),bubble:colors('.canvas-agent-user-bubble'),composer:colors('.canvas-r1-agent-composer')};

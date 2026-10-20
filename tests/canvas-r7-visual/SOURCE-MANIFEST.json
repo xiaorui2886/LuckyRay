@@ -2,7 +2,7 @@
   "scope": "synthetic-production-ui-only",
   "nativeOrProviderCalls": false,
   "sourceSnapshot": "uncommitted R7 candidate",
-  "frozenAt": "2026-10-20T20:27:53.889Z",
+  "frozenAt": "2026-10-20T20:35:30.852Z",
   "files": [
     {
       "path": "src/core/canvas/cinematography.ts",
@@ -246,9 +246,9 @@
     },
     {
       "path": "tests/canvasAgentR7Ui.browser.cjs",
-      "bytes": 17492,
-      "sha256": "02b80a623a40a44663b584fa10b090507a4688126eee51066e9d5eca6fe26afa",
-      "gitBlob": "396ecd907abbf367d067758646840b560fdbf78a"
+      "bytes": 19758,
+      "sha256": "4c1ea5594a6e762a1bd766140ed03f067bfdd4834a8e5018fadfe76b7aef4ac8",
+      "gitBlob": "a25989523a2d1124c8056c694fe5347fb70c2564"
     },
     {
       "path": "tests/canvasAgentR7Ui.fixture.tsx",
