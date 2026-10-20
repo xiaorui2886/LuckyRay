@@ -252,3 +252,37 @@
 @media(max-width:700px){.canvas-workflow-layout{grid-template-columns:1fr;gap:18px}.canvas-workflow-list{padding:0 0 12px;border-right:0;border-bottom:1px solid var(--theme-border-subtle)}.canvas-workflow-results{max-height:180px}.canvas-workflow-export{grid-template-columns:1fr}.canvas-workflow-export>button{justify-self:end}.canvas-pack-grid{grid-template-columns:1fr}.canvas-creative-dialog{padding:16px}.canvas-creative-rail nav{width:min(226px,calc(100vw - 80px))}}
 @media(prefers-reduced-motion:reduce){.canvas-creative-dialog,.canvas-creative-dialog *, .canvas-creative-rail *{animation:none!important;transition:none!important}}
 .reduce-motion .canvas-creative-dialog,.reduce-motion .canvas-creative-dialog *{animation:none!important;transition:none!important}
+
+/* R7C: a full-image preview with a lightweight, direct-manipulation crop. */
+.canvas-image-tools-dialog .canvas-image-tools-preview{padding:18px 16px 12px;background:var(--theme-hover)}
+.canvas-image-crop-workspace{display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;gap:14px}
+.canvas-image-crop-viewport{display:flex;align-items:center;justify-content:center;flex:1;min-width:0;min-height:0}
+.canvas-image-crop-stage{position:relative;flex:none;max-width:100%;max-height:100%;isolation:isolate;user-select:none;-webkit-user-select:none;touch-action:none;background:repeating-conic-gradient(#7e7e7e18 0% 25%,transparent 0% 50%) 50% / 16px 16px;box-shadow:0 1px 8px #00000010}
+.canvas-image-tools-dialog .canvas-image-crop-stage>canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:fill;pointer-events:none}
+.canvas-image-crop-mask{position:absolute;background:#0b0d12a3;pointer-events:none}
+.canvas-image-crop-selection{position:absolute;box-sizing:border-box;border:1px solid #fff;box-shadow:0 0 0 1px #0005;pointer-events:none}
+.canvas-image-crop-guides{position:absolute;inset:0;pointer-events:none;opacity:0;background:linear-gradient(to right,transparent calc(33.333% - .5px),#ffffff55 calc(33.333% - .5px),#ffffff55 calc(33.333% + .5px),transparent calc(33.333% + .5px),transparent calc(66.666% - .5px),#ffffff55 calc(66.666% - .5px),#ffffff55 calc(66.666% + .5px),transparent calc(66.666% + .5px)),linear-gradient(to bottom,transparent calc(33.333% - .5px),#ffffff55 calc(33.333% - .5px),#ffffff55 calc(33.333% + .5px),transparent calc(33.333% + .5px),transparent calc(66.666% - .5px),#ffffff55 calc(66.666% - .5px),#ffffff55 calc(66.666% + .5px),transparent calc(66.666% + .5px));transition:opacity .12s ease}
+.canvas-image-crop-stage:is(:hover,:focus-within,.is-dragging) .canvas-image-crop-guides{opacity:1}
+.canvas-creative-dialog .canvas-image-crop-move{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;border-radius:0;background:transparent;pointer-events:auto;cursor:move;touch-action:none}
+.canvas-creative-dialog .canvas-image-crop-move:hover:not(:disabled){background:transparent;border-color:transparent}
+.canvas-creative-dialog .canvas-image-crop-move:focus-visible{outline:2px solid #fff;outline-offset:-4px;background:#ffffff08}
+.canvas-creative-dialog .canvas-image-crop-handle{position:absolute;z-index:2;width:28px;height:28px;min-width:0;max-width:none;padding:0;border:0;border-radius:3px;background:transparent;pointer-events:auto;transform:translate(-50%,-50%);touch-action:none}
+.canvas-creative-dialog .canvas-image-crop-handle::after{content:'';width:7px;height:7px;border:1px solid #0006;border-radius:1.5px;background:#fff;box-shadow:0 1px 3px #0005}
+.canvas-creative-dialog .canvas-image-crop-handle:hover:not(:disabled){background:transparent;border-color:transparent}
+.canvas-creative-dialog .canvas-image-crop-handle:focus-visible{outline:2px solid var(--accent);outline-offset:0;background:#ffffff25}
+.canvas-image-crop-handle.is-nw{left:0;top:0;cursor:nwse-resize}.canvas-image-crop-handle.is-n{left:50%;top:0;cursor:ns-resize}.canvas-image-crop-handle.is-ne{left:100%;top:0;cursor:nesw-resize}.canvas-image-crop-handle.is-e{left:100%;top:50%;cursor:ew-resize}.canvas-image-crop-handle.is-se{left:100%;top:100%;cursor:nwse-resize}.canvas-image-crop-handle.is-s{left:50%;top:100%;cursor:ns-resize}.canvas-image-crop-handle.is-sw{left:0;top:100%;cursor:nesw-resize}.canvas-image-crop-handle.is-w{left:0;top:50%;cursor:ew-resize}
+.canvas-creative-dialog .canvas-image-crop-handle:is(.is-n,.is-s)::after{width:15px;height:4px}.canvas-creative-dialog .canvas-image-crop-handle:is(.is-e,.is-w)::after{width:4px;height:15px}
+.canvas-image-crop-stage.is-dragging,.canvas-image-crop-stage.is-dragging *{cursor:grabbing}
+.canvas-image-crop-stage.is-disabled .canvas-image-crop-selection{opacity:.55}
+.canvas-image-crop-caption{display:flex;gap:5px 12px;justify-content:space-between;flex-wrap:wrap;flex:none;color:var(--text-secondary);font-size:10px;line-height:1.6}
+.canvas-image-crop-caption>span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}
+.canvas-image-crop-sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.canvas-image-crop-heading{display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--theme-border-subtle);padding-top:10px;margin-top:4px}
+.canvas-image-crop-heading>strong{font-size:11px;font-weight:500;color:var(--text-secondary)}
+.canvas-image-tools-dialog .canvas-image-crop-heading>button{font-size:10px;padding:3px 5px;border-color:transparent;background:transparent;color:var(--text-secondary)}
+.canvas-image-tools-dialog label select{width:125px;padding:6px 8px;height:31px;border-radius:7px}
+.canvas-image-crop-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
+.canvas-image-tools-dialog .canvas-image-crop-fields label{display:flex;flex-direction:column;align-items:flex-start;gap:5px;font-size:10px;color:var(--text-secondary)}
+.canvas-image-tools-dialog .canvas-image-crop-fields input[type=number]{width:100%;color:var(--text-primary);font-variant-numeric:tabular-nums}
+@media(pointer:coarse){.canvas-creative-dialog .canvas-image-crop-handle{width:40px;height:40px}.canvas-image-tools-dialog .canvas-image-tools-preview{padding:23px 22px 12px}}
+@media(max-width:680px){.canvas-image-crop-workspace{gap:10px}.canvas-image-crop-caption{font-size:9px;line-height:1.4}.canvas-image-tools-dialog .canvas-image-tools-preview{padding-top:15px}}

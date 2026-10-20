@@ -2,7 +2,7 @@
   "scope": "synthetic-production-ui-only",
   "nativeOrProviderCalls": false,
   "sourceSnapshot": "uncommitted R7 candidate",
-  "frozenAt": "2026-10-20T20:03:57.924Z",
+  "frozenAt": "2026-10-20T20:27:53.889Z",
   "files": [
     {
       "path": "src/core/canvas/cinematography.ts",
@@ -27,6 +27,12 @@
       "bytes": 13408,
       "sha256": "49184df938270d3e8fc6fa302dbb363b7152ae7d2e0cb2b2c848ffeff525ce62",
       "gitBlob": "3f601ccd154fcf1c46eef75254aa74f079961c3e"
+    },
+    {
+      "path": "src/core/canvas/imageCropGeometry.ts",
+      "bytes": 7248,
+      "sha256": "f4a0bec725e374877511e81743028468c2419cc205f9c7fb987d925c64a80b01",
+      "gitBlob": "53afdd8a3930e6610383a948fa8904a09c6f190b"
     },
     {
       "path": "src/core/canvas/imageEditing.ts",
@@ -131,10 +137,16 @@
       "gitBlob": "d0c86c08c17ee916b7b4ee4a0105108702a68b3a"
     },
     {
+      "path": "src/features/canvas/CanvasImageCropOverlay.tsx",
+      "bytes": 11789,
+      "sha256": "9608aa1eb7efc357c0bc7dc02e04430d4ff3826e679050239abf139faf7e4224",
+      "gitBlob": "1139d8ea572295211206a7ebea250831cb003fda"
+    },
+    {
       "path": "src/features/canvas/CanvasImageTools.tsx",
-      "bytes": 13934,
-      "sha256": "4f344d0cc9b39bac3c6c124b5fc122bc40de4207c60cbb0b180e1e6e563b4e78",
-      "gitBlob": "086d4dca0f8e6a0c8824f91f0720254bd8529eaf"
+      "bytes": 16829,
+      "sha256": "78ed5cdf5225a918eadebc7c98ae423e54128b4ec9259a5c90931642a9c386c7",
+      "gitBlob": "a6618910266f1d3afdf06b9f5c0aab8e9adb8c45"
     },
     {
       "path": "src/features/canvas/CanvasMotionContext.tsx",
@@ -216,9 +228,9 @@
     },
     {
       "path": "src/features/canvas/canvasCreative.css",
-      "bytes": 42343,
-      "sha256": "c0c74bce7e09eea22caaabcd452ce0959924f7c9d094c1a2dbfa252c67efa4c0",
-      "gitBlob": "1acdac2c16d45871e7ec4c92461c628ffb2d37e5"
+      "bytes": 47954,
+      "sha256": "5774cf24dea271b837975b0a37e1c6f79253c5055774110670453ac66d172fec",
+      "gitBlob": "b0a716fda59b99dc7c33cf5b239721c9bbaab164"
     },
     {
       "path": "src/features/canvas/canvasPanelSurface.css",
@@ -255,6 +267,18 @@
       "bytes": 6627,
       "sha256": "a5801feead7fb54515b336b233ec5d2dcf7c7c5e4d6e59b88b41f6c3c97b367f",
       "gitBlob": "7afb15dafa21dfc25cee1d968fdc61b67aa680dd"
+    },
+    {
+      "path": "tests/canvasImageCropR7Ui.browser.cjs",
+      "bytes": 28489,
+      "sha256": "860a96f88316f9451f77c83b6fd5ee0802e2e2dc6bbd8281f3644f3ac7854c2b",
+      "gitBlob": "d785d864304b5e504e6097029a7246f943c8a2cd"
+    },
+    {
+      "path": "tests/canvasImageCropR7Ui.fixture.tsx",
+      "bytes": 6000,
+      "sha256": "f154f69ebea5cbaa43c6605b6c47180ecf63b4fb0bfa020b21b50fe4e79e5b7a",
+      "gitBlob": "dff1cb1bb0d5b39d65da070b62729cb1a93bde5b"
     }
   ]
 }

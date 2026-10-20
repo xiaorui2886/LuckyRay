@@ -5,7 +5,7 @@ assert.equal(manifest.nativeOrProviderCalls,false);
 const names=new Set();
 const denied=[/-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,/(?:github_pat_[A-Za-z0-9_]{30,}|gh[pousr]_[A-Za-z0-9]{30,})/,/https:\/\/github\.com\/xiaorui2886\/luckyray-app\//,/C:\\Users\\|\/home\/agent\/|\/workspace\//];
 for(const row of manifest.files){
- assert.match(row.path,/^(src\/(?:features\/canvas|core\/(?:canvas|theme))\/[^/]+\.(?:ts|tsx|css)|tests\/canvas(?:Agent|Creative)R7Ui\.(?:fixture\.tsx|browser\.cjs))$/);
+ assert.match(row.path,/^(src\/(?:features\/canvas|core\/(?:canvas|theme))\/[^/]+\.(?:ts|tsx|css)|tests\/canvas(?:Agent|Creative|ImageCrop)R7Ui\.(?:fixture\.tsx|browser\.cjs))$/);
  assert.ok(!row.path.includes('..'));assert.ok(!names.has(row.path)); names.add(row.path);
  const content=fs.readFileSync(row.path);assert.equal(content.length,row.bytes);assert.equal(crypto.createHash('sha256').update(content).digest('hex'),row.sha256);
  for(const re of denied)assert.ok(!re.test(content.toString('utf8')),`disallowed content in ${row.path}`);
