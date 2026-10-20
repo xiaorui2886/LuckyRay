@@ -1,0 +1,260 @@
+{
+  "scope": "synthetic-production-ui-only",
+  "nativeOrProviderCalls": false,
+  "sourceSnapshot": "uncommitted R7 candidate",
+  "frozenAt": "2026-10-20T19:37:35.770Z",
+  "files": [
+    {
+      "path": "src/core/canvas/cinematography.ts",
+      "bytes": 5847,
+      "sha256": "fb1be3c7d3c6d20c949784e9bd872803e42b1fb147cd7df15498abc6e7346fe4",
+      "gitBlob": "7a7463c77a53d00281994451e9c494dea52847e2"
+    },
+    {
+      "path": "src/core/canvas/creativeReview.ts",
+      "bytes": 4723,
+      "sha256": "30187d9533dc35c4487fa9ef6dba9463a83fc02417f40f5b182ec5c9d22c3df2",
+      "gitBlob": "a7b20d7a3c1e7f67419f37ca0bdc0d6956216dca"
+    },
+    {
+      "path": "src/core/canvas/edgeSemantics.ts",
+      "bytes": 5115,
+      "sha256": "09eaa0c9ee4a160452e6923610c75be2d04b5df9887ae6d8ce6304eac8b824be",
+      "gitBlob": "fae61187241a0e83f491335c93c1bf3c6d7b4d05"
+    },
+    {
+      "path": "src/core/canvas/imageCreativeActions.ts",
+      "bytes": 13408,
+      "sha256": "49184df938270d3e8fc6fa302dbb363b7152ae7d2e0cb2b2c848ffeff525ce62",
+      "gitBlob": "3f601ccd154fcf1c46eef75254aa74f079961c3e"
+    },
+    {
+      "path": "src/core/canvas/imageEditing.ts",
+      "bytes": 4709,
+      "sha256": "c1f8f27398b5e04077edda02054dc1a86f6023897b332d41248e397928f0230f",
+      "gitBlob": "6f989710be4aff2d2f185d7f0a1a7b78f715ae6b"
+    },
+    {
+      "path": "src/core/canvas/mediaDelivery.ts",
+      "bytes": 7064,
+      "sha256": "724f6a904f1cc1b5fc930b5ba4d9e729f7689a8bbedd3df45244d955f1a5485f",
+      "gitBlob": "dc4efff99504924defdca0bc8565cb9ad8689cda"
+    },
+    {
+      "path": "src/core/canvas/nodeCapabilities.ts",
+      "bytes": 4495,
+      "sha256": "dfd8699d3a044cb87de9e627462ddf4e5eef71dbb6ef440fc6a73b1dfd9cefcd",
+      "gitBlob": "008adff7b43e9a39151d5783b4c4f6152ff68007"
+    },
+    {
+      "path": "src/core/canvas/referenceMentions.ts",
+      "bytes": 8608,
+      "sha256": "c157c16057dbe7c2f705f2ac31ed6854b0e8935d1a287640beb70502f9b1fddd",
+      "gitBlob": "5dc4d442332799a8a4a9de5fa6887bdad42aaa2b"
+    },
+    {
+      "path": "src/core/canvas/storyboard.ts",
+      "bytes": 9280,
+      "sha256": "4ad69d4d5ebb74c20322aa48c44d038b8e3cfd4f390143d5d9c195d01dffcedd",
+      "gitBlob": "5c83ac2aef6b2f9c70848f20acc2782a2b050b11"
+    },
+    {
+      "path": "src/core/canvas/storyboardScript.ts",
+      "bytes": 7507,
+      "sha256": "bc0507fa4f32ba980ad31370b721afa49590d99de6e0d5caec1a99da7bfeb787",
+      "gitBlob": "7bdfcac6217eb04498ef7dddac8b8c001051606a"
+    },
+    {
+      "path": "src/core/canvas/workflowTemplates.ts",
+      "bytes": 25748,
+      "sha256": "84ac6d319fd5758d79312f120da2de988bdc10ae7163516ea490d494c0133de6",
+      "gitBlob": "93b3e486cc7243cd7089cdcafdce15e5cec6171a"
+    },
+    {
+      "path": "src/core/theme/themeTokens.css",
+      "bytes": 13177,
+      "sha256": "99430058f0858dc989475cb3f1aa2b5e2975245dd5dfffb2383752c5b4d169d7",
+      "gitBlob": "9b32ff7bdb8fef0e97553b38cf838617fbea2650"
+    },
+    {
+      "path": "src/features/canvas/CanvasAgentBlackHole.tsx",
+      "bytes": 1929,
+      "sha256": "047a76d17dda9193297d31b2a2d82e026fbebe8740a2b36bbbf89a0bc5cb6cd0",
+      "gitBlob": "54322b8bbc418463a0f0027e87fb0807104a7375"
+    },
+    {
+      "path": "src/features/canvas/CanvasAgentConversation.tsx",
+      "bytes": 18307,
+      "sha256": "4d4c41ca0a919470177f1f91e3cc21231a908e403d4a147ee77daa106e594019",
+      "gitBlob": "8a642e1e30441f18863e795c319896c8d89d2076"
+    },
+    {
+      "path": "src/features/canvas/CanvasAgentModelPicker.tsx",
+      "bytes": 10413,
+      "sha256": "c65f6c12bde013a57680762cd9d10efe3b225939ccf14c0ff773f8d04bead74d",
+      "gitBlob": "4a5e8b2d3bc79d91f615a1572aea9c5417846a17"
+    },
+    {
+      "path": "src/features/canvas/CanvasAgentOrb.tsx",
+      "bytes": 1204,
+      "sha256": "7328a49b75e482e9e2d42e752d473d19aa8c27d5c08f867287b0dd07151c282f",
+      "gitBlob": "f02050ca0a7f14eabeb946f41872ab83d9b12118"
+    },
+    {
+      "path": "src/features/canvas/CanvasAgentPanel.tsx",
+      "bytes": 56497,
+      "sha256": "c2f8a0c7c34ff7d582de610ff1d0c021b293b321b3056a6cf4ac449172b1cae5",
+      "gitBlob": "74a0bc675d4cf084a93dc06b890190d4a70cd193"
+    },
+    {
+      "path": "src/features/canvas/CanvasCreativeDialog.tsx",
+      "bytes": 2862,
+      "sha256": "0205fb175a52b39b7b670f795444041d115d2da824b5e46f37daa7734743eff1",
+      "gitBlob": "7a2ec3b26316ad69db0c78fec1ea9d74af061558"
+    },
+    {
+      "path": "src/features/canvas/CanvasCreativeRail.tsx",
+      "bytes": 6023,
+      "sha256": "990e9c41217d477211692fad42e75fd29164eaf3dca8ca8b335706cddea723e5",
+      "gitBlob": "53b0ad1204306fd87363b18f2c4cfd286b5be5ee"
+    },
+    {
+      "path": "src/features/canvas/CanvasDeliveryPanel.tsx",
+      "bytes": 5108,
+      "sha256": "74ed852e60b48946218214d71f23dd82fd18be60f8a6fc1ffd87508b617ecdbb",
+      "gitBlob": "8662a7958a773ed9d10852241a60b28a73345024"
+    },
+    {
+      "path": "src/features/canvas/CanvasHoverVideo.tsx",
+      "bytes": 2143,
+      "sha256": "9b5b76d0d2a57a1417fa0dc171871590551ba780f87f66ce6b01c10f6d945335",
+      "gitBlob": "d0c86c08c17ee916b7b4ee4a0105108702a68b3a"
+    },
+    {
+      "path": "src/features/canvas/CanvasImageTools.tsx",
+      "bytes": 13934,
+      "sha256": "4f344d0cc9b39bac3c6c124b5fc122bc40de4207c60cbb0b180e1e6e563b4e78",
+      "gitBlob": "086d4dca0f8e6a0c8824f91f0720254bd8529eaf"
+    },
+    {
+      "path": "src/features/canvas/CanvasMotionContext.tsx",
+      "bytes": 485,
+      "sha256": "793934e5d3faadb27611a67e909ed13163c1a41dbb50c586ab8ae2054e778db4",
+      "gitBlob": "db09651f66aefd1c24c7bd592d8eac148b4a0f6b"
+    },
+    {
+      "path": "src/features/canvas/CanvasReferencePacks.tsx",
+      "bytes": 9797,
+      "sha256": "8bf162b94c7743a80c04899f066d08c03cd22465361eaf3190178e6968d69b22",
+      "gitBlob": "3b1df5bd6016f43df392e7f5a8e55ef123171ea8"
+    },
+    {
+      "path": "src/features/canvas/CanvasReferencePreview.tsx",
+      "bytes": 1197,
+      "sha256": "c8b2c025d767760dae9a8907ebc204fafb13ea9ea700f8abeaf5c7508027a080",
+      "gitBlob": "385b376a095d5c6fbbc10b312e81b634326ecfa1"
+    },
+    {
+      "path": "src/features/canvas/CanvasStoryboard.tsx",
+      "bytes": 35874,
+      "sha256": "39462eeff4a69f6e2d4edb7555f0ec515f701271425b055ffe86cfc99a2b0a33",
+      "gitBlob": "452115bdf4a5c7338c62979cd9197b7a09210e26"
+    },
+    {
+      "path": "src/features/canvas/CanvasStoryboardCandidates.tsx",
+      "bytes": 2605,
+      "sha256": "2447cbfb26ba9b06b3da0dc6eb9f65c0f37d57921ee3c10c06126bd9dcad6ac6",
+      "gitBlob": "dddf51b23148527a2dba95442cb21ff6b2715ac3"
+    },
+    {
+      "path": "src/features/canvas/CanvasStoryboardScriptImport.css",
+      "bytes": 1418,
+      "sha256": "308aedf947fdfe3be82e5d05a33e0f2c35c4d52c4c77e13a9af61ddb988b3155",
+      "gitBlob": "c8c3dadcf50269e2eac7d0ab8b1f4630846ae242"
+    },
+    {
+      "path": "src/features/canvas/CanvasStoryboardScriptImport.tsx",
+      "bytes": 6300,
+      "sha256": "70aa71a1e664f626ee53e2d5136c7622f3df76fd849b6f2afbec28ee8b8ff1b3",
+      "gitBlob": "79bdb56e6ac5e504a4aa29abd6227d8b3301bf2a"
+    },
+    {
+      "path": "src/features/canvas/CanvasWorkflowLibrary.tsx",
+      "bytes": 14500,
+      "sha256": "d54996c9c36ac793563e976dfbb7e7be25a9ee3a9cb217fd63ab6e90b2f17a1c",
+      "gitBlob": "0d324ac80661670b47ff138f325b974222ed2681"
+    },
+    {
+      "path": "src/features/canvas/canvasAgentModelPicker.css",
+      "bytes": 868,
+      "sha256": "05cfdf67bbf4b2e916af5a30465bcba91b62db2c3adce2e56ad055aabf5cad5d",
+      "gitBlob": "a74691aff3f90ad146dbf5db8006c845139e3847"
+    },
+    {
+      "path": "src/features/canvas/canvasAgentOrb.css",
+      "bytes": 3330,
+      "sha256": "f37ee7ff84494e94841c406b21061aa8d27e1ed6dfed409086f6e85fc7ce12f3",
+      "gitBlob": "82967b42420b1a81f27e982d557bb8cb5e1f2538"
+    },
+    {
+      "path": "src/features/canvas/canvasAgentPanel.css",
+      "bytes": 46250,
+      "sha256": "d43f235cd814a0278692a84293c12540172bcbf4d09940d5834d34ca473cc54a",
+      "gitBlob": "6f2e20847db6c46ff7fd05b9f5ba89d5f1139551"
+    },
+    {
+      "path": "src/features/canvas/canvasAgentPresentation.ts",
+      "bytes": 978,
+      "sha256": "bbed0f1fec4641268d34fd69f6b63f0273d0dce912d94f6dea99ca22b4a19719",
+      "gitBlob": "2a4be3cd6720dabbb46680adbfffb8f3666264f5"
+    },
+    {
+      "path": "src/features/canvas/canvasBlackHoleRenderer.ts",
+      "bytes": 14937,
+      "sha256": "bd1fddf08ace73a693a0c883df9277014fb78c11200e8411a16edf0dcee1b080",
+      "gitBlob": "f22b3049d40adc7af21b5585725a2cdb42c905c3"
+    },
+    {
+      "path": "src/features/canvas/canvasCreative.css",
+      "bytes": 42343,
+      "sha256": "c0c74bce7e09eea22caaabcd452ce0959924f7c9d094c1a2dbfa252c67efa4c0",
+      "gitBlob": "1acdac2c16d45871e7ec4c92461c628ffb2d37e5"
+    },
+    {
+      "path": "src/features/canvas/canvasPanelSurface.css",
+      "bytes": 368,
+      "sha256": "0e463dbac9e5b7ae01741627c6ad86b876b3dd7abefb4b830c49fdfcc45375e5",
+      "gitBlob": "5b583d7c52935d401a34b3c9ec73fdaacbc68134"
+    },
+    {
+      "path": "src/features/canvas/canvasStoryboardWorkflow.css",
+      "bytes": 1453,
+      "sha256": "9c710c1009b54d3dcbea7b4ea03a6b715231e705c166a2c3d717e0dd344b5fb6",
+      "gitBlob": "a17572df71705786c34f808971be2ccfd447d8a5"
+    },
+    {
+      "path": "tests/canvasAgentR7Ui.browser.cjs",
+      "bytes": 11490,
+      "sha256": "55ea7a796980d27914be755cf112ef378bfec524e7a80e5577ad09baff7a3ca3",
+      "gitBlob": "e1a29b4027dd3d8c0363a3704d5bbc06aa305658"
+    },
+    {
+      "path": "tests/canvasAgentR7Ui.fixture.tsx",
+      "bytes": 6135,
+      "sha256": "8f19eeb3a688227c3385c0f5d31fc5f92ff69f38e329eef4104bbdf6d079932b",
+      "gitBlob": "688bb3b191aaae01e30834424b11ab8e301e89dd"
+    },
+    {
+      "path": "tests/canvasCreativeR7Ui.browser.cjs",
+      "bytes": 7341,
+      "sha256": "ee0bb067ed06eebfee0ede471e4d214a07fe26698db2f238641dc0227ad997ac",
+      "gitBlob": "2ea4a39ac262e4de953236cafe9a1b5f0a77a20f"
+    },
+    {
+      "path": "tests/canvasCreativeR7Ui.fixture.tsx",
+      "bytes": 6627,
+      "sha256": "a5801feead7fb54515b336b233ec5d2dcf7c7c5e4d6e59b88b41f6c3c97b367f",
+      "gitBlob": "7afb15dafa21dfc25cee1d968fdc61b67aa680dd"
+    }
+  ]
+}

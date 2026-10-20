@@ -1,0 +1,8 @@
+.canvas-agent-model-picker { display:flex; align-items:center; gap:4px; }
+.canvas-agent-model-picker .canvas-agent-model-trigger { flex:1; min-width:0; }
+.canvas-r1-agent-panel .canvas-agent-strength { flex:0 0 auto; max-width:88px; min-width:48px; height:28px; padding:0 7px; gap:6px; border:1px solid var(--theme-border-subtle, rgba(255,255,255,.08)); border-radius:7px; background:transparent; color:var(--text-primary, #ececf0); font:inherit; font-size:10px; }
+.canvas-agent-strength > span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.canvas-r1-agent-panel .canvas-agent-strength > svg { width:12px;height:12px; }
+.canvas-agent-strength[aria-expanded=true] > svg { transform:rotate(180deg); }
+.canvas-agent-strength:focus-visible { outline:2px solid var(--accent, #aba6f7); outline-offset:2px; }
+.canvas-agent-strength:disabled { opacity:.5; }

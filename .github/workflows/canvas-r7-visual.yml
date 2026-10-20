@@ -1,0 +1,45 @@
+name: Canvas R7 synthetic visual checks
+on:
+  push:
+    branches: [qa/canvas-r7-visual-20261021]
+permissions:
+  contents: read
+concurrency:
+  group: canvas-r7-visual-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser-fixtures:
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.ref == 'refs/heads/qa/canvas-r7-visual-20261021'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tests/canvas-r7-visual
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Audit exact synthetic fixture inputs
+        run: node audit-inputs.mjs
+      - name: Install exact public test dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install official Playwright Chromium and OS dependencies
+        run: |
+          npx --no-install playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      - name: Run real-component synthetic browser checks
+        run: node run-all.cjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: canvas-r7-synthetic-visual-${{ github.sha }}
+          path: |
+            tests/canvas-r7-visual/output/**
+            tests/canvas-r7-visual/SOURCE-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
