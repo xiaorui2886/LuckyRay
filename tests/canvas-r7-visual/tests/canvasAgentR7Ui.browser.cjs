@@ -130,10 +130,52 @@ const checks = [];
     const compact = await page.locator('.canvas-r1-agent-composer').boundingBox();
     assert.ok(compact.y + compact.height <= 540);
     await page.screenshot({ path: path.join(out, 'conversation-780.png') });
+    // Exercise repeated theme changes while real fixture streaming ticks rerender the panel.
+    await page.getByRole('button',{name:'流式推理',exact:true}).click();
+    const themeChecks=[];
+    for(const width of [780,1440]){
+      await page.setViewportSize({width,height:width===780?540:900});
+      for(const theme of ['light','dark','light','dark']){
+        await page.evaluate(async theme=>{document.documentElement.dataset.theme=theme;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));},theme);
+        const state=await page.evaluate(()=>Object.fromEntries(['html','.canvas-r1-agent-panel','.canvas-agent-user-bubble','.canvas-r1-agent-composer'].map(selector=>{const style=getComputedStyle(document.querySelector(selector));return [selector,{color:style.color,background:style.backgroundColor,surface:style.getPropertyValue('--theme-surface-panel').trim(),hover:style.getPropertyValue('--theme-hover').trim()}];})));
+        themeChecks.push({width,theme,state});
+        fs.writeFileSync(path.join(out,'theme-cycle-computed.json'),JSON.stringify(themeChecks,null,2));
+        const foreground=theme==='light'?'rgb(24, 25, 31)':'rgb(240, 240, 242)';
+        for(const selector of ['html','.canvas-r1-agent-panel','.canvas-agent-user-bubble','.canvas-r1-agent-composer']) assert.equal(state[selector].color,foreground,`${width} ${theme} ${selector} foreground`);
+        assert.equal(state['.canvas-agent-user-bubble'].background,theme==='light'?'rgb(232, 234, 240)':'rgb(34, 34, 40)');
+        assert.equal(state['.canvas-r1-agent-panel'].surface,theme==='light'?'#f0f1f4':'#111114');
+        const sourceLength=await page.locator('.canvas-agent-model-reasoning p').last().textContent().then(text=>text.length);
+        await page.waitForFunction(length=>{const el=document.querySelector('.canvas-agent-model-reasoning p');return el&&el.textContent.length>length;},sourceLength);
+        assert.equal(await page.locator('.canvas-r1-agent-panel').evaluate(el=>getComputedStyle(el).color),foreground,'stream rerender preserves selected theme');
+        await page.locator('.canvas-agent-run-settings > summary').click();
+        assert.notEqual(await page.locator('.canvas-agent-run-settings').getAttribute('open'),null);
+        assert.equal(await page.locator('.canvas-agent-run-settings > summary').evaluate(el=>getComputedStyle(el).color),foreground,'reopened menu preserves theme');
+        await page.keyboard.press('Escape');
+      }
+    }
+    fs.writeFileSync(path.join(out,'theme-cycle-computed.json'),JSON.stringify(themeChecks,null,2));
+    await page.getByRole('button',{name:'完整对话',exact:true}).click();
+    await page.setViewportSize({width:780,height:540});
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.evaluate(async () => { document.documentElement.dataset.theme = 'light'; await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))); });
+    const themeState = await page.evaluate(() => {
+      const colors = selector => { const el=document.querySelector(selector); const style=getComputedStyle(el); return {color:style.color,background:style.backgroundColor,surface:style.getPropertyValue('--theme-surface-panel').trim()}; };
+      return {theme:document.documentElement.dataset.theme,root:colors('html'),panel:colors('.canvas-r1-agent-panel'),bubble:colors('.canvas-agent-user-bubble'),composer:colors('.canvas-r1-agent-composer')};
+    });
+    fs.writeFileSync(path.join(out,'light-theme-computed.json'),JSON.stringify(themeState,null,2));
+    assert.equal(themeState.theme,'light');
+    assert.equal(themeState.panel.surface,'#f0f1f4');
+    assert.equal(themeState.panel.color,'rgb(24, 25, 31)');
+    assert.equal(themeState.bubble.color,'rgb(24, 25, 31)');
+    assert.equal(themeState.bubble.background,'rgb(232, 234, 240)');
+    const luminance = rgb => {const c=rgb.map(value=>value/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);return c[0]*.2126+c[1]*.7152+c[2]*.0722;};
+    const contrast=(luminance([232,234,240])+.05)/(luminance([24,25,31])+.05);
+    assert.ok(contrast>=4.5,'light user text contrast meets normal-text minimum');
     await page.screenshot({ path: path.join(out, 'light-reduced-motion-780.png') });
-    checks.push('compact viewport keeps composer visible; light/reduced-motion captured');
+    await page.setViewportSize({width:1440,height:900});
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    await page.screenshot({ path: path.join(out, 'light-reduced-motion-1440.png') });
+    checks.push('compact composer visible and committed light theme has readable text contrast');
     assert.deepEqual(errors, []);
     assert.deepEqual(unexpectedRequests, []);
     fs.writeFileSync(path.join(out, 'checks.json'), JSON.stringify({ checks, errors, fixture: 'synthetic-no-provider-calls' }, null, 2));
