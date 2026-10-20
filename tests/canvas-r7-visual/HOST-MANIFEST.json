@@ -14,7 +14,7 @@
     {
       "path": "webview2/Host/packages.lock.json",
       "bytes": 267,
-      "sha256": "a0f8d29a6ddcb4ce413f38bea37c6cfc00dad6faf09826cfe1fc2c5b9a2e2e2d"
+      "sha256": "96462a28402e4210cfbfc260f7dcfe4cc1ca572d2106aef40dbc4578bca52cbd"
     },
     {
       "path": "webview2/NuGet.Config",
