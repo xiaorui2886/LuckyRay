@@ -28,34 +28,15 @@ const out=process.env.LR_RESULT_UI_OUT||path.join(root,'output/canvas-agent-resu
     const all=page.getByRole('button',{name:'Select and locate all results',exact:true});
     const heading=page.locator('.canvas-r1-agent-section-heading'),tooltip=heading.getByRole('tooltip');
     const evidence=async key=>JSON.parse(await page.locator('#evidence').getAttribute(`data-${key}`));
+    const commitThemeStyles=require('./canvasThemeCommit.browser.cjs');
     const commitTheme=async theme=>{
-      const observation=await page.evaluate(async theme=>{
-        document.documentElement.dataset.theme=theme;
-        const selectors=['html','.canvas-r1-agent-panel','.canvas-agent-result-tooltip'];
-        const flush=()=>{for(const selector of selectors)for(const el of document.querySelectorAll(selector)){const style=getComputedStyle(el);void style.color;void style.backgroundColor;}};
-        const recorded=[];
-        const settle=async()=>{
-          for(let pass=0;pass<4;pass++){
-            flush();
-            const animations=document.documentElement.getAnimations({subtree:true}).filter(animation=>animation.effect?.getTiming().iterations!==Infinity&&['running','pending'].includes(animation.playState));
-            for(const animation of animations)recorded.push({type:animation.constructor.name,property:animation.transitionProperty||null,name:animation.animationName||null,duration:animation.effect?.getTiming().duration,target:animation.effect?.target?.className?.toString().slice(0,150)||''});
-            await Promise.all(animations.map(animation=>animation.finished.catch(()=>{})));
-            await new Promise(resolve=>requestAnimationFrame(resolve));flush();
-            if(!document.documentElement.getAnimations({subtree:true}).some(animation=>animation.effect?.getTiming().iterations!==Infinity&&['running','pending'].includes(animation.playState)))return;
-          }
-          throw new Error('Theme finite animations did not settle');
-        };
-        let timeout,failure;
-        try{await Promise.race([settle(),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Theme commit exceeded 1000ms')),1000);})]);}
-        catch(error){failure=String(error?.message||error);}
-        finally{clearTimeout(timeout);}
-        return {theme,failure,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,animations:recorded,foreground:{panel:getComputedStyle(document.querySelector('.canvas-r1-agent-panel')).color,tooltip:getComputedStyle(document.querySelector('.canvas-r1-agent-section-heading .canvas-agent-result-tooltip')).color}};
-      },theme);
+      const observation=await commitThemeStyles(page,theme,['html','.canvas-r1-agent-panel','.canvas-agent-result-tooltip']);
       themeTransitions.push(observation);
       fs.writeFileSync(path.join(out,'theme-transition-diagnostics.json'),JSON.stringify(themeTransitions,null,2));
-      assert.equal(observation.failure,undefined,'theme finite transitions must settle within 1000ms');
+      assert.equal(observation.failure,undefined,'theme target styles must settle within 1000ms');
       const foreground=theme==='light'?'rgb(24, 25, 31)':'rgb(240, 240, 242)';
-      assert.deepEqual(observation.foreground,{panel:foreground,tooltip:foreground},'panel and result tooltip must match the committed theme before screenshot');
+      const actual=await page.evaluate(()=>({panel:getComputedStyle(document.querySelector('.canvas-r1-agent-panel')).color,tooltip:getComputedStyle(document.querySelector('.canvas-r1-agent-section-heading .canvas-agent-result-tooltip')).color}));
+      assert.deepEqual(actual,{panel:foreground,tooltip:foreground},'panel and result tooltip must match the committed theme before screenshot');
     };
     await page.waitForFunction(()=>document.querySelector('#evidence')?.getAttribute('data-ready')==='true');
     const transform=()=>page.locator('.react-flow__viewport').evaluate(el=>el.style.transform);
@@ -64,12 +45,13 @@ const out=process.env.LR_RESULT_UI_OUT||path.join(root,'output/canvas-agent-resu
     await all.scrollIntoViewIfNeeded();
     assert.equal(await all.innerText(),'');assert.equal(await all.isEnabled(),true);checks.push('select-all is an enabled icon-only control');
     await all.hover();await tooltip.waitFor({state:'visible'});assert.equal(await tooltip.innerText(),'Select and locate 2 result nodes');checks.push('hover tooltip reports deduplicated live result count');
-    await page.mouse.move(1,1);await all.focus();await tooltip.waitFor({state:'visible'});checks.push('keyboard focus exposes tooltip');
+    await page.mouse.move(1,1);await all.focus();await page.keyboard.press('Shift+Tab');await page.keyboard.press('Tab');assert.equal(await all.evaluate(el=>el.matches(':focus-visible')),true);await tooltip.waitFor({state:'visible'});checks.push('real Tab keyboard focus exposes tooltip');
     await page.keyboard.press('Enter');await page.waitForFunction(()=>JSON.stringify([...document.querySelectorAll('.react-flow__node.selected')].map(node=>node.getAttribute('data-id')).sort())==='["draft","edited"]');assert.deepEqual(await evidence('selected'),['draft','edited']);assert.deepEqual(await evidence('events'),[{nodeIds:['draft','edited'],selectAll:true}]);checks.push('Enter selects only actual live results');
     assert.deepEqual(await actualSelected(),['draft','edited']);assert.notEqual(await transform(),initialTransform);assert.deepEqual(await evidence('bounds'),{x:2200,y:100,width:1020,height:520});checks.push('real ReactFlow selection and measured combined bounds change the actual viewport transform');
     const allTransform=await transform();
     await page.getByRole('button',{name:'Locate Edited text',exact:true}).click();assert.deepEqual((await evidence('events')).at(-1),{nodeIds:['edited'],selectAll:false});checks.push('per-node locate does not select all');
     await page.waitForFunction(before=>document.querySelector('.react-flow__viewport')?.style.transform!==before,allTransform);assert.notEqual(await transform(),allTransform);assert.deepEqual(await actualSelected(),['draft','edited']);checks.push('real per-node setCenter changes transform without replacing selection');
+    await all.hover();assert.equal(await page.locator('.canvas-agent-result-tooltip:visible').count(),1,'mouse-clicked row does not retain a second tooltip while hovering another result');checks.push('pointer hover does not retain the previous mouse-click tooltip');
     assert.equal(await page.getByRole('button',{name:'Locate Removed result',exact:true}).isDisabled(),true);checks.push('deleted result is disabled');
     assert.equal(await page.getByRole('button',{name:'Locate Running existing result',exact:true}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Locate Failed existing result',exact:true}).isDisabled(),true);checks.push('unfinished and failed existing nodes remain ineligible');
     for(const theme of ['dark','light'])for(const width of [1440,360]){

@@ -33,36 +33,13 @@ const checks = [];
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('.canvas-agent-turn').waitFor();
     const settleFinite = locator => locator.evaluate(async el=>{await Promise.all(el.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})));});
-    // Style reads create CSS transitions; two rAF callbacks alone can precede that flush.
-    // In particular the shared reduced-motion rule sets a nonzero .01ms duration
-    // even on elements whose default transition-property is all.
+    const commitThemeStyles = require('./canvasThemeCommit.browser.cjs');
     const themeTransitions = [];
     const commitTheme = async theme => {
-      const observation = await page.evaluate(async theme => {
-        document.documentElement.dataset.theme = theme;
-        const flush = () => { for (const selector of ['html','.canvas-r1-agent-panel','.canvas-agent-user-bubble','.canvas-r1-agent-composer']) { const el=document.querySelector(selector); if(el) { const style=getComputedStyle(el); void style.color; void style.backgroundColor; } } };
-        const recorded = [];
-        const settle = async () => {
-          for(let pass=0;pass<4;pass++) {
-            flush();
-            const animations=document.documentElement.getAnimations({subtree:true}).filter(animation=>animation.effect?.getTiming().iterations!==Infinity && ['running','pending'].includes(animation.playState));
-            for(const animation of animations) recorded.push({type:animation.constructor.name,property:animation.transitionProperty||null,name:animation.animationName||null,duration:animation.effect?.getTiming().duration,target:animation.effect?.target?.className?.toString().slice(0,150)||''});
-            await Promise.all(animations.map(animation=>animation.finished.catch(()=>{})));
-            await new Promise(resolve=>requestAnimationFrame(resolve));
-            flush();
-            if(!document.documentElement.getAnimations({subtree:true}).some(animation=>animation.effect?.getTiming().iterations!==Infinity && animation.playState==='running')) return;
-          }
-          throw new Error('Theme finite animations did not settle');
-        };
-        let timeout, failure;
-        try { await Promise.race([settle(),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Theme commit exceeded 1000ms')),1000);})]); }
-        catch(error) { failure=String(error?.message||error); }
-        finally { clearTimeout(timeout); }
-        return {failure,theme,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,animations:recorded};
-      },theme);
+      const observation = await commitThemeStyles(page,theme,['html','.canvas-r1-agent-panel','.canvas-agent-user-bubble','.canvas-r1-agent-composer','.canvas-agent-run-settings > summary']);
       themeTransitions.push(observation);
       fs.writeFileSync(path.join(out,'theme-transition-diagnostics.json'),JSON.stringify(themeTransitions,null,2));
-      assert.equal(observation.failure,undefined,'theme finite transitions must settle within 1000ms');
+      assert.equal(observation.failure,undefined,'theme target styles must settle within 1000ms');
     };
     const historicalMark = page.locator('.canvas-agent-turn-mark .canvas-agent-orb-black-hole').first();
     assert.deepEqual(await historicalMark.evaluate(el => ({width:getComputedStyle(el).width,height:getComputedStyle(el).height})), {width:'88px',height:'64px'});

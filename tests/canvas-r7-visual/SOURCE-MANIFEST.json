@@ -2,7 +2,7 @@
   "scope": "synthetic-production-ui-only",
   "nativeOrProviderCalls": false,
   "sourceSnapshot": "uncommitted R7 candidate",
-  "frozenAt": "2026-10-20T21:04:49.356Z",
+  "frozenAt": "2026-10-20T21:17:00.826Z",
   "files": [
     {
       "path": "src/core/canvas/cinematography.ts",
@@ -210,9 +210,9 @@
     },
     {
       "path": "src/features/canvas/canvasAgentPanel.css",
-      "bytes": 47563,
-      "sha256": "a952e9d6218d81d7032992091a1a236b93cefbb111925d247b74be9e9f806fb2",
-      "gitBlob": "f14d1dff04d7455b088510ce02fcc76b2850e035"
+      "bytes": 47578,
+      "sha256": "c86a73cbcec820541b05834e0752f766140e6bbc4e53d2ffe9458586ffa19211",
+      "gitBlob": "c4b7a0526d23dc3d51c234bdae2b2aaea9552155"
     },
     {
       "path": "src/features/canvas/canvasAgentPresentation.ts",
@@ -258,9 +258,9 @@
     },
     {
       "path": "tests/canvasAgentR7Ui.browser.cjs",
-      "bytes": 19943,
-      "sha256": "76ca962b1ddc2f13a251fda2c2bbfb8db7051c2c014ba83ff157c6d204f9e9da",
-      "gitBlob": "0b0b29daeff7a42ffd83136d23e230e45aeeac33"
+      "bytes": 18041,
+      "sha256": "ce0b999251dd259242525a15a722f9f39c5ba0dc962663ff13648bf3fcd3a08f",
+      "gitBlob": "e7c56521835f120bd5f454f5820f628fc072fbf8"
     },
     {
       "path": "tests/canvasAgentR7Ui.fixture.tsx",
@@ -270,9 +270,9 @@
     },
     {
       "path": "tests/canvasAgentResultR7dUi.browser.cjs",
-      "bytes": 12072,
-      "sha256": "dc71c5635874c9fb97fa1d4245562d660dd63e385a940bd27e3f6e5781aaf1cf",
-      "gitBlob": "69ab56ec734993e24b2bf9e095ce106fb1dd8bda"
+      "bytes": 10808,
+      "sha256": "b0677848d7ef4860ac05da887727c20d28090250080c10d950c44160d066880e",
+      "gitBlob": "f559ad9f7014e87121bbf92922b7691625dd7052"
     },
     {
       "path": "tests/canvasAgentResultR7dUi.fixture.tsx",
@@ -303,6 +303,12 @@
       "bytes": 6000,
       "sha256": "f154f69ebea5cbaa43c6605b6c47180ecf63b4fb0bfa020b21b50fe4e79e5b7a",
       "gitBlob": "dff1cb1bb0d5b39d65da070b62729cb1a93bde5b"
+    },
+    {
+      "path": "tests/canvasThemeCommit.browser.cjs",
+      "bytes": 2699,
+      "sha256": "cfe6799cf71f6a066153e0ec26f6268631ad7a29e6813a696ed87db265ec53d6",
+      "gitBlob": "dd732be0e78a54c04d0d166eaedcc6a47cad1ad0"
     }
   ]
 }
