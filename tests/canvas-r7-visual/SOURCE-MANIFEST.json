@@ -2,7 +2,7 @@
   "scope": "synthetic-production-ui-only",
   "nativeOrProviderCalls": false,
   "sourceSnapshot": "uncommitted R7 candidate",
-  "frozenAt": "2026-10-20T19:37:35.770Z",
+  "frozenAt": "2026-10-20T19:42:22.403Z",
   "files": [
     {
       "path": "src/core/canvas/cinematography.ts",
@@ -234,9 +234,9 @@
     },
     {
       "path": "tests/canvasAgentR7Ui.browser.cjs",
-      "bytes": 11490,
-      "sha256": "55ea7a796980d27914be755cf112ef378bfec524e7a80e5577ad09baff7a3ca3",
-      "gitBlob": "e1a29b4027dd3d8c0363a3704d5bbc06aa305658"
+      "bytes": 11508,
+      "sha256": "9ed9f7f6a6b2ffd4d9a0a221a299322fe6a1287a56f25dc9e725563f40628b24",
+      "gitBlob": "a4afd5db0447d942c0ae0a830e3759186b3662ff"
     },
     {
       "path": "tests/canvasAgentR7Ui.fixture.tsx",
@@ -246,9 +246,9 @@
     },
     {
       "path": "tests/canvasCreativeR7Ui.browser.cjs",
-      "bytes": 7341,
-      "sha256": "ee0bb067ed06eebfee0ede471e4d214a07fe26698db2f238641dc0227ad997ac",
-      "gitBlob": "2ea4a39ac262e4de953236cafe9a1b5f0a77a20f"
+      "bytes": 7359,
+      "sha256": "621a36a70812ebdc027fbab65d7b0d4dac30b4b387462330ad1ff39063292940",
+      "gitBlob": "85d2ca28331f61e2f22eb591194b8e0834e32a00"
     },
     {
       "path": "tests/canvasCreativeR7Ui.fixture.tsx",
