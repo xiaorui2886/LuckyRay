@@ -35,13 +35,37 @@ const command=value=>{const tmp=path.join(out,'command.tmp');fs.writeFileSync(tm
   await page.keyboard.press('Escape');
  }
  checks.push('four theme switches and model menu interactions');
- for(const width of [780,1440]){
-  command({action:'resize',width,height:900});
-  await page.waitForFunction(w=>innerWidth===w,width);
-  const panel=await page.locator('.canvas-r1-agent-panel').boundingBox();assert.ok(panel&&panel.width>0&&panel.x>=0&&panel.x+panel.width<=width+1);
-  await page.screenshot({path:path.join(out,`native-window-${width}.png`)});
+ const resizeEvidence=[];
+ const initialNativeViewport=await page.evaluate(()=>({innerWidth,innerHeight,outerWidth,outerHeight,devicePixelRatio}));
+ fs.writeFileSync(path.join(out,'initial-viewport.json'),JSON.stringify({requestedWidth:1440,requestedHeight:900,observed:initialNativeViewport},null,2));
+ const pageMetrics=()=>page.evaluate(()=>({innerWidth,innerHeight,outerWidth,outerHeight,devicePixelRatio,screenWidth:screen.width,screenHeight:screen.height}));
+ for(const [id,width] of [['narrow',780],['wide',1440]]){
+  command({action:'resize',id,width,height:900});
+  const ackPath=path.join(out,`resize-${id}.json`);
+  const deadline=Date.now()+10000;
+  while(!fs.existsSync(ackPath)){if(Date.now()>deadline)throw new Error(`Native resize acknowledgement missing: ${id}`);await new Promise(r=>setTimeout(r,100));}
+  const native=JSON.parse(fs.readFileSync(ackPath,'utf8'));
+  assert.equal(native.id,id);assert.equal(native.requestedWidth,width);
+  assert.ok(native.webviewClientWidth>0&&native.webviewClientHeight>0&&native.windowDpi>0&&native.zoomFactor>0);
+  const expectedDpr=native.windowDpi/96*native.zoomFactor;
+  const entry={native,beforeWait:await pageMetrics(),expectedDpr};resizeEvidence.push(entry);
+  fs.writeFileSync(path.join(out,'resize-evidence.json'),JSON.stringify(resizeEvidence,null,2));
+  try{
+   await page.waitForFunction(n=>Math.abs(devicePixelRatio-n.expectedDpr)<0.02&&Math.abs(innerWidth*devicePixelRatio-n.width)<=2&&Math.abs(innerHeight*devicePixelRatio-n.height)<=2,{expectedDpr,width:native.webviewClientWidth,height:native.webviewClientHeight},{timeout:10000});
+  }finally{
+   entry.observed=await pageMetrics();
+   entry.requestedCssWidthVerified=Math.abs(entry.observed.innerWidth-width)<=1;
+   entry.requested1440WidthCoverage=width===1440?(entry.requestedCssWidthVerified?'WIDTH_MATCH_ONLY':'NOT_RUN_ACTUAL_CSS_WIDTH_DIFFERENT'):null;
+   fs.writeFileSync(path.join(out,'resize-evidence.json'),JSON.stringify(resizeEvidence,null,2));
+  }
+  entry.resizeDimensionsVerified=true;
+  if(width===1440&&entry.requestedCssWidthVerified)entry.requested1440WidthCoverage='PASS';
+  fs.writeFileSync(path.join(out,'resize-evidence.json'),JSON.stringify(resizeEvidence,null,2));
+  const panel=await page.locator('.canvas-r1-agent-panel').boundingBox();assert.ok(panel&&panel.width>0&&panel.x>=0&&panel.x+panel.width<=entry.observed.innerWidth+1&&panel.y>=0&&panel.y+panel.height<=entry.observed.innerHeight+1);
+  await page.screenshot({path:path.join(out,`native-window-${id}-${entry.observed.innerWidth}.png`)});
  }
- checks.push('native WinForms client resize 780/1440 preserves visible panel');
+ assert.ok(resizeEvidence[1].observed.innerWidth-resizeEvidence[0].observed.innerWidth>=100,'two genuinely different native widths must be exercised');
+ checks.push('two actual native window sizes agree with settled control dimensions/DPI; requested and applied sizes recorded');
  await page.getByRole('button',{name:'流式推理',exact:true}).click();
  await page.locator('.canvas-agent-turn-process > summary').click();
  await page.locator('.canvas-agent-model-reasoning > summary').click();

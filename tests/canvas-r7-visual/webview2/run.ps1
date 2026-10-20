@@ -106,6 +106,7 @@ try {
     @{status=$status; error=$_.ToString()} | ConvertTo-Json | Set-Content (Join-Path $run 'result.json')
     Write-Error $_ -ErrorAction Continue
 } finally {
+    $cleanupEvidence = [ordered]@{ ownedProcesses=@(); remainingDebugListeners=@(); listenerQuerySucceeded=$null; temporaryDirectoryRemoved=$false; status='PENDING'; errors=@() }
     if ($hostProcess -and !$hostProcess.HasExited) {
         try {
             Remember-Descendants $hostProcess
@@ -115,15 +116,26 @@ try {
     }
     # Only processes created here, still matching start time and executable, are eligible.
     foreach ($entry in ($owned | Sort-Object Started -Descending)) {
+        $identity = [ordered]@{ pid=$entry.Process.Id; executable=[IO.Path]::GetFileName($entry.Path); startedAt=$entry.Started.ToString('o'); identityMatched=$false; outcome='not-present' }
         try {
             $p = Get-Process -Id $entry.Process.Id -ErrorAction SilentlyContinue
             if ($p -and $p.StartTime.ToUniversalTime() -eq $entry.Started -and $p.Path -eq $entry.Path) {
+                $identity.identityMatched=$true
                 & taskkill /PID $p.Id /T /F | Out-Null
-                if (!$p.WaitForExit(3000)) { $cleanupFailed=$true }
-            }
-        } catch { $cleanupFailed=$true; Write-Warning "Owned process cleanup failed: $_" }
+                if (!$p.WaitForExit(3000)) { $cleanupFailed=$true; $identity.outcome='still-running' }
+                else { $identity.outcome='stopped' }
+            } elseif ($p) { $identity.outcome='pid-reused-not-touched' }
+        } catch { $cleanupFailed=$true; $identity.outcome='cleanup-error'; Write-Warning "Owned process cleanup failed: $_" }
+        $cleanupEvidence.ownedProcesses += $identity
     }
-    if ($port -and @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue).Count) { $cleanupFailed=$true }
+    if ($port) {
+        try {
+            $cleanupEvidence.remainingDebugListeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -eq $port } | ForEach-Object { @{address=$_.LocalAddress;port=$_.LocalPort;pid=$_.OwningProcess} })
+            $cleanupEvidence.listenerQuerySucceeded=$true
+            if ($cleanupEvidence.remainingDebugListeners.Count) { $cleanupFailed=$true }
+        } catch { $cleanupEvidence.listenerQuerySucceeded=$false; $cleanupFailed=$true }
+    }
+    try {
     if (Test-Path (Join-Path $run 'native.jsonl')) {
         $lateNative = @(Get-Content (Join-Path $run 'native.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
         if ($exit -eq 0 -and @($lateNative | Where-Object { $_.type -notin @('environment','navigation','resize') }).Count) {
@@ -131,11 +143,16 @@ try {
             @{status='FAIL';error='Late native error during shutdown; inspect native.jsonl'} | ConvertTo-Json | Set-Content (Join-Path $run 'result.json')
         }
     }
+    } catch { $exit=1; $cleanupFailed=$true; $cleanupEvidence.errors += 'Native log parsing failed during cleanup' }
     if ($cleanupFailed) {
         $exit=1
         @{status='FAIL_CLEANUP'; error='At least one owned process could not be verified stopped'} | ConvertTo-Json | Set-Content (Join-Path $run 'result.json')
     }
-    Get-ChildItem $run -File | Where-Object { $_.Extension -in @('.json','.jsonl','.png','.zip','.log') } | Copy-Item -Destination $out -Force
-    try { Remove-Item -LiteralPath $run -Recurse -Force } catch { $exit=1; @{status='FAIL_CLEANUP';error='Temporary QA directory could not be fully removed'} | ConvertTo-Json | Set-Content (Join-Path $out 'result.json'); Write-Warning 'Temporary QA directory could not be fully removed' }
+    try { Get-ChildItem $run -File | Where-Object { $_.Extension -in @('.json','.jsonl','.png','.zip','.log') } | Copy-Item -Destination $out -Force } catch { $exit=1; $cleanupFailed=$true; $cleanupEvidence.errors += 'Evidence copy failed during cleanup' }
+    try { Remove-Item -LiteralPath $run -Recurse -Force; $cleanupEvidence.temporaryDirectoryRemoved=!(Test-Path -LiteralPath $run) } catch { $exit=1; @{status='FAIL_CLEANUP';error='Temporary QA directory could not be fully removed'} | ConvertTo-Json | Set-Content (Join-Path $out 'result.json'); Write-Warning 'Temporary QA directory could not be fully removed' }
+    if (!$cleanupEvidence.temporaryDirectoryRemoved) { $exit=1; @{status='FAIL_CLEANUP';error='Temporary directory removal not verified'} | ConvertTo-Json | Set-Content (Join-Path $out 'result.json') }
+    if ($cleanupFailed) { $exit=1; @{status='FAIL_CLEANUP';error='Cleanup or evidence finalization failed; inspect cleanup.json'} | ConvertTo-Json | Set-Content (Join-Path $out 'result.json') }
+    $cleanupEvidence.status = if (!$cleanupFailed -and $cleanupEvidence.temporaryDirectoryRemoved) { 'PASS' } else { 'FAIL' }
+    $cleanupEvidence | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $out 'cleanup.json') -Encoding utf8
 }
 exit $exit

@@ -8,8 +8,8 @@
     },
     {
       "path": "webview2/Host/Program.cs",
-      "bytes": 5541,
-      "sha256": "ff02125b26109e13f7165328217676163c7b18c38efdbff08dd89885111f4eeb"
+      "bytes": 7487,
+      "sha256": "3190259825ee92c96c2ef4a2e821933b5a033992df0c48698b12dafb3227ff2f"
     },
     {
       "path": "webview2/Host/packages.lock.json",
@@ -33,8 +33,8 @@
     },
     {
       "path": "webview2/run.ps1",
-      "bytes": 8638,
-      "sha256": "c365866859803cf0f217c37d21bc343d14ea21ef1c011323d4c554d3730c9738"
+      "bytes": 10614,
+      "sha256": "bf08311fa9d0dd468436ea54c8ef3d8049ab8ebc1ec454b8aba80d50f8ae6c80"
     },
     {
       "path": "webview2/server.cjs",
@@ -43,8 +43,8 @@
     },
     {
       "path": "webview2/test.cjs",
-      "bytes": 5426,
-      "sha256": "3ee52557a23f0001a9920a86f747a4ce949ad7ee1d75cc0f70c86429a6128558"
+      "bytes": 7811,
+      "sha256": "796bb535af4d4b78569840abba31e9a74ff146a9195f44698e8f54b403503918"
     }
   ]
 }
