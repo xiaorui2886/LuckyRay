@@ -425,3 +425,10 @@
 
 .canvas-r1-agent-panel .canvas-agent-receipt-notice { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
 .canvas-r1-agent-panel .canvas-agent-receipt-notice button { border:0; background:transparent; color:var(--accent); font-size:inherit; padding:2px 0; cursor:pointer; }
+
+/* Keep the flow readable: details reveal content instead of repeating its preview. */
+.canvas-agent-turn-process[open] > summary > .canvas-agent-reasoning-preview,
+.canvas-agent-model-reasoning[open] > summary > .canvas-agent-reasoning-preview { display:none; }
+.canvas-r1-agent-message.is-user { position:relative; }
+.canvas-r1-agent-message.is-user > .canvas-agent-message-actions { position:absolute; top:100%; right:0; margin-top:0; padding-top:6px; z-index:1; }
+.canvas-agent-turn > .canvas-r1-agent-message-label { margin-bottom:2px; }

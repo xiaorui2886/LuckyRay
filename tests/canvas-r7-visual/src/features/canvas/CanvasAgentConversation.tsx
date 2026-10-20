@@ -129,7 +129,7 @@ export function CanvasAgentTurnView({ messages, activity = [], tools = [], progr
     : activelyReasoning ? english ? 'Thinking' : '正在思考'
     : messages.some(message => message.streaming && message.text) ? english ? 'Writing' : '正在回复'
     : phase ? LABELS[phase.label]?.[english ? 1 : 0] || (english ? 'Working' : '正在处理') : english ? 'Working' : '正在处理';
-  const label = busy ? currentAction : status === 'failed' ? english ? 'Interrupted' : '已中断' : status === 'cancelled' ? english ? 'Stopped' : '已停止' : status === 'completed' ? english ? 'Completed' : '已完成' : english ? 'Activity' : '任务过程';
+  const label = busy ? english ? 'Task activity' : '任务过程' : status === 'failed' ? english ? 'Interrupted' : '已中断' : status === 'cancelled' ? english ? 'Stopped' : '已停止' : status === 'completed' ? english ? 'Completed' : '已完成' : english ? 'Activity' : '任务过程';
   const livePreview = busy && activelyReasoning ? reasoningPreview(reasoningText, true) : undefined;
   return <article className={`canvas-agent-turn${busy ? ' is-running' : ''}`} aria-busy={busy || undefined}>
     <div className="canvas-r1-agent-message-label"><span className="canvas-agent-turn-mark" aria-hidden="true"><CanvasAgentBlackHole busy={busy} animated /></span><span className={busy ? "canvas-agent-live-wordmark" : undefined}>Agent{busy && ` · ${currentAction}`}</span></div>

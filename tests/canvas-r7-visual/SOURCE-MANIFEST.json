@@ -2,7 +2,7 @@
   "scope": "synthetic-production-ui-only",
   "nativeOrProviderCalls": false,
   "sourceSnapshot": "uncommitted R7 candidate",
-  "frozenAt": "2026-10-20T19:42:22.403Z",
+  "frozenAt": "2026-10-20T19:52:42.746Z",
   "files": [
     {
       "path": "src/core/canvas/cinematography.ts",
@@ -84,9 +84,9 @@
     },
     {
       "path": "src/features/canvas/CanvasAgentConversation.tsx",
-      "bytes": 18307,
-      "sha256": "4d4c41ca0a919470177f1f91e3cc21231a908e403d4a147ee77daa106e594019",
-      "gitBlob": "8a642e1e30441f18863e795c319896c8d89d2076"
+      "bytes": 18336,
+      "sha256": "3e8779db30ef980109d673259660c40d3a068dd981d50bedefa39042167f0cc1",
+      "gitBlob": "acc4892481cbd64a51c815cb9c2fa26e52040169"
     },
     {
       "path": "src/features/canvas/CanvasAgentModelPicker.tsx",
@@ -198,9 +198,9 @@
     },
     {
       "path": "src/features/canvas/canvasAgentPanel.css",
-      "bytes": 46250,
-      "sha256": "d43f235cd814a0278692a84293c12540172bcbf4d09940d5834d34ca473cc54a",
-      "gitBlob": "6f2e20847db6c46ff7fd05b9f5ba89d5f1139551"
+      "bytes": 46794,
+      "sha256": "80082cf40660d0a4fccd2c77bc0642b088f0cec7188ad26dedf79145ddbe7f25",
+      "gitBlob": "bb21e1055abebeb74fe1cc160c84f740154bc6be"
     },
     {
       "path": "src/features/canvas/canvasAgentPresentation.ts",
@@ -234,9 +234,9 @@
     },
     {
       "path": "tests/canvasAgentR7Ui.browser.cjs",
-      "bytes": 11508,
-      "sha256": "9ed9f7f6a6b2ffd4d9a0a221a299322fe6a1287a56f25dc9e725563f40628b24",
-      "gitBlob": "a4afd5db0447d942c0ae0a830e3759186b3662ff"
+      "bytes": 12730,
+      "sha256": "7e8a9ba341755acf257e6986a4943bc66f65f69b6b0e954b95e7723f90e6e470",
+      "gitBlob": "a4a42b9750748f77c34e3c85a3829d3521a27fe0"
     },
     {
       "path": "tests/canvasAgentR7Ui.fixture.tsx",
@@ -246,9 +246,9 @@
     },
     {
       "path": "tests/canvasCreativeR7Ui.browser.cjs",
-      "bytes": 7359,
-      "sha256": "621a36a70812ebdc027fbab65d7b0d4dac30b4b387462330ad1ff39063292940",
-      "gitBlob": "85d2ca28331f61e2f22eb591194b8e0834e32a00"
+      "bytes": 9040,
+      "sha256": "fb501012dfb4231f5f66ac720165735c4b54c1f9aa15fe02ff47dec7b4451ce9",
+      "gitBlob": "b6a68dc629f89fb5c47c940170651d9e6e72d605"
     },
     {
       "path": "tests/canvasCreativeR7Ui.fixture.tsx",
