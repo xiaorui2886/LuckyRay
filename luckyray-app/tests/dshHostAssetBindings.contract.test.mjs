@@ -17,6 +17,7 @@ const bindings = [
   ["LIGHTSEEK_UI_PACKAGE_SHA256", "luckyray-dsh-lightseek-ui/package.json"],
   ["LIGHTSEEK_UI_CLIENT_SHA256", "luckyray-dsh-lightseek-ui/client.js"],
   ["LIGHTSEEK_UI_BACKGROUND_SHA256", "luckyray-dsh-lightseek-ui/lightseek-cosmic-home.webp", "binary"],
+  ["CANVAS_AGENT_SHA256", "luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs"],
   ["PROVIDER_EXPORT_SHA256", "luckyray-dsh-authenticated-webserver/luckyray-dsh-provider-export.mjs"],
   ["CARRIER_PACKAGE_SHA256", "luckyray-dsh-authenticated-webserver/package.json"],
   ["RESOURCE_PACKAGE_SHA256", "luckyray-dsh-resource-tools/package.json"],
