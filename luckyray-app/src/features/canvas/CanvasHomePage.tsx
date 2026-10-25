@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { ContextMenuSurface } from "../../components/ContextMenuSurface";
+import { buildHomeTemplate, toggleHomeSelection, type HomeTemplateKind } from "./canvasHomeTemplates";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
@@ -43,8 +46,10 @@ type CanvasBridge = {
     nodes: unknown;
     edges: unknown;
     viewport: { x: number; y: number; zoom: number };
+    revision?: number; contentDigest?: string;
     generationHistory: unknown;
   }>;
+  saveCanvas: (canvas: Awaited<ReturnType<CanvasBridge["loadCanvas"]>> & { schemaVersion: number }) => Promise<CanvasEntry>;
   createCanvas: (name?: string) => Promise<CanvasEntry>;
   renameCanvas: (canvasId: string, name: string) => Promise<CanvasEntry | null>;
   deleteCanvas: (canvasId: string) => Promise<void>;
@@ -86,6 +91,13 @@ const COPY = defineMessages({
   "action.saving": { "zh-CN": "保存中", "en-US": "Saving" }, "action.save": { "zh-CN": "保存", "en-US": "Save" }, "action.cancel": { "zh-CN": "取消", "en-US": "Cancel" }, "edited": { "zh-CN": "编辑于 {time}", "en-US": "Edited {time}" }, "exporting": { "zh-CN": "正在导出 JSON", "en-US": "Exporting JSON" }, "menu.aria": { "zh-CN": "{name}操作", "en-US": "Actions for {name}" },
   "action.open": { "zh-CN": "打开", "en-US": "Open" }, "favorite.added": { "zh-CN": "已收藏画布", "en-US": "Canvas added to favorites" }, "favorite.removed": { "zh-CN": "已取消收藏", "en-US": "Removed from favorites" }, "favorite.error": { "zh-CN": "收藏操作失败", "en-US": "Favorite action failed" }, "favorite.add": { "zh-CN": "收藏画布", "en-US": "Add to favorites" }, "favorite.remove": { "zh-CN": "取消收藏", "en-US": "Remove from favorites" }, "action.rename": { "zh-CN": "重命名", "en-US": "Rename" }, "action.export": { "zh-CN": "导出 JSON", "en-US": "Export JSON" }, "action.delete": { "zh-CN": "删除", "en-US": "Delete" },
   "storage.title": { "zh-CN": "画布数据", "en-US": "Canvas Data" }, "storage.desc": { "zh-CN": "本地文件与缩略图", "en-US": "Local files and thumbnails" }, "storage.ok": { "zh-CN": "存储检查通过", "en-US": "Storage check passed" }, "storage.issues.one": { "zh-CN": "发现 {count} 个问题", "en-US": "{count} issue found" }, "storage.issues.other": { "zh-CN": "发现 {count} 个问题", "en-US": "{count} issues found" }, "storage.unchecked": { "zh-CN": "尚未检查", "en-US": "Not checked" }, "storage.files.one": { "zh-CN": "{checked}/{total} 文件", "en-US": "{checked}/{total} file" }, "storage.files.other": { "zh-CN": "{checked}/{total} 文件", "en-US": "{checked}/{total} files" }, "storage.open": { "zh-CN": "打开数据目录", "en-US": "Open Data Folder" }, "storage.checking": { "zh-CN": "检查中", "en-US": "Checking" }, "storage.check": { "zh-CN": "检查存储", "en-US": "Check Storage" },
+  "error.templateSeed": { "zh-CN": "模板保存未完成，新建草稿已保留在列表中，可打开检查内容或删除后重试。", "en-US": "Template saving did not complete. The new draft remains in the list for review or removal before retrying." },
+  "selection.start": { "zh-CN": "多选", "en-US": "Select" }, "selection.done": { "zh-CN": "完成", "en-US": "Done" },
+  "selection.all": { "zh-CN": "全选当前结果", "en-US": "Select visible" }, "selection.clear": { "zh-CN": "清空", "en-US": "Clear" },
+  "selection.count": { "zh-CN": "已选 {count} 项", "en-US": "{count} selected" }, "selection.toggle": { "zh-CN": "选择 {name}", "en-US": "Select {name}" },
+  "selection.favorite": { "zh-CN": "收藏所选", "en-US": "Favorite selected" }, "selection.delete": { "zh-CN": "删除所选", "en-US": "Delete selected" },
+  "selection.deleteCopy": { "zh-CN": "确定删除所选 {count} 个画布吗？删除前请确认重要内容已有导出副本。", "en-US": "Delete {count} selected canvases? Export important work before deleting." },
+  "selection.partial": { "zh-CN": "部分画布未能处理，未完成的项目仍保持选中。", "en-US": "Some canvases could not be processed. Unfinished items remain selected." },
   "quick.title": { "zh-CN": "快速开始", "en-US": "Quick Start" }, "quick.desc": { "zh-CN": "从常用结构开始创作", "en-US": "Start from a familiar structure" },
   "delete.title": { "zh-CN": "删除画布", "en-US": "Delete Canvas" }, "delete.copy": { "zh-CN": "确定删除「{name}」吗？该画布文件会从画布存储中移除。", "en-US": "Delete “{name}”? Its file will be removed from canvas storage." }, "delete.deleting": { "zh-CN": "删除中", "en-US": "Deleting" },
 });
@@ -191,6 +203,15 @@ function HomeIcon({ type }: { type: "search" | "more" | "plus" | "chevron" | "bl
 
 export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
   const { locale, plural, t } = useMessages(COPY);
+  const creatingRef = useRef(false);
+  const menuTriggerRef = useRef<HTMLElement | null>(null);
+  const [menuPoint, setMenuPoint] = useState({ x: 0, y: 0 });
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [batchDelete, setBatchDelete] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const batchBusyRef = useRef(false);
+  const batchDeleteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [canvases, setCanvases] = useState<CanvasEntry[]>([]);
   const [storageDir, setStorageDir] = useState("");
   const [loading, setLoading] = useState(true);
@@ -298,8 +319,11 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
       setOpenMenuId(null);
       setSortMenuOpen(false);
     };
+    const closeOnScroll = (event: Event) => { if (!(event.target instanceof HTMLElement) || !event.target.closest(".canvas-home-floating-menu")) closeMenu(); };
     window.addEventListener("pointerdown", closeMenu);
-    return () => window.removeEventListener("pointerdown", closeMenu);
+    window.addEventListener("blur", closeMenu);
+    window.addEventListener("scroll", closeOnScroll, true);
+    return () => { window.removeEventListener("pointerdown", closeMenu); window.removeEventListener("blur", closeMenu); window.removeEventListener("scroll", closeOnScroll, true); };
   }, [openMenuId, sortMenuOpen]);
 
   const openCanvas = useCallback((canvasId?: string) => {
@@ -311,22 +335,34 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
     onOpenCanvas(canvasId);
   }, [onOpenCanvas]);
 
-  const createCanvas = useCallback(async (name: string) => {
+  const createCanvas = useCallback(async (name: string, template: HomeTemplateKind = "blank") => {
+    if (creatingRef.current) return;
     if (!bridge) {
       openCanvas();
       return;
     }
+    creatingRef.current = true;
+    let createdDraft: CanvasEntry | null = null;
     setCreatingName(name);
     setMessage("");
     try {
+      const graph = buildHomeTemplate(template, locale === "en-US");
       const created = await bridge.createCanvas(name);
+      createdDraft = created;
+      if (template !== "blank") {
+        const original = await bridge.loadCanvas(created.id);
+        await bridge.saveCanvas({ ...original, schemaVersion: 1, nodes: graph.nodes, edges: graph.edges, updatedAt: new Date().toISOString() });
+      }
       openCanvas(created.id);
     } catch {
-      setMessage(t("error.create"));
+      // Keep a newly-created draft discoverable if seeding fails; never claim it is a populated template.
+      if (createdDraft) setCanvases(items => [createdDraft!, ...items.filter(item => item.id !== createdDraft!.id)]);
+      setMessage(t(createdDraft ? "error.templateSeed" : "error.create"));
     } finally {
+      creatingRef.current = false;
       setCreatingName(null);
     }
-  }, [bridge, openCanvas, t]);
+  }, [bridge, locale, openCanvas, t]);
 
   const startRename = useCallback((canvas: CanvasEntry) => {
     setOpenMenuId(null);
@@ -439,6 +475,7 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (batchDelete) { if (!batchBusy) setBatchDelete(false); return; }
       if (deleteTarget) {
         if (!deletingId) setDeleteTarget(null);
         return;
@@ -449,11 +486,51 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
         return;
       }
       if (renamingId && !renamingSaving) cancelRename();
+      else if (selectionMode && !batchBusy) { setSelectionMode(false); setSelectedIds(new Set()); }
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [cancelRename, deleteTarget, deletingId, openMenuId, renamingId, renamingSaving, sortMenuOpen]);
+  }, [cancelRename, deleteTarget, deletingId, openMenuId, renamingId, renamingSaving, sortMenuOpen, batchDelete, batchBusy, selectionMode]);
 
+  const toggleSelection = (id: string) => { if (!batchBusyRef.current) setSelectedIds(current => toggleHomeSelection(current, id)); };
+  const showMenu = (canvas: CanvasEntry, x: number, y: number, trigger: HTMLElement) => {
+    if (batchBusyRef.current) return;
+    menuTriggerRef.current = trigger; setMenuPoint({ x, y }); setSortMenuOpen(false); setOpenMenuId(canvas.id);
+  };
+  const activateCanvas = (id: string) => { if (!batchBusyRef.current) { if (selectionMode) toggleSelection(id); else openCanvas(id); } };
+  const runBatch = async (action: "favorite" | "delete") => {
+    if (!bridge || batchBusyRef.current) return;
+    const targets = canvases.filter(canvas => selectedIds.has(canvas.id));
+    if (!targets.length) return;
+    batchBusyRef.current = true; setBatchBusy(true); setMessage("");
+    const completed = new Set<string>();
+    for (const canvas of targets) {
+      try {
+        if (action === "delete") await bridge.deleteCanvas(canvas.id);
+        else if (!canvasFavorites.byId.has(canvas.id)) {
+          const result = await canvasFavorites.toggle(canvas.id, canvas.name || t("untitled"));
+          if (result.cancelled) continue;
+        }
+        completed.add(canvas.id);
+      } catch { /* Preserve incomplete selection; do not imply success. */ }
+    }
+    if (action === "delete") setCanvases(items => items.filter(item => !completed.has(item.id)));
+    setSelectedIds(ids => new Set([...ids].filter(id => !completed.has(id))));
+    setBatchDelete(false); setBatchBusy(false); batchBusyRef.current = false;
+    if (completed.size !== targets.length) setMessage(t("selection.partial"));
+  };
+  useEffect(() => {
+    const ids = new Set(canvases.map(canvas => canvas.id));
+    setSelectedIds(current => [...current].some(id => !ids.has(id)) ? new Set([...current].filter(id => ids.has(id))) : current);
+  }, [canvases]);
+
+  useEffect(() => {
+    if (!batchDelete) return;
+    const trigger = batchDeleteTriggerRef.current;
+    return () => { if (trigger?.isConnected) trigger.focus({ preventScroll: true }); };
+  }, [batchDelete]);
+
+  const menuCanvas = canvases.find(canvas => canvas.id === openMenuId);
   return (
     <section id="page-canvas" className="canvas-home-page">
       <div className="canvas-home-inner">
@@ -485,6 +562,7 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
                 <p>{loading ? t("recent.loading") : plural(canvases.length, { one: "summary.count.one", other: "summary.count.other" })}</p>
               </div>
               <div className="canvas-home-head-actions">
+                <button type="button" aria-pressed={selectionMode} disabled={batchBusy} onClick={() => { setSelectionMode(value => !value); setSelectedIds(new Set()); }}>{t(selectionMode ? "selection.done" : "selection.start")}</button>
                 <button onClick={() => void createCanvas(t("untitled"))} disabled={creatingName !== null}>{creatingName ? t("action.creating") : t("action.new")}</button>
                 <button
                   type="button"
@@ -548,6 +626,13 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
                 ) : null}
               </div>
             </div>
+            {selectionMode && <div className="canvas-home-selection-bar" role="toolbar" aria-label={t("selection.start")}>
+              <span aria-live="polite">{t("selection.count", { count: selectedIds.size })}</span>
+              <button disabled={batchBusy} onClick={() => setSelectedIds(new Set(visibleCanvases.map(canvas => canvas.id)))}>{t("selection.all")}</button>
+              <button disabled={batchBusy || !selectedIds.size} onClick={() => setSelectedIds(new Set())}>{t("selection.clear")}</button>
+              <button disabled={batchBusy || !selectedIds.size} onClick={() => void runBatch("favorite")}>{t("selection.favorite")}</button>
+              <button className="danger" disabled={batchBusy || !selectedIds.size} ref={batchDeleteTriggerRef} onClick={() => setBatchDelete(true)}>{t("selection.delete")}</button>
+            </div>}
             <div className="canvas-home-list">
               <button
                 className="canvas-home-new-card"
@@ -579,8 +664,10 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
                   const isRenaming = renamingId === canvas.id;
                   const showCover = !!cover && !failedCovers.has(coverKey);
                   return (
-                    <article key={canvas.id} className="canvas-home-list-card">
-                      <button className="canvas-home-list-open" onClick={() => openCanvas(canvas.id)} aria-label={t("action.openNamed", { name: canvas.name || t("untitled") })}>
+                    <article key={canvas.id} className={`canvas-home-list-card${selectedIds.has(canvas.id) ? " is-selected" : ""}`}
+                      onContextMenu={event => { if ((event.target as HTMLElement).closest("input")) return; event.preventDefault(); showMenu(canvas, event.clientX, event.clientY, event.currentTarget.querySelector("button")!); }}>
+                      {selectionMode && <button type="button" className="canvas-home-select-check" role="checkbox" aria-checked={selectedIds.has(canvas.id)} aria-label={t("selection.toggle", { name: canvas.name || t("untitled") })} disabled={batchBusy} onClick={() => toggleSelection(canvas.id)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8 3 3 6-7" /></svg></button>}
+                      <button className="canvas-home-list-open" onClick={() => activateCanvas(canvas.id)} aria-label={t("action.openNamed", { name: canvas.name || t("untitled") })}>
                         <span className={`canvas-home-thumb${showCover ? " has-media" : ""}`}>
                           {showCover && cover?.kind === "image" ? (
                             <img
@@ -627,7 +714,7 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
                         ) : (
                           <div className="canvas-home-card-heading">
                             <div className="canvas-home-card-copy">
-                              <button className="canvas-home-list-title" onClick={() => openCanvas(canvas.id)} title={canvas.name}>
+                              <button className="canvas-home-list-title" onClick={() => activateCanvas(canvas.id)} title={canvas.name}>
                                 {canvas.name || t("untitled")}
                               </button>
                               <div className="canvas-home-list-meta">
@@ -641,31 +728,14 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
                             >
                               <button
                                 className="canvas-home-card-menu-trigger"
-                                onClick={() => setOpenMenuId((current) => current === canvas.id ? null : canvas.id)}
+                                onClick={event => { if (openMenuId === canvas.id) { setOpenMenuId(null); return; } const rect = event.currentTarget.getBoundingClientRect(); showMenu(canvas, rect.right - 150, rect.bottom + 6, event.currentTarget); }}
+                                aria-haspopup="menu"
                                 aria-label={t("menu.aria", { name: canvas.name || t("untitled") })}
                                 aria-expanded={openMenuId === canvas.id}
                               >
                                 <HomeIcon type="more" />
                               </button>
-                              {openMenuId === canvas.id ? (
-                                <div className="canvas-home-card-menu">
-                                  <button onClick={() => { setOpenMenuId(null); openCanvas(canvas.id); }}>{t("action.open")}</button>
-                                  <button onClick={() => {
-                                    setOpenMenuId(null);
-                                    void canvasFavorites.toggle(canvas.id, canvas.name || t("untitled"))
-                                      .then((result) => {
-                                        if (!result.cancelled) setMessage(result.favorited ? t("favorite.added") : t("favorite.removed"));
-                                      })
-                                      .catch(() => setMessage(t("favorite.error")));
-                                  }} aria-pressed={canvasFavorites.byId.has(canvas.id)}>
-                                    <FavoriteGlyph filled={canvasFavorites.byId.has(canvas.id)} />
-                                    {canvasFavorites.byId.has(canvas.id) ? t("favorite.remove") : t("favorite.add")}
-                                  </button>
-                                  <button onClick={() => { setOpenMenuId(null); startRename(canvas); }}>{t("action.rename")}</button>
-                                  <button disabled={exportingId !== null} onClick={() => { setOpenMenuId(null); void exportCanvas(canvas); }}>{t("action.export")}</button>
-                                  <button className="danger" onClick={() => { setOpenMenuId(null); setDeleteTarget(canvas); }}>{t("action.delete")}</button>
-                                </div>
-                              ) : null}
+
                             </div>
                           </div>
                         )}
@@ -722,7 +792,7 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
                   <button
                     key={template.name}
                     className={`canvas-home-template-card tone-${index + 1}`}
-                    onClick={() => void createCanvas(template.name)}
+                    onClick={() => void createCanvas(template.name, template.icon)}
                     disabled={creatingName !== null}
                   >
                     <span className="canvas-home-template-icon">
@@ -740,6 +810,27 @@ export default function CanvasHomePage({ onOpenCanvas }: CanvasHomePageProps) {
         </div>
       </div>
 
+      {menuCanvas ? createPortal(<ContextMenuSurface x={menuPoint.x} y={menuPoint.y} placementKey={menuCanvas.id} className="canvas-home-card-menu canvas-home-floating-menu" label={t("menu.aria", { name: menuCanvas.name || t("untitled") })} returnFocusTo={menuTriggerRef.current} onRequestClose={() => { setOpenMenuId(null); menuTriggerRef.current?.focus({ preventScroll: true }); }}>
+        <button role="menuitem" data-context-menu-item="root" onClick={() => { setOpenMenuId(null); openCanvas(menuCanvas.id); }}>{t("action.open")}</button>
+        <button role="menuitem" data-context-menu-item="root" onClick={() => { setOpenMenuId(null); void canvasFavorites.toggle(menuCanvas.id, menuCanvas.name || t("untitled")).catch(() => setMessage(t("favorite.error"))); }}><FavoriteGlyph filled={canvasFavorites.byId.has(menuCanvas.id)} />{t(canvasFavorites.byId.has(menuCanvas.id) ? "favorite.remove" : "favorite.add")}</button>
+        <button role="menuitem" data-context-menu-item="root" onClick={() => startRename(menuCanvas)}>{t("action.rename")}</button>
+        <button role="menuitem" data-context-menu-item="root" onClick={() => { setSelectionMode(true); toggleSelection(menuCanvas.id); setOpenMenuId(null); }}>{t("selection.start")}</button>
+        <button role="menuitem" data-context-menu-item="root" disabled={exportingId !== null} onClick={() => { setOpenMenuId(null); void exportCanvas(menuCanvas); }}>{t("action.export")}</button>
+        <button role="menuitem" data-context-menu-item="root" className="danger" onClick={() => { setOpenMenuId(null); setDeleteTarget(menuCanvas); }}>{t("action.delete")}</button>
+      </ContextMenuSurface>, document.body) : null}
+      {batchDelete ? <div className="canvas-home-dialog-backdrop" onClick={() => { if (!batchBusy) setBatchDelete(false); }}>
+        <div className="canvas-home-dialog" role="dialog" aria-modal="true" aria-label={t("selection.delete")} aria-busy={batchBusy} onClick={event => event.stopPropagation()} onKeyDown={event => {
+            if (event.key !== "Tab") return;
+            const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+            if (!controls.length) { event.preventDefault(); return; }
+            const first = controls[0], last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+          }}>
+          <h3>{t("selection.delete")}</h3><p>{t("selection.deleteCopy", { count: selectedIds.size })}</p>
+          <div className="canvas-home-dialog-actions"><button autoFocus disabled={batchBusy} onClick={() => setBatchDelete(false)}>{t("action.cancel")}</button><button className="danger" disabled={batchBusy} onClick={() => void runBatch("delete")}>{t(batchBusy ? "delete.deleting" : "action.delete")}</button></div>
+        </div>
+      </div> : null}
       {deleteTarget ? (
         <div className="canvas-home-dialog-backdrop" onClick={() => { if (!deletingId) setDeleteTarget(null); }}>
           <div className="canvas-home-dialog" onClick={(event) => event.stopPropagation()} aria-busy={deletingId === deleteTarget.id}>

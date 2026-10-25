@@ -1,3 +1,5 @@
+import PhoneAuthorizationChoice, { PHONE_AUTHORIZATION_COPY } from "./PhoneAuthorizationChoice";
+import type { CompanionAuthorizationMode } from "../../core/services/companionGateway";
 import PhoneAccessManager from "./PhoneAccessManager";
 import { companionInterfaceHint, orderedCompanionInterfaces, selectedCompanionAddress } from "../../core/services/companionAccess";
 import { useEffect, useRef, useState } from "react";
@@ -62,8 +64,8 @@ export const COMPANION_COPY = defineMessages({
   "devices.revoke": { "zh-CN": "撤销", "en-US": "Revoke" },
   "devices.lshRemote": { "zh-CN": "LSH 远程", "en-US": "LSH remote" },
   "devices.lshRemoteHint": { "zh-CN": "允许此设备在手机上打开本机的 LSH 会话界面", "en-US": "Allow this device to open this desktop's LSH session on the phone" },
-  "devices.services": { "zh-CN": "跨端服务权限（默认关闭）", "en-US": "Cross-device service access (off by default)" },
-  "devices.servicesHint": { "zh-CN": "只对这台已配对设备和显示的范围生效；关闭后新请求立即被拒绝。", "en-US": "Applies only to this paired device and the shown scope; new requests are denied when turned off." },
+  "devices.services": { "zh-CN": "跨端服务权限", "en-US": "Cross-device service access" },
+  "devices.servicesHint": { "zh-CN": "信任模式下，开关对所有已保存及未来的库生效；手动模式按显示的库授权。关闭后新请求立即被拒绝。", "en-US": "In Trusted mode, switches apply to every saved and future library. Manual mode uses the shown scope. New requests are denied when turned off." },
   "devices.materialRead": { "zh-CN": "读取素材库", "en-US": "Read materials" },
   "devices.materialWrite": { "zh-CN": "修改素材元数据/移除管理记录", "en-US": "Edit metadata / remove managed records" },
   "devices.materialIngest": { "zh-CN": "导入素材", "en-US": "Import materials" },
@@ -167,6 +169,8 @@ export default function CompanionGatewayPanel() {
 
 function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentationStore }) {
   const { locale, t } = useMessages(COMPANION_COPY);
+  const { t: auth } = useMessages(PHONE_AUTHORIZATION_COPY);
+  const [authorizationMode, setAuthorizationMode] = useState<CompanionAuthorizationMode | null>(null);
   const { state, owner, seconds: secondsRemaining } = useCompanionView(store, true);
   const { status, devices, audit, services: serviceGrants, busy } = state;
   const interfaces = orderedCompanionInterfaces(state.interfaces);
@@ -186,7 +190,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
   const startGateway = () => { if (selectedAddress) void store.run("start", client => client.start(selectedAddress)); };
   const stopGateway = () => void store.run("stop", client => client.stop());
   const restartGateway = () => { if (selectedAddress) void store.run("restart", client => client.restart(selectedAddress)); };
-  const issuePairing = (replace: boolean) => { setPairViewOpen(true); void store.issuePairing(owner, replace); };
+  const issuePairing = (replace: boolean) => { if (authorizationMode) void store.issuePairing(owner, replace, authorizationMode); };
   const closePairing = async () => {
     if (closingPairing) return;
     setClosingPairing(true);
@@ -237,7 +241,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
         </span>
       </div>
 
-      {error && <div className="companion-inline-error" role="alert">{error}</div>}
+            {error && <div className="companion-inline-error" role="alert">{error}</div>}
       {resumeFailed && <div className="companion-inline-error" role="alert">{t("gateway.resumeFailed")} {gatewayErrorMessage(status, t)}</div>}
 
       <div className="companion-console-grid">
@@ -286,7 +290,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
               <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy) || !selectedAddress || status?.state === "recovery-required" || status?.state === "stopping"} onClick={startGateway}>{resumeFailed ? t("gateway.retry") : t("gateway.start")}</button>
             ) : (
               <>
-                <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy)} onClick={() => issuePairing(false)}>{t("gateway.pair")}</button>
+                <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy)} onClick={() => { setAuthorizationMode(null); setPairViewOpen(true); }}>{t("gateway.pair")}</button>
                 <button className="settings-btn" type="button" disabled={Boolean(busy)} onClick={restartGateway}>{t("gateway.restart")}</button>
                 <button className="settings-btn settings-btn-danger" type="button" disabled={Boolean(busy)} onClick={stopGateway}>{t("gateway.stop")}</button>
               </>
@@ -347,7 +351,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
                   {!device.revokedAt && (state.grantErrors[device.deviceId] || state.grantErrors[device.deviceId + ":lsh"])
                     ? <small className="companion-inline-error" role="alert">{gatewayErrorMessage(state.grantErrors[device.deviceId] || state.grantErrors[device.deviceId + ":lsh"], t)}</small> : null}
                   {!device.revokedAt && services && (
-                    <div className="companion-service-permissions"><PhoneAccessManager key={device.deviceId} store={store} deviceId={device.deviceId} /><details>
+                    <details className="companion-service-permissions"><summary>{t("devices.services")}</summary><PhoneAccessManager key={device.deviceId} store={store} deviceId={device.deviceId} />{!services.savedLibraries && services.authorizationMode !== "trusted" && <details>
                       <summary>{t("devices.services")}</summary>
                       <small>{t("devices.servicesHint")}</small>
                       <div className="companion-service-permission-list">
@@ -362,7 +366,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
                           </button>;
                         })}
                       </div>
-                    </details></div>
+                    </details>}</details>
                   )}
                 </div>
               );
@@ -393,6 +397,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
             </button>
             <div className="companion-pairing-copy"><span className="companion-kicker">ONE-TIME PAIRING</span><h3 id="companion-pair-title">{t("pair.title")}</h3><p>{t("pair.description")}</p></div>
             {error && <div className="companion-inline-error" role="alert">{error}</div>}
+            {!pairing && busy !== "pair" && <PhoneAuthorizationChoice value={authorizationMode} onChange={setAuthorizationMode} disabled={Boolean(busy) || closingPairing} />}
             {pairing ? <><div className="companion-qr-frame" aria-label={t("pair.qr")}>
               <svg viewBox={`-4 -4 ${pairing.qrSize + 8} ${pairing.qrSize + 8}`} role="img" aria-label={t("pair.qr")} shapeRendering="crispEdges">
                 <rect x="-4" y="-4" width={pairing.qrSize + 8} height={pairing.qrSize + 8} rx="2" fill="white" />
@@ -400,7 +405,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
               </svg>
             </div>
             <div className="companion-pairing-meta"><b>{pairing.ip}:{pairing.port}</b><span>{t("pair.expires", { seconds: secondsRemaining })}</span></div></> : busy === "pair" || closingPairing ? <p role="status">{t("state.loading")}</p> : null}
-            <p className="companion-pairing-hint">{t("pair.copyHint")}</p>
+            {pairing && <p className="companion-pairing-hint">{t("pair.copyHint")}</p>}
             {pairing && copyState?.pairingId === pairing.pairingId && copyState.state === "copied" && (
               <p className="companion-pairing-copied" role="status">{t("pair.copied")}</p>
             )}
@@ -408,9 +413,9 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
               <p className="companion-inline-error" role="alert">{t("pair.copyFailed")}</p>
             )}
             <div className="companion-dialog-actions">
-              <button className="settings-btn" type="button" disabled={Boolean(busy) || closingPairing || !pairing} onClick={() => void copyPairingInfo()}>{t("pair.copy")}</button>
-              <button className="settings-btn" type="button" disabled={Boolean(busy) || closingPairing} onClick={() => issuePairing(true)}>{t("pair.regenerate")}</button>
-              <button className="settings-btn settings-btn-primary" type="button" disabled={closingPairing} onClick={() => void closePairing()}>{t("pair.done")}</button>
+              {pairing && <button className="settings-btn" type="button" disabled={Boolean(busy) || closingPairing || !pairing} onClick={() => void copyPairingInfo()}>{t("pair.copy")}</button>}
+              <button className={`settings-btn${pairing ? "" : " settings-btn-primary"}`} type="button" disabled={Boolean(busy) || closingPairing || !authorizationMode} onClick={() => issuePairing(Boolean(pairing))}>{pairing ? t("pair.regenerate") : auth(authorizationMode === "trusted" ? "pairTrusted" : authorizationMode === "manual" ? "pairManual" : "pairChoose")}</button>
+              <button className={`settings-btn${pairing ? " settings-btn-primary" : ""}`} type="button" disabled={closingPairing} onClick={() => void closePairing()}>{t(pairing ? "pair.done" : "revoke.cancel")}</button>
             </div>
           </div>
         </div>

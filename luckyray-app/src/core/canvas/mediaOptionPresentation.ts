@@ -1,4 +1,5 @@
-import { effectiveCanvasImageProtocol, isTwelveMediaHost, twelveModelSpec } from './mediaCapabilities';
+import agnesImageLegacySpecs from "./agnesImageLegacySpecs.json" with {type:"json"};
+import { effectiveCanvasImageProtocol, isTwelveMediaHost, twelveModelSpec, nativeImageSpec } from './mediaCapabilities';
 import type { MediaCapabilities } from './mediaCapabilities';
 import type { CanvasMediaProfile } from '../services/canvasMediaProfiles';
 
@@ -13,26 +14,41 @@ export function mediaParameterKind(kind: 'image' | 'video', profile?: CanvasMedi
 
 export function mediaParameterLabel(value: string, parameter: 'resolution' | 'quality'): string {
   if (parameter === 'resolution') {
+    if (value === '512') return '512px';
     // These are the exact existing Agnes native size mappings. Persisted values stay unchanged.
     return ({ '标准': '1K', '高清': '2K', '超清': '4K' } as Record<string,string>)[value] || value;
   }
   return ({low:'低',medium:'标准',high:'高',auto:'自动',xhigh:'更高',max:'最高',standard:'标准',hd:'高'} as Record<string,string>)[value] || value;
 }
 
+/** Omit absent controls and their punctuation/units, without inventing wire defaults. */
+export function videoParameterSummary(options: {aspect?: string; quality?: string; duration?: number; sound?: string}): string {
+  return [options.aspect?.trim(), options.quality?.trim(),
+    typeof options.duration === 'number' && Number.isFinite(options.duration) && options.duration > 0 ? `${options.duration}s` : '',
+    options.sound?.trim()].filter(Boolean).join(' · ');
+}
+
 /** Pixel readout for existing fixed-size GPT/DALL-E request mappings, not a fabricated K selector. */
 export function mediaPixelSize(kind: 'image' | 'video', profile: CanvasMediaProfile | null | undefined, model: string, aspect: string, resolution?:string): string | undefined {
   if (kind !== 'image') return undefined;
   const protocol = effectiveCanvasImageProtocol(profile?.baseUrl || '', model, profile?.imageProtocol);
+  const legacy=(agnesImageLegacySpecs as Record<string,{sizes:Record<string,string>}>)[model];
+  if(legacy && (!protocol || protocol === "agnes"))return legacy.sizes[aspect]?.replace("x"," × ");
   const spec = twelveModelSpec(model);
   if (spec?.family === 'gpt' && (protocol === '12ai-task' || isTwelveMediaHost(profile?.baseUrl || '') && protocol === 'openai-image')) {
     if (aspect === 'auto') return '自动';
     return (resolution ? spec.resolutionSizes?.[resolution]?.[aspect] : spec.sizes?.[aspect])?.replace('x',' × ');
   }
+  const native=nativeImageSpec(model,protocol);
+  if(native?.family==='gpt') {
+    if(aspect==='auto')return '自动';
+    return (resolution ? native.resolutionSizes?.[resolution]?.[aspect] : native.sizes?.[aspect])?.replace('x',' × ');
+  }
   if (protocol !== 'openai-image') return undefined;
   if (model.includes('dall-e-2')) return '1024 × 1024';
   const horizontal = model.includes('dall-e-3') ? '1792 × 1024' : '1536 × 1024';
   const vertical = model.includes('dall-e-3') ? '1024 × 1792' : '1024 × 1536';
-  return ['3:2','16:9','4:3'].includes(aspect) ? horizontal : ['2:3','9:16','3:4'].includes(aspect) ? vertical : '1024 × 1024';
+  return ['7:4','3:2','16:9','4:3'].includes(aspect) ? horizontal : ['4:7','2:3','9:16','3:4'].includes(aspect) ? vertical : '1024 × 1024';
 }
 
 export function aspectFrame(value: string): {width:number;height:number;x:number;y:number;automatic:boolean} {

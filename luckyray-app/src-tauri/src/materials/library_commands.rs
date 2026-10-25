@@ -136,6 +136,13 @@ pub(crate) enum LibraryAction {
         path: String,
         options: MaterialImportOptions,
     },
+    LibraryWatchRoot,
+    ImportLibraryRoot {
+        #[serde(rename = "expectedRoot")] expected_root: String,
+        #[serde(default)] paths: Option<Vec<String>>,
+    },
+    WatchLibraryRoot { #[serde(rename = "expectedRoot")] expected_root: String, channel: tauri::ipc::JavaScriptChannelId },
+    UnwatchLibraryRoot { token: String },
     Update {
         id: String,
         patch: MaterialAssetPatch,
@@ -592,6 +599,19 @@ pub(crate) fn execute_library_request_with_progress(
                 .map_err(error)?
                 .value,
         ),
+        LibraryWatchRoot => encode(c.library_watch_root().map_err(error)?.to_string_lossy()),
+        WatchLibraryRoot { .. } | UnwatchLibraryRoot { .. } => Err("library-watch-native-caller-required".into()),
+        ImportLibraryRoot { expected_root, paths } => {
+            let previous_version = c.read_change().map_err(error)?.version;
+            let (result, deferred, elapsed) = c.import_stable_library_files(Path::new(&expected_root), paths.as_deref()).map_err(error)?;
+            let mut value = encode(result.value)?;
+            value["changed"] = json!(result.change.is_some());
+            value["change"] = json!(result.change);
+            value["previousVersion"] = json!(previous_version);
+            value["deferredPaths"] = json!(deferred);
+            value["elapsedMs"] = json!(elapsed);
+            Ok(value)
+        },
         Update { id, patch } => encode(
             c.update_asset(&id, patch, "library-ui-update")
                 .map_err(error)?

@@ -1,3 +1,4 @@
+import { SelectionCheck } from "../../components/SelectionCheck";
 // D73: 标签详情组件
 // 显示选中标签关联的素材和笔记网格。
 // D124: 改用 services/tags + services/notes + services/materials 包装
@@ -447,10 +448,8 @@ function AssetCard({ asset, selected, onSelect, onRemove, onContextMenu, onClick
   const isVideo = (asset.kind || "").toLowerCase() === "video";
   const previewTarget = resolveMaterialPreviewTarget(asset);
   return (
-    <div className="tag-detail-card" tabIndex={0} aria-haspopup="menu" onClick={onClick} onContextMenu={onContextMenu} title={asset.name}>
-      <label className="tag-detail-card-check" onClick={(event) => event.stopPropagation()}>
-        <input type="checkbox" checked={selected} onChange={onSelect} />
-      </label>
+    <div className={`tag-detail-card${selected ? " selected" : ""}`} tabIndex={0} aria-haspopup="menu" onClick={onClick} onContextMenu={onContextMenu} title={asset.name}>
+      <SelectionCheck className="tag-detail-card-check" checked={selected} label={t(selected ? "action.unselect" : "action.select")} onClick={(event) => { event.stopPropagation(); onSelect(); }} />
       <div className="placeholder">
         {previewTarget?.kind === "image" ? (
           <img

@@ -36,3 +36,9 @@ export function selectedCompanionAddress(current: string, interfaces: readonly L
   if (status?.state === "running" || status?.state === "resume-failed") return status.bindAddress || "";
   return interfaces.some(item => item.address === current) ? current : orderedCompanionInterfaces(interfaces)[0]?.address || "";
 }
+
+/** UI readback follows the native effective policy, including future-library OFF overrides. */
+export function companionGrantEnabled(state: CompanionServiceGrantState, grant: CompanionGrant): boolean {
+  if (state.authorizationMode === "trusted") return !state.serviceOverrides?.some(off => off.grantClass === grant.grantClass && off.scopeKind === grant.scopeKind);
+  return state.grants.some(existing => sameCompanionGrant(existing, grant));
+}

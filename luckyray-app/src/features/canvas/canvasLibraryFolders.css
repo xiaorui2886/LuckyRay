@@ -1,0 +1,21 @@
+.canvas-library-destination-backdrop { z-index: 1500; }
+.canvas-library-destination-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); display: flex; flex-direction: column; }
+.canvas-library-destination-dialog .canvas-modal-body { overflow: auto; min-height: 0; }
+.canvas-library-name-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; max-height: 80px; overflow: auto; }
+.canvas-library-name-summary > span { max-width: 100%; padding: 5px 9px; border-radius: 6px; background: var(--theme-hover); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-library-breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 10px 0; border-bottom: 1px solid var(--theme-border-subtle); font-size: 11px; }
+.canvas-library-breadcrumbs > span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.canvas-library-breadcrumbs button { padding: 4px 6px; color: inherit; background: transparent; border: 0; border-radius: 5px; font: inherit; cursor: pointer; overflow-wrap: anywhere; text-align: left; }
+.canvas-library-breadcrumbs button[aria-current] { background: var(--theme-selected); }
+.canvas-library-folder-list { min-height: 140px; max-height: min(36vh, 300px); overflow: auto; padding: 7px 0; }
+.canvas-library-folder-row { width: 100%; display: flex; gap: 10px; align-items: center; padding: 11px 9px; background: transparent; color: inherit; border: 0; border-radius: 7px; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.canvas-library-folder-row > span:nth-child(2) { flex: 1; overflow-wrap: anywhere; }
+.canvas-library-folder-row svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.5; flex-shrink: 0; opacity: .7; }
+.canvas-library-folder-row:hover, .canvas-library-breadcrumbs button:hover { background: var(--theme-hover); }
+.canvas-library-folder-browser button:focus-visible, .canvas-library-destination-dialog button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.canvas-library-folder-up, .canvas-library-folder-empty { opacity: .65; }
+.canvas-library-folder-empty { padding: 12px 9px; font-size: 11px; }
+.canvas-library-destination-path { font-size: 11px; line-height: 1.5; opacity: .75; overflow-wrap: anywhere; }
+.canvas-library-folder-error { font-size: 12px; color: #dc6b65; }
+.canvas-library-folder-error button { margin-left: 10px; }
+.canvas-library-destination-dialog .canvas-modal-button:disabled { opacity: .45; cursor: not-allowed; }

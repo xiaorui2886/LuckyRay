@@ -1,6 +1,8 @@
+import PhoneAuthorizationChoice, { PHONE_AUTHORIZATION_COPY } from "./PhoneAuthorizationChoice";
+import type { CompanionAuthorizationMode } from "../../core/services/companionGateway";
 import PhoneAccessManager from "./PhoneAccessManager";
 import { companionInterfaceHint, orderedCompanionInterfaces, selectedCompanionAddress } from "../../core/services/companionAccess";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { defineMessages, useMessages } from "../../core/i18n/index";
 import { useApplicationModalSurface } from "../../app/applicationModalIsolation";
 import { companionDeviceDisplayLabel, companionGrantKey, companionOnlineCount, type CompanionPresentationStore } from "../../core/services/companionPresentationStore";
@@ -25,7 +27,7 @@ const COPY = defineMessages({
   "quick.vault": { "zh-CN": "当前知识库 · {name}", "en-US": "Current vault · {name}" },
   "quick.noVault": { "zh-CN": "未打开知识库，知识权限暂不显示", "en-US": "No active vault; vault permissions are not shown" },
   "quick.local": { "zh-CN": "已授权；本机 LSH 暂不可用", "en-US": "Granted; desktop LSH is currently unavailable" },
-  "quick.paired": { "zh-CN": "配对成功。请选择所需权限，默认不自动授权。", "en-US": "Paired. Choose access explicitly; nothing is granted automatically." },
+  "quick.paired": { "zh-CN": "配对成功，已应用你确认的权限模式。可随时调整下方开关。", "en-US": "Paired with the access mode you confirmed. Adjust the switches below anytime." },
   "quick.expired": { "zh-CN": "配对码已过期，请重新生成", "en-US": "Pairing code expired. Generate a new one." },
   "quick.renewing": { "zh-CN": "正在更新配对码…", "en-US": "Renewing pairing code…" },
   "quick.switchOn": { "zh-CN": "已开启 · 点击关闭", "en-US": "On · Click to turn off" },
@@ -75,6 +77,8 @@ export default function PhoneConnectionDialog({ onClose, onMore }: { onClose: ()
 function PhoneConnectionContents({ store }: { store: CompanionPresentationStore }) {
   const { state, owner, seconds } = useCompanionView(store);
   const { t } = useMessages(COPY);
+  const { t: auth } = useMessages(PHONE_AUTHORIZATION_COPY);
+  const [authorizationMode, setAuthorizationMode] = useState<CompanionAuthorizationMode | null>(null);
   const [address, setAddress] = useState("");
   const interfaces = orderedCompanionInterfaces(state.interfaces);
   const selectedAddress = selectedCompanionAddress(address, interfaces, state.status);
@@ -86,30 +90,7 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
   const services = device ? state.services[device.deviceId] : undefined, lsh = device ? state.lsh[device.deviceId] : undefined;
   const count = companionOnlineCount(state);
   const presentationError = state.error || (state.pairingOwner === owner ? state.pairingError : null);
-  const preparedOnOpen = useRef(false);
-  const renewedExpiry = useRef(0);
-  const expiry = state.pairingExpiry?.owner === owner ? state.pairingExpiry : null;
-  const preparing = Boolean(expiry || state.pairingOwner === owner && state.pairingState === "waiting" && !pairing);
-  // Opening requests a QR and renewal of this view's successfully retired expired
-  // ticket. Polls, manual close, failures and another view's expiry are not requests.
-  useEffect(() => {
-    let cancelled = false;
-    const prepare = () => {
-      // Defer past owner registration/StrictMode replay; closing before issuance is read-only.
-      void Promise.resolve().then(() => {
-        const current = store.getSnapshot(), expired = current.pairingExpiry;
-        if (cancelled || document.visibilityState === "hidden" || current.status?.state !== "running" || current.loading || current.busy || current.error || current.pairingOwner || companionOnlineCount(current) === null) return;
-        if (expired) {
-          if (expired.owner !== owner || !expired.ready || renewedExpiry.current === expired.epoch) return;
-          renewedExpiry.current = expired.epoch;
-        } else if (preparedOnOpen.current) return;
-        preparedOnOpen.current = true;
-        void store.issuePairing(owner);
-      });
-    };
-    prepare(); document.addEventListener("visibilitychange", prepare);
-    return () => { cancelled = true; document.removeEventListener("visibilitychange", prepare); };
-  }, [store, owner, running, state.loading, state.busy, state.error, state.pairingOwner, state.pairingExpiry, count]);
+  const preparing = Boolean(state.pairingOwner === owner && state.pairingState === "waiting" && !pairing);
   const statusText = count === null ? t("quick.unknown") : count ? t("quick.online", { count }) : t("quick.offline");
   const localError = (error: unknown) => {
     const code = error && typeof error === "object" && "code" in error ? error.code : "";
@@ -143,10 +124,11 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
               <rect x="-4" y="-4" width={pairing.qrSize + 8} height={pairing.qrSize + 8} fill="white" />
               <path d={pairing.qrPath} fill="#101014" /></svg> : <span className="phone-qr-pending" aria-hidden="true">{t("quick.renewing")}</span>}</div>
               <b>{t("pair.title")}</b><p role="status">{preparing ? t("quick.renewing") : t("pair.expires", { seconds })}</p>
-              <div className="phone-pairing-actions"><button type="button" disabled={preparing || Boolean(state.busy)} onClick={() => void store.issuePairing(owner, true)}>{t("pair.regenerate")}</button>
+              <div className="phone-pairing-actions"><button type="button" disabled={preparing || Boolean(state.busy)} onClick={() => void store.issuePairing(owner, true, authorizationMode || "manual")}>{t("pair.regenerate")}</button>
                 <button type="button" onClick={() => void store.releasePairing(owner)}>{t("pair.close")}</button></div></>
-              : <><button type="button" className="primary phone-pair-button" disabled={Boolean(state.busy)} onClick={() => void store.issuePairing(owner)}>
-                  <PhoneIcon />{state.busy === "pair" ? t("state.loading") : t("gateway.pair")}</button>
+              : <><div className="phone-pairing-intro"><PhoneIcon /><h3>{auth("pairingTitle")}</h3><p>{auth("pairingHint")}</p></div>
+                <PhoneAuthorizationChoice value={authorizationMode} onChange={setAuthorizationMode} disabled={Boolean(state.busy)} /><button type="button" className="primary phone-pair-button" disabled={Boolean(state.busy) || !authorizationMode} onClick={() => authorizationMode && void store.issuePairing(owner, false, authorizationMode)}>
+                  <PhoneIcon />{state.busy === "pair" ? t("state.loading") : auth(authorizationMode === "trusted" ? "pairTrusted" : authorizationMode === "manual" ? "pairManual" : "pairChoose")}</button>
                 {!state.devices.length && <p>{t("quick.networkHint")}</p>}
                 {state.pairingState === "expired" && <p role="status">{t("quick.expired")}</p>}
                 {state.pairingState === "paired" && <p role="status">{t("quick.paired")}</p>}</>}
@@ -180,7 +162,7 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
           {/* Background checks retain confirmed controls; scope changes and read failures still clear them. */}
           {!services ? <p role="status">{state.grantErrors[device.deviceId] ? localError(state.grantErrors[device.deviceId]) : t("state.loading")}
             <button type="button" disabled={state.grantLoading[device.deviceId]} onClick={() => void store.readGrant(device.deviceId, true)}>{t("action.refresh")}</button></p>
-            : <><h4>{t("quick.materials")}</h4>
+            : !services.savedLibraries && services.authorizationMode !== "trusted" ? <><h4>{t("quick.materials")}</h4>
               {permission("content.read", "catalog", "", t("devices.materialRead"))}
               {permission("content.write", "catalog", "", t("devices.materialWrite"))}
               {permission("ingest.write", "catalog", "", t("devices.materialIngest"))}
@@ -190,7 +172,7 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
                 {permission("content.write", "vault", services.currentVault.vaultId, t("devices.vaultWrite", { name: services.currentVault.label }))}
                 {permission("ingest.write", "vault", services.currentVault.vaultId, t("devices.vaultIngest", { name: services.currentVault.label }))}
                 {permission("desktop.open", "vault", services.currentVault.vaultId, t("devices.vaultOpen", { name: services.currentVault.label }))}</>
-                : <p>{t("quick.noVault")}</p>}</>}
+                : <p>{t("quick.noVault")}</p>}</> : null}
           {lsh ? <div className="phone-permission phone-lsh-permission"><div><span title={t("devices.lshRemoteHint")}>{t("devices.lshRemote")}</span>
             {lsh.granted && !lsh.runtimeAvailable && <small>{t("quick.local")}</small>}
             {state.grantErrors[device.deviceId + ":lsh"] ? <small className="phone-error" role="alert">{localError(state.grantErrors[device.deviceId + ":lsh"])}</small> : null}</div>

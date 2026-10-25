@@ -8,7 +8,6 @@
 //! ```
 
 mod desktop_app_update;
-mod materials_mcp_gui;
 mod community_mcp_knowledge;
 mod community_mcp;
 mod community_mcp_package;
@@ -50,11 +49,13 @@ mod ai_profiles;
 mod backend;
 mod browser_broker;
 mod canvas_agent;
+mod canvas_comfyui;
 mod canvas_media_profiles;
 mod canvas_media_protocols;
 mod capabilities;
 mod companion_gateway;
 mod dsh_host;
+mod dsh_login_browser;
 #[cfg(all(windows, feature = "lsh-background-surface-preload"))]
 mod dsh_native_container;
 mod dsh_engine_update;
@@ -765,6 +766,9 @@ pub fn run() {
             agent_search_settings_status,
             agent_search_settings_update,
             agent_search_test_connection,
+            canvas_comfyui_get_config,
+            canvas_comfyui_set_config,
+            canvas_comfyui_test_connection,
             canvas_media_profiles_list,
             canvas_media_profile_upsert,
             canvas_media_profile_activate,
@@ -786,6 +790,7 @@ pub fn run() {
             companion_gateway::companion_gateway_stop,
             companion_gateway::companion_gateway_restart,
             companion_gateway::companion_gateway_issue_pairing,
+            companion_gateway::companion_gateway_set_authorization_mode,
             companion_gateway::companion_gateway_cancel_pairing,
             companion_gateway::companion_gateway_list_interfaces,
             companion_gateway::companion_gateway_list_devices,
@@ -820,6 +825,7 @@ pub fn run() {
             dsh_native_surface_set_bounds,
             dsh_native_surface_open_intent,
             dsh_native_surface_open_intent_status,
+            canvas_agent_dispatch,
             dsh_native_surface_hide,
             dsh_native_surface_show,
             dsh_native_surface_close,
@@ -847,6 +853,7 @@ pub fn run() {
             attachment_coordination::knowledge_set_attachment_handling_policy,
             attachment_coordination::knowledge_audit_attachment_portability,
             attachment_coordination::knowledge_export_standalone_vault,
+            attachment_coordination::knowledge_export_note_archive,
             attachment_coordination::knowledge_preview_attachment_relink,
             attachment_file_moves::knowledge_preview_material_file_move,
             attachment_coordination::knowledge_attachment_versions,
@@ -883,13 +890,6 @@ pub fn run() {
             get_local_transport_client_config,
             community_mcp::community_mcp_status,
             community_mcp::community_mcp_action,
-            materials_mcp_pairing_context,
-            materials_mcp_gui::materials_mcp_client_prepare,
-            materials_mcp_gui::materials_mcp_client_connect,
-            materials_mcp_gui::materials_mcp_client_test,
-            materials_mcp_gui::materials_mcp_client_disconnect,
-            materials_mcp_confirm_pairing,
-            materials_mcp_revoke_pairing,
             revoke_local_transport_extension_origin,
             rotate_local_transport_credentials,
             open_directory,
@@ -901,6 +901,7 @@ pub fn run() {
             list_backups,
             restore_backup,
             get_current_notes_vault,
+            knowledge_migrate_saved_vaults,
             create_notes_vault,
             open_notes_vault,
             list_notes_vault_files,
@@ -1718,6 +1719,17 @@ async fn dsh_plugin_compat_apply(
         .map_err(|_| "dsh-plugin-compat-unavailable".to_owned())?
 }
 
+fn open_dsh_login_in_system_browser(target: &url::Url) {
+    if dsh_login_browser::is_official_authorize_url(target) {
+        // Use the existing URL/default-browser opener, not the directory
+        // helper (Explorer may open a folder for an authorization URL).
+        // Do not log URLs, which contain short-lived auth data.
+        if tauri_plugin_opener::open_url(target.as_str(), None::<&str>).is_err() {
+            eprintln!("dsh-login-browser-open-failed");
+        }
+    }
+}
+
 fn create_dsh_native_surface_child(
     caller: &tauri::Webview,
     position: tauri::LogicalPosition<f64>,
@@ -1736,19 +1748,49 @@ fn create_dsh_native_surface_child(
         tauri::WebviewUrl::External(url),
     )
     .disable_drag_drop_handler()
+    .initialization_script(dsh_login_browser::INITIALIZATION_SCRIPT)
+    .on_new_window(|target, _features| {
+        open_dsh_login_in_system_browser(&target);
+        tauri::webview::NewWindowResponse::Deny
+    })
     .on_navigation(move |target| {
+        // The official client preopens a blank popup, then replaces its location.
+        // The child-only shim routes that replacement here. Never load account
+        // pages in the privileged native child or broaden its loopback fence.
+        open_dsh_login_in_system_browser(target);
         target.scheme() == "http"
             && target.host_str() == Some("127.0.0.1")
             && target.port() == Some(expected_port)
     });
     #[cfg(all(windows, feature = "lsh-background-surface-preload"))]
-    return dsh_native_container::create_hidden(&caller.window(), builder, position, size);
+    dsh_native_container::create_hidden(&caller.window(), builder, position, size)?;
     #[cfg(not(all(windows, feature = "lsh-background-surface-preload")))]
     caller
         .window()
         .add_child(builder, position, size)
         .map(|_| ())
-        .map_err(|_| "dsh-native-surface-unavailable".to_owned())
+        .map_err(|_| "dsh-native-surface-unavailable".to_owned())?;
+    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    {
+        // Child WebView focus does not bubble through Main's DOM. The only
+        // exposed action is dismissing Main's content drawer; no IPC authority
+        // or file/session data is made available to the remote page.
+        let child = caller.app_handle().get_webview(DSH_NATIVE_SURFACE_WEBVIEW_LABEL)
+            .ok_or_else(|| "dsh-native-surface-unavailable".to_owned())?;
+        let app = caller.app_handle().clone();
+        child.with_webview(move |view| unsafe {
+            let handler = webview2_com::FocusChangedEventHandler::create(Box::new(move |_, _| {
+                let _ = tauri::Emitter::emit_to(&app, "main", "luckyray:lsh-content-outside", ());
+                Ok(())
+            }));
+            let mut token = 0;
+            if view.controller().add_GotFocus(&handler, &mut token).is_err() {
+                eprintln!("lsh-content-outside-focus-unavailable");
+            }
+            // The controller owns the handler until this child is destroyed.
+        }).map_err(|_| "dsh-native-surface-unavailable".to_owned())?;
+    }
+    Ok(())
 }
 
 fn retire_dsh_native_surface_child(caller: &tauri::Webview) -> Result<(), String> {
@@ -2156,6 +2198,20 @@ fn engine_update_other_runs_quiescent() -> bool {
             .map_err(|_| "agent-run-ledger-unavailable".to_owned()))
         .map(|active| !active)
         .unwrap_or(false)
+}
+
+#[tauri::command]
+async fn canvas_agent_dispatch(
+    caller: tauri::Webview,
+    host: tauri::State<'_, Arc<dsh_host::DshHostService>>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    require_main_caller(&caller)?;
+    let owned = host.inner().clone();
+    // Startup is shared with dsh_native_surface_preload. Polling this bounded
+    // channel never opens, shows or replaces a native child WebView.
+    tauri::async_runtime::spawn_blocking(move || owned.canvas_agent_dispatch(request))
+        .await.map_err(|_| "canvas-agent-unavailable".to_owned())?
 }
 
 #[tauri::command]
@@ -2815,6 +2871,7 @@ fn material_catalog_begin_external_drag(
     library_id: Option<String>,
     vault_id: Option<String>,
     asset_ids: Vec<String>,
+    preview_png: Option<String>,
 ) -> Result<(), String> {
     if caller.label() != "main" {
         return Err("material-external-drag-untrusted-caller".to_owned());
@@ -2822,7 +2879,7 @@ fn material_catalog_begin_external_drag(
     let paths = material_catalog_in_context(&app,&caller,library_id.as_deref(),vault_id.as_deref(),&asset_ids)?
         .resolve_external_drag_files(&asset_ids)
         .map_err(encode_material_catalog_command_error)?;
-    material_drag::begin_file_drag(caller.window().clone(), paths)
+    material_drag::begin_file_drag(caller.window().clone(), paths, preview_png)
 }
 
 fn material_catalog_in_context(app:&tauri::AppHandle,caller:&tauri::Webview,library_id:Option<&str>,vault_id:Option<&str>,ids:&[String])->Result<materials::MaterialCatalog,String> {
@@ -2838,6 +2895,25 @@ fn material_catalog_in_library(app:&tauri::AppHandle,caller:&tauri::Webview,libr
 #[tauri::command]
 async fn material_library_command(caller:tauri::Webview,app:tauri::AppHandle,mut request:materials::LibraryRequest)->Result<serde_json::Value,String> {
     require_main_caller(&caller)?;
+    if matches!(&request.action, materials::LibraryAction::WatchLibraryRoot { .. } | materials::LibraryAction::UnwatchLibraryRoot { .. }) {
+        if request.vault_id.is_some() { return Err("vault-attachment-operation-not-authorized".into()); }
+        let id = request.library_id.clone().ok_or("library-watch-owner-required")?;
+        let catalog = material_catalog_for_app(&app)?;
+        return match request.action {
+            materials::LibraryAction::WatchLibraryRoot { expected_root, channel } => {
+                let catalog = catalog.for_library(&id).map_err(encode_material_catalog_command_error)?;
+                let channel: tauri::ipc::Channel<serde_json::Value> = channel.channel_on(caller);
+                tauri::async_runtime::spawn_blocking(move || materials::start_library_root_watch(&catalog, std::path::Path::new(&expected_root), move |event| { let _ = channel.send(event); }).map(serde_json::Value::String))
+                    .await.map_err(|e| format!("library-watch-worker-failed: {e}"))?
+            }
+            materials::LibraryAction::UnwatchLibraryRoot { token } => {
+                // Release still works after a library becomes hidden/offline.
+                tauri::async_runtime::spawn_blocking(move || materials::stop_library_root_watch(&catalog, &id, &token).map(|_| serde_json::Value::Null))
+                    .await.map_err(|e| format!("library-watch-worker-failed: {e}"))?
+            }
+            _ => unreachable!(),
+        };
+    }
     let progress: Option<tauri::ipc::Channel<serde_json::Value>> = match &request.action {
         materials::LibraryAction::ImportPaths { progress: Some(id), .. } => Some(id.channel_on(caller.clone())),
         _ => None,
@@ -3307,45 +3383,6 @@ fn revoke_local_transport_extension_origin(
 }
 
 #[tauri::command]
-fn materials_mcp_pairing_context(caller: tauri::Webview, app: tauri::AppHandle,
-    transport: tauri::State<'_, local_transport::LocalTransportHandle>) -> Result<serde_json::Value, String> {
-    require_main_caller(&caller)?;
-    let catalog = material_catalog_for_app(&app)?;
-    let libraries = catalog.list_libraries(true).map_err(|e| e.message)?.into_iter()
-        .filter(|library| library.visible)
-        .map(|library| serde_json::json!({"id":library.id,"name":library.name})).collect::<Vec<_>>();
-    Ok(serde_json::json!({"baseUrl":transport.base_url(),"libraries":libraries,
-        "profileRoot":transport.materials_profile_root()?,
-        "executable":std::env::current_exe().map_err(|_| "instance-path-unavailable")?.to_string_lossy(),
-        "grants":transport.list_materials_grants()?.iter().map(|g|g.public_metadata()).collect::<Vec<_>>()}))
-}
-
-#[tauri::command]
-fn materials_mcp_confirm_pairing(caller: tauri::Webview, app: tauri::AppHandle,
-    transport: tauri::State<'_, local_transport::LocalTransportHandle>,
-    client_name: String, library_id: String, confirmed: bool) -> Result<serde_json::Value, String> {
-    require_main_caller(&caller)?;
-    if !confirmed { return Err("materials-pairing-confirmation-required".into()); }
-    // Validate the exact library again at confirmation; never use active UI state.
-    material_catalog_for_app(&app)?.for_library(&library_id).map_err(|e| e.message)?;
-    // Resolve non-secret identity before issuing, so a later path error cannot
-    // lose the one-time credential after a successful persistent grant.
-    let executable = std::env::current_exe().map_err(|_| "instance-path-unavailable")?;
-    let profile_root = transport.materials_profile_root()?;
-    let mut paired = transport.pair_materials(&client_name, &library_id)?;
-    paired["desktopExe"] = serde_json::json!(executable.to_string_lossy());
-    paired["profileRoot"] = serde_json::json!(profile_root);
-    Ok(paired)
-}
-
-#[tauri::command]
-fn materials_mcp_revoke_pairing(caller: tauri::Webview,
-    transport: tauri::State<'_, local_transport::LocalTransportHandle>, client_id: String) -> Result<(), String> {
-    require_main_caller(&caller)?;
-    transport.revoke_materials(&client_id)
-}
-
-#[tauri::command]
 fn rotate_local_transport_credentials(
     transport: tauri::State<'_, local_transport::LocalTransportHandle>,
 ) -> Result<(), String> {
@@ -3688,6 +3725,22 @@ async fn agent_search_test_connection(
 }
 
 #[tauri::command]
+fn canvas_comfyui_get_config(caller: tauri::Webview, backend: tauri::State<'_, Arc<backend::BackendServices>>) -> Result<canvas_comfyui::Config, String> {
+    require_main_caller(&caller)?;
+    canvas_comfyui::get(backend.db_path()).map_err(str::to_owned)
+}
+#[tauri::command]
+fn canvas_comfyui_set_config(caller: tauri::Webview, backend: tauri::State<'_, Arc<backend::BackendServices>>, base_url: String) -> Result<canvas_comfyui::Config, String> {
+    require_main_caller(&caller)?;
+    canvas_comfyui::set(backend.db_path(), &base_url).map_err(str::to_owned)
+}
+#[tauri::command]
+async fn canvas_comfyui_test_connection(caller: tauri::Webview, base_url: String) -> Result<canvas_comfyui::ConnectionResult, String> {
+    require_main_caller(&caller)?;
+    canvas_comfyui::test(&base_url).await.map_err(str::to_owned)
+}
+
+#[tauri::command]
 fn canvas_media_profiles_list(caller: tauri::Webview, backend: tauri::State<'_, Arc<backend::BackendServices>>) -> Result<canvas_media_profiles::Snapshot, String> {
     require_main_caller(&caller)?;
     canvas_media_profiles::list(backend.db_path()).map_err(str::to_owned)
@@ -3739,6 +3792,7 @@ async fn canvas_media_profile_list_models(
         }
     }
     let gemini = query.image_protocol == "gemini-image";
+    let base=canvas_media_protocols::easycli_base(&base,&query.image_protocol);
     canvas_media_protocols::list_models(&base, &key, gemini)
         .await
         .map_err(str::to_owned)
@@ -5769,6 +5823,13 @@ fn write_current_notes_vault(
     knowledge_service()?
         .register_current_vault(&knowledge::KnowledgeVaultRegistration::from(metadata))
         .map_err(knowledge_error)
+}
+
+#[tauri::command]
+fn knowledge_migrate_saved_vaults(caller: tauri::Webview, vaults: Vec<NotesVaultMetadata>) -> Result<(), String> {
+    require_main_caller(&caller)?;
+    let registrations: Vec<_> = vaults.iter().map(knowledge::KnowledgeVaultRegistration::from).collect();
+    knowledge_service()?.migrate_saved_vaults(&registrations).map_err(knowledge_error)
 }
 
 #[tauri::command]
@@ -13942,26 +14003,32 @@ struct AiVideoGenerationProgress {
 
 fn canvas_generation_message(kind: &str) -> &'static str {
     match kind {
+        "bigmodel_prompt_too_long" => "智谱 CogVideoX-Flash 的提示词最多 512 个字符，请缩短后重新生成",
+        "bigmodel_reference_invalid" => "智谱参考图需为 PNG/JPEG，且不超过 5 MB",
+        "submission_unknown" => "提交结果尚未确认。为避免重复生成，请先在服务端确认原任务状态，不要重新提交",
+        "submission_binding_changed" => "原视频任务的配置或输入已改变，无法安全恢复；请检查原任务后再决定是否重新生成",
+        "stable_task_id_required" => "缺少可恢复的视频任务标识，请更新客户端后重新操作",
         "no_api_key" => "尚未配置画布生成服务",
         "profile_changed" => "生成配置已更改或删除；请检查原配置后重新发起，不会自动切换服务",
         "unauthorized" => "画布生成服务认证失败",
         "rate_limited" => "画布生成服务请求过于频繁",
+        "account_rate_limited" => "供应商报告账户已达到速率限制；当前占用情况尚未确认",
+        "provider_overloaded" => "供应商报告该模型当前访问量过大",
+        "permission_denied" => "供应商报告当前账户、订阅或密钥无此接口权限",
+        "insufficient_balance" => "供应商报告账户欠费或余额不足",
+        "account_restricted" => "供应商报告账户或套餐使用受限，请核对对应错误码",
+        "usage_limit" => "供应商报告使用上限已达到，请核对对应错误码",
         "timeout" => "画布生成请求超时",
         "connection" => "画布生成服务连接失败",
         "invalid_response" => "画布生成服务响应无效",
         "empty_response" => "画布生成服务没有返回可用结果",
         "unsupported_input" => "当前生成服务不支持该输入",
+        "moderation_blocked" => "生成服务因内容安全规则拒绝了本次请求或输出",
+        "model_unavailable" => "当前模型不可用或不支持此生成操作",
+        "unsupported_protocol" => "当前模型与生成接口协议不匹配，请检查服务协议配置",
+        "unsupported_model_protocol" => "当前模型无法自动识别图片协议，请在配置中选择固定协议",
+        "invalid_request" => "生成服务拒绝了请求参数，请检查模型、协议与生成选项",
         _ => "画布生成服务暂时不可用",
-    }
-}
-
-fn ai_image_failure(kind: &str) -> AiImageGenerateResponse {
-    AiImageGenerateResponse {
-        success: false,
-        images: Vec::new(),
-        error_kind: Some(kind.to_string()),
-        error_message: Some(canvas_generation_message(kind).to_string()),
-        error_detail: None,
     }
 }
 
@@ -13975,11 +14042,10 @@ fn ai_image_failure_with_detail(kind: &str, detail: &str) -> AiImageGenerateResp
     }
 }
 
-fn ai_video_failure(kind: &str) -> AiVideoGenerateResponse {
-    AiVideoGenerateResponse {
+fn ai_image_failure(kind: &str) -> AiImageGenerateResponse {
+    AiImageGenerateResponse {
         success: false,
-        video_url: None,
-        thumbnail_url: None,
+        images: Vec::new(),
         error_kind: Some(kind.to_string()),
         error_message: Some(canvas_generation_message(kind).to_string()),
         error_detail: None,
@@ -13996,6 +14062,19 @@ fn ai_video_failure_with_detail(kind: &str, detail: &str) -> AiVideoGenerateResp
         error_detail: Some(detail.chars().take(400).collect()),
     }
 }
+
+
+fn ai_video_failure(kind: &str) -> AiVideoGenerateResponse {
+    AiVideoGenerateResponse {
+        success: false,
+        video_url: None,
+        thumbnail_url: None,
+        error_kind: Some(kind.to_string()),
+        error_message: Some(canvas_generation_message(kind).to_string()),
+        error_detail: None,
+    }
+}
+
 
 fn canvas_generation_http_error_kind(status: reqwest::StatusCode) -> &'static str {
     match status.as_u16() {
@@ -14434,8 +14513,8 @@ fn canvas_image_size(model: &str, aspect: Option<&str>) -> &'static str {
         return "1024x1024";
     }
     match aspect.unwrap_or("1:1") {
-        "16:9" | "4:3" if model.to_ascii_lowercase().contains("dall-e-3") => "1792x1024",
-        "9:16" | "3:4" if model.to_ascii_lowercase().contains("dall-e-3") => "1024x1792",
+        "7:4" | "3:2" | "16:9" | "4:3" if model.to_ascii_lowercase().contains("dall-e-3") => "1792x1024",
+        "4:7" | "2:3" | "9:16" | "3:4" if model.to_ascii_lowercase().contains("dall-e-3") => "1024x1792",
         "16:9" | "4:3" => "1536x1024",
         "9:16" | "3:4" => "1024x1536",
         _ => "1024x1024",
@@ -14472,19 +14551,28 @@ async fn ai_image_generate_with_binding(
     if cancelled() {
         return Ok(ai_image_failure("cancelled"));
     }
-    let db_path = match app.path().app_data_dir() { Ok(path) => path.join("luckyray.db"), Err(_) => return Ok(ai_image_failure("provider_error")) };
-    let config = match canvas_media_profiles::resolve(&db_path, profile_id, profile_revision) {
-        Ok(value) => value,
+    // Resolve the pinned profile once (or active only for unpinned legacy callers); Agnes keeps the
+    // original inline adapter, every other protocol dispatches through the
+    // profile-aware implementations in canvas_media_protocols.
+    let db_path = match app.path().app_data_dir() {
+        Ok(dir) => dir.join("luckyray.db"),
+        Err(_) => return Ok(ai_image_failure("provider_error")),
+    };
+    let runtime = match canvas_media_profiles::resolve(&db_path, profile_id, profile_revision) {
+        Ok(runtime) => runtime,
         Err("canvas-media-profile-changed" | "canvas-media-profile-missing") => return Ok(ai_image_failure("profile_changed")),
         Err(_) => return Ok(ai_image_failure("provider_error")),
     };
-    let protocol = config.profile.image_protocol.clone();
-    if protocol == "disabled" { return Ok(ai_image_failure("unsupported_input")); }
-    if protocol != "agnes" { return Ok(canvas_media_protocols::image(&request, &config, cancelled).await); }
-    // The Agnes inline adapter has no resolution bucket; a resolution is only
-    // meaningful for the profile-aware protocols above.
-    if request.resolution.is_some() { return Ok(ai_image_failure("unsupported_input")); }
-    let (api_key, base_url, configured_model) = (normalize_ai_api_key(&config.api_key), config.profile.base_url, config.profile.image_model);
+    if runtime.profile.image_protocol == "disabled" {
+        return Ok(ai_image_failure("unsupported_input"));
+    }
+    if runtime.profile.image_protocol != "agnes" {
+        return Ok(canvas_media_protocols::image(&request, &runtime, cancelled).await);
+    }
+    if request.resolution.is_some() {return Ok(ai_image_failure("unsupported_input"));}
+    let api_key = crate::normalize_ai_api_key(&runtime.api_key);
+    let base_url = runtime.profile.base_url.clone();
+    let configured_model = runtime.profile.image_model.clone();
     if api_key.is_empty() {
         return Ok(ai_image_failure("no_api_key"));
     }
@@ -14511,17 +14599,25 @@ async fn ai_image_generate_with_binding(
     body.insert("model".to_string(), serde_json::json!(model));
     body.insert("prompt".to_string(), serde_json::json!(prompt));
     if is_agnes {
-        let size = match request.quality.as_deref() {
+        if request.count.unwrap_or(1) != 1 {return Ok(ai_image_failure("unsupported_input"));}
+        let legacy_specs: serde_json::Value = serde_json::from_str(include_str!("../../src/core/canvas/agnesImageLegacySpecs.json")).expect("validated legacy Agnes image specs");
+        let legacy = legacy_specs.get(model);
+        let size = if let Some(spec) = legacy {
+            if request.quality.is_some() {return Ok(ai_image_failure("unsupported_input"));}
+            match spec["sizes"].get(request.aspect.as_deref().unwrap_or("1:1")).and_then(serde_json::Value::as_str) {
+                Some(size) => size,
+                None => return Ok(ai_image_failure("unsupported_input")),
+            }
+        } else { match request.quality.as_deref() {
             Some("超清") | Some("4K") => "4K",
             Some("高清") | Some("2K") => "2K",
             Some("3K") => "3K",
             _ => "1K",
-        };
+        }};
         body.insert("size".to_string(), serde_json::json!(size));
-        body.insert(
-            "ratio".to_string(),
-            serde_json::json!(request.aspect.as_deref().unwrap_or("1:1")),
-        );
+        if legacy.is_none() {
+            body.insert("ratio".to_string(),serde_json::json!(request.aspect.as_deref().unwrap_or("1:1")));
+        }
         if reference_images.is_empty() {
             body.insert("return_base64".to_string(), serde_json::json!(true));
         } else {
@@ -14818,6 +14914,66 @@ async fn ai_video_generate_internal(
     ai_video_generate_with_binding(app, request, cancelled, None, None).await
 }
 
+/// Verified model controls share the same matrix as the UI. Unknown legacy models
+/// retain basic generation, but never silently accept discarded option selections.
+fn canvas_agnes_video_body(request: &AiVideoGenerateRequest, model: &str, prompt: &str, references: &[String]) -> Result<serde_json::Value, &'static str> {
+    static SPECS: OnceLock<serde_json::Value> = OnceLock::new();
+    let specs = SPECS.get_or_init(|| serde_json::from_str(include_str!("../../src/core/canvas/agnesVideoSpecs.json")).expect("validated Agnes video specs"));
+    let spec = specs.get(model);
+    let mut body = serde_json::json!({"model":model,"prompt":prompt,"mode":"text","size":"720P"});
+    if let Some(spec) = spec {
+        let aspect = request.aspect.as_deref().unwrap_or("16:9");
+        let quality = request.quality.as_deref().unwrap_or("720p");
+        let duration = request.duration.unwrap_or(5);
+        if !spec["aspects"].as_array().is_some_and(|v|v.iter().any(|x|x.as_str()==Some(aspect)))
+            || !spec["qualities"].as_array().is_some_and(|v|v.iter().any(|x|x.as_str()==Some(quality)))
+            || !spec["durations"].as_array().is_some_and(|v|v.iter().any(|x|x.as_u64()==Some(duration as u64)))
+            || request.sound.is_some() || references.len()>2 || references.iter().any(|url|!url.starts_with("https://")) {
+            return Err("unsupported_input");
+        }
+        body["aspect_ratio"] = serde_json::json!(aspect);
+        body["seconds"] = serde_json::json!(duration.to_string());
+        body["size"] = serde_json::json!(match quality {"720p"=>"720P","1080p"=>"1080P",value=>value});
+    } else if request.aspect.is_some() || request.quality.is_some() || request.duration.is_some() || request.sound.is_some() {
+        return Err("unsupported_input");
+    }
+    if let Some(first) = references.first() {
+        body["mode"] = serde_json::json!("keyframe");
+        body[if spec.is_some(){"first_frame"}else{"first_frame_image"}] = serde_json::json!(first);
+        if let Some(last)=references.get(1) {
+            body[if spec.is_some(){"last_frame"}else{"last_frame_image"}] = serde_json::json!(last);
+        }
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
+mod canvas_agnes_video_payload_tests {
+    use super::*;
+    fn request(model: &str) -> AiVideoGenerateRequest {
+        AiVideoGenerateRequest {client_task_id:None,provider_task_id:None,prompt:"synthetic".into(),model:model.into(),aspect:Some("3:4".into()),quality:Some("2K".into()),duration:Some(11),sound:None,references:vec![]}
+    }
+    #[test]
+    fn verified_agnes_options_reach_actual_request_body() {
+        let request=request("agnes-video-2.5");
+        let body=canvas_agnes_video_body(&request,&request.model,&request.prompt,&["https://example.test/first.png".into(),"https://example.test/last.png".into()]).unwrap();
+        assert_eq!(body["aspect_ratio"],"3:4");assert_eq!(body["size"],"2K");assert_eq!(body["seconds"],"11");
+        assert_eq!(body["first_frame"],"https://example.test/first.png");assert_eq!(body["last_frame"],"https://example.test/last.png");
+        assert!(body.get("first_frame_image").is_none());
+    }
+    #[test]
+    fn rejects_invalid_flash_and_legacy_controls_without_coercion() {
+        let mut r=request("agnes-video-2.5-flash");
+        assert!(canvas_agnes_video_body(&r,&r.model,&r.prompt,&[]).is_err());
+        r.quality=Some("720p".into());assert!(canvas_agnes_video_body(&r,&r.model,&r.prompt,&[]).is_ok());
+        r.duration=Some(15);assert!(canvas_agnes_video_body(&r,&r.model,&r.prompt,&[]).is_err());
+        r.model="agnes-video-v2.0".into();assert!(canvas_agnes_video_body(&r,&r.model,&r.prompt,&[]).is_err());
+        r.aspect=None;r.quality=None;r.duration=None;
+        let body=canvas_agnes_video_body(&r,&r.model,&r.prompt,&[]).unwrap();
+        assert!(body.get("aspect_ratio").is_none());assert!(body.get("seconds").is_none());
+    }
+}
+
 async fn ai_video_generate_with_binding(
     app: &tauri::AppHandle,
     request: AiVideoGenerateRequest,
@@ -14828,21 +14984,30 @@ async fn ai_video_generate_with_binding(
     if cancelled() {
         return Ok(ai_video_failure("cancelled"));
     }
-    // A legacy persisted task has no reliable provider binding. Never poll it
-    // with a newly selected connection or silently create another paid task.
+    // A persisted task must never be resumed with a newly selected provider.
     if request.provider_task_id.as_deref().is_some_and(|id| !id.is_empty()) && profile_id.is_none() {
         return Ok(ai_video_failure("profile_changed"));
     }
-    let db_path = match app.path().app_data_dir() { Ok(path) => path.join("luckyray.db"), Err(_) => return Ok(ai_video_failure("provider_error")) };
-    let config = match canvas_media_profiles::resolve(&db_path, profile_id, profile_revision) {
-        Ok(value) => value,
+    // Same profile resolution as image generation: Agnes keeps the inline
+    // adapter, openai-video / 12ai-task dispatch to canvas_media_protocols.
+    let db_path = match app.path().app_data_dir() {
+        Ok(dir) => dir.join("luckyray.db"),
+        Err(_) => return Ok(ai_video_failure("provider_error")),
+    };
+    let runtime = match canvas_media_profiles::resolve(&db_path, profile_id, profile_revision) {
+        Ok(runtime) => runtime,
         Err("canvas-media-profile-changed" | "canvas-media-profile-missing") => return Ok(ai_video_failure("profile_changed")),
         Err(_) => return Ok(ai_video_failure("provider_error")),
     };
-    let protocol = config.profile.video_protocol.clone();
-    if protocol == "disabled" { return Ok(ai_video_failure("unsupported_input")); }
-    if protocol != "agnes" { return Ok(canvas_media_protocols::video(&app, &request, &config, cancelled).await); }
-    let (api_key, base_url, configured_model) = (normalize_ai_api_key(&config.api_key), config.profile.base_url, config.profile.video_model);
+    if runtime.profile.video_protocol == "disabled" {
+        return Ok(ai_video_failure("unsupported_input"));
+    }
+    if runtime.profile.video_protocol != "agnes" {
+        return Ok(canvas_media_protocols::video(app, &request, &runtime, cancelled).await);
+    }
+    let api_key = crate::normalize_ai_api_key(&runtime.api_key);
+    let base_url = runtime.profile.base_url.clone();
+    let configured_model = runtime.profile.video_model.clone();
     if api_key.is_empty() {
         return Ok(ai_video_failure("no_api_key"));
     }
@@ -14864,9 +15029,6 @@ async fn ai_video_generate_with_binding(
     let create_endpoint = format!("{base}/videos");
     let gateway = base.strip_suffix("/v1").unwrap_or(&base);
     let poll_endpoint = format!("{gateway}/agnesapi");
-    let Some(reference_images) = ordered_canvas_image_references(&request.references) else {
-        return Ok(ai_video_failure("unsupported_input"));
-    };
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .redirect(reqwest::redirect::Policy::none())
@@ -14887,27 +15049,14 @@ async fn ai_video_generate_with_binding(
     let video_id = if !resumed.is_empty() {
         resumed.to_string()
     } else {
-        // Agnes Video 2.5 contract (wiki.agnes-ai.com/en/docs/agnes-video-25):
-        // mode is required and one of text|keyframe|reference; size is a
-        // bucket like "720P"/"1080P"; seconds is a string; width/height/
-        // num_frames/frame_rate are forbidden fields.
-        let size = match request.quality.as_deref() {
-            Some("1080p") | Some("2K") => "1080P",
-            _ => "720P",
+        // Polling an accepted task needs no original image files or upload payload.
+        let Some(reference_images) = ordered_canvas_image_references(&request.references) else {
+            return Ok(ai_video_failure("unsupported_input"));
         };
-        let mut body = serde_json::json!({
-            "model": model,
-            "prompt": prompt,
-            "mode": "text",
-            "size": size,
-        });
-        if !reference_images.is_empty() {
-            body["mode"] = serde_json::json!("keyframe");
-            body["first_frame_image"] = serde_json::json!(reference_images[0]);
-            if let Some(last) = reference_images.get(1) {
-                body["last_frame_image"] = serde_json::json!(last);
-            }
-        }
+        let body = match canvas_agnes_video_body(&request, model, prompt, &reference_images) {
+            Ok(body) => body,
+            Err(kind) => return Ok(ai_video_failure(kind)),
+        };
         let response = match client
             .post(create_endpoint)
             .bearer_auth(&api_key)

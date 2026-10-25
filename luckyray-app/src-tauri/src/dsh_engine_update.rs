@@ -17,6 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const MAX_ENVELOPE_BYTES: usize = 96 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
+// The exact 0.2.1-rc.2 Windows closure has 35,173 files. Keep this bounded
+// metadata/tree limit aligned with MAX_DSH_CLOSURE_FILE_COUNT in the verifier.
+const MAX_CLOSURE_FILE_COUNT: u32 = 40_000;
 const PLATFORM: &str = "windows-x86_64";
 const CHANNEL: &str = "preview";
 
@@ -766,7 +769,7 @@ fn scan_runtime_closure(
                 total = total
                     .checked_add(metadata.len())
                     .ok_or(ArtifactError::Invalid)?;
-                if total > MAX_ARTIFACT_BYTES || files.len() >= 30_000 {
+                if total > MAX_ARTIFACT_BYTES || files.len() >= MAX_CLOSURE_FILE_COUNT as usize {
                     return Err(ArtifactError::Invalid);
                 }
                 let relative = path
@@ -831,7 +834,7 @@ fn validate_candidate(candidate: &Candidate) -> Result<(), AdmissionError> {
         || candidate.from_versions.is_empty()
         || candidate.from_versions.len() > 16
         || candidate.closure_file_count == 0
-        || candidate.closure_file_count > 30_000
+        || candidate.closure_file_count > MAX_CLOSURE_FILE_COUNT
         || candidate.artifact_bytes == 0
         || candidate.artifact_bytes > MAX_ARTIFACT_BYTES
         || !hex64(&candidate.adapter_fingerprint)
@@ -1257,6 +1260,23 @@ mod tests {
             serde_json::to_vec(&envelope).unwrap(),
             pair.public_key().as_ref().to_vec(),
         )
+    }
+
+    #[test]
+    fn closure_file_budget_accepts_new_windows_tree_and_rejects_overflow() {
+        assert_eq!(MAX_CLOSURE_FILE_COUNT, 40_000);
+        for count in [35_173, MAX_CLOSURE_FILE_COUNT] {
+            fixture_with(|candidate| {
+                candidate.closure_file_count = count;
+                assert!(validate_candidate(candidate).is_ok());
+            });
+        }
+        for count in [0, MAX_CLOSURE_FILE_COUNT + 1, u32::MAX] {
+            fixture_with(|candidate| {
+                candidate.closure_file_count = count;
+                assert_eq!(validate_candidate(candidate), Err(AdmissionError::InvalidManifest));
+            });
+        }
     }
 
     fn frozen_assembly_fixture(candidate: &mut Candidate) {

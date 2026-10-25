@@ -1,4 +1,6 @@
-import { sameCompanionGrant, type CompanionGrantChange } from "./companionAccess";
+import { companionGrantEnabled } from "./companionAccess";
+import type { CompanionAuthorizationMode } from "./companionGateway";
+import { type CompanionGrantChange } from "./companionAccess";
 import {
   assertCanonicalPairingEnvelope, createCompanionPairingSession, pairingSecondsRemaining,
   type CompanionGatewayClient, type CompanionGatewayStatus, type CompanionServiceGrantState,
@@ -182,7 +184,7 @@ export function createCompanionPresentationStore(client: CompanionGatewayClient)
       return false;
     }
   }
-  async function issuePairing(owner: symbol, replace = false) {
+  async function issuePairing(owner: symbol, replace = false, authorizationMode: CompanionAuthorizationMode = "manual") {
     if (state.busy || disposed || !details.has(owner)) return;
     publish({ busy: "pair" });
     const previousOwner = state.pairingOwner;
@@ -192,7 +194,7 @@ export function createCompanionPresentationStore(client: CompanionGatewayClient)
     beforePairing = new Set(state.devices.map(d => d.deviceId));
     publish({ busy: "pair", error: null, pairingOwner: owner, pairing: null, pairingState: "waiting", pairingError: null, pairingExpiry: null });
     try {
-      const pairing = await ownedSession.issue(replace);
+      const pairing = await ownedSession.issue(replace, authorizationMode);
       if (epoch !== pairingEpoch || disposed || state.pairingOwner !== owner || !pairing) return;
       assertCanonicalPairingEnvelope(pairing);
       pairingTickets.set(owner, pairing.pairingId);
@@ -224,7 +226,22 @@ export function createCompanionPresentationStore(client: CompanionGatewayClient)
       await readGrant(id, false, true);
       const confirmed = state.services[id];
       if (scope !== scopeEpoch || !validDevice(id)) return false;
-      if (!confirmed || requested.some(change => confirmed.grants.some(grant => sameCompanionGrant(change, grant)) !== change.enabled)) throw { code: "permission-readback-failed" };
+      if (!confirmed || requested.some(change => companionGrantEnabled(confirmed, change) !== change.enabled)) throw { code: "permission-readback-failed" };
+      return true;
+    } catch (error) {
+      if (scope === scopeEpoch && validDevice(id)) { await readGrant(id, false, true); publish({ grantErrors: { ...state.grantErrors, [key]: error } }); }
+      return false;
+    } finally { publish({ grantBusy: { ...state.grantBusy, [key]: false } }); }
+  }
+  async function setAuthorizationMode(id: string, mode: CompanionAuthorizationMode, expected: CompanionServiceGrantState): Promise<boolean> {
+    const key = id + ":batch", scope = scopeEpoch;
+    if (!validDevice(id) || state.grantLoading[id] || state.busy || Object.values(state.grantBusy).some(Boolean)) return false;
+    publish({ grantBusy: { ...state.grantBusy, [key]: true }, grantErrors: { ...state.grantErrors, [key]: null } });
+    try {
+      await client.setAuthorizationMode(id, mode, expected.permissionRevision);
+      await readGrant(id, false, true);
+      if (disposed || scope !== scopeEpoch || !validDevice(id)) return false;
+      if (state.services[id]?.authorizationMode !== mode) throw { code: "permission-readback-failed" };
       return true;
     } catch (error) {
       if (scope === scopeEpoch && validDevice(id)) { await readGrant(id, false, true); publish({ grantErrors: { ...state.grantErrors, [key]: error } }); }
@@ -234,7 +251,7 @@ export function createCompanionPresentationStore(client: CompanionGatewayClient)
   async function toggleService(id: string, grant: Grant) {
     const current = state.services[id], key = companionGrantKey(id, grant), scope = scopeEpoch;
     if (!current || !validDevice(id) || state.grantLoading[id] || state.grantBusy[key] || state.grantBusy[id + ":batch"] || state.busy) return;
-    const enabled = !current.grants.some(g => g.grantClass === grant.grantClass && g.scopeKind === grant.scopeKind && g.scopeId === grant.scopeId);
+    const enabled = !companionGrantEnabled(current, grant);
     publish({ grantBusy: { ...state.grantBusy, [key]: true }, grantErrors: { ...state.grantErrors, [key]: null } });
     try {
       // Recheck the permission generation and vault immediately before an explicit write.
@@ -243,11 +260,11 @@ export function createCompanionPresentationStore(client: CompanionGatewayClient)
       if (latest.permissionRevision !== current.permissionRevision || latest.currentVault?.vaultId !== current.currentVault?.vaultId) {
         await readGrant(id, true); throw { code: "permission-state-changed" };
       }
-      if (enabled && grant.scopeKind === "vault" && latest.currentVault?.vaultId !== grant.scopeId) throw { code: "permission-state-changed" };
+      if (enabled && latest.authorizationMode !== "trusted" && grant.scopeKind === "vault" && latest.currentVault?.vaultId !== grant.scopeId && !latest.savedLibraries?.some(scope => scope.scopeKind === "vault" && scope.scopeId === grant.scopeId && scope.available)) throw { code: "permission-state-changed" };
       await client.setServiceGrants(id, [{ ...grant, enabled }], current.permissionRevision, current.currentVault?.vaultId || null);
       await readGrant(id, false, true);
       const confirmed = state.services[id];
-      if (scope === scopeEpoch && (!confirmed || confirmed.grants.some(g => g.grantClass === grant.grantClass && g.scopeKind === grant.scopeKind && g.scopeId === grant.scopeId) !== enabled)) throw { code: "permission-readback-failed" };
+      if (scope === scopeEpoch && (!confirmed || companionGrantEnabled(confirmed, grant) !== enabled)) throw { code: "permission-readback-failed" };
     } catch (error) { if (scope === scopeEpoch && validDevice(id)) publish({ grantErrors: { ...state.grantErrors, [key]: error } }); }
     finally { publish({ grantBusy: { ...state.grantBusy, [key]: false } }); }
   }
@@ -268,7 +285,7 @@ export function createCompanionPresentationStore(client: CompanionGatewayClient)
   return {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    refresh, refreshDetails, readGrant, run, toggleService, applyServiceChanges, toggleLsh, issuePairing, releasePairing,
+    refresh, refreshDetails, readGrant, run, toggleService, applyServiceChanges, setAuthorizationMode, toggleLsh, issuePairing, releasePairing,
     selectDevice: (id: string) => { if (validDevice(id)) { ++scopeEpoch; publish({ selectedDeviceId: id }); void readGrant(id, true); } },
     invalidateScopes: () => { ++scopeEpoch; publish({ services: {}, lsh: {}, grantLoading: {} }); if (details.size) selectedTargets().forEach(id => void readGrant(id, true)); },
     open: (owner: symbol, advanced = false) => {

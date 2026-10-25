@@ -1,5 +1,200 @@
 // Included in the existing transport tests: real loopback parser/auth/dispatch,
 // synthetic Catalogs only. No production grants or user credential reads.
+struct MarkdownRetryFixture {
+    handle: LocalTransportHandle,
+    principal: VerifiedTransportPrincipal,
+    service: KnowledgeService,
+    _backend: Arc<BackendServices>,
+    pair: Value,
+    app_data: PathBuf,
+    // Drop the real services/transport before deleting their disposable files.
+    _root: tempfile::TempDir,
+}
+impl MarkdownRetryFixture {
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let app_data = root.path().join("app");
+        fs::create_dir_all(&app_data).unwrap();
+        let app_data = PathBuf::from(fs::canonicalize(&app_data).unwrap()
+            .to_string_lossy().trim_start_matches(r"\\?\").to_owned());
+        let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
+        let service = backend.knowledge();
+        let vault_root = root.path().join("vault");
+        fs::create_dir_all(vault_root.join(".luckyray")).unwrap();
+        fs::create_dir_all(vault_root.join("Sub")).unwrap();
+        let vault = KnowledgeVaultRegistration {
+            id: "retry-test-vault".into(), name: "Synthetic retry test".into(),
+            root_path: vault_root.to_string_lossy().into_owned(), mode: "vault-bound".into(),
+            created_at: "2026-10-17T00:00:00Z".into(), last_opened_at: "2026-10-17T00:00:00Z".into(),
+            schema_version: 1, link_update_policy: Default::default(),
+        };
+        fs::write(vault_root.join(".luckyray/vault.json"), serde_json::to_vec(&vault).unwrap()).unwrap();
+        service.register_current_vault(&vault).unwrap();
+        let scope = service.capture_workspace_scope(&vault.id).unwrap().workspace_recovery_record().unwrap();
+        let library = backend.material_catalog().library_state().unwrap().0;
+        let handle = start_server(ServerConfig::test(app_data.clone()), Arc::new(LegacyLocalTransportAdapter::new(backend.clone()))).unwrap();
+        let pair = handle.pair_libraries(&library, &vault.id, scope).unwrap();
+        let principal = authenticate(
+            &HashMap::from([("authorization".into(), format!("Bearer {}", pair["credential"].as_str().unwrap()))]),
+            None, &ServerConfig::test(app_data.clone()), &handle.auth, CapabilityTier::Dangerous,
+        ).unwrap();
+        Self { handle, principal, service, _backend: backend, pair, app_data, _root: root }
+    }
+    fn input(url: &str) -> Value {
+        json!({"requestId":"synthetic-stable-retry-001","url":url,"fileName":"中文 合成.md"})
+    }
+    fn receipt(&self, suffix: &str) -> PathBuf {
+        self.app_data.join("community-mcp-receipts").join(self.pair["clientId"].as_str().unwrap())
+            .join(format!("{:x}.{suffix}.json", Sha256::digest(b"synthetic-stable-retry-001")))
+    }
+    fn import(&self, input: Value, content: &str) -> Result<Value, String> {
+        crate::community_mcp_knowledge::test_import_with_download(&self.principal, &self.service, input, |_| Ok(content.as_bytes().to_vec()))
+    }
+}
+
+#[test]
+fn community_markdown_retry_verifies_bytes_not_temporary_download_url() {
+    let f = MarkdownRetryFixture::new();
+    let (principal, service, pair, app_data) = (&f.principal, &f.service, &f.pair, &f.app_data);
+    let content = "---\r\ntitle: 合成\r\n---\r\n# 内容 ✅\r\n```txt\r\n保留空行\r\n```\r\n";
+    let input = |url: &str| json!({"requestId":"synthetic-stable-retry-001","url":url,"fileName":"中文 合成.md"});
+    let url_a = "https://files.example.com/synthetic.md?signature=FIRST_SYNTHETIC";
+    let url_b = "https://files.example.com/synthetic.md?signature=SECOND_SYNTHETIC";
+    let imported = crate::community_mcp_knowledge::test_import_with_download(&principal, &service, input(url_a), |actual| {
+        assert_eq!(actual, url_a, "do not strip or normalize the temporary URL");
+        Ok(content.as_bytes().to_vec())
+    }).unwrap();
+    assert_eq!(imported["disposition"], "imported");
+    let receipt_dir = app_data.join("community-mcp-receipts").join(pair["clientId"].as_str().unwrap());
+    let key = format!("{:x}", Sha256::digest(b"synthetic-stable-retry-001"));
+    let pending_before = fs::read(receipt_dir.join(format!("{key}.pending.json"))).unwrap();
+    let complete_before = fs::read(receipt_dir.join(format!("{key}.complete.json"))).unwrap();
+    let legacy: Value = serde_json::from_slice(&complete_before).unwrap();
+    assert_eq!(legacy.as_object().unwrap().len(), 6, "retain the old six-field receipt format");
+    assert_eq!(legacy["requestDigest"], format!("{:x}", Sha256::digest(serde_json::to_vec(&json!([url_a,"中文 合成.md",null])).unwrap())));
+    let downloads = std::cell::Cell::new(0);
+    let duplicate = crate::community_mcp_knowledge::test_import_with_download(&principal, &service, input(url_b), |actual| {
+        downloads.set(downloads.get()+1);
+        assert_eq!(actual, url_b, "new full URL must pass through the guarded downloader");
+        Ok(content.as_bytes().to_vec())
+    }).unwrap();
+    assert_eq!(downloads.get(), 1, "verify bytes, never trust only an attachment ID");
+    assert_eq!(duplicate["disposition"], "duplicate");
+    assert_eq!(duplicate["noteId"], imported["noteId"]);
+    assert_eq!(duplicate["vaultId"], imported["vaultId"]);
+    assert_eq!(duplicate["contentSha256"], imported["contentSha256"]);
+    let reference = KnowledgeService::parse_document_id(imported["noteId"].as_str().unwrap()).unwrap();
+    let target = service.current_target_identity().unwrap();
+    let read = service.read_document_for_target(&target, &reference).unwrap();
+    assert_eq!(read.content.as_bytes(), content.as_bytes());
+    assert_eq!(service.search_documents("内容",20).unwrap().len(), 1);
+    assert_eq!(fs::read(receipt_dir.join(format!("{key}.pending.json"))).unwrap(), pending_before);
+    assert_eq!(fs::read(receipt_dir.join(format!("{key}.complete.json"))).unwrap(), complete_before);
+}
+
+#[test]
+fn community_markdown_retry_rejects_changed_bytes_or_destination_without_mutation() {
+    let f = MarkdownRetryFixture::new();
+    let input = MarkdownRetryFixture::input("https://files.example.com/x.md?signature=SAME");
+    let content = "# immutable original\n中文 ✅\n";
+    let first = f.import(input.clone(), content).unwrap();
+    let pending = fs::read(f.receipt("pending")).unwrap();
+    let complete = fs::read(f.receipt("complete")).unwrap();
+    assert_eq!(f.import(input.clone(), "# genuinely different content\n").unwrap_err(), "request-id-conflict");
+    for (key, value) in [("fileName", "other.md"), ("folder", "Sub")] {
+        let mut other = input.clone();
+        other[key] = json!(value);
+        assert_eq!(crate::community_mcp_knowledge::test_import_with_download(&f.principal, &f.service, other, |_| {
+            panic!("a different destination must fail before downloading")
+        }).unwrap_err(), "request-id-conflict");
+    }
+    assert_eq!(f.import(input, content).unwrap()["noteId"], first["noteId"]);
+    assert_eq!(f.service.search_documents("", 20).unwrap().len(), 1);
+    let reference = KnowledgeService::parse_document_id(first["noteId"].as_str().unwrap()).unwrap();
+    assert_eq!(f.service.read_document_for_target(&f.service.current_target_identity().unwrap(), &reference).unwrap().content, content);
+    assert_eq!(fs::read(f.receipt("pending")).unwrap(), pending);
+    assert_eq!(fs::read(f.receipt("complete")).unwrap(), complete);
+}
+
+#[test]
+fn community_markdown_retry_pending_remains_unknown_without_network_or_rewrite() {
+    let f = MarkdownRetryFixture::new();
+    let path = f.receipt("pending");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let original = serde_json::to_vec(&json!({"requestDigest":"a".repeat(64)})).unwrap();
+    fs::write(&path, &original).unwrap();
+    let mut input = MarkdownRetryFixture::input("https://files.example.com/x.md?signature=ROTATED");
+    input["folder"] = json!("Missing");
+    assert_eq!(crate::community_mcp_knowledge::test_import_with_download(&f.principal, &f.service, input, |_| {
+        panic!("never retry a pending-only unknown outcome")
+    }).unwrap_err(), "import-outcome-unknown");
+    assert_eq!(fs::read(path).unwrap(), original);
+    assert!(!f.receipt("complete").exists());
+    assert_eq!(f.service.search_documents("", 20).unwrap().len(), 0);
+}
+
+#[test]
+fn community_markdown_retry_concurrent_completion_returns_original_note() {
+    let f = MarkdownRetryFixture::new();
+    let input = MarkdownRetryFixture::input("https://files.example.com/x.md?signature=OUTER");
+    let content = "# one concurrent note\n中文\n";
+    let mut inner = None;
+    let duplicate = crate::community_mcp_knowledge::test_import_with_download(&f.principal, &f.service, input, |_| {
+        inner = Some(f.import(MarkdownRetryFixture::input("https://files.example.com/x.md?signature=INNER"), content).unwrap());
+        Ok(content.as_bytes().to_vec())
+    }).unwrap();
+    let imported = inner.unwrap();
+    assert_eq!(imported["disposition"], "imported");
+    assert_eq!(duplicate["disposition"], "duplicate");
+    assert_eq!(duplicate["noteId"], imported["noteId"]);
+    assert_eq!(f.service.search_documents("", 20).unwrap().len(), 1);
+}
+
+#[test]
+fn community_markdown_retry_revocation_during_download_blocks_commit() {
+    let f = MarkdownRetryFixture::new();
+    let error = crate::community_mcp_knowledge::test_import_with_download(&f.principal, &f.service,
+        MarkdownRetryFixture::input("https://files.example.com/x.md"), |_| {
+            f.handle.revoke_materials(f.pair["clientId"].as_str().unwrap()).unwrap();
+            Ok(b"# must not be saved\n".to_vec())
+        }).unwrap_err();
+    assert_eq!(error, "library-grant-invalid");
+    assert!(!f.receipt("pending").exists());
+    assert!(!f.receipt("complete").exists());
+    assert_eq!(f.service.search_documents("", 20).unwrap().len(), 0);
+}
+
+#[test]
+fn community_markdown_retry_download_failure_is_prewrite_and_does_not_seal_intent() {
+    let f = MarkdownRetryFixture::new();
+    let input = MarkdownRetryFixture::input("https://files.example.com/x.md");
+    assert_eq!(crate::community_mcp_knowledge::test_import_with_download(&f.principal, &f.service, input.clone(), |_| {
+        Err("markdown-download-failed".into())
+    }).unwrap_err(), "markdown-download-failed");
+    assert!(!f.receipt("pending").exists());
+    assert!(!f.receipt("complete").exists());
+    assert_eq!(f.import(input, "# saved once after confirmed prewrite failure\n").unwrap()["disposition"], "imported");
+    assert_eq!(f.service.search_documents("", 20).unwrap().len(), 1);
+}
+
+#[test]
+fn community_markdown_retry_does_not_overwrite_a_user_edited_import() {
+    let f = MarkdownRetryFixture::new();
+    let input = MarkdownRetryFixture::input("https://files.example.com/x.md");
+    let content = "# original\n";
+    let first = f.import(input.clone(), content).unwrap();
+    let reference = KnowledgeService::parse_document_id(first["noteId"].as_str().unwrap()).unwrap();
+    let target = f.service.current_target_identity().unwrap();
+    f.service.replace_document_for_target(&target, &crate::knowledge::KnowledgeWriteInput {
+        document_ref: reference.clone(), content: "# actual user edit\n".into(),
+        expected_revision: Some(first["contentSha256"].as_str().unwrap().into()),
+    }).unwrap();
+    let complete = fs::read(f.receipt("complete")).unwrap();
+    assert_eq!(f.import(input, content).unwrap_err(), "imported-note-changed");
+    assert_eq!(f.service.read_document_for_target(&target, &reference).unwrap().content, "# actual user edit\n");
+    assert_eq!(fs::read(f.receipt("complete")).unwrap(), complete);
+}
+
 #[test]
 fn community_mcp_unified_grant_uses_formal_vault_and_revokes_both_over_tcp() {
     let root = tempfile::tempdir().unwrap();
@@ -52,6 +247,28 @@ fn community_mcp_unified_grant_uses_formal_vault_and_revokes_both_over_tcp() {
         json!({"requestId":"fixture-invalid-extension","url":"https://example.com/file.md","fileName":"bad.txt"}));
     assert_eq!(status(&bad_extension), 400, "{bad_extension}");
     assert_eq!(body(&bad_extension)["error"]["code"], "markdown-file-required");
+    // A missing knowledge directory is a confirmed pre-write rejection, not an
+    // indeterminate import. The URL is intentionally non-downloadable: reject the
+    // parent before fetching or creating a durable intent, without relaxing SSRF.
+    let missing_parent = materials_request(&handle, token, "POST", "/api/v1/library-mcp/knowledge/import-markdown",
+        json!({"requestId":"fixture-missing-parent-001","url":"https://127.0.0.1/never-fetch.md","fileName":"目录检查.md","folder":"不存在的目录"}));
+    assert_eq!(status(&missing_parent), 400, "{missing_parent}");
+    assert_eq!(body(&missing_parent)["error"]["code"], "knowledge-parent-missing");
+    assert!(!app_data.join("community-mcp-receipts").exists());
+    assert!(!vault_root.join("不存在的目录").exists());
+    // Old uncertain outcomes stay opaque even when today's parent preflight
+    // would fail. Preserve intent bytes instead of deleting/reclassifying them.
+    let old_id = "fixture-old-pending-parent-001";
+    let receipt_dir = app_data.join("community-mcp-receipts").join(pair["clientId"].as_str().unwrap());
+    fs::create_dir_all(&receipt_dir).unwrap();
+    let pending_path = receipt_dir.join(format!("{:x}.pending.json", Sha256::digest(old_id.as_bytes())));
+    let pending_bytes = serde_json::to_vec(&json!({"requestDigest":"a".repeat(64)})).unwrap();
+    fs::write(&pending_path, &pending_bytes).unwrap();
+    let old_unknown = materials_request(&handle, token, "POST", "/api/v1/library-mcp/knowledge/import-markdown",
+        json!({"requestId":old_id,"url":"https://127.0.0.1/never-fetch.md","fileName":"目录检查.md","folder":"不存在的目录"}));
+    assert_eq!(status(&old_unknown), 409, "{old_unknown}");
+    assert_eq!(body(&old_unknown)["error"]["code"], "import-outcome-unknown");
+    assert_eq!(fs::read(&pending_path).unwrap(), pending_bytes);
     // Changing the visible vault cannot retarget the grant or expose a foreign note.
     service.register_current_vault(&other_vault).unwrap();
     let search = materials_request(&handle, token, "POST", "/api/v1/library-mcp/knowledge/search", json!({"query":"中文","limit":20}));

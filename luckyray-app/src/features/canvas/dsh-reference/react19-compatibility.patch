@@ -1,0 +1,5 @@
+--- a/upstream/primitives/lib/index.js
++++ b/upstream/primitives/lib/index.js
+@@ -3148,1 +3148,1 @@
+-			inert: "",
++			inert: true,

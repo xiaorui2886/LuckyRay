@@ -26,13 +26,13 @@ const LAUNCH_BYTES: &[u8] = include_bytes!(concat!(env!("LUCKYRAY_ISSUE189_OLD_D
 const RUNTIME_BYTES: &[u8] = include_bytes!(concat!(env!("LUCKYRAY_ISSUE189_OLD_DSH_HOST"), "/records/runtime-manifest.json"));
 
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const AUTHORITY_SHA256: &str = "75cbb9b7c935980bc46ae00a62b7b30880c4408be32a5698b82e3261d1042632";
+const AUTHORITY_SHA256: &str = "cbbbf0816f2aba1c4688093d9d396f8c195115272aac31967e7a07a9fd5ef631";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const AUDIT_SHA256: &str = "db28fa51bbea382dc8b8caf29964e31b4848600682d95be47d6e9db4e8e670c1";
+const AUDIT_SHA256: &str = "5666b72894239bff65f04987c83329116c75483880b5fe0eab1de7e1780d52e9";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const LAUNCH_SHA256: &str = "7282c882d5bd5de8e5a714b9629a16f307fe7df96671f471203773cc51c94886";
+const LAUNCH_SHA256: &str = "59c6d8a84ae723e8eab7ff68b40459b5f7443aecd3d734395852087991472ff0";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const RUNTIME_SHA256: &str = "5fcc250740c1195c61e110088892169ae11223207658e773a8d02f57ad05d556";
+const RUNTIME_SHA256: &str = "caf9f28acedaefe2797d3c75c5954ff2fb53465f0a39685495b77c65b063927d";
 #[cfg(feature = "issue189-frozen-old-fixture")]
 const AUTHORITY_SHA256: &str = "c0c4b4bec0ce5b86f759b970c722f7fc82073cdbd678593ec03eaf61a4d49c04";
 #[cfg(feature = "issue189-frozen-old-fixture")]
@@ -608,7 +608,7 @@ mod tests {
         );
         assert_eq!(identity.package_version, if cfg!(feature = "issue189-frozen-old-fixture") {
             "0.1.5-rc.2"
-        } else { "0.1.7-rc.2" });
+        } else { "0.2.1-rc.2" });
         assert_eq!(
             identity.node_exe_sha256,
             "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362"
@@ -618,7 +618,7 @@ mod tests {
             if cfg!(feature = "issue189-frozen-old-fixture") {
                 "0ff7f1d72c4e0cbe14001709c81e20a04b70464118a7f78568952988e28f2ac5"
             } else {
-                "935e95d05f4dc70a8a013eea59da80028946b5c139e45c6351dcaf2810ca00a1"
+                "80112efe368efb1a39720c7ada0af00442e5131fb2744edaaff8a3e8bb499e6f"
             }
         );
     }
@@ -677,7 +677,7 @@ mod tests {
         let elapsed = started.elapsed();
         assert_eq!(identity.package_version, if cfg!(feature = "issue189-frozen-old-fixture") {
             "0.1.5-rc.2"
-        } else { "0.1.7-rc.2" });
+        } else { "0.2.1-rc.2" });
         eprintln!(
             "runtime identity check took {:?} (two critical entries; full closure stays on prepare/install)",
             elapsed

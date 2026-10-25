@@ -54,7 +54,9 @@ export function readKnownNotesVaults(
 ): BridgeVaultMetadata[] {
   try {
     const parsed = JSON.parse(storage.getItem(KNOWN_NOTES_VAULTS_KEY) || "[]") as unknown;
-    return Array.isArray(parsed) ? mergeKnownNotesVaults([], parsed.filter(isVaultMetadata)) : [];
+    const vaults = Array.isArray(parsed) ? mergeKnownNotesVaults([], parsed.filter(isVaultMetadata)) : [];
+    syncKnownNotesVaultsToNative(vaults);
+    return vaults;
   } catch {
     return [];
   }
@@ -70,5 +72,24 @@ export function rememberKnownNotesVault(
   } catch {
     // A restricted WebView may deny localStorage; the current Vault remains authoritative.
   }
+  syncKnownNotesVaultsToNative(next);
   return next;
+}
+
+// Import only the exact saved UI list. No filesystem discovery and no active
+// Vault selection. Failure leaves localStorage intact for the next retry.
+let lastNativeMigration = "";
+let nativeMigration: Promise<void> = Promise.resolve();
+export function syncKnownNotesVaultsToNative(vaults: readonly BridgeVaultMetadata[]): void {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+  const snapshot = mergeKnownNotesVaults([], vaults);
+  const signature = JSON.stringify(snapshot);
+  nativeMigration = nativeMigration.then(async () => {
+    if (signature === lastNativeMigration) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("knowledge_migrate_saved_vaults", { vaults: snapshot });
+    lastNativeMigration = signature;
+  }).catch(() => {
+    // Offline/older hosts can retry on the next saved-list read or update.
+  });
 }

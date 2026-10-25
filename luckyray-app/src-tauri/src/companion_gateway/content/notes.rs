@@ -5,6 +5,9 @@ use crate::knowledge::{
 };
 use std::collections::HashSet;
 mod uploads;
+mod replica_manifest;
+mod folders;
+mod import_plans;
 use crate::knowledge::{
     companion_note_name, companion_replaced_content, KnowledgeCreateInput, KnowledgeDeleteInput,
     KnowledgeError, KnowledgeMoveInput, KnowledgeWriteInput,
@@ -103,16 +106,14 @@ pub(super) fn remap_moved_note_for_service(
     change(&transaction, vault_id, note_id, &updated_revision, false)?;
     transaction.commit().map_err(db_error)?;
     invalidate_service_reconcile(gateway, vault_id);
-    if let Ok(registration) = gateway.backend.knowledge().current_vault_id() {
-        gateway.backend.knowledge().notify_companion_committed(&registration, vec![relative_path.into()]);
+    if let Ok(registration) = gateway.knowledge().current_vault_id() {
+        gateway.knowledge().notify_companion_committed(&registration, vec![relative_path.into()]);
     }
     Ok(updated_revision)
 }
 
 pub(crate) fn target(gateway: &CompanionGateway) -> ContentResult<(KnowledgeTargetIdentity, String)> {
-    let target = gateway
-        .backend
-        .knowledge()
+    let target = gateway.knowledge()
         .current_target_identity()
         .map_err(|_| (409, "VAULT_UNAVAILABLE"))?;
     let key = format!(
@@ -167,7 +168,7 @@ fn direct_document(
     target: &KnowledgeTargetIdentity,
     path: &str,
 ) -> Result<KnowledgeDocumentSnapshot, KnowledgeError> {
-    let knowledge = gateway.backend.knowledge();
+    let knowledge = gateway.knowledge();
     let reference = KnowledgeDocumentRef {
         vault_id: knowledge.current_vault_id()?,
         relative_path: path.to_owned(),
@@ -179,6 +180,8 @@ pub(in crate::companion_gateway) fn mutate_route(
     gateway: &CompanionGateway,
     request: &HttpRequest,
 ) -> ContentResult<Value> {
+    if request.path.split('?').next().is_some_and(|p| p == "/v1/notes/import-plans" || p.starts_with("/v1/notes/import-plans/")) { return import_plans::route(gateway, request); }
+    if request.path.split('?').next() == Some("/v1/notes/folders") { return folders::create(gateway, request); }
     mutate(gateway, request, false)
 }
 
@@ -260,7 +263,7 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
     } else {
         state.reconciled.remove(&vault);
         reconcile(gateway, &target, &vault, &mut state)?;
-        let knowledge = gateway.backend.knowledge();
+        let knowledge = gateway.knowledge();
         let id = route_id
             .map(str::to_owned)
             .or(input.note_id.clone())
@@ -341,7 +344,7 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
             params![device, input.op_id, vault, id, payload, serde_json::to_string(&plan).unwrap(), chrono::Utc::now().to_rfc3339()]).map_err(db_error)?;
         (id, plan, false)
     };
-    let knowledge = gateway.backend.knowledge();
+    let knowledge = gateway.knowledge();
     let before_ref = plan
         .before
         .as_ref()
@@ -560,7 +563,7 @@ pub(crate) fn service_note_reference(gateway: &CompanionGateway, vault: &str, no
     let path: String = database(gateway)?.query_row(
         "SELECT path FROM companion_content_note WHERE vault_key=?1 AND note_id=?2 AND deleted=0",
         params![vault, note], |row| row.get(0)).optional().map_err(db_error)?.ok_or((404, "NOTE_DELETED"))?;
-    let reference = KnowledgeDocumentRef { vault_id: gateway.backend.knowledge().current_vault_id().map_err(knowledge_error)?, relative_path: path };
+    let reference = KnowledgeDocumentRef { vault_id: gateway.knowledge().current_vault_id().map_err(knowledge_error)?, relative_path: path };
     Ok((expected, reference))
 }
 
@@ -631,7 +634,7 @@ fn reconcile(
     {
         return Ok(());
     }
-    let knowledge = gateway.backend.knowledge();
+    let knowledge = gateway.knowledge();
     let snapshot = knowledge
         .refresh_index_for_target(target)
         .map_err(|_| (503, "KNOWLEDGE_UNAVAILABLE"))?;
@@ -806,16 +809,12 @@ fn current_document(
     let db = database(gateway)?;
     let path: Option<String> = db.query_row("SELECT path FROM companion_content_note WHERE vault_key=?1 AND note_id=?2 AND deleted=0", params![vault, id], |r| r.get(0)).optional().map_err(db_error)?;
     let document_ref = KnowledgeDocumentRef {
-        vault_id: gateway
-            .backend
-            .knowledge()
+        vault_id: gateway.knowledge()
             .current_vault_id()
             .map_err(|_| (409, "VAULT_CHANGED"))?,
         relative_path: path.ok_or((404, "NOTE_DELETED"))?,
     };
-    gateway
-        .backend
-        .knowledge()
+    gateway.knowledge()
         .read_document_for_target(target, &document_ref)
         .map_err(|_| (409, "NOTE_CHANGED"))
 }
@@ -869,10 +868,8 @@ fn document_value(
     id: &str,
     doc: &KnowledgeDocumentSnapshot,
 ) -> ContentResult<Value> {
-    let knowledge = gateway.backend.knowledge();
-    let approved = gateway
-        .backend
-        .material_catalog()
+    let knowledge = gateway.knowledge();
+    let approved = gateway.material_catalog()
         .approved_note_attachment_paths(
             &doc.summary.document_ref.vault_id,
             &doc.summary.relative_path,
@@ -897,6 +894,10 @@ pub(super) fn read_route(
     gateway: &CompanionGateway,
     request: &HttpRequest,
 ) -> ContentResult<Value> {
+    if request.path.split('?').next().is_some_and(|p| p == "/v1/notes/import-plans" || p.starts_with("/v1/notes/import-plans/")) { return import_plans::route(gateway, request); }
+    if request.path.split('?').next().unwrap_or("").ends_with("/replica-manifest") {
+        return replica_manifest::route(gateway, request);
+    }
     if request.path.contains("/attachments/") {
         return uploads::route(gateway, request);
     }
@@ -1040,9 +1041,7 @@ pub(super) fn read_route(
             Err(error) => return Err(error),
         }
     };
-    gateway
-        .backend
-        .knowledge()
+    gateway.knowledge()
         .with_current_target_response_lease(&target, || value)
         .map_err(|_| (409, "VAULT_CHANGED"))
 }
@@ -1078,10 +1077,8 @@ pub(super) fn resource(
             format!("res-{:x}", Sha256::digest(link.destination.as_bytes())) == resource_id
         })
         .ok_or((404, "RESOURCE_UNAVAILABLE"))?;
-    let knowledge = gateway.backend.knowledge();
-    let approved = gateway
-        .backend
-        .material_catalog()
+    let knowledge = gateway.knowledge();
+    let approved = gateway.material_catalog()
         .approved_note_attachment_paths(
             &doc.summary.document_ref.vault_id,
             &doc.summary.relative_path,
@@ -1434,14 +1431,10 @@ mod tests {
         let (_root, gateway, registration, vault) = fixture();
         let doc = create(&gateway, &vault, "kn-a", "原笔记");
         let payload = json!({"opId":"op-edit-a","vaultId":vault,"kind":"update","expectedRevision":doc["revision"],"content":"手机输入"});
-        let active = gateway
-            .backend
-            .knowledge()
+        let active = gateway.knowledge()
             .activate_ui_source(&registration.id)
             .unwrap();
-        gateway
-            .backend
-            .knowledge()
+        gateway.knowledge()
             .companion_set_desktop_drafts(active.source_epoch, 1, vec!["原笔记.md".into()])
             .unwrap();
         let req = request("PATCH", "/v1/notes/kn-a", payload.clone());
@@ -1453,13 +1446,17 @@ mod tests {
             fs::read_to_string(Path::new(&registration.root_path).join("原笔记.md")).unwrap(),
             "原文\n"
         );
-        gateway
-            .backend
-            .knowledge()
+        gateway.knowledge()
             .companion_set_desktop_drafts(active.source_epoch, 2, vec![])
             .unwrap();
         let saved = mutate_route(&gateway, &req).unwrap();
-        assert_eq!(saved["document"]["content"], "手机输入\n");
+        // Full replacements preserve the submitted EOF, rather than append
+        // a newline. The receipt must agree with the actual persisted bytes.
+        assert_eq!(saved["document"]["content"], payload["content"]);
+        assert_eq!(
+            fs::read_to_string(Path::new(&registration.root_path).join("原笔记.md")).unwrap(),
+            payload["content"].as_str().unwrap()
+        );
         let mut stale = payload;
         stale["opId"] = json!("op-stale");
         stale["content"] = json!("旧基础上的编辑");
@@ -1645,7 +1642,7 @@ mod tests {
         assert_eq!(read["content"], "恢复后的正文\n");
         // An incomplete scan (whole-vault failure) is never read as deletion.
         gateway.content_state.lock().unwrap().reconciled.clear();
-        gateway.backend.knowledge().fail_next_index_refresh();
+        gateway.knowledge().fail_next_index_refresh();
         let failed = read_route(&gateway, &request("GET", &format!("/v1/notes?vault={vault}"), Value::Null));
         assert!(failed.is_err(), "incomplete scan stays fatal: {failed:?}");
     }
@@ -1690,5 +1687,58 @@ mod tests {
         let read = read_route(&gateway, &request("GET", &format!("/v1/notes/{}?vault={vault}", entry["noteId"].as_str().unwrap()), Value::Null)).unwrap();
         assert_eq!(read["content"], "别人的内容\n");
     }
+    fn replica_request(gateway: &CompanionGateway, vault: &str, id: &str) -> HttpRequest {
+        database(gateway).unwrap().execute(
+            "INSERT OR IGNORE INTO companion_device(device_id,label,credential_verifier,created_at,last_authenticated_at,revoked_at) VALUES(?1,'replica fixture','not-a-real-credential','2026-10-25',NULL,NULL)",
+            [format!("device-{}", "a".repeat(32))]).unwrap();
+        request("GET", &format!("/v1/notes/{id}/replica-manifest?vault={vault}"), Value::Null)
+    }
+
+    #[test]
+    fn replica_manifest_body_hash_is_document_utf8_and_aliases_are_scoped() {
+        let (_root,gateway,registration,vault)=fixture();
+        create(&gateway,&vault,"kn-replica","Replica");
+        fs::write(Path::new(&registration.root_path).join("Replica.md"), b"\xef\xbb\xbfhello\r\n").unwrap();
+        gateway.content_state.lock().unwrap().reconciled.clear();
+        let request=replica_request(&gateway,&vault,"kn-replica");
+        let manifest=read_route(&gateway,&request).unwrap();
+        let (target,_)=target(&gateway).unwrap();
+        let doc=current_document(&gateway,&target,&vault,"kn-replica").unwrap();
+        assert_eq!(manifest["body"]["sha256"],format!("{:x}",Sha256::digest(doc.content.as_bytes())));
+        assert_eq!(manifest["body"]["sizeBytes"],doc.content.len());
+        assert_eq!(manifest["body"]["encoding"],"utf-8");
+        assert_eq!(manifest["complete"],true);
+    }
+
+    #[test]
+    fn replica_manifest_missing_dependency_is_explicit_and_never_complete() {
+        let (_root,gateway,registration,vault)=fixture();
+        create(&gateway,&vault,"kn-replica","Replica");
+        fs::write(Path::new(&registration.root_path).join("Replica.md"),"![missing](missing.png)\n[web](https://example.com)\n").unwrap();
+        gateway.content_state.lock().unwrap().reconciled.clear();
+        let request=replica_request(&gateway,&vault,"kn-replica");
+        let manifest=read_route(&gateway,&request).unwrap();
+        assert_eq!(manifest["complete"],false);
+        let resources=manifest["resources"].as_array().unwrap();
+        assert_eq!(resources.len(),2);
+        assert_eq!(resources[0]["required"],true);
+        assert!(resources[0].get("sha256").is_none());
+        assert_eq!(resources[1]["required"],false);
+        let again=read_route(&gateway,&request).unwrap();
+        assert_eq!(manifest["resources"][0]["resourceId"],again["resources"][0]["resourceId"]);
+        assert_eq!(manifest["resources"][0]["downloadResourceId"],format!("res-{:x}",Sha256::digest(b"missing.png")));
+    }
+
+    #[test]
+    fn replica_manifest_rejects_revoked_device_and_wrong_scope() {
+        let (_root,gateway,_registration,vault)=fixture();
+        create(&gateway,&vault,"kn-replica","Replica");
+        let request=replica_request(&gateway,&vault,"kn-replica");
+        database(&gateway).unwrap().execute("UPDATE companion_device SET revoked_at='revoked'",[]).unwrap();
+        assert_eq!(read_route(&gateway,&request).unwrap_err(),(401,"AUTH_REVOKED"));
+        let wrong=HttpRequest {path:"/v1/notes/kn-replica/replica-manifest?vault=wrong".into(),..request};
+        assert_eq!(read_route(&gateway,&wrong).unwrap_err(),(409,"VAULT_CHANGED"));
+    }
+
 }
 

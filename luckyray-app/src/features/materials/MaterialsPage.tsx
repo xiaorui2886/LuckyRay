@@ -1,3 +1,5 @@
+import { materialDragPreview } from "./materialDragPreview";
+import { SelectionCheck } from "../../components/SelectionCheck";
 // D81: 素材库 React 化主组件
 // 文件夹树 + 瀑布流 + 素材卡片 + 详情面板 + 工具栏
 
@@ -10,6 +12,7 @@ import { clearCurrentAssetContext, publishCurrentAssetContext } from "../../core
 import { materialNavigationCoordinator } from "../../core/services/materialNavigationCoordinator";
 import type { MaterialNavigationIntent } from "../../core/services/materialNavigationCoordinator";
 import { MaterialLibrarySwitcher } from "./MaterialLibrarySwitcher";
+import { MissingAssetsPanel } from "./MissingAssetsPanel";
 import { MaterialFilmViewer } from "./MaterialFilmViewer";
 import { createPortal } from "react-dom";
 import { NativeVideoInline } from "./NativeVideoInline";
@@ -75,7 +78,6 @@ import { flattenFolders } from "../folders/useFolders";
 import type { Folder } from "../folders/useFolders";
 import {
   MATERIALS_FILTER_PANEL_ID,
-  MATERIALS_MISSING_PANEL_ID,
   MATERIALS_SORT_OPTIONS,
   MATERIALS_TOOLBAR_COMMAND_EVENT,
   clearMaterialsToolbarFilters,
@@ -91,6 +93,7 @@ import {
   attachMaterialMissingScanTriggers,
   closeCurrentConfirmDialog,
   createMaterialMissingScanCoordinator,
+  removeMissingMaterialRecords,
   notifyMaterialMissingCount,
   replaceCurrentConfirmDialog,
   resolveMaterialPathAction,
@@ -807,6 +810,8 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
   const [missingList, setMissingList] = useState<MaterialMissingItem[]>([]);
   const [missingLoading, setMissingLoading] = useState(false);
   const [missingScanError, setMissingScanError] = useState("");
+  const [missingRemoving, setMissingRemoving] = useState(false);
+  const missingRemovingRef = useRef(false);
   const [missingRelocatingIds, setMissingRelocatingIds] = useState<Set<string>>(new Set());
   const materialsPageMountedRef = useRef(false);
   const missingRelocatingIdsRef = useRef<Set<string>>(new Set());
@@ -3127,7 +3132,7 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
 
   // D110: 失效素材扫描
   const handleScanMissing = useCallback(async () => {
-    if (!materialsPageMountedRef.current) return;
+    if (!materialsPageMountedRef.current || missingRemovingRef.current) return;
     setMissingLoading(true);
     setMissingScanError("");
     const coordinator = missingScanCoordinatorRef.current;
@@ -3147,19 +3152,38 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
     if (materialsPageMountedRef.current) setMissingLoading(false);
   }, [t]);
 
-  const performRemoveMissing = useCallback(async (id: string) => {
+  const missingOperationCurrent = useCallback(() => materialsPageMountedRef.current && !attachmentCollection && (
+    scopeRef.current ? scopeRef.current.libraryId === libraryId && scopeRef.current.visible
+      : materialLibrarySession.isCurrent(libraryContext) && materialLibrarySession.getSnapshot().status === "ready"
+  ), [attachmentCollection, libraryContext, libraryId]);
+
+  const performRemoveMissing = useCallback(async (ids: string[]) => {
+    if (missingRemovingRef.current || missingRelocatingIdsRef.current.size > 0 || !missingOperationCurrent()) return;
+    missingRemovingRef.current = true;
+    setMissingRemoving(true);
     try {
-      await removeMissingMaterialAssetRecord(id);
-      setMissingList((list) => list.filter((item) => item.id !== id));
-      void revalidateMaterials("material-remove-missing", { affectedIds: [id] });
-      missingScanCoordinatorRef.current?.schedule("data-change", 0);
-      setToast(t("materials.status.missingRemoved"));
-    } catch {
-      setAlertDialog({
-        message: t("materials.status.missingRemoveFailed"),
+      const result = await removeMissingMaterialRecords({
+        ids,
+        scanMissing: scanMissingMaterialAssets,
+        removeRecord: removeMissingMaterialAssetRecord,
+        canContinue: missingOperationCurrent,
+        onRemoved: (id) => setMissingList((list) => list.filter((item) => item.id !== id)),
       });
+      if (!missingOperationCurrent()) return;
+      if (result.removedIds.length > 0) void revalidateMaterials("material-remove-missing", { affectedIds: result.removedIds });
+      if (result.failure) {
+        setAlertDialog({ message: t("materials.status.missingBatchPartial", { count: result.removedIds.length, remaining: result.remainingIds.length }) });
+      } else {
+        setToast(t("materials.status.missingBatchRemoved", { count: result.removedIds.length, skipped: result.skippedIds.length }));
+      }
+    } catch {
+      if (missingOperationCurrent()) setAlertDialog({ message: t("materials.status.missingRemoveFailed") });
+    } finally {
+      missingRemovingRef.current = false;
+      if (materialsPageMountedRef.current) setMissingRemoving(false);
+      if (missingOperationCurrent()) missingScanCoordinatorRef.current?.schedule("data-change", 0);
     }
-  }, [revalidateMaterials, t]);
+  }, [missingOperationCurrent, removeMissingMaterialAssetRecord, revalidateMaterials, scanMissingMaterialAssets, t]);
 
   const handleRemoveMissing = useCallback((item: MaterialMissingItem) => {
     openConfirmDialog({
@@ -3167,10 +3191,21 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
       actions: [{
         label: t("materials.missing.remove"),
         kind: "danger",
-        onClick: () => { void performRemoveMissing(item.id); },
+        onClick: () => { void performRemoveMissing([item.id]); },
       }],
     });
   }, [openConfirmDialog, performRemoveMissing, t]);
+
+  const handleRemoveManyMissing = useCallback((ids: string[], all: boolean) => {
+    if (missingRemovingRef.current || missingRelocatingIdsRef.current.size > 0 || !missingOperationCurrent()) return;
+    const candidates = new Set(missingList.map((item) => item.id));
+    const targets = [...new Set(ids)].filter((id) => candidates.has(id));
+    if (targets.length === 0) return;
+    openConfirmDialog({
+      message: t("materials.dialog.missingRecords", { count: targets.length }),
+      actions: [{ label: t(all ? "materials.missing.removeAll" : "materials.missing.removeSelected"), kind: "danger", onClick: () => { void performRemoveMissing(targets); } }],
+    });
+  }, [missingList, missingOperationCurrent, openConfirmDialog, performRemoveMissing, t]);
 
   const settleSourceRelocateConfirmation = useCallback((confirmed: boolean) => {
     const resolve = sourceRelocateConfirmationRef.current;
@@ -3206,6 +3241,7 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
 
   const handleMaterialRelocation = useCallback(async (assetId: string) => {
     if (!materialsPageMountedRef.current) return "cancelled" as const;
+    if (missingRemovingRef.current) return "busy" as const;
     if (missingRelocatingIdsRef.current.has(assetId)) return "busy" as const;
     missingRelocatingIdsRef.current.add(assetId);
     setMissingRelocatingIds((current) => new Set(current).add(assetId));
@@ -3245,12 +3281,12 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
     const coordinator = createMaterialMissingScanCoordinator<MaterialMissingItem>({
       scan: scanMissingMaterialAssets,
       onResult: (result) => {
-        if (!materialsPageMountedRef.current) return;
+        if (!materialsPageMountedRef.current || missingRemovingRef.current) return;
         setMissingList(result);
         setMissingScanError("");
       },
       onError: () => {
-        if (!materialsPageMountedRef.current) return;
+        if (!materialsPageMountedRef.current || missingRemovingRef.current) return;
         setMissingScanError(t("materials.status.missingScanFailed"));
       },
     });
@@ -3259,7 +3295,7 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
       windowTarget: window,
       documentTarget: document,
       getVisibilityState: () => document.visibilityState,
-      schedule: (reason) => coordinator.schedule(reason, reason === "initial" ? 0 : undefined),
+      schedule: (reason) => { if (!missingRemovingRef.current) coordinator.schedule(reason, reason === "initial" ? 0 : undefined); },
     });
     return () => {
       materialsPageMountedRef.current = false;
@@ -3372,7 +3408,7 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
         const assetIds = resolveMaterialExternalDragSelection(asset.id, selectedIds);
         if (!selectedIds.has(asset.id)) setSelectedIds(new Set([asset.id]));
         suppressNextCardClickRef.current = true;
-        void beginMaterialExternalDrag(assetIds, libraryId, attachmentCollection ? attachmentVaultId : undefined).catch(() => {
+        void beginMaterialExternalDrag(assetIds, libraryId, attachmentCollection ? attachmentVaultId : undefined, materialDragPreview(asset.id)).catch(() => {
           setToast(t("materials.status.dragFailed"), "error");
         });
       },
@@ -3431,7 +3467,7 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
     return <MaterialViewProvider identity={scope}><MaterialsDetailPanel asset={asset} resolution={null}
       onClose={()=>setFocusedAssetId(null)} onOpen={handleOpenAsset} onReveal={item=>performMaterialPathAction(item,'reveal')} onRelocate={handleMaterialRelocation} relocating={missingRelocatingIds.has(asset.id)}
       onPreview={openPreviewViewer} onCompare={()=>openSingleCompare(asset,'context',null)} onFindSimilar={()=>setAppearanceRequest({assetId:asset.id})}
-      onExport={()=>void beginMaterialExport({kind:'assets',assetIds:[asset.id]})} onCsvExport={()=>void beginCsvExport({kind:'assets',assetIds:[asset.id]})}
+      onExport={()=>void beginMaterialExport({kind:'assets',assetIds:[asset.id]})}
       onUpdated={mergeAssetUpdate} selectedCount={1} onBatchTags={()=>void openTagsModal([asset.id])} onInsertToNote={()=>void handleInsertToCurrentNote(asset)} onAskAi={()=>void handleAskAiWithAssets([asset])}
       favorite={materialFavorites.byId.has(asset.id)} onToggleFavorite={()=>void toggleMaterialFavorite(asset)}/></MaterialViewProvider>;
   };
@@ -3567,7 +3603,6 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
             onPreview={openPreviewViewer} onCompare={() => openSingleCompare(viewerAsset, "detail")}
             onFindSimilar={() => { const assetId = viewerAsset.id; closeMaterialViewer(); setAppearanceRequest({ assetId }); }}
             onExport={() => void beginMaterialExport({ kind: "assets", assetIds: [viewerAsset.id] })}
-            onCsvExport={() => void beginCsvExport({ kind: "assets", assetIds: [viewerAsset.id] })}
             selectedCount={selectedCount} onUpdated={mergeAssetUpdate} onBatchTags={() => void openTagsModal(Array.from(selectedIds))}
             onInsertToNote={() => void handleInsertToCurrentNote(viewerAsset)}
             onAskAi={() => void handleAskAiWithAssets(resolveAskAiSelection(viewerAsset))}
@@ -3605,7 +3640,6 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
               onExport={() => attachmentCollection
                 ? void exportAttachmentAsBefore(viewerAsset)
                 : void beginMaterialExport({ kind: "assets", assetIds: [viewerAsset.id] })}
-              onCsvExport={attachmentCollection ? undefined : () => void beginCsvExport({ kind: "assets", assetIds: [viewerAsset.id] })}
               selectedCount={selectedCount}
               onUpdated={(updatedAsset) => {
                 mergeAssetUpdate(updatedAsset);
@@ -3791,9 +3825,11 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
         loading={missingLoading}
         error={missingScanError}
         relocatingIds={missingRelocatingIds}
+        removing={missingRemoving}
         onScan={handleScanMissing}
         onRelocate={handleRelocateMissing}
         onRemove={handleRemoveMissing}
+        onRemoveMany={handleRemoveManyMissing}
         onClose={() => setMissingOpen(false)}
       />
       {/* D115: 应用内确认弹窗 */}
@@ -4132,87 +4168,6 @@ function MaterialsFilterPanel({
     </div>
   );
 }
-// ========== D110: 失效素材面板 ==========
-
-function MissingAssetsPanel({
-  open,
-  list,
-  loading,
-  error,
-  relocatingIds,
-  onScan,
-  onRelocate,
-  onRemove,
-  onClose,
-}: {
-  open: boolean;
-  list: MaterialMissingItem[];
-  loading: boolean;
-  error: string;
-  relocatingIds: Set<string>;
-  onScan: () => void;
-  onRelocate: (item: MaterialMissingItem) => void;
-  onRemove: (item: MaterialMissingItem) => void;
-  onClose: () => void;
-}) {
-  const { t } = useI18n();
-  if (!open) return null;
-
-  return (
-    <div id={MATERIALS_MISSING_PANEL_ID} className="missing-panel-react" role="region" aria-label={t("materials.missing.title")}>
-      <div className="missing-panel-header-react">
-        <span className="missing-panel-title-react">{t("materials.missing.title")}</span>
-        <div className="missing-panel-actions-react">
-          <button type="button" className="missing-rescan-react" onClick={onScan} disabled={loading}>
-            <span className="material-action-icon-react sync-retry" aria-hidden="true" />
-            {t(loading ? "materials.missing.scanning" : "materials.missing.scan")}
-          </button>
-          <button type="button" className="missing-close-react" aria-label={t("materials.missing.close")} title={t("materials.detail.close")} onClick={onClose}>
-            <span className="material-action-icon-react close" aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-      <div className="missing-panel-body-react">
-        {loading && <div className="missing-empty-react">{t("materials.missing.scanningDetail")}</div>}
-        {!loading && error && (
-          <div className="missing-empty-react" role="status">
-            {t("materials.missing.failed", { error })}
-          </div>
-        )}
-        {!loading && !error && list.length === 0 && <div className="missing-empty-react">{t("materials.missing.empty")}</div>}
-        {!loading && list.map((item) => (
-          <div key={item.id} className="missing-item-react" aria-busy={relocatingIds.has(item.id)}>
-            <div className="missing-item-info-react">
-              <span className="missing-item-name-react" title={item.name}>{item.name}</span>
-              <span className="missing-item-path-react" title={item.libraryPath}>{item.libraryPath}</span>
-            </div>
-            <div className="missing-panel-actions-react">
-              <button
-                type="button"
-                className="filter-chip-react"
-                onClick={() => onRelocate(item)}
-                disabled={relocatingIds.has(item.id)}
-                aria-label={t("materials.missing.relocateAria", { name: item.name })}
-              >
-                {t(relocatingIds.has(item.id) ? "materials.missing.relocating" : "materials.missing.relocate")}
-              </button>
-              <button
-                type="button"
-                className="missing-item-remove-react"
-                onClick={() => onRemove(item)}
-                disabled={relocatingIds.has(item.id)}
-                aria-label={t("materials.missing.removeAria", { name: item.name })}
-              >
-                {t("materials.missing.remove")}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ========== 素材卡片 ==========
 
 type AssetCardProps = {
@@ -4489,9 +4444,10 @@ function AssetColorPalette({ color }: { color?: string | null }) {
   );
 }
 
-function ImagePreview({ src, alt, className, variant = "thumbnail", sourceIdentity, onLoad }: {
+function ImagePreview({ src, alt, className, variant = "thumbnail", sourceIdentity, onLoad, style }: {
   src: string; alt: string; className?: string; variant?: "thumbnail" | "viewer"; sourceIdentity?: string;
   onLoad?: (event: React.SyntheticEvent<HTMLImageElement>) => void;
+  style?: CSSProperties;
 }) {
   const { t } = useI18n();
   const identity = `${sourceIdentity || ""}\u001f${src}`;
@@ -4505,7 +4461,7 @@ function ImagePreview({ src, alt, className, variant = "thumbnail", sourceIdenti
       <small>{t("materials.viewer.imageLoadFailed")}</small>
     </div>;
   }
-  return <img key={identity} className={className} src={src} alt={alt} loading={variant === "viewer" ? "eager" : "lazy"} onLoad={onLoad} onError={() => setFailedIdentity(identity)} />;
+  return <img key={identity} className={className} style={style} src={src} alt={alt} loading={variant === "viewer" ? "eager" : "lazy"} onLoad={onLoad} onError={() => setFailedIdentity(identity)} />;
 }
 
 function AssetHoverControls({ asset, onPreview, isFavorite, onToggleFavorite }: {
@@ -4704,9 +4660,7 @@ function ListAssetRow({ asset, selectedIds, batchMode, focusedAssetId, onOpen, o
 function BatchCheckbox({ checked, onClick }: { checked: boolean; onClick: (event: MouseEvent<HTMLButtonElement>) => void }) {
   const { t } = useI18n();
   return (
-    <button className={`batch-checkbox-react${checked ? " checked" : ""}`} onClick={onClick} title={t(checked ? "materials.card.unselect" : "materials.card.select")}>
-      <svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" /></svg>
-    </button>
+    <SelectionCheck className="batch-checkbox-react" checked={checked} onClick={onClick} label={t(checked ? "materials.card.unselect" : "materials.card.select")} />
   );
 }
 
@@ -4734,7 +4688,6 @@ export function MaterialsDetailPanel({
   onCompare,
   onFindSimilar,
   onExport,
-  onCsvExport,
   onUpdated,
   selectedCount,
   onBatchTags,
@@ -4756,7 +4709,6 @@ export function MaterialsDetailPanel({
   onCompare: () => void;
   onFindSimilar?: () => void;
   onExport: () => void;
-  onCsvExport?: () => void;
   onUpdated: (asset: Asset) => void;
   selectedCount: number;
   onBatchTags: () => void;
@@ -4766,7 +4718,8 @@ export function MaterialsDetailPanel({
   onToggleFavorite: () => void;
 }) {
   const { locale, plural, t } = useI18n();
-  const {getMaterialSourcePage,getMaterialAssetTagContext,updateMaterialAsset,setMaterialAssetTags,getMaterialAssetAiSuggestion,generateMaterialAssetAiSuggestion,applyMaterialAssetAiTags,dismissMaterialAssetAiSuggestion}=useMaterialViewServices();
+  const {getMaterialSourcePage,getMaterialAssetTagContext,createMaterialTag,updateMaterialAsset,setMaterialAssetTags,getMaterialAssetAiSuggestion,generateMaterialAssetAiSuggestion,applyMaterialAssetAiTags,dismissMaterialAssetAiSuggestion}=useMaterialViewServices();
+  const viewScope = useMaterialViewScope();
   const [activeTab, setActiveTab] = useState<"inspector" | "taxonomy">("inspector");
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
@@ -4775,13 +4728,20 @@ export function MaterialsDetailPanel({
   const [assetTags, setAssetTagsLocal] = useState<Tag[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [tagLoading, setTagLoading] = useState(false);
+  const [tagStatus, setTagStatus] = useState("");
+  const tagReadRef = useRef(0);
+  const metadataRef = useRef<{ key: string; name: string; description: string; rating: number | null } | null>(null);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [newTagOpen, setNewTagOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const tagWriteRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [sourcePage, setSourcePage] = useState<MaterialSourcePage | null>(null);
-  const selectionRef = useRef({ assetId: null as string | null, epoch: 0 });
-  if (selectionRef.current.assetId !== (asset?.id ?? null)) {
-    selectionRef.current = { assetId: asset?.id ?? null, epoch: selectionRef.current.epoch + 1 };
+  const selectionKey = JSON.stringify([viewScope?.libraryId, vaultId, asset?.id]);
+  const selectionRef = useRef({ key: selectionKey, epoch: 0 });
+  if (selectionRef.current.key !== selectionKey) {
+    selectionRef.current = { key: selectionKey, epoch: selectionRef.current.epoch + 1 };
   }
   const [aiSuggestion, setAiSuggestion] = useState<AiSuggestionState | null>(null);
   const [aiSelectedTags, setAiSelectedTags] = useState<string[]>([]);
@@ -4818,18 +4778,22 @@ export function MaterialsDetailPanel({
 
   const loadTagState = useCallback(async () => {
     if (!asset) return;
+    const epoch = selectionRef.current.epoch;
+    const request = ++tagReadRef.current;
+    const current = () => selectionRef.current.epoch === epoch && tagReadRef.current === request;
     setTagLoading(true);
     try {
       const context = await getMaterialAssetTagContext([asset.id], vaultId);
+      if (!current()) return;
       setAllTags(context.tags);
       setAssetTagsLocal(context.tags.filter((tag: Tag) => context.selectedTagIds.includes(tag.id)));
     } catch (e) {
       console.warn("[materials] detail tags failed", e);
-      setStatus(t("materials.detail.status.tagLoadFailed"));
+      if (current()) setTagStatus(t("materials.detail.status.tagLoadFailed"));
     } finally {
-      setTagLoading(false);
+      if (current()) setTagLoading(false);
     }
-  }, [asset, t]);
+  }, [asset?.id, vaultId, getMaterialAssetTagContext, t]);
 
   useEffect(() => {
     let current = true;
@@ -4845,19 +4809,32 @@ export function MaterialsDetailPanel({
   }, [asset?.id]);
 
   useEffect(() => {
-    setActiveTab("inspector");
-    setDraftName(asset?.name ?? "");
-    setDraftDescription(asset?.description ?? "");
-    setDraftRating(asset?.rating ?? null);
-    setHoveredDetailRating(null);
-    setStatus("");
-    setAssetTagsLocal([]);
-    setAllTags([]);
-    setTagPickerOpen(false);
-    setAiSuggestion(null);
-    setAiSelectedTags([]);
+    const previous = metadataRef.current;
+    const next = { key: selectionKey, name: asset?.name ?? "", description: asset?.description ?? "", rating: asset?.rating ?? null };
+    metadataRef.current = next;
+    if (!previous || previous.key !== selectionKey) {
+      setActiveTab("inspector");
+      setDraftName(next.name);
+      setDraftDescription(next.description);
+      setDraftRating(next.rating);
+      setHoveredDetailRating(null);
+      setStatus("");
+      setTagStatus("");
+      setAssetTagsLocal([]);
+      setAllTags([]);
+      setTagPickerOpen(false);
+      setNewTagOpen(false);
+      setNewTagName("");
+      setAiSuggestion(null);
+      setAiSelectedTags([]);
+    } else {
+      // Same material refreshed in the background: retain UI and unsaved edits.
+      setDraftName(current => current === previous.name ? next.name : current);
+      setDraftDescription(current => current === previous.description ? next.description : current);
+      setDraftRating(current => current === previous.rating ? next.rating : current);
+    }
     void loadTagState();
-  }, [asset, loadTagState]);
+  }, [asset, selectionKey, loadTagState]);
 
   useEffect(() => {
     if (!tagPickerOpen) return;
@@ -4918,18 +4895,53 @@ export function MaterialsDetailPanel({
   };
 
   const applyTagIds = async (nextIds: string[]) => {
+    if (tagWriteRef.current) return;
+    tagWriteRef.current = true;
+    const epoch = selectionRef.current.epoch;
     setTagLoading(true);
-    setStatus("");
+    setTagStatus("");
     try {
       await setMaterialAssetTags(asset.id, nextIds, vaultId);
+      if (selectionRef.current.epoch !== epoch) return;
+      setAssetTagsLocal(allTags.filter(tag => nextIds.includes(tag.id)));
       await loadTagState();
+      if (selectionRef.current.epoch !== epoch) return;
       setTagPickerOpen(false);
-      setStatus(t("materials.detail.status.tagsUpdated"));
     } catch (e) {
       console.warn("[materials] setAssetTags failed", e);
-      setStatus(t("materials.detail.status.tagsFailed"));
+      if (selectionRef.current.epoch === epoch) setTagStatus(t("materials.detail.status.tagsFailed"));
     } finally {
-      setTagLoading(false);
+      tagWriteRef.current = false;
+      if (selectionRef.current.epoch === epoch) setTagLoading(false);
+    }
+  };
+
+  const createAndAttachTag = async () => {
+    const name = newTagName.trim();
+    if (!name || tagWriteRef.current || tagLoading) return;
+    tagWriteRef.current = true;
+    const epoch = selectionRef.current.epoch;
+    let created = false;
+    setTagLoading(true);
+    setTagStatus("");
+    try {
+      // Reuse an existing name (including after an attachment failure), not a second tag.
+      const tag = allTags.find((item) => item.name === name) ?? await createMaterialTag(name, vaultId);
+      created = true;
+      if (selectionRef.current.epoch !== epoch) return;
+      setAllTags((current) => current.some((item) => item.id === tag.id) ? current : [...current, tag]);
+      await setMaterialAssetTags(asset.id, [...new Set([...assetTags.map((item) => item.id), tag.id])], vaultId);
+      if (selectionRef.current.epoch !== epoch) return;
+      setAssetTagsLocal(current => current.some(item => item.id === tag.id) ? current : [...current, tag]);
+      await loadTagState();
+      if (selectionRef.current.epoch !== epoch) return;
+      setNewTagOpen(false);
+      setNewTagName("");
+    } catch {
+      if (selectionRef.current.epoch === epoch) setTagStatus(t(created ? "materials.detail.status.tagsFailed" : "materials.status.createTagFailed"));
+    } finally {
+      tagWriteRef.current = false;
+      if (selectionRef.current.epoch === epoch) setTagLoading(false);
     }
   };
 
@@ -5039,7 +5051,7 @@ export function MaterialsDetailPanel({
               <div className="detail-field-heading-react">
                 <label className="detail-input-label-react detail-description-label-react">{t("materials.detail.description")}</label>
                 <button
-                  className="ai-suggest-btn-react"
+                  className="ai-suggest-btn-react detail-add-tag-react"
                   onClick={generateAiSuggestion}
                   disabled={aiLoading}
                   title={t("materials.detail.generateTitle")}
@@ -5047,7 +5059,7 @@ export function MaterialsDetailPanel({
                   {aiLoading ? t("materials.detail.generating") : t("materials.detail.generate")}
                 </button>
               </div>
-              <textarea className="detail-textarea-react" rows={3} aria-label={t("materials.detail.descriptionAria")} value={draftDescription} onChange={(event) => setDraftDescription(event.target.value)} />
+              <textarea className="detail-textarea-react" rows={1} aria-label={t("materials.detail.descriptionAria")} value={draftDescription} onChange={(event) => setDraftDescription(event.target.value)} />
               <div className={`detail-save-row-react detail-description-save-row-react${hasDirtyMeta || status ? " show" : ""}`}>
                 <span className="detail-status-react">{status}</span>
                 {hasDirtyMeta && <button className="detail-primary-btn-react" onClick={saveMeta} disabled={saving}>{saving ? t("materials.detail.saving") : t("materials.detail.save")}</button>}
@@ -5117,13 +5129,15 @@ export function MaterialsDetailPanel({
             <div className="detail-section inspector-section-react">
               <div className="detail-section-title">{t("materials.detail.tags")}</div>
               <div className="detail-tag-list-react">
-                {assetTags.map((tag, index) => {
-                  const tone = DETAIL_TAG_COLORS[index % DETAIL_TAG_COLORS.length];
+                {assetTags.map((tag) => {
+                  const colorIndex = Array.from(tag.id).reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 0);
+                  const tone = DETAIL_TAG_COLORS[colorIndex % DETAIL_TAG_COLORS.length];
                   return (
                     <button
                       key={tag.id}
                       className="detail-tag-react active"
-                      style={{ background: tone.bg, color: tone.fg }}
+                      disabled={tagLoading}
+                      style={{ "--detail-tag-bg": tone.bg, "--detail-tag-color": tone.fg } as CSSProperties}
                       onClick={() => void applyTagIds(assetTags.filter((item) => item.id !== tag.id).map((item) => item.id))}
                     >
                       {tag.name}<span>×</span>
@@ -5133,10 +5147,17 @@ export function MaterialsDetailPanel({
                 <div className="detail-add-tag-wrap-react" ref={tagPickerRootRef}>
                   <button
                     className="detail-add-tag-react"
-                    onClick={() => setTagPickerOpen((open) => !open)}
+                    onClick={() => { setNewTagOpen(false); setTagPickerOpen((open) => !open); }}
                     disabled={tagLoading}
+                    aria-expanded={tagPickerOpen}
                   >
                     {t("materials.detail.add")}
+                  </button>
+                  <button type="button" className="detail-new-tag-react"
+                    aria-label={t("materials.modal.newTag")} title={t("materials.modal.newTag")}
+                    aria-expanded={newTagOpen} disabled={tagLoading}
+                    onClick={() => { setTagPickerOpen(false); setNewTagOpen((open) => !open); }}>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
                   </button>
                   {tagPickerOpen && (
                     <div className="detail-tag-picker-react">
@@ -5160,6 +5181,18 @@ export function MaterialsDetailPanel({
                   )}
                 </div>
               </div>
+              {newTagOpen && <form className="detail-new-tag-form-react" onSubmit={(event) => { event.preventDefault(); void createAndAttachTag(); }}>
+                <input className="detail-input-react" autoFocus value={newTagName} disabled={tagLoading}
+                  aria-label={t("materials.modal.newTag")} placeholder={t("materials.modal.newTag")}
+                  onChange={(event) => setNewTagName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault();
+                    if (event.key === "Escape") { event.stopPropagation(); if (!tagLoading) setNewTagOpen(false); }
+                  }} />
+                <button type="submit" className="detail-add-tag-react" disabled={tagLoading || !newTagName.trim()}>{t("materials.modal.new")}</button>
+                <button type="button" className="detail-add-tag-react" disabled={tagLoading} onClick={() => setNewTagOpen(false)}>{t("materials.modal.cancel")}</button>
+              </form>}
+              {tagStatus && <div className="detail-tag-status-react" role="alert">{tagStatus}</div>}
             </div>
 
             <div className="detail-section inspector-section-react">
@@ -5213,7 +5246,7 @@ export function MaterialsDetailPanel({
                           title={selectedSourcePage.pageUrl}
                           onClick={(event) => { event.preventDefault(); void openSourceLink(selectedSourcePage.pageUrl); }}
                         >{selectedSourcePage.pageUrl}</a>
-                        <button type="button" className="material-source-mini" onClick={() => void copySourceValue(selectedSourcePage.pageUrl)}>{t("materials.source.copy")}</button>
+                        <button type="button" className="material-source-mini" aria-label={t("materials.source.copy")} title={t("materials.source.copy")} onClick={() => void copySourceValue(selectedSourcePage.pageUrl)}><SourceCopyIcon /></button>
                       </b>
                     </>
                   ) : null}
@@ -5222,7 +5255,7 @@ export function MaterialsDetailPanel({
                       <span>{t("materials.source.site")}</span>
                       <b className="material-source-value">
                         <span className="material-source-text" title={materialSource.origin}>{materialSource.origin}</span>
-                        <button type="button" className="material-source-mini" onClick={() => void copySourceValue(materialSource.origin!)}>{t("materials.source.copy")}</button>
+                        <button type="button" className="material-source-mini" aria-label={t("materials.source.copy")} title={t("materials.source.copy")} onClick={() => void copySourceValue(materialSource.origin!)}><SourceCopyIcon /></button>
                       </b>
                       {!selectedSourcePage && (
                         <>
@@ -5237,7 +5270,7 @@ export function MaterialsDetailPanel({
                       <span>{t("materials.source.localFile")}</span>
                       <b className="material-source-value">
                         <span className="material-source-text" title={asset.originalPath}>{asset.originalPath}</span>
-                        <button type="button" className="material-source-mini" onClick={() => void copySourceValue(asset.originalPath)}>{t("materials.source.copy")}</button>
+                        <button type="button" className="material-source-mini" aria-label={t("materials.source.copy")} title={t("materials.source.copy")} onClick={() => void copySourceValue(asset.originalPath)}><SourceCopyIcon /></button>
                       </b>
                     </>
                   ) : null}
@@ -5257,7 +5290,6 @@ export function MaterialsDetailPanel({
                 <button onClick={() => onPreview(asset)}>{t("materials.detail.preview")}</button>
                 {onFindSimilar && <button onClick={onFindSimilar} disabled={!isImage}>查找相似</button>}
                 <button onClick={onExport}><IconDownload />{t("materials.export.originals")}</button>
-                {onCsvExport && <button onClick={onCsvExport}><IconDownload />{t("materials.csv.entry")}</button>}
                 <button className="detail-compare-action-react" onClick={onCompare} disabled={!isImage} title={!isImage ? t("materials.compare.reason.imageOnly") : t("materials.detail.compare")}><IconCompare />{t("materials.detail.compare")}</button>
                 <button onClick={openInExplorer} disabled={!assetPath}>{t("materials.detail.explorer")}</button>
                 <button onClick={relocateAssetPath} disabled={relocating}>{relocating ? t("materials.missing.relocating") : t("materials.detail.relocate")}</button>
@@ -5890,6 +5922,10 @@ function IconCopy() {
   return <svg viewBox="0 0 16 16"><rect x="4" y="2" width="8" height="10" rx="1" /><path d="M3 6h1v8a1 1 0 0 0 1 1h7" /></svg>;
 }
 
+function SourceCopyIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>;
+}
+
 function IconDownload() {
   return <svg viewBox="0 0 16 16"><path d="M8 2v8M4 6l4-4 4 4" /><path d="M2 12v2h12v-2" /></svg>;
 }
@@ -6173,6 +6209,7 @@ function MaterialViewer({
                 src={imagePreviewUrl}
                 alt={asset.name}
                 variant="viewer"
+                style={containedVideoStyle}
                 sourceIdentity={imageSourceIdentity}
                 onLoad={(event) => {
                   if (event.currentTarget.naturalWidth > 0 && event.currentTarget.naturalHeight > 0) {

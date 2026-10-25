@@ -263,11 +263,25 @@ impl KnowledgeService {
         destination: &Path,
         approved: &[(String, Vec<String>)],
     ) -> Result<AttachmentExportResult, KnowledgeError> {
+        self.export_portable_notes(source_epoch, destination, approved, &[], false)
+    }
+
+    pub(crate) fn export_note_archive(
+        &self, source_epoch: u64, destination: &Path,
+        approved: &[(String, Vec<String>)], document: &KnowledgeDocumentRef,
+    ) -> Result<AttachmentExportResult, KnowledgeError> {
+        self.export_portable_notes(source_epoch, destination, approved, &[document.clone()], true)
+    }
+
+    fn export_portable_notes(
+        &self, source_epoch: u64, destination: &Path,
+        approved: &[(String, Vec<String>)], documents: &[KnowledgeDocumentRef], archive: bool,
+    ) -> Result<AttachmentExportResult, KnowledgeError> {
         let vault_id = self.current_vault_id()?;
         let _source = self.lock_active_ui_source(source_epoch, Some(&vault_id))?;
         let (vault, source_guard, identity) = self.capture_current_target()?;
         let inventory = index::attachment_inventory(&vault.root)?;
-        let notes = portability_notes(&vault, &inventory, &[])?;
+        let notes = portability_notes(&vault, &inventory, documents)?;
         let mut result = AttachmentExportResult {
             vault_id: vault.registration.id.clone(),
             destination: destination.to_string_lossy().into_owned(),
@@ -395,6 +409,9 @@ impl KnowledgeService {
             )?);
         }
         self.verify_current_target(&identity, &source_guard)?;
+        if archive {
+            return write_note_archive(&vault.root, destination, files, result);
+        }
         let (destination, _ancestors, destination_guard) =
             prepare_export_destination(&vault.root, destination)?;
         result.destination = destination.to_string_lossy().into_owned();
@@ -576,4 +593,44 @@ fn create_export_parents(root: &Path, relative: &Path) -> Result<Vec<File>, Know
         )?);
     }
     Ok(held)
+}
+
+/// Archive paths come from safe Markdown paths and generated attachment names.
+/// Never overwrite an existing file, traverse symlinks, or write inside the source Vault.
+fn write_note_archive(
+    source: &Path, destination: &Path, files: Vec<(String, Vec<u8>, bool)>,
+    mut result: AttachmentExportResult,
+) -> Result<AttachmentExportResult, KnowledgeError> {
+    if !destination.is_absolute() || destination.extension().and_then(OsStr::to_str).map(|x| !x.eq_ignore_ascii_case("zip")).unwrap_or(true) {
+        return Err(error("knowledge-export-invalid-destination", "Choose an absolute ZIP filename"));
+    }
+    let parent = destination.parent().ok_or_else(|| error("knowledge-export-invalid-destination", "Missing export directory"))?;
+    let anchor = parent.ancestors().last().ok_or_else(|| error("knowledge-export-invalid-destination", "Missing export root"))?;
+    let _ancestors = guard_existing_ancestors(anchor, parent)?;
+    let guard = filesystem_directory_identity_guard(parent).map_err(map_filesystem_identity_error)?;
+    let parent = parent.canonicalize().map_err(|_| error("knowledge-export-invalid-destination", "Export directory is unavailable"))?;
+    let target = parent.join(destination.file_name().ok_or_else(|| error("knowledge-export-invalid-destination", "Missing export filename"))?);
+    if target.starts_with(source) { return Err(error("knowledge-export-source-overlap", "Save the ZIP outside the source knowledge base")); }
+    guard.verify_current_path(&parent).map_err(map_filesystem_identity_error)?;
+    let output = OpenOptions::new().write(true).create_new(true).open(&target)
+        .map_err(|_| error("knowledge-export-write-failed", "Choose a new ZIP filename; existing files are never overwritten"))?;
+    let mut archive = zip::ZipWriter::new(output);
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (relative, bytes, is_note) in files {
+        let safe = safe_relative_path(&relative, false)?;
+        archive.start_file(relative_path_string(&safe), options)
+            .map_err(|_| error("knowledge-export-write-failed", "Cannot write ZIP entry"))?;
+        archive.write_all(&bytes).map_err(|_| error("knowledge-export-write-failed", "Cannot write ZIP contents"))?;
+        result.written_bytes += bytes.len() as u64;
+        if is_note { result.document_count += 1; } else { result.attachment_count += 1; }
+    }
+    // A receipt travels with partial exports, so missing references are never silently hidden.
+    let receipt = serde_json::to_vec_pretty(&result).map_err(|_| error("knowledge-export-write-failed", "Cannot encode export receipt"))?;
+    archive.start_file("LuckyRay-export-receipt.json", options).map_err(|_| error("knowledge-export-write-failed", "Cannot write receipt"))?;
+    archive.write_all(&receipt).map_err(|_| error("knowledge-export-write-failed", "Cannot write receipt"))?;
+    let output = archive.finish().map_err(|_| error("knowledge-export-write-failed", "Cannot finish ZIP"))?;
+    output.sync_all().map_err(|_| error("knowledge-export-write-failed", "Cannot flush ZIP"))?;
+    guard.verify_current_path(&parent).map_err(map_filesystem_identity_error)?;
+    result.destination = target.to_string_lossy().into_owned();
+    Ok(result)
 }

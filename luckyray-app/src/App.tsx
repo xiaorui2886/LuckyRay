@@ -1,4 +1,9 @@
+import { createMaterialProvenanceStore } from "./core/canvas/materialProvenanceStore";
+import { normalizeMaterialGenerationProvenance } from "./core/canvas/materialProvenance";
+import { prepareCanvasVideoBridgeReferences } from "./core/canvas/videoGenerationAdapter";
+import { canvasGenerationFailure } from "./core/canvas/generationErrors";
 import { materialLibrarySession } from "./core/services/materialLibraryContext";
+import { confirmKnowledgeScopeRead, readKnowledgeScopeTransition, withKnowledgeScopeTransition } from "./core/services/knowledgeScopeTransition";
 import { createMaterialLibraryAdapter, createMaterialVaultAttachmentAdapter, type MaterialLibraryAi } from "./core/services/materialLibraryAdapter";
 import type { MaterialCatalogAdapter } from "./core/services/materialCatalog";
 import { adaptMaterialAssetMedia, derivePreviewUrl } from "./core/services/materialAssetAdapter";
@@ -6,11 +11,11 @@ import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { shellFilePath } from "./core/services/shellFilePath";
-import { mkdir, readFile, writeFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, readFile, writeFile, rename } from "@tauri-apps/plugin-fs";
 import Database from "@tauri-apps/plugin-sql";
 import { useCallback, useRef } from "react";
 import { openBackendOwnedDatabase, type BackendBootstrapStatus } from "./core/backendBootstrap";
-import { createDefaultKnowledgeLegacyBridgeAdapter, knowledgeLegacyBridgeAdapter } from "./core/services/knowledgeLegacyBridge";
+import { createDefaultKnowledgeLegacyBridgeAdapter, knowledgeFolderIdentity, knowledgeLegacyBridgeAdapter } from "./core/services/knowledgeLegacyBridge";
 import {
   KnowledgeServiceError,
   createKnowledgeDocument,
@@ -85,6 +90,9 @@ import type {
   BridgeNotesInlineApplyResult,
   BridgeCanvasFile,
   BridgeCanvasStorageCheck,
+  BridgeCanvasMaterialDestination,
+  BridgeCanvasMaterialFolders,
+  BridgeCanvasKnowledgeFolders,
   BridgeAssetPatch,
   MemoryViewId,
   MemoryEntryView,
@@ -269,6 +277,7 @@ function readMaterialImportSettings(options?: MaterialImportOptions): { storageM
 function normalizeAsset(asset: Partial<BridgeAsset>): BridgeAsset {
   const importedAt = asset.importedAt || new Date().toISOString();
   return adaptMaterialAssetMedia({
+    materialGenerationProvenance: normalizeMaterialGenerationProvenance(asset.materialGenerationProvenance),
     id: asset.id || createId(),
     name: asset.name || filenameFromPath(asset.originalPath || "untitled"),
     originalPath: asset.originalPath || "",
@@ -705,7 +714,9 @@ function writeFallbackVault(vault: BridgeVaultMetadata | null) {
 async function getCurrentNotesVault(): Promise<BridgeVaultMetadata | null> {
   if (!isTauri()) return readFallbackVault();
   try {
+    const scopeGeneration = readKnowledgeScopeTransition().generation;
     const vault = await invoke<BridgeVaultMetadata | null>("get_current_notes_vault");
+    confirmKnowledgeScopeRead(vault?.id ?? null, scopeGeneration);
     writeFallbackVault(vault);
     return vault;
   } catch (error) {
@@ -716,14 +727,20 @@ async function getCurrentNotesVault(): Promise<BridgeVaultMetadata | null> {
 
 async function createNotesVault(rootPath: string): Promise<BridgeVaultMetadata> {
   if (!isTauri()) throw new Error("当前环境不支持建立本地仓库");
-  const vault = await invoke<BridgeVaultMetadata>("create_notes_vault", { rootPath });
+  const vault = await withKnowledgeScopeTransition(
+    () => invoke<BridgeVaultMetadata>("create_notes_vault", { rootPath }),
+    result => result.id,
+  );
   writeFallbackVault(vault);
   return vault;
 }
 
 async function openNotesVault(rootPath: string): Promise<BridgeOpenVaultResult> {
   if (!isTauri()) throw new Error("当前环境不支持打开本地仓库");
-  const result = await invoke<BridgeOpenVaultResult>("open_notes_vault", { rootPath });
+  const result = await withKnowledgeScopeTransition(
+    () => invoke<BridgeOpenVaultResult>("open_notes_vault", { rootPath }),
+    value => value.vault?.id ?? null,
+  );
   if (result.vault) writeFallbackVault(result.vault);
   return result;
 }
@@ -1523,7 +1540,7 @@ type BridgeAiVideoGenerateResponse = {
 type BridgeAiVideoGenerationProgress = {
   client_task_id: string;
   provider_task_id?: string | null;
-  stage: "queued" | "generating" | "downloading";
+  stage: "submitting" | "queued" | "generating" | "downloading";
   progress?: number | null;
 };
 
@@ -1814,20 +1831,6 @@ async function notesInlineCancel() {
   return invoke<boolean>("notes_inline_cancel");
 }
 
-function canvasGenerationFailure(kind = "connection") {
-  const messages: Record<string, string> = {
-    no_api_key: "尚未配置画布生成服务",
-    unauthorized: "画布生成服务认证失败",
-    rate_limited: "画布生成服务请求过于频繁",
-    timeout: "画布生成请求超时",
-    invalid_response: "画布生成服务响应无效",
-    unsupported_input: "当前生成服务不支持该输入",
-    empty_response: "画布生成服务没有返回可用结果",
-    connection: "画布生成服务连接失败",
-  };
-  return { error_kind: kind, error_message: messages[kind] || "画布生成服务暂时不可用" };
-}
-
 async function aiImageGenerate(
   request: import("./core/canvas/generationTasks").CanvasGenerationRequestSnapshot,
 ): Promise<import("./core/canvas/imageGenerationAdapter").CanvasImageGenerationResponse> {
@@ -1863,18 +1866,10 @@ async function aiImageGenerate(
     return {
       success: response.success,
       images,
-      error_kind: response.error_kind,
-      error_message: response.error_message,
-      error_detail: null,
+      ...(!response.success ? canvasGenerationFailure(response) : {}),
     };
   } catch (error) {
-    // Distinguish a rejected invocation (binding/permission/protocol issue)
-    // from a real transport failure so the history entry says what happened.
-    const code = String(error);
-    if (code.includes("provider_error") || code.includes("canvas-media-profile")) {
-      return { success: false, images: [], ...canvasGenerationFailure("provider_error") };
-    }
-    return { success: false, images: [], ...canvasGenerationFailure("connection") };
+    return { success: false, images: [], ...canvasGenerationFailure(error) };
   }
 }
 
@@ -1882,11 +1877,12 @@ async function aiVideoGenerate(
   request: import("./core/canvas/generationTasks").CanvasGenerationRequestSnapshot,
   onProgress?: (progress: import("./core/canvas/videoGenerationAdapter").CanvasVideoGenerationProgress) => void,
   providerTaskId?: string,
+  persistedClientTaskId?: string,
 ): Promise<import("./core/canvas/videoGenerationAdapter").CanvasVideoGenerationResponse> {
   if (request.references.some((reference) => reference.kind === "video")) {
     return { success: false, ...canvasGenerationFailure("unsupported_input") };
   }
-  const clientTaskId = `canvas-video-${crypto.randomUUID()}`;
+  const clientTaskId = persistedClientTaskId || `canvas-video-${crypto.randomUUID()}`;
   let unlisten: undefined | (() => void);
   try {
     if (onProgress) {
@@ -1901,13 +1897,7 @@ async function aiVideoGenerate(
       });
     }
     // Text and notes are already compiled into the prompt; the native media list accepts images only.
-    const references = await Promise.all(request.references.filter(reference => reference.kind !== "text" && reference.kind !== "note").map(async (reference) => ({
-      id: reference.id,
-      label: reference.label,
-      kind: reference.kind,
-      role: reference.role,
-      media_url: reference.mediaUrl ? await prepareCanvasMediaReference(reference.mediaUrl) : null,
-    })));
+    const references = await prepareCanvasVideoBridgeReferences(request, providerTaskId, prepareCanvasMediaReference);
     const response = await invoke<BridgeAiVideoGenerateResponse>("ai_video_generate", {
       mediaProfileId: request.mediaProfileId ?? null,
       mediaProfileRevision: request.mediaProfileRevision ?? null,
@@ -1927,16 +1917,10 @@ async function aiVideoGenerate(
       success: response.success,
       videoUrl: response.video_url,
       thumbnailUrl: response.thumbnail_url,
-      error_kind: response.error_kind,
-      error_message: response.error_message,
-      error_detail: null,
+      ...(!response.success ? canvasGenerationFailure(response) : {}),
     };
   } catch (error) {
-    const code = String(error);
-    if (code.includes("provider_error") || code.includes("canvas-media-profile")) {
-      return { success: false, ...canvasGenerationFailure("provider_error") };
-    }
-    return { success: false, ...canvasGenerationFailure("connection") };
+    return { success: false, ...canvasGenerationFailure(error) };
   } finally {
     unlisten?.();
   }
@@ -1995,28 +1979,139 @@ async function materializeCanvasGeneratedImage(value: string): Promise<string> {
   return outputPath;
 }
 
+// Canvas uses the legacy material catalog, independent of the selected materials-page library.
+const canvasMaterialProvenanceStore = createMaterialProvenanceStore({
+  async read(key) {
+    if (!isTauri()) return localStorage.getItem(`luckyray:material-generation:${key}`);
+    const path = await canvasMaterialProvenancePath(key);
+    if (!(await exists(path))) return null;
+    return new TextDecoder().decode(await readFile(path));
+  },
+  async write(key, value) {
+    if (!isTauri()) { localStorage.setItem(`luckyray:material-generation:${key}`, value); return; }
+    const path = await canvasMaterialProvenancePath(key);
+    await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+    await writeFile(temporary, new TextEncoder().encode(value));
+    await rename(temporary, path);
+  },
+}, "legacy-material-catalog");
+async function canvasMaterialProvenancePath(key: string): Promise<string> {
+  const root = await getAppDataDir();
+  if (!root) throw Error("material-provenance-storage-unavailable");
+  const directory = `${root}/canvas-material-provenance-v1`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+  return `${directory}/${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}.json`;
+}
+async function enrichCanvasMaterialAssets(assets: BridgeAsset[]): Promise<BridgeAsset[]> {
+  return Promise.all(assets.map(async asset => {
+    try { return { ...asset, materialGenerationProvenance: await canvasMaterialProvenanceStore.read(asset) }; }
+    catch { return asset; } // Unavailable metadata must never become invented generation history.
+  }));
+}
+async function listCanvasMaterialFolders(): Promise<BridgeCanvasMaterialFolders> {
+  const folders = (await listFolders("materials")).flatMap(function flatten(folder): BridgeCanvasMaterialFolders["folders"] {
+    return [{ id: folder.id, name: folder.name, parentId: folder.parentId }, ...folder.children.flatMap(flatten)];
+  });
+  return { catalogId: "legacy-material-catalog", folders };
+}
+
+async function listCanvasKnowledgeFolders(): Promise<BridgeCanvasKnowledgeFolders> {
+  // The general bridge read falls back to cached metadata on native failures.
+  // Folder snapshots must instead fail closed, so a stale Vault is never exposed.
+  const readCurrentVault = () => isTauri()
+    ? invoke<BridgeVaultMetadata | null>("get_current_notes_vault")
+    : getCurrentNotesVault();
+  const vault = await readCurrentVault();
+  if (!vault) return { vaultId: null, folders: [], noteFolderIds: {} };
+  const root = await listNotesVaultFiles(vault);
+  const result: BridgeCanvasKnowledgeFolders = { vaultId: vault.id, folders: [], noteFolderIds: {} };
+  const visit = (node: BridgeNotesVaultFileNode, parentId: string | null) => {
+    if (node.kind === "folder") {
+      const id = node.relativePath ? knowledgeFolderIdentity(vault.id, node.relativePath) : null;
+      if (id) result.folders.push({ id, name: node.name, parentId });
+      node.children.forEach(child => visit(child, id));
+    } else if (/\.md$/i.test(node.relativePath)) {
+      result.noteFolderIds[knowledgeDocumentNoteId({ vaultId: vault.id, relativePath: node.relativePath })] = parentId;
+    }
+  };
+  visit(root, null);
+  if ((await readCurrentVault())?.id !== vault.id) throw new Error("knowledge-vault-not-current");
+  return result;
+}
+
 async function saveCanvasGenerationToLibrary(
   candidate: import("./core/canvas/generationHistory").CanvasGenerationLibraryCandidate,
+  destination?: BridgeCanvasMaterialDestination,
 ): Promise<{ success: boolean; assetId?: string; message?: string }> {
-  const mediaUrl = candidate.mediaUrl.trim();
+  const target = destination ? { ...destination } : undefined;
+  let mediaUrl = candidate.mediaUrl.trim();
   if (!mediaUrl) return { success: false, message: "生成结果没有可保存的文件" };
-  if (candidate.kind === "image" && /^https:\/\//i.test(mediaUrl)) {
-    const result = await importImageToAssets(mediaUrl);
-    return result.success
-      ? { success: true, assetId: result.asset_id, message: "已保存到素材库" }
-      : { success: false, message: "图片结果暂时无法保存到素材库" };
-  }
-  if (/^(?:https?|data|blob):/i.test(mediaUrl)) {
-    return { success: false, message: "远程结果需先生成本地文件后才能保存" };
-  }
   try {
-    const imported = await importAssets({ paths: [mediaUrl], storageMode: "managed" });
-    const asset = imported.assets[0];
-    return asset
-      ? { success: true, assetId: asset.id, message: "已保存到素材库" }
-      : { success: false, message: "素材库没有接受该生成结果" };
-  } catch {
-    return { success: false, message: "生成结果暂时无法保存到素材库" };
+    // Never let an invalid or stale folder fall through importAssets' legacy root fallback.
+    const validateDestination = async () => {
+      if (!target) return;
+      if (target.catalogId !== "legacy-material-catalog") throw new Error("canvas-material-catalog-mismatch");
+      const snapshot = await listCanvasMaterialFolders();
+      if (target.folderId !== null && !snapshot.folders.some(folder => folder.id === target.folderId)) {
+        throw new Error("canvas-material-folder-missing");
+      }
+    };
+    await validateDestination();
+    const before = await listAssets();
+    let asset: BridgeAsset | undefined;
+    let duplicate = false;
+    if (candidate.kind === "image" && /^https:\/\//i.test(mediaUrl)) {
+      const result = await importImageToAssets(mediaUrl);
+      if (!result.success || !result.asset_id) return { success: false, message: "图片结果暂时无法保存到素材库" };
+      asset = (await getAssetsByIds([result.asset_id]))[0];
+      duplicate = !!result.skipped;
+    } else {
+      if (candidate.kind === "image" && /^data:image\//i.test(mediaUrl)) mediaUrl = await materializeCanvasGeneratedImage(mediaUrl);
+      if (/^(?:https?|data|blob):/i.test(mediaUrl)) return { success: false, message: "远程结果需先生成本地文件后才能保存" };
+      const imported = await importAssets({ paths: [mediaUrl], storageMode: "managed" });
+      asset = imported.assets[0];
+      duplicate = imported.skippedDuplicates > 0;
+      // Some catalog versions report duplicates without returning an asset. Only exact source identity is safe.
+      if (!asset && duplicate) asset = before.find(item => item.originalPath === mediaUrl || item.libraryPath === mediaUrl);
+    }
+    if (!asset) return { success: false, message: "素材库没有接受该生成结果" };
+    duplicate ||= before.some(item => item.id === asset!.id);
+    if (target) {
+      await validateDestination();
+      if (duplicate && (asset.folderId ?? null) !== target.folderId) {
+        return { success: false, assetId: asset.id, message: "素材已存在于其他文件夹，未移动或覆盖原素材" };
+      }
+      if (!duplicate && (asset.folderId ?? null) !== target.folderId) {
+        await moveAssetToFolder({ assetId: asset.id, folderId: target.folderId });
+        const placed = (await getAssetsByIds([asset.id]))[0];
+        if (!placed || (placed.folderId ?? null) !== target.folderId) {
+          return { success: false, assetId: asset.id, message: "素材已导入，但目标文件夹未能保存，请在素材库中检查" };
+        }
+        asset = placed;
+      }
+    }
+    const name = candidate.name?.trim();
+    if (name && !duplicate && name !== asset.name) {
+      const renamed = await updateAsset(asset.id, { name });
+      if (!renamed) return { success: false, assetId: asset.id, message: "素材已导入，但名称未能保存，请在素材库中修改名称" };
+      asset = renamed;
+    }
+    const provenance = normalizeMaterialGenerationProvenance(candidate.provenance);
+    if (provenance) {
+      const previous = await canvasMaterialProvenanceStore.read(asset);
+      // A content duplicate may have a different origin. Never rewrite its existing evidence.
+      if (!previous) await canvasMaterialProvenanceStore.write(asset, provenance);
+    }
+    return { success: true, assetId: asset.id, message: duplicate && name && name !== asset.name ? "素材已存在，保留了素材库中的原名称" : "已保存到素材库" };
+  } catch (error) {
+    if (error instanceof Error && error.message === "canvas-material-catalog-mismatch") {
+      return { success: false, message: "目标素材库不匹配，请重新选择保存位置" };
+    }
+    if (error instanceof Error && error.message === "canvas-material-folder-missing") {
+      return { success: false, message: "目标文件夹已失效，请刷新后重新选择；若素材已导入，请在素材库检查" };
+    }
+    return { success: false, message: "素材或生成记录未能完整保存，请重试" };
   }
 }
 
@@ -3928,6 +4023,9 @@ export function buildLuckyRayBridge(): LuckyRayBridge {
     importAssets,
     importDroppedFiles,
     listAssets,
+    listCanvasAssets: async () => enrichCanvasMaterialAssets(await listAssets()),
+    listCanvasMaterialFolders,
+    listCanvasKnowledgeFolders,
     getAssetsByIds,
     getMaterialChangeState,
     updateAsset,
@@ -4038,6 +4136,10 @@ export function buildLuckyRayBridge(): LuckyRayBridge {
     notesInlineCancel,
     aiImageGenerate,
     aiVideoGenerate,
+    storeCanvasImageSlice: async (png: string) => {
+      if (!isTauri() || !png.startsWith("data:image/png;base64,")) throw Error("canvas-slice-invalid");
+      return materializeCanvasGeneratedImage(png);
+    },
     saveCanvasGenerationToLibrary,
     listAiConversations,
     createAiConversation,

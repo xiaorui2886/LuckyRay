@@ -1,0 +1,57 @@
+{
+  "agnes-video-2.5": {
+    "aspects": [
+      "16:9",
+      "9:16",
+      "1:1",
+      "4:3",
+      "3:4",
+      "21:9"
+    ],
+    "qualities": [
+      "720p",
+      "1080p",
+      "1K",
+      "2K"
+    ],
+    "durations": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "defaultDuration": 5,
+    "source": "https://wiki.agnes-ai.com/en/docs/agnes-video-25"
+  },
+  "agnes-video-2.5-flash": {
+    "aspects": [
+      "16:9",
+      "9:16",
+      "1:1",
+      "4:3",
+      "3:4",
+      "21:9"
+    ],
+    "qualities": [
+      "720p"
+    ],
+    "durations": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "defaultDuration": 5,
+    "source": "https://wiki.agnes-ai.com/en/docs/agnes-video-25-flash"
+  }
+}

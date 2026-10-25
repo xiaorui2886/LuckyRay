@@ -25,7 +25,7 @@ export type DshNativeSurfaceOpenIntent = {
     kind: "material";
     assetId: string;
     canonicalPath: string;
-    delivery: "image-attachment" | "path-reference";
+    delivery: "image-attachment" | "file-attachment" | "path-reference";
   }>[];
   source: "materials" | "notes" | "collection" | "graph" | "search";
   text: string;

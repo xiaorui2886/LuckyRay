@@ -139,7 +139,7 @@ fn secret(p: &Paths, action: &str, name: &str, input: Option<&[u8]>) -> Result<S
         "-Name".into(),
         name.into(),
     ];
-    let (ok, out, mut err) = crate::materials_mcp_gui::run(&exe, &args, input, 20)?;
+    let (ok, out, mut err) = process::run(&exe, &args, input, 20)?;
     err.zeroize();
     if !ok {
         return Err("private-secret-storage-failed".into());
@@ -256,7 +256,7 @@ fn start_runtime(
     }
     let dir = payload(p, s)?;
     package::verify(&dir, s.version.as_deref().unwrap())?;
-    let (ok, _, _) = crate::materials_mcp_gui::run(
+    let (ok, _, _) = process::run(
         &dir.join("node.exe"),
         &[
             dir.join("packages/community-mcp/src/server.mjs")

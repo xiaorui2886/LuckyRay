@@ -1,7 +1,69 @@
+import { generatorCardDimensions, storyboardAppendY, storyboardBounds } from "./core/canvas/storyboardLayout";
+import { DIRECTOR_STORYBOARD_INSETS, directorStoryboardAppendY, directorStoryboardBounds, spaceDirectorStoryboards } from "./core/canvas/director/storyboardLayout";
+import { CanvasMotionProvider } from './features/canvas/CanvasMotionContext';
+import { CanvasDialogPortal, CanvasDialogScopeProvider } from './features/canvas/CanvasDialogScope';
+import { normalizeCanvasNodeDragHandle } from './core/canvas/nodeDrag';
+import { appendAgentReferences } from './core/canvas/agent/references';
+import { CanvasAgentOrb } from "./features/canvas/CanvasAgentOrb";
+import { CanvasAgentOrbPositionSetting } from "./features/canvas/CanvasAgentOrbPositionSetting";
+import { readCreation, applyCreation, type CreationState } from "./core/canvas/agent/creationEngine";
+import { prepareCreationHandoff } from "./core/canvas/agent/creationHandoff";
+import { completeCreationMutation } from "./core/canvas/agent/creationCommit";
+import type { ImageEdit as AgentImageEdit } from "./core/canvas/imageEditing";
+import { CanvasAgentPanel } from "./features/canvas/CanvasAgentPanel";
+import { canvasAgentExecutionOwnerMatches, canvasAgentExecutionNodeIds as canvasAgentExecutionNodeIdsFromState, navigateCanvasAgentExecution } from "./features/canvas/canvasAgentResultNavigation";
+import { useCanvasAgent } from "./features/canvas/useCanvasAgent";
+import { agentContextNodes, agentContextWorkingSet, agentGraphRevision, agentNodeKind, agentNodeMedia, agentNodeRevision, validateAgentContextCurrent } from "./core/canvas/agent/context";
+import { prepareAgentImage } from "./core/canvas/agent/images";
+import { validateCanvasAgentPlan, applyCanvasAgentPlan } from "./core/canvas/agent/plan";
+import { editCanvasAgentGraph } from "./core/canvas/agent/graphEdit";
+import { createCanvasActionLedger } from "./core/canvas/agent/actionLedger";
+import { executeCanvasAgentPlan } from "./core/canvas/agent/execution";
+import { canvasAgentErrorMessage } from "./core/services/canvasAgent";
+import type { CanvasAgentContext, CanvasAgentPlan, CanvasAgentExecution, CanvasAgentPendingAction, CanvasAgentActionResult } from "./core/canvas/agent/types";
+import { CanvasNodeSearchPanel, canvasNodeSearchKind, type CanvasNodeSearchRow } from "./features/canvas/CanvasNodeSearchPanel";
+import { canvasLibraryDisplayText } from "./core/canvas/libraryPicker";
+import { CanvasLibraryPicker } from "./features/canvas/CanvasLibraryPicker";
+import { materialProvenanceHistory, normalizeMaterialGenerationProvenance, type MaterialGenerationProvenance } from "./core/canvas/materialProvenance";
+import {captureGenerationEditorSnapshot} from "./core/canvas/generationEditorSnapshot";
+import { CanvasLibraryDestinationDialog } from "./features/canvas/CanvasLibraryDestinationDialog";
+import { type CanvasLibraryFolderSnapshot } from "./core/canvas/libraryFolders";
+import type { BridgeCanvasFolder, BridgeCanvasMaterialFolders, BridgeCanvasKnowledgeFolders, BridgeCanvasMaterialDestination } from "./core/bridge/bridgeTypes";
+import { CanvasNodeName } from "./features/canvas/CanvasNodeName";
+import "./features/canvas/canvasLibraryFolders.css";
+import { canvasMaterialDefaultNames, canvasNodeDisplayName } from "./core/canvas/materialNaming";
+import { CanvasCinematography } from "./features/canvas/CanvasCinematography";
+import { compileCinematographyPrompt, normalizeCinematographySettings, cinematographyHasDirections, type CinematographySettings } from "./core/canvas/cinematography";
+import { CanvasImageCreativeMenu, CanvasCreativeRecipeEditor } from "./features/canvas/CanvasImageCreativeMenu";
+import { compileCreativeRecipePrompt, validateCreativeRecipeInput, normalizeCreativeRecipe, getImageCreativeAction, type ImageCreativeRecipe } from "./core/canvas/imageCreativeActions";
+import { storyboardCandidates, adoptStoryboardCandidate, clearStoryboardChoice } from "./core/canvas/storyboardCandidates";
+import { validateScriptShots, SCRIPT_TEXT_LIMIT, type StoryboardScriptImport } from "./core/canvas/storyboardScript";
+import { reusableStoryboardDraft } from "./core/canvas/storyboardImport";
+import { buildStoryboardDeliveryPlan, prepareStoryboardDelivery } from "./core/canvas/storyboardDelivery";
+import { CanvasFocusStatus } from "./features/canvas/CanvasFocusStatus";
+import { applyFocusReference, resolvePinnedFocusReference } from "./core/canvas/focusReference";
+import {CanvasImageResults} from "./features/canvas/CanvasImageResults";
+import {mergeImageResults,selectPrimaryResultImage} from "./core/canvas/imageResults";
+import {compileMentionedPrompt,parseReferenceMentions,validateReferenceMentions,remapReferenceMentions} from "./core/canvas/referenceMentions";
+import {CanvasPromptEditor,type CanvasPromptEditorHandle} from "./features/canvas/CanvasPromptEditor";
+import {CanvasResultActions} from "./features/canvas/CanvasResultActions";
+import {buildHistoryDraft,historyHasResult,historyLibraryCandidates,resultEntryForNode,hasLiveGenerationTask} from "./core/canvas/generationIteration";
+import {CanvasReferenceHover} from "./features/canvas/CanvasReferenceHover";
+import {planReferenceReorder} from "./core/canvas/referenceReorder";
+import {useReferencePointerReorder} from "./features/canvas/useReferencePointerReorder";
+import {createCanvasReferencePlan,canvasReferenceSnapshots,duplicatesConnectedReference,referenceSourceId,referenceIssueText,type ReferenceIssue,type ReferenceEntry} from "./core/canvas/referencePlan";
+import {CanvasComposerPopover} from "./features/canvas/CanvasComposerPopover";
+import {CanvasAnchoredSurface} from "./features/canvas/CanvasAnchoredSurface";
+import {CanvasSelectionToolbar} from "./features/canvas/CanvasSelectionToolbar";
+import {canLayoutSelection, selectedLayoutRoots, planSelectionLayout, planSelectionNudge, applySelectionLayout, type LayoutCommand} from "./core/canvas/selectionLayout";
+import {CanvasViewportControls} from "./features/canvas/CanvasViewportControls";
+import {useCanvasReducedMotion} from "./features/canvas/useCanvasReducedMotion";
+import {CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM, DEFAULT_CANVAS_VIEWPORT, normalizeCanvasViewport, type CanvasViewport} from "./core/canvas/viewportNavigation";
 import {readActiveKnowledgeWriteSource} from "./core/services/knowledgeSource";
 import {registerWorkspaceFlush} from "./workspace/windowLifecycle";
 import {flushCanvasBeforeQuit} from "./features/canvas/canvasQuitBarrier";
 import {canvasNoteBody,canvasNoteTitle,canvasNodeLibraryCandidates,createCanvasSaveGate} from "./core/canvas/nodeSaving";
+import {CanvasHistoryDisclosure} from "./features/canvas/CanvasHistoryDisclosure";
 import {useCanvasHistoryPopover} from "./features/canvas/useCanvasHistoryPopover";
 // D65 正式画布 MVP
 // 基于 React Flow 12，沿用 D47/D64-R2 节点能力。
@@ -28,8 +90,7 @@ import {useCanvasHistoryPopover} from "./features/canvas/useCanvasHistoryPopover
 //
 // 文件名仍叫 CanvasSpike.tsx 以兼容 main.tsx 路由；内容是 D65 正式画布。
 
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { createPortal } from "react-dom";
+import { Suspense, lazy, Fragment, createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { resolveScopedShortcut } from "./app/shortcuts";
 import { I18nProvider, useI18n, type I18nContextValue } from "./core/i18n/index";
 import { useSavedLocale } from "./features/settings/useSettings";
@@ -56,25 +117,39 @@ import {
   SelectionMode,
   useReactFlow,
   useViewport,
+  getViewportForBounds,
 } from "@xyflow/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getLuckyRayBridgeSync } from "./core/bridge/luckyRayBridge";
+import type { BridgeAiMessageContent } from "./core/bridge/bridgeTypes";
 import { focusEntity, publishCurrentCanvasContext } from "./core/services/context";
 import { getAiProviderMeta } from "./core/services/aiProviders";
 import { completeCanvasProfileText, resolveCanvasTextSelection, canvasMediaProfilesClient, type CanvasMediaProfilesSnapshot, type CanvasMediaProfile } from "./core/services/canvasMediaProfiles";
 import { CanvasAspectOptions } from "./features/canvas/CanvasAspectOptions";
-import { mediaParameterKind, mediaParameterLabel, mediaPixelSize } from "./core/canvas/mediaOptionPresentation";
+import { mediaParameterKind, mediaParameterLabel, mediaPixelSize, videoParameterSummary } from "./core/canvas/mediaOptionPresentation";
+import { canvasGenerationSubmissionLabel } from "./core/canvas/generationTasks";
 import { mediaCapabilities, mediaOption, mediaQualityOption } from "./core/canvas/mediaCapabilities";
-import { PromptStarterSelect } from "./features/canvas/PromptStarterSelect";
 import { CanvasVersionReview } from "./features/canvas/CanvasVersionReview";
 import { CanvasReferencePacks } from "./features/canvas/CanvasReferencePacks";
+import { CanvasGridSplit, CanvasImageToolbar } from "./features/canvas/CanvasGridSplit";
+import { splitImageSource, stageGridOutputs, planGridNodes, restoreGridSliceInteraction, type GridSpec, type GridOutput, type GridCell } from "./core/canvas/imageGrid";
 import { CanvasImageTools } from "./features/canvas/CanvasImageTools";
+import { CanvasShotSummary } from "./features/canvas/CanvasShotSummary";
+import { duplicateStoryboardData } from "./core/canvas/storyboardDuplicate";
+import { CanvasTextDocument } from "./features/canvas/CanvasTextDocument";
+import { CanvasStoryboard, type StoryboardPosition } from "./features/canvas/CanvasStoryboard";
+import { canBeShot, defaultShot, isStoryboard, validShot, buildStoryboardPrompt, patchStoryboardPrompt, resolveStoryboardPosition, SHOT_LIMIT, storyboardShots, patchStoryboardShot, moveStoryboardShot, type StoryboardTag, type StoryboardShot, type ShotPatch } from "./core/canvas/storyboard";
 import { CanvasDeliveryPanel } from "./features/canvas/CanvasDeliveryPanel";
 import { selectedCanvasMedia } from "./core/canvas/mediaSelection";
-import { safeDeliveryName, type DeliveryItem } from "./core/canvas/mediaDelivery";
+import { readMediaBytes, safeDeliveryName, type DeliveryItem } from "./core/canvas/mediaDelivery";
+import { buildCanvasFocusMessages, normalizeCanvasFocusPoint, prepareCanvasFocusImage, sanitizeCanvasFocusPhrase } from "./core/canvas/focusTarget";
+import "./features/canvas/canvasFocusMode.css";
 import type { ImageEdit } from "./core/canvas/imageEditing";
+import type { DirectorDocument, DirectorShot } from "./core/canvas/director/types";
+import { createDirectorDocument, sanitizeDirectorDocument } from "./core/canvas/director/model";
+import { assertDirectorCapture, directorSessionMatches, directorShotDescription, retainDirectorExport, readDirectorShotSource, directorFrameDraft } from "./core/canvas/director/integration";
 import { CanvasCreativeRail, type CreativeAction } from "./features/canvas/CanvasCreativeRail";
 import { hydrateNotePreviews, notePreviewText, noteBodyText, type CanvasNoteDetail } from "./core/canvas/notePreview";
 import { CanvasSharpImage } from "./features/canvas/CanvasSharpImage";
@@ -93,7 +168,6 @@ import {
   type CanvasResultKind,
 } from "./core/canvas/nodeCapabilities";
 import {
-  isCanvasEdgeRole,
   normalizeCanvasEdgeSemantics,
   resolveCanvasEdgeSemanticData,
   type CanvasEdgeRole,
@@ -108,6 +182,7 @@ import {
 import {
   canCancelCanvasGenerationTask,
   canRetryCanvasGenerationTask,
+  resumeCanvasVideoGenerationTask,
   createCanvasGenerationTask,
   transitionCanvasGenerationTask,
   type CanvasGenerationKind,
@@ -120,8 +195,8 @@ import {
   type CanvasGenerationOutput,
 } from "./core/canvas/generationRunner";
 import { CanvasReferencePreview } from "./features/canvas/CanvasReferencePreview";
-import { compileCanvasGenerationInputs, orderCanvasGenerationReferences } from "./core/canvas/generationInputCompiler";
-import { PENDING_CANVAS_OPEN_KEY, resolveCanvasOpenTarget } from "./features/canvas/canvasNavigation";
+import { compileCanvasGenerationInputs } from "./core/canvas/generationInputCompiler";
+import { PENDING_CANVAS_OPEN_KEY, resolveCanvasOpenTarget, clearRememberedCanvasEditor, rememberCanvasEditor, canvasEditorHash } from "./features/canvas/canvasNavigation";
 import {
   appendCanvasHistoryEntry,
   canvasBeginPendingEdit,
@@ -146,15 +221,14 @@ import {
 } from "./features/canvas/canvasPersistence";
 import {
   arrangeCanvasNodes,
+  canvasNodeSize,
   attachCanvasNodesToGroup,
   createCanvasGroupDraft,
   ungroupCanvasNodes,
+  snapCanvasGroupDrop,
 } from "./core/canvas/canvasArrangement";
 import {
   canUngroupCanvasSelection,
-  isSafeCanvasTransformSelection,
-  planCanvasHorizontalDistribution,
-  planCanvasLeftAlignment,
   selectedCanvasGroupContainerIds,
   selectedCanvasIdsEqual,
   synchronizeCanvasNodeSelection,
@@ -174,13 +248,13 @@ import {
 import {
   generationTaskFromHistory,
   normalizeGenerationHistory,
-  toGenerationLibraryCandidate,
   upsertGenerationHistory,
   type CanvasGenerationHistoryEntry,
   type CanvasGenerationLibraryCandidate,
 } from "./core/canvas/generationHistory";
 import "@xyflow/react/dist/style.css";
 import "./canvas-spike-scroll.css";
+import "./features/canvas/canvas-history-grid.css";
 
 // ========== 类型 ==========
 
@@ -189,14 +263,27 @@ type AiResultKind = CanvasResultKind;
 type GenerationKind = "image" | "video";
 type CanvasDensity = "compact" | "standard";
 
+type CanvasFocusSession = {
+  canvasId: string;
+  epoch: number;
+  targetId: string;
+  bindingKey: string;
+  model: string;
+  profileId?: string;
+  profileRevision?: number;
+};
+
 type GenerationReference = {
   id: string;
+  mentionKey?: string;
   label: string;
   kind: string;
   role?: CanvasEdgeRole;
   thumbnailUrl?: string | null;
   mediaUrl?: string | null;
   text?: string | null;
+  sourceNodeId?: string;
+  issue?: ReferenceIssue;
 };
 
 const CANVAS_GENERATION_CONCURRENCY: Record<CanvasGenerationKind, number> = {
@@ -210,16 +297,10 @@ type ConnectedGenerationInput = {
   sourceNodeId: string;
   role: CanvasEdgeRole;
   reference: GenerationReference;
+  issue?: ReferenceIssue;
 };
 
-type ComposerReferenceEntry = {
-  key: string;
-  source: "connected" | "stored";
-  role: CanvasEdgeRole;
-  reference: GenerationReference;
-  edgeId?: string;
-  storedIndex?: number;
-};
+type ComposerReferenceEntry = ReferenceEntry;
 
 type CanvasReferenceCandidate = {
   nodeId: string;
@@ -237,6 +318,7 @@ type CanvasUiSettings = {
   minimap: boolean;
   density: CanvasDensity;
   reduceMotion: boolean;
+  scrollToPan: boolean;
   creativeRailAlwaysVisible: boolean;
   noteReferenceIncludeTitle: boolean;
 };
@@ -245,6 +327,7 @@ const TEXT_NODE_PLACEHOLDER_LABELS = new Set(["新文本节点", "双击开始�
 
 type SpikeNodeData = {
   label: string;
+  labelIsCustom?: boolean;
   payload?: string; // 素材 id / 笔记 id / AI 提示词
   kind: NodeKind;
   role?: CanvasNodeRole;
@@ -260,12 +343,14 @@ type SpikeNodeData = {
   refKind?: string; // image / video / audio
   derivedFromNodeId?: string;
   imageEdit?: ImageEdit;
+  gridSlice?: { version: 1; batchId: string; sourceNodeId: string; cell: GridCell };
   refSummary?: string; // 笔记预览缓存（正文摘要）
   refContextText?: string; // 生成上下文，独立于卡片预览，最多 8000 字符
   refUpdatedAt?: string | null; // 素材/笔记更新时间
   _manualSize?: boolean; // 文本/笔记节点是否已经手动缩放
   _emptyMedia?: boolean; // 双击画布创建的空图片/视频占位卡片
   // 临时视觉标记：新建节点蓝色脉冲。约 4.3s 后由 addNode 自动清除。
+  canvasAgentOrigin?: {planId:string;stepId:string;runId:string};
   generationPrompt?: string;
   generationKind?: GenerationKind;
   generationModel?: string;
@@ -276,15 +361,25 @@ type SpikeNodeData = {
   generationResolution?: string;
   generationCount?: number;
   generationCameraStrength?: number;
+  generationCinematography?: CinematographySettings;
+  generationCreativeRecipe?: ImageCreativeRecipe;
   generationReferences?: GenerationReference[];
+  generationInputOrder?: string[];
   generationTask?: CanvasGenerationTask;
   sourceGenerationTaskId?: string;
   sourceGenerationHistoryId?: string;
+  materialGenerationProvenance?: MaterialGenerationProvenance;
   sourceGenerationMediaUrl?: string;
   groupMemberCount?: number;
   referencePack?: ReferencePackTag;
+  storyboard?: StoryboardTag;
+  directorDocument?: DirectorDocument;
+  directorShotSource?: { version: 1; shotId: string; shot: DirectorShot };
+  storyboardShot?: StoryboardShot;
   _newHighlight?: boolean;
 };
+
+const DirectorWorkspace = lazy(() => import("./features/canvas/director/DirectorWorkspace").then(module => ({ default: module.DirectorWorkspace })));
 
 type SpikeNode = Node<SpikeNodeData>;
 type SpikeEdge = Edge<CanvasEdgeSemanticData>;
@@ -292,9 +387,12 @@ type SpikeEdge = Edge<CanvasEdgeSemanticData>;
 type CanvasNodeUiActions = {
   inlineEditingNodeId: string | null;
   openNodeComposer: (nodeId: string) => void;
+  openStoryboard: (nodeId?: string) => void;
+  storyboardMemberIds: ReadonlySet<string>;
   startInlineEdit: (nodeId: string) => void;
   updateInlineLabel: (nodeId: string, text: string) => void;
   updateNodeData: (nodeId: string, patch: Partial<SpikeNodeData>) => void;
+  setPrimaryImage: (nodeId: string, sourceIndex: number) => void;
   openMediaAssetPicker: (nodeId: string) => void;
   clearMediaAsset: (nodeId: string) => void;
   openGeneratorAssetPicker: (nodeId: string, role?: CanvasEdgeRole) => void;
@@ -323,9 +421,12 @@ type CanvasNodeUiActions = {
 const CanvasNodeUiContext = createContext<CanvasNodeUiActions>({
   inlineEditingNodeId: null,
   openNodeComposer: () => {},
+  openStoryboard: () => {},
+  storyboardMemberIds: new Set(),
   startInlineEdit: () => {},
   updateInlineLabel: () => {},
   updateNodeData: () => {},
+  setPrimaryImage: () => {},
   openMediaAssetPicker: () => {},
   clearMediaAsset: () => {},
   openGeneratorAssetPicker: () => {},
@@ -398,22 +499,6 @@ type CanvasAiRuntimeConfig = {
   error: string | null;
 };
 
-type CanvasViewport = { x: number; y: number; zoom: number };
-
-const DEFAULT_CANVAS_VIEWPORT: CanvasViewport = { x: 0, y: 0, zoom: 1 };
-
-function normalizeCanvasViewport(value: unknown): CanvasViewport {
-  if (!value || typeof value !== "object") return { ...DEFAULT_CANVAS_VIEWPORT };
-  const candidate = value as Partial<CanvasViewport>;
-  const x = Number(candidate.x);
-  const y = Number(candidate.y);
-  const zoom = Number(candidate.zoom);
-  return {
-    x: Number.isFinite(x) ? x : 0,
-    y: Number.isFinite(y) ? y : 0,
-    zoom: Number.isFinite(zoom) && zoom > 0 ? Math.min(2.4, Math.max(0.08, zoom)) : 1,
-  };
-}
 
 type BridgeApi = {
   getCanvasStorageDir?: () => Promise<string>;
@@ -428,6 +513,9 @@ type BridgeApi = {
   saveCanvasThumbnail: (canvasId: string, data: Uint8Array) => Promise<void>;
   deleteCanvasThumbnail: (canvasId: string) => Promise<void>;
   listAssets: () => Promise<any[]>;
+  listCanvasAssets?: () => Promise<any[]>;
+  listCanvasMaterialFolders?: () => Promise<BridgeCanvasMaterialFolders>;
+  listCanvasKnowledgeFolders?: () => Promise<BridgeCanvasKnowledgeFolders>;
   importAssets?: (options?: { paths?: string[] }) => Promise<{ assets: any[]; source: "tauri" | "browser"; skippedDuplicates: number }>;
   listNotes: () => Promise<any[]>;
   createNote?: (input:{title?:string;contentText?:string})=>Promise<{id:string}>;
@@ -448,14 +536,15 @@ type BridgeApi = {
     aiVideoModel?: string;
   }) => Promise<unknown>;
   aiChatComplete?: (
-    messages: Array<{ role: string; content: string }>,
+    messages: Array<{ role: string; content: BridgeAiMessageContent }>,
     options?: { systemPrompt?: string; temperature?: number; maxTokens?: number; model?: string },
   ) => Promise<{ success: boolean; content?: string; error_kind?: string; error_message?: string; error_detail?: string }>;
   createAiConversation?: (title?: string) => Promise<{ id: string; title: string; createdAt: string; updatedAt: string }>;
   aiImageGenerate?: CanvasAiImageGeneration;
   aiVideoGenerate?: CanvasAiVideoGeneration;
   /** Canvas-owned seam. The desktop host may implement it when the material library is reconnected. */
-  saveCanvasGenerationToLibrary?: (candidate: CanvasGenerationLibraryCandidate) => Promise<{ success: boolean; assetId?: string; message?: string }>;
+  storeCanvasImageSlice?: (png: string) => Promise<string>;
+  saveCanvasGenerationToLibrary?: (candidate: CanvasGenerationLibraryCandidate, destination?: BridgeCanvasMaterialDestination) => Promise<{ success: boolean; assetId?: string; message?: string }>;
 };
 
 const STORAGE_KEY_V2 = "luckyray-canvas-v2";
@@ -472,6 +561,7 @@ const DEFAULT_CANVAS_UI_SETTINGS: CanvasUiSettings = {
   minimap: false,
   density: "standard",
   reduceMotion: false,
+  scrollToPan: false,
   creativeRailAlwaysVisible: false,
   noteReferenceIncludeTitle: false,
 };
@@ -495,6 +585,7 @@ function resolveCanvasMediaUrl(value: string | null | undefined): string {
 const CANVAS_SCHEMA_VERSION = 2;
 
 function returnToLuckyRay() {
+  clearRememberedCanvasEditor();
   try { window.sessionStorage.removeItem("luckyray-canvas-return"); } catch {}
   if (window.location.hash.startsWith("#canvas")) {
     window.location.hash = "#canvas";
@@ -545,6 +636,7 @@ function applyGenerationTaskToNodes(
     if (!output) {
       return { ...node, data: { ...node.data, generationTask: task } };
     }
+    const imageResults = output.kind === "image" ? mergeImageResults(node.data, output) : undefined;
     const nextLabel = output.kind === "text"
       ? sanitizeCanvasTextGenerationOutput(output.text || "").trim() || node.data.label
       : node.data.label;
@@ -560,12 +652,12 @@ function applyGenerationTaskToNodes(
         resultKind: output.kind,
         result: output.kind === "text" ? output.text || "" : "",
         resultMediaUrl: output.kind === "image" || output.kind === "video"
-          ? output.mediaUrl || ""
+          ? imageResults?.[0]?.url || output.mediaUrl || ""
           : undefined,
         resultThumbnailUrl: output.kind === "image" || output.kind === "video"
-          ? output.thumbnailUrl
+          ? imageResults?.[0]?.thumbnailUrl || output.thumbnailUrl
           : undefined,
-        resultMediaItems: output.kind === "image" ? output.mediaItems : undefined,
+        resultMediaItems: imageResults,
       },
     };
   });
@@ -646,14 +738,12 @@ function migrateLegacyCanvasNode(node: SpikeNode): SpikeNode {
 }
 
 function withInitialSquareSize(node: SpikeNode): SpikeNode {
-  node = migrateLegacyCanvasNode(node);
-  const normalizedNode = {
+  node = restoreGridSliceInteraction(migrateLegacyCanvasNode(node));
+  const normalizedNode = normalizeCanvasNodeDragHandle({
     ...node,
     data: normalizeCanvasNodeCapabilityData(node.data),
-  };
-  if (normalizedNode.data.kind === "generator") {
-    return { ...normalizedNode, dragHandle: ".canvas-node-drag-handle" };
-  }
+  });
+  if (normalizedNode.data.kind === "generator") return normalizedNode;
   if (!isSquareNodeKind(normalizedNode.data.kind)) return normalizedNode;
   if (normalizedNode.style?.width && normalizedNode.style?.height) return normalizedNode;
   if (normalizedNode.data.kind === "text") {
@@ -817,18 +907,6 @@ function parseGeneratorAspectRatio(value?: string | null): number {
   return width / height;
 }
 
-function generatorCardDimensions(aspectRatio: number): { width: number; height: number } {
-  const ratio = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
-  if (ratio >= 1.15) {
-    const width = 430;
-    return { width, height: Math.max(204, Math.min(374, Math.round(width / ratio))) };
-  }
-  if (ratio <= .88) {
-    const height = 430;
-    return { width: Math.max(242, Math.min(378, Math.round(height * ratio))), height };
-  }
-  return { width: 360, height: 360 };
-}
 
 function generationMotionLabel(task: CanvasGenerationTask | undefined, t: I18nContextValue["t"]): string {
   if (!task || (task.status !== "queued" && task.status !== "running")) return "";
@@ -1006,6 +1084,10 @@ function resetMagneticHandle(event: ReactPointerEvent<HTMLDivElement>) {
   event.currentTarget.style.setProperty("--handle-magnet-y", "0px");
 }
 
+function sameCanvasNodeContent(before: NodeProps<SpikeNode>, after: NodeProps<SpikeNode>) {
+  return before.id === after.id && before.data === after.data && before.selected === after.selected;
+}
+
 const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodeProps<SpikeNode>) {
   const { t, locale } = useI18n();
   const nodeUi = useContext(CanvasNodeUiContext);
@@ -1045,6 +1127,8 @@ const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodePr
   const generatorCardStyle = kind === "generator" ? {
     "--generator-card-width": `${generatorDimensions.width}px`,
     "--generator-card-height": `${generatorDimensions.height}px`,
+  } as CSSProperties : data.gridSlice?.version === 1 ? {
+    "--grid-slice-aspect": `${data.gridSlice.cell.width} / ${data.gridSlice.cell.height}`,
   } as CSSProperties : undefined;
   const cardClass = [
     "canvas-node-card",
@@ -1062,6 +1146,7 @@ const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodePr
       className={cardClass}
       data-reference-message={locale === "en-US" ? "Reference information is incomplete" : "引用信息不完整"}
       style={generatorCardStyle}
+      data-grid-slice={data.gridSlice?.version === 1 ? "true" : undefined}
       data-node-role={capabilities.role}
       data-content-kind={capabilities.contentKind}
       data-can-receive={capabilities.canReceive ? "true" : "false"}
@@ -1146,17 +1231,11 @@ const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodePr
             }
           />}
         </span>
-        {kind === "text"
-          ? "Text"
-          : isEmptyMedia && kind === "image"
-            ? t("editor.canvas.type.image")
-            : isEmptyMedia && kind === "video"
-              ? t("editor.canvas.type.video")
-          : kind === "aiResult"
-            ? t("editor.canvas.node.legacyResult")
-            : kind === "generator"
-              ? data.generationKind === "video" ? t("editor.canvas.toolbar.videoGenerate") : t("editor.canvas.toolbar.imageGenerate")
-            : canvasNodeKindLabel(kind, t)}
+        {(kind === "image" || kind === "video" || kind === "generator") ? <CanvasNodeName
+          value={data.labelIsCustom ? data.label : canvasNodeDisplayName(data.label, data.generationPrompt || data.generationTask?.request.prompt, kind === "video" || data.generationKind === "video" ? "video" : "image", locale === "en-US")}
+          english={locale === "en-US"}
+          onCommit={name => nodeUi.updateNodeData(id, { label: name, labelIsCustom: true })}
+        /> : (kind === "text" ? "Text" : kind === "aiResult" ? t("editor.canvas.node.legacyResult") : canvasNodeKindLabel(kind, t))}
       </div>
 
       {/* 素材引用节点：缩略图 + 名称 */}
@@ -1252,18 +1331,15 @@ const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodePr
                 onAspectRatio={setDetectedGeneratorAspect}
               />
             ) : data.generationKind === "image" && generatedMediaItems.length > 1 ? (
-              <div className="canvas-ai-result-gallery">
-                {generatedMediaItems.map((item, index) => (
-                  <CanvasSharpImage key={`${item.url}-${index}`} source={resolveCanvasMediaUrl(item.url)} preview={resolveCanvasMediaUrl(item.thumbnailUrl)} alt={t("editor.canvas.history.generatedImage", { index: index + 1 })} selected={selected} fallback={t("editor.canvas.node.noThumbnail")} />
-                ))}
-              </div>
+              <CanvasImageResults items={generatedMediaItems} selected={selected} english={locale === "en-US"} fallback={t("editor.canvas.node.noThumbnail")} resolveUrl={resolveCanvasMediaUrl} onSelectPrimary={sourceIndex => nodeUi.setPrimaryImage(id, sourceIndex)} onDimensions={(width, height) => { if (width > 0 && height > 0) setDetectedGeneratorAspect(width / height); }} />
             ) : data.generationKind === "image" && (primaryGeneratedImage?.url || data.resultMediaUrl) ? (
               <CanvasSharpImage source={resolveCanvasMediaUrl(primaryGeneratedImage?.url || data.resultMediaUrl)} preview={resolveCanvasMediaUrl(primaryGeneratedImage?.thumbnailUrl || data.resultThumbnailUrl)} alt={t("editor.canvas.generation.generateImage")} className="canvas-ai-result-media" selected={selected} fallback={t("editor.canvas.node.noThumbnail")} onDimensions={(width,height)=>{if(width>0&&height>0)setDetectedGeneratorAspect(width/height);}} />
-            ) : !activeGenerationTask ? (
+            ) : !activeGenerationTask && !["failed", "cancelled"].includes(data.generationTask?.status || "") ? (
               <div className="canvas-generator-output-empty" aria-label={data.generationKind === "video" ? t("editor.canvas.node.waitingVideo") : t("editor.canvas.node.waitingImage")}>
                 <ToolIcon type={data.generationKind === "video" ? "video" : "image"} />
               </div>
             ) : null}
+            <CanvasResultActions task={data.generationTask} english={locale === "en-US"} onRetry={() => nodeUi.retryGeneration(id)} placement="card" />
             {activeGenerationTask ? (
               <div className="canvas-generator-process" aria-live="polite">
                 <div className="canvas-generator-process-core" aria-hidden="true">
@@ -1277,22 +1353,17 @@ const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodePr
       ) : (
         /* 文本节点：原有显示 */
         <>
-          {isInlineEditing ? (
-            <textarea
-              autoFocus
-              className="canvas-node-inline-editor nodrag nopan"
+          {kind === "text" ? (
+            <CanvasTextDocument
+              nodeId={id}
               value={isTextPlaceholder ? "" : data.label}
+              selected={!!selected}
+              editing={isInlineEditing}
+              english={locale === "en-US"}
               placeholder={t("editor.canvas.node.textPlaceholder")}
-              aria-label={t("editor.canvas.node.editText")}
-              onChange={(event) => nodeUi.updateInlineLabel(id, event.target.value)}
-              onBlur={nodeUi.finishInlineEdit}
-              onMouseDown={(event) => event.stopPropagation()}
-              onDoubleClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" || ((event.ctrlKey || event.metaKey) && event.key === "Enter")) {
-                  event.currentTarget.blur();
-                }
-              }}
+              onChange={value => nodeUi.updateInlineLabel(id, value)}
+              onStartEditing={() => nodeUi.startInlineEdit(id)}
+              onFinishEditing={nodeUi.finishInlineEdit}
             />
           ) : (
             <div className="canvas-node-title">{data.label || t("editor.canvas.node.noContent")}</div>
@@ -1304,6 +1375,8 @@ const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodePr
           ) : null}
         </>
       )}
+
+      <CanvasShotSummary shot={data.storyboardShot} english={locale === "en-US"} onOpen={nodeUi.storyboardMemberIds.has(id)?()=>nodeUi.openStoryboard(id):undefined} />
 
       {capabilities.canOutput ? (
         <Handle
@@ -1317,20 +1390,22 @@ const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodePr
       ) : null}
     </div>
   );
-});
+}, sameCanvasNodeContent);
 
-const CanvasGroupNodeView = memo(function CanvasGroupNodeView({ data, selected }: NodeProps<SpikeNode>) {
-  const { t } = useI18n();
+const CanvasGroupNodeView = memo(function CanvasGroupNodeView({ id, data, selected }: NodeProps<SpikeNode>) {
+  const { t, locale } = useI18n();
+  const nodeUi = useContext(CanvasNodeUiContext);
   return (
-    <div className={`canvas-node-group${selected ? " selected" : ""}`}>
+    <div className={`canvas-node-group${selected ? " selected" : ""}${data.storyboard?.version === 1 ? " is-storyboard" : ""}`}>
       <div className="canvas-group-drag-handle">
         <ToolIcon type="group" />
         <strong>{data.label || t("editor.canvas.node.group")}</strong>
         <span>{t("editor.canvas.node.cards", { count: data.groupMemberCount || 0 })}</span>
+        {data.storyboard?.version === 1 ? <button type="button" className="canvas-storyboard-group-open nodrag nopan" onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();nodeUi.openStoryboard(id);}}>{locale === "en-US" ? "Open storyboard" : "打开脚本与分镜"}</button> : null}
       </div>
     </div>
   );
-});
+}, sameCanvasNodeContent);
 
 const nodeTypes = { spike: SpikeNodeView, group: CanvasGroupNodeView };
 
@@ -1500,7 +1575,8 @@ function generateThumbnail(nodes: SpikeNode[], edges: SpikeEdge[]): Uint8Array |
 
 // ========== 主组件 ==========
 
-function CanvasInner() {
+function CanvasInner({ visible = true }: { visible?: boolean }) {
+  const canvasVisibleRef = useRef(visible); canvasVisibleRef.current = visible;
   const { t, locale } = useI18n();
   const bridge: BridgeApi | null = useMemo(() => {
     return getLuckyRayBridgeSync() as BridgeApi | null;
@@ -1522,6 +1598,12 @@ function CanvasInner() {
   });
   const [mediaProfiles, setMediaProfiles] = useState<CanvasMediaProfilesSnapshot | null>(null);
   const activeMediaProfile = mediaProfiles?.profiles.find((entry) => entry.id === mediaProfiles.activeProfileId) ?? null;
+  const focusTextBindingKey = JSON.stringify([
+    activeMediaProfile?.id, activeMediaProfile?.revision, activeMediaProfile?.textProtocol,
+    aiRuntimeConfig.model, aiRuntimeConfig.providerLabel,
+  ]);
+  const focusTextBindingRef = useRef(focusTextBindingKey);
+  focusTextBindingRef.current = focusTextBindingKey;
   const legacyTextConfigRef = useRef({model:"",models:[] as string[],providerLabel:""});
   const mediaLoadEpochRef = useRef(0);
   const refreshAiRuntimeConfig = useCallback(async () => {
@@ -1603,6 +1685,14 @@ function CanvasInner() {
 
   // ========== 画布内容状态 ==========
   const [nodes, setNodes] = useState<SpikeNode[]>([]);
+  const [groupDragging, setGroupDragging] = useState(false);
+  useEffect(() => {
+    if (!groupDragging) return;
+    const finish = () => setGroupDragging(false);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    return () => { window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); };
+  }, [groupDragging]);
   const [edges, setEdges] = useState<SpikeEdge[]>([]);
   const [generationHistory, setGenerationHistory] = useState<CanvasGenerationHistoryEntry[]>([]);
   const [canvasViewport, setCanvasViewport] = useState<CanvasViewport>(DEFAULT_CANVAS_VIEWPORT);
@@ -1611,6 +1701,41 @@ function CanvasInner() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const selectedNodeId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null;
   const [composerNodeId, setComposerNodeId] = useState<string | null>(null);
+  const [focusSession, setFocusSession] = useState<CanvasFocusSession | null>(null);
+  const focusSessionRef = useRef<CanvasFocusSession | null>(null);
+  const [focusBusy, setFocusBusy] = useState(false);
+  const focusBusyRef = useRef(false);
+  const [focusStatus, setFocusStatus] = useState("");
+  const focusRequestRef = useRef(0);
+  const focusAbortRef = useRef<AbortController | null>(null);
+  const focusPointerRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const stopCanvasFocus = useCallback(() => {
+    focusSessionRef.current = null;
+    focusRequestRef.current += 1;
+    focusAbortRef.current?.abort();
+    focusAbortRef.current = null;
+    focusPointerRef.current = null;
+    focusBusyRef.current = false;
+    setFocusSession(null);
+    setFocusBusy(false);
+    setFocusStatus("");
+  }, []);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (!canvasVisibleRef.current) return;
+      if (event.key !== "Escape" || event.isComposing || !focusSessionRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      stopCanvasFocus();
+    };
+    window.addEventListener("keydown", escape, true);
+    return () => {
+      window.removeEventListener("keydown", escape, true);
+      focusSessionRef.current = null;
+      focusRequestRef.current += 1;
+      focusAbortRef.current?.abort();
+    };
+  }, [stopCanvasFocus]);
   const [inspectorNodeId, setInspectorNodeId] = useState<string | null>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<{
     nodeId: string;
@@ -1619,10 +1744,10 @@ function CanvasInner() {
   } | null>(null);
   const [inlineEditingNodeId, setInlineEditingNodeId] = useState<string | null>(null);
   const editorBodyRef = useRef<HTMLDivElement>(null);
-  const [materialInspectorPortal, setMaterialInspectorPortal] = useState<{
-    nodeId: string;
-    element: HTMLElement;
-  } | null>(null);
+  const viewportStageRef = useRef<HTMLDivElement>(null);
+  const viewportMotionActive = useRef(false);
+  const cancelViewportMotion = useRef<(() => void) | null>(null);
+  const [selectionContextMenu, setSelectionContextMenu] = useState<{x:number;y:number}|null>(null);
 
   // ========== 撤销/重做历史栈 ==========
   // nodesRef/edgesRef 镜像最新值，供回调在 setNodes 之前拿到"变更前"状态入栈。
@@ -1630,7 +1755,8 @@ function CanvasInner() {
   const edgesRef = useRef(edges); edgesRef.current = edges;
   const generationHistoryRef = useRef(generationHistory); generationHistoryRef.current = generationHistory;
   const currentCanvasIdRef = useRef(currentCanvasId); currentCanvasIdRef.current = currentCanvasId;
-  const viewportRef = useRef<CanvasViewport>(canvasViewport); viewportRef.current = canvasViewport;
+  const viewportRef = useRef<CanvasViewport>(canvasViewport);
+  const committedViewportRef = useRef<CanvasViewport>(canvasViewport);
   const pastRef = useRef<CanvasHistorySnapshot[]>([]);
   const futureRef = useRef<CanvasHistorySnapshot[]>([]);
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -1662,6 +1788,10 @@ function CanvasInner() {
   const [assets, setAssets] = useState<any[]>([]);
   const [notes, setNotes] = useState<any[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
+  const [assetFolders, setAssetFolders] = useState<BridgeCanvasFolder[] | null>(null);
+  const [noteFolders, setNoteFolders] = useState<BridgeCanvasFolder[] | null>(null);
+  const [pickerError, setPickerError] = useState("");
+  const pickerLoadRevision = useRef(0);
   const [storageDir, setStorageDir] = useState<string>("");
   const [storageCheck, setStorageCheck] = useState<CanvasStorageCheck | null>(null);
   const [storageChecking, setStorageChecking] = useState(false);
@@ -1677,6 +1807,22 @@ function CanvasInner() {
   const [createCanvasName, setCreateCanvasName] = useState(() => t("editor.canvas.untitled"));
   const [returnConfirmMessage, setReturnConfirmMessage] = useState<string | null>(null);
   const [runningAiNodeId, setRunningAiNodeId] = useState<string | null>(null);
+  const [canvasAgentOpen, setCanvasAgentOpen] = useState(false);
+  const [canvasAgentCollapsed, setCanvasAgentCollapsed] = useState(false);
+  const [canvasAgentPicking, setCanvasAgentPicking] = useState(false);
+  const canvasAgentCapturesSelection = canvasAgentOpen && !canvasAgentCollapsed;
+  const [canvasAgentContextIds, setCanvasAgentContextIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!canvasAgentPicking) return;
+    const cancelPick = (event: KeyboardEvent) => { if (!canvasVisibleRef.current) return; if (event.key === 'Escape' && !event.isComposing) setCanvasAgentPicking(false); };
+    window.addEventListener('keydown', cancelPick);
+    return () => window.removeEventListener('keydown', cancelPick);
+  }, [canvasAgentPicking]);
+  const canvasAgentSelectionRef = useRef<string[]>([]);
+  const [canvasAgentExecution, setCanvasAgentExecution] = useState<CanvasAgentExecution|null>(null);
+  const canvasAgentExecutionRef = useRef(canvasAgentExecution); canvasAgentExecutionRef.current = canvasAgentExecution;
+  const [canvasAgentActionError, setCanvasAgentActionError] = useState('');
+  const canvasAgentExecutionController = useRef<AbortController|null>(null);
   const [nodeSearchOpen, setNodeSearchOpen] = useState(false);
   const [nodeSearchQuery, setNodeSearchQuery] = useState("");
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
@@ -1693,6 +1839,7 @@ function CanvasInner() {
       if (anchor && !event.composedPath().includes(anchor)) setCanvasSettingsOpen(false);
     };
     const onEscape = (event: KeyboardEvent) => {
+      if (!canvasVisibleRef.current) return;
       if (event.key === "Escape" && !event.isComposing) setCanvasSettingsOpen(false);
     };
     document.addEventListener("pointerdown", onOutsidePointerDown, true);
@@ -1702,9 +1849,17 @@ function CanvasInner() {
       document.removeEventListener("keydown", onEscape);
     };
   }, [canvasSettingsOpen]);
-  const [creativePanel, setCreativePanel] = useState<{ canvasId:string; kind:'review'|'packs'|'workflows'|'editImage'|'export'; initialId?:string }|null>(null);
+  const [creativePanel, setCreativePanel] = useState<{ canvasId:string; kind:'review'|'packs'|'workflows'|'editImage'|'export'|'storyboard'|'director'; initialId?:string; imageEdit?:AgentImageEdit; imageNodeId?:string; imageIndex?:number; imageSource?:string }|null>(null);
+  const storyboardExportController = useRef<AbortController | null>(null);
+  const [storyboardExportState, setStoryboardExportState] = useState<{canvasId:string;boardId:string;busy:boolean;notice:string;error:string}|null>(null);
+  useEffect(() => {
+    if (creativePanel?.kind !== "storyboard" || creativePanel.canvasId !== currentCanvasId) storyboardExportController.current?.abort();
+    return () => { storyboardExportController.current?.abort(); };
+  }, [creativePanel?.kind, creativePanel?.canvasId, currentCanvasId]);
+  const [storyboardPosition, setStoryboardPosition] = useState<(StoryboardPosition & {canvasId:string})|null>(null);
   const [generationHistoryOpen, setGenerationHistoryOpen] = useState(false);
   const [generationHistoryNotice, setGenerationHistoryNotice] = useState("");
+  const [generationHistoryView, setGenerationHistoryView] = useState<"grid" | "list">("grid");
   const [generationHistoryQuery, setGenerationHistoryQuery] = useState("");
   const [generationHistoryStatusFilter, setGenerationHistoryStatusFilter] = useState<"all" | "active" | "succeeded" | "failed">("all");
   const [generationHistoryKindFilter, setGenerationHistoryKindFilter] = useState<"all" | "text" | "image" | "video">("all");
@@ -1715,6 +1870,7 @@ function CanvasInner() {
     () => {setGenerationHistoryOpen(false);setGenerationHistoryDeleteConfirmId(null);setGenerationHistoryClearConfirm(false);},
     () => setGenerationHistoryNotice(""));
   const [uiSettings, setUiSettings] = useState<CanvasUiSettings>(() => loadCanvasUiSettings());
+  const reducedCameraMotion = useCanvasReducedMotion(uiSettings.reduceMotion);
   const [quickAddMenu, setQuickAddMenu] = useState<{
     screenX: number;
     screenY: number;
@@ -1861,6 +2017,7 @@ function CanvasInner() {
     futureRef.current = [];
     editSnapshotRef.current = null;
     dragSnapshotRef.current = null;
+    setGroupDragging(false);
     resizeSnapshotRef.current = null;
     setHistoryVersion((version) => version + 1);
   }, []);
@@ -1932,6 +2089,7 @@ function CanvasInner() {
       };
       setCreativePanel(null);
       setCurrentCanvasId(c.canvasId);
+      rememberCanvasEditor(canvasEditorHash(c.canvasId).slice(1));
       setCurrentCanvasName(c.name);
       setCurrentCanvasCreatedAt(c.createdAt);
       setNodes(loadedNodes);
@@ -1939,6 +2097,7 @@ function CanvasInner() {
       setGenerationHistory(loadedHistory);
       const loadedViewport = normalizeCanvasViewport(c.viewport);
       viewportRef.current = loadedViewport;
+      committedViewportRef.current = loadedViewport;
       setCanvasViewport(loadedViewport);
       setSelectedNodeIds([]);
       setSaveStatus("saved");
@@ -2192,11 +2351,12 @@ function CanvasInner() {
   useEffect(() => {
     if (!bridge || !currentCanvasId) return;
     if (loadingCanvas) return; // 加载中的空状态不回写；用户主动清空画布仍会保存历史。
+    if (groupDragging) return; // Avoid thumbnail/JSON work during a held group drag.
     const t = setTimeout(() => {
       void flushPendingAutosave();
     }, 500);
     return () => clearTimeout(t);
-  }, [nodes, edges, generationHistory, canvasViewport, currentCanvasId, bridge, loadingCanvas, flushPendingAutosave]);
+  }, [nodes, edges, generationHistory, canvasViewport, currentCanvasId, bridge, loadingCanvas, groupDragging, flushPendingAutosave]);
 
   // ========== 节点编辑回调（保留 D47） ==========
   // 持久化边界状态：编辑代（每次真实文档编辑递增）、已保存代（上次成功保存
@@ -2206,9 +2366,8 @@ function CanvasInner() {
   const saveGenerationRef = useRef(0);
   const lastSavedGenerationRef = useRef(0);
   const saveSlotRef = useRef<CanvasSaveSlot>({ occupied: false });
-  // This retained page participates even when Settings/LSH is visible. Use
-  // the existing writer and generation/identity refs; never regard a queued
-  // autosave or a local recovery archive as a durable save acknowledgement.
+  // Participate even while this retained page is hidden. Reuse Main's durable
+  // writer and exact generation/identity checks rather than a recovery cache.
   const quitFlushRef = useRef<() => Promise<boolean>>(async () => false);
   quitFlushRef.current = () => flushCanvasBeforeQuit(() => ({
     canvasId: currentCanvasIdRef.current,
@@ -2216,7 +2375,8 @@ function CanvasInner() {
     editing: saveGenerationRef.current,
     saved: lastSavedGenerationRef.current,
     writing: saveSlotRef.current.occupied,
-    blocked: loadingCanvas || runningAiNodeId !== null || mediaImportingNodeId !== null
+    blocked: loadingCanvas || groupDragging || canvasAgent.busy || canvasAgentExecution?.status === 'running'
+      || runningAiNodeId !== null || mediaImportingNodeId !== null
       || renamePendingRef.current || canvasTaskSaveQueuesRef.current.size > 0
       || runningGenerationTaskIdsRef.current.size > 0
       || nodesRef.current.some(node => ['queued', 'running'].includes(node.data.generationTask?.status ?? ''))
@@ -2340,9 +2500,10 @@ function CanvasInner() {
   const canRedo = historyVersion >= 0 && futureRef.current.length > 0;
 
   const onNodesChange = useCallback((changes: NodeChange<SpikeNode>[]) => {
+    if (focusSessionRef.current) changes = changes.filter((change) => change.type !== "select");
     // 仅当变更批包含真正的文档编辑时才标记脏；选择/测量等 UI 态变化不进自动保存。
     if (nodeChangesContainDurableEdit(changes)) markDirty();
-    setNodes((nds) => applyNodeChanges(changes, nds));
+    setNodes((nds) => applyNodeChanges(changes, nds).map(restoreGridSliceInteraction));
   }, [markDirty]);
   const onEdgesChange = useCallback((changes: EdgeChange<SpikeEdge>[]) => {
     if (edgeChangesContainDurableEdit(changes)) markDirty();
@@ -2363,7 +2524,7 @@ function CanvasInner() {
         const source = nodesRef.current.find((node) => node.id === c.source);
         const target = nodesRef.current.find((node) => node.id === c.target);
         if (!source || !target || !c.target) return current;
-        const data = resolveCanvasEdgeSemanticData(source.data, target.data, c.target, current);
+        const data = resolveCanvasConnectionData(source.data, target.data, c.target, current, nodesRef.current);
         return addEdge({ ...c, animated: false, id: genEdgeId(), data }, current);
       });
     },
@@ -2403,6 +2564,9 @@ function CanvasInner() {
       kind === "generator" ? t("editor.canvas.node.newGeneration") :
       t("editor.canvas.node.legacyResult")
     );
+    const provenance = normalizeMaterialGenerationProvenance(preset?.materialGenerationProvenance);
+    const recoveredHistory = provenance && preset?.refMediaUrl ? materialProvenanceHistory(provenance, id, preset.sourceGenerationMediaUrl || preset.refMediaUrl, preset.refThumbnailUrl) : undefined;
+    const recoveredDraft = recoveredHistory && (uiSettings.noteReferenceIncludeTitle || !recoveredHistory.request.references.some(reference => reference.kind === "note" && reference.label !== "笔记正文")) ? buildHistoryDraft(recoveredHistory, "parameters") : null;
     const nodeData: SpikeNodeData = normalizeCanvasNodeCapabilityData({
       label,
       kind,
@@ -2425,11 +2589,17 @@ function CanvasInner() {
       generationResolution: preset?.generationResolution,
       generationCount: preset?.generationCount,
       generationCameraStrength: preset?.generationCameraStrength,
+      generationCinematography: preset?.generationCinematography,
+      generationCreativeRecipe: preset?.generationCreativeRecipe,
       generationReferences: preset?.generationReferences,
       _emptyMedia: preset?._emptyMedia,
       _manualSize: false,
       _newHighlight: true,
+      ...(recoveredDraft ? {...recoveredDraft, label, resultKind:provenance!.kind,resultMediaUrl:recoveredHistory?.outputMediaUrl,resultThumbnailUrl:preset?.refThumbnailUrl,resultMediaItems:recoveredHistory?.outputMediaItems} : {}),
+      materialGenerationProvenance: provenance,
+      ...(recoveredHistory ? {sourceGenerationTaskId:recoveredHistory.taskId,sourceGenerationHistoryId:recoveredHistory.id,sourceGenerationMediaUrl:recoveredHistory.outputMediaUrl} : {}),
     });
+    if (recoveredHistory) setGenerationHistory(current => [recoveredHistory, ...current]);
     const initialNodeSize = kind === "text"
       ? textNodeSize(nodeData)
       : kind === "noteRef"
@@ -2442,13 +2612,14 @@ function CanvasInner() {
           type: "spike",
           position: position || { x: 100 + Math.random() * 400, y: 100 + Math.random() * 200 },
           data: nodeData,
-          dragHandle: kind === "generator" ? ".canvas-node-drag-handle" : undefined,
+          dragHandle: nodeData.kind === "generator" ? ".canvas-node-drag-handle" : undefined,
           style: initialNodeSize || undefined,
           selected: true,
         },
       ]),
     );
     setSelectedNodeIds([id]);
+    if (recoveredDraft) setComposerNodeId(id);
     // 新建节点只做一次短暂淡入提示，避免持续动效干扰创作。
     if (newHighlightTimerRef.current) window.clearTimeout(newHighlightTimerRef.current);
     newHighlightTimerRef.current = window.setTimeout(() => {
@@ -2462,7 +2633,7 @@ function CanvasInner() {
       newHighlightTimerRef.current = null;
     }, 900);
     return id;
-  }, [commitHistory, markDirty, t]);
+  }, [commitHistory, markDirty, t, uiSettings.noteReferenceIncludeTitle]);
 
   const addGeneratorNode = useCallback((
     generationKind: GenerationKind,
@@ -2501,7 +2672,7 @@ function CanvasInner() {
         sourceHandle: "s-right",
         targetHandle: "t-left",
         animated: false,
-        data: resolveCanvasEdgeSemanticData(source.data, targetData, id, current),
+        data: resolveCanvasConnectionData(source.data, targetData, id, current, nodesRef.current),
       }, current));
     }
     setCreateMenuOpen(false);
@@ -2539,7 +2710,7 @@ function CanvasInner() {
       const sourceData = startsFromSource ? sourceNode?.data : createdNodeData;
       const targetData = startsFromSource ? createdNodeData : sourceNode?.data;
       const data = sourceData && targetData
-        ? resolveCanvasEdgeSemanticData(sourceData, targetData, targetId, current)
+        ? resolveCanvasConnectionData(sourceData, targetData, targetId, current, nodesRef.current)
         : undefined;
       return addEdge({
         id: genEdgeId(),
@@ -2562,23 +2733,29 @@ function CanvasInner() {
     targetNodeId: string | null,
     targetRole: CanvasEdgeRole | null = null,
     createPosition: { x: number; y: number } | null = null,
+    imageOnly = false,
   ) => {
     if (!bridge) return;
     setAssetPickerReplaceNodeId(null);
-    setAssetPickerMediaKind(null);
+    setAssetPickerMediaKind(imageOnly ? "image" : null);
     setAssetPickerTargetNodeId(targetNodeId);
     setAssetPickerTargetRole(targetRole);
     setPickerCreatePosition(targetNodeId ? null : createPosition);
     setShowAssetPicker(true);
-    setPickerLoading(true);
+    setPickerLoading(true); setPickerError(""); setAssetFolders(null);
+    const revision = ++pickerLoadRevision.current;
     try {
-      const list = await bridge.listAssets();
-      setAssets(Array.isArray(list) ? list : []);
+      if (!bridge.listCanvasMaterialFolders) throw new Error("canvas-folder-bridge-unavailable");
+      const [list, snapshot] = await Promise.all([(bridge.listCanvasAssets || bridge.listAssets)(), bridge.listCanvasMaterialFolders()]);
+      if (revision !== pickerLoadRevision.current) return;
+      setAssetFolders(snapshot?.folders || null);
+      setAssets(Array.isArray(list) ? (imageOnly ? list.filter(asset => asset?.kind === "image") : list) : []);
     } catch (e) {
       console.warn("[canvas-d65] listAssets failed", e);
-      setAssets([]);
+      if (revision !== pickerLoadRevision.current) return;
+      setPickerError(locale === "en-US" ? "Could not load folders and materials." : "文件夹与素材加载失败，请关闭后重试。"); setAssets([]);
     } finally {
-      setPickerLoading(false);
+      if (revision === pickerLoadRevision.current) setPickerLoading(false);
     }
   }, [bridge, reactFlowInstance]);
 
@@ -2605,15 +2782,20 @@ function CanvasInner() {
     setAssetPickerMediaKind(mediaKind);
     setPickerCreatePosition(null);
     setShowAssetPicker(true);
-    setPickerLoading(true);
+    setPickerLoading(true); setPickerError(""); setAssetFolders(null);
+    const revision = ++pickerLoadRevision.current;
     try {
-      const list = await bridge.listAssets();
+      if (!bridge.listCanvasMaterialFolders) throw new Error("canvas-folder-bridge-unavailable");
+      const [list, snapshot] = await Promise.all([(bridge.listCanvasAssets || bridge.listAssets)(), bridge.listCanvasMaterialFolders()]);
+      if (revision !== pickerLoadRevision.current) return;
+      setAssetFolders(snapshot?.folders || null);
       setAssets(Array.isArray(list) ? list.filter((asset) => asset?.kind === mediaKind) : []);
     } catch (error) {
       console.warn("[canvas-media] listAssets failed", error);
-      setAssets([]);
+      if (revision !== pickerLoadRevision.current) return;
+      setPickerError(locale === "en-US" ? "Could not load folders and materials." : "文件夹与素材加载失败，请关闭后重试。"); setAssets([]);
     } finally {
-      setPickerLoading(false);
+      if (revision === pickerLoadRevision.current) setPickerLoading(false);
     }
   }, [bridge]);
 
@@ -2621,15 +2803,23 @@ function CanvasInner() {
     if (!bridge) return;
     setPickerCreatePosition(createPosition);
     setShowNotePicker(true);
-    setPickerLoading(true);
+    setPickerLoading(true); setPickerError(""); setNoteFolders(null);
+    const revision = ++pickerLoadRevision.current;
     try {
-      const list = await bridge.listNotes();
-      setNotes(Array.isArray(list) ? list : []);
+      if (!bridge.listCanvasKnowledgeFolders) throw new Error("canvas-knowledge-folder-bridge-unavailable");
+      const [list, snapshot] = await Promise.all([bridge.listNotes(), bridge.listCanvasKnowledgeFolders()]);
+      if (revision !== pickerLoadRevision.current) return;
+      if (snapshot && Array.isArray(list) && list.some(note => !Object.prototype.hasOwnProperty.call(snapshot.noteFolderIds, note.id))) {
+        throw new Error("knowledge-folder-snapshot-changed");
+      }
+      setNoteFolders(snapshot?.folders || null);
+      setNotes(Array.isArray(list) ? list.map(note => ({ ...note, folderId: snapshot ? snapshot.noteFolderIds[note.id] : note.folderId })) : []);
     } catch (e) {
       console.warn("[canvas-d65] listNotes failed", e);
-      setNotes([]);
+      if (revision !== pickerLoadRevision.current) return;
+      setPickerError(locale === "en-US" ? "Could not load folders and notes." : "文件夹与笔记加载失败，请关闭后重试。"); setNotes([]);
     } finally {
-      setPickerLoading(false);
+      if (revision === pickerLoadRevision.current) setPickerLoading(false);
     }
   }, [bridge]);
 
@@ -2652,6 +2842,9 @@ function CanvasInner() {
     };
     const mediaUrl = toWebUrl(asset.libraryPath || asset.originalPath);
     const thumbUrl = toWebUrl(asset.thumbnailUrl) || (node.data.kind === "image" ? mediaUrl : null);
+    const provenance = normalizeMaterialGenerationProvenance(asset.materialGenerationProvenance);
+    const recoveredHistory = provenance && mediaUrl ? materialProvenanceHistory(provenance, nodeId, asset.libraryPath || asset.originalPath || mediaUrl, thumbUrl) : undefined;
+    const recoveredDraft = recoveredHistory && (uiSettings.noteReferenceIncludeTitle || !recoveredHistory.request.references.some(reference => reference.kind === "note" && reference.label !== "笔记正文")) ? buildHistoryDraft(recoveredHistory, "parameters") : null;
     commitHistory();
     markDirty();
     setNodes((current) => current.map((candidate) => candidate.id === nodeId
@@ -2660,6 +2853,7 @@ function CanvasInner() {
           data: normalizeCanvasNodeCapabilityData({
             ...candidate.data,
             sourceGenerationTaskId:undefined,sourceGenerationHistoryId:undefined,sourceGenerationMediaUrl:undefined,
+            gridSlice:undefined,derivedFromNodeId:undefined,
             generationTask:undefined,resultMediaUrl:undefined,resultMediaItems:undefined,resultThumbnailUrl:undefined,
             label: asset.name || (node.data.kind === "video" ? t("editor.canvas.node.untitledVideo") : t("editor.canvas.node.untitledImage")),
             payload: `asset:${asset.id}`,
@@ -2669,11 +2863,17 @@ function CanvasInner() {
             refUpdatedAt: asset.updatedAt || null,
             _emptyMedia: false,
             role: "resource",
+            materialGenerationProvenance: provenance,
+            generationPrompt: undefined, generationModel: undefined, generationReferences: undefined,
+            generationInputOrder: undefined, generationCreativeRecipe: undefined, generationCinematography: undefined,
+            ...(recoveredDraft ? {...recoveredDraft,label:asset.name || node.data.label,resultKind:provenance!.kind,resultMediaUrl:recoveredHistory?.outputMediaUrl,resultThumbnailUrl:thumbUrl,resultMediaItems:recoveredHistory?.outputMediaItems} : {}),
+            ...(recoveredHistory ? {sourceGenerationTaskId:recoveredHistory.taskId,sourceGenerationHistoryId:recoveredHistory.id,sourceGenerationMediaUrl:recoveredHistory.outputMediaUrl} : {}),
           }),
         }
       : candidate));
+    if (recoveredHistory) { setGenerationHistory(current => [recoveredHistory, ...current.filter(entry => entry.id !== recoveredHistory.id)]); if (recoveredDraft) setComposerNodeId(nodeId); }
     return true;
-  }, [commitHistory, markDirty, t]);
+  }, [commitHistory, markDirty, t, uiSettings.noteReferenceIncludeTitle]);
 
   const clearMediaAsset = useCallback((nodeId: string) => {
     const node = nodesRef.current.find((candidate) => candidate.id === nodeId);
@@ -2688,7 +2888,8 @@ function CanvasInner() {
           style: undefined,
           data: normalizeCanvasNodeCapabilityData<SpikeNodeData>({
             ...candidate.data,
-            sourceGenerationTaskId:undefined,sourceGenerationHistoryId:undefined,sourceGenerationMediaUrl:undefined,
+            sourceGenerationTaskId:undefined,sourceGenerationHistoryId:undefined,sourceGenerationMediaUrl:undefined,materialGenerationProvenance:undefined,
+            gridSlice:undefined,derivedFromNodeId:undefined,
             generationTask:undefined,resultMediaUrl:undefined,resultMediaItems:undefined,resultThumbnailUrl:undefined,
             label: mediaKind === "video" ? t("editor.canvas.node.videoGenerate") : t("editor.canvas.node.imageGenerate"),
             kind: "generator",
@@ -2770,6 +2971,8 @@ function CanvasInner() {
       refMediaUrl: mediaUrl,
       refKind: asset.kind || "image",
       refUpdatedAt: asset.updatedAt || null,
+      materialGenerationProvenance: normalizeMaterialGenerationProvenance(asset.materialGenerationProvenance),
+      sourceGenerationMediaUrl: asset.libraryPath || asset.originalPath,
     }, pickerCreatePosition || getViewportCreatePosition(kind));
     setShowAssetPicker(false);
     setPickerCreatePosition(null);
@@ -2782,9 +2985,11 @@ function CanvasInner() {
     try {
       const result = await bridge.importAssets();
       const imported = Array.isArray(result?.assets) ? result.assets : [];
+      const refreshed = await (bridge.listCanvasAssets || bridge.listAssets)();
+      const enriched = imported.map(asset => Array.isArray(refreshed) ? refreshed.find(item => item.id === asset.id) : undefined).filter(Boolean);
       const compatible = assetPickerMediaKind
-        ? imported.filter((asset) => asset?.kind === assetPickerMediaKind)
-        : imported;
+        ? enriched.filter((asset) => asset?.kind === assetPickerMediaKind)
+        : enriched;
       if (assetPickerReplaceNodeId && compatible[0]) {
         pickAsset(compatible[0]);
         return;
@@ -2793,7 +2998,6 @@ function CanvasInner() {
         pickAsset(compatible[0]);
         return;
       }
-      const refreshed = await bridge.listAssets();
       setAssets(Array.isArray(refreshed)
         ? (assetPickerMediaKind ? refreshed.filter((asset) => asset?.kind === assetPickerMediaKind) : refreshed)
         : []);
@@ -2881,8 +3085,22 @@ function CanvasInner() {
     setNodes((nds) => nds.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n));
   }, [beginPendingEdit, markDirty]);
 
+  const setPrimaryImage = useCallback((nodeId: string, sourceIndex: number) => {
+    if (loadingCanvas) return;
+    const source = nodesRef.current.find(node => node.id === nodeId);
+    if (!source || source.data.generationTask?.status === "queued" || source.data.generationTask?.status === "running") return;
+    const data = selectPrimaryResultImage(source.data, sourceIndex);
+    if (data === source.data) return;
+    commitHistory();
+    markDirty();
+    const next = nodesRef.current.map(node => node.id === nodeId ? { ...node, data } : node);
+    nodesRef.current = next;
+    setNodes(next);
+  }, [loadingCanvas, commitHistory, markDirty]);
+
   const runNodeAI = useCallback(async (nodeId: string) => {
-    const selected = nodes.find((node) => node.id === nodeId);
+    const currentNodes = nodesRef.current;
+    const selected = currentNodes.find((node) => node.id === nodeId);
     if (!selected) return;
     commitHistory();
     markDirty();
@@ -2921,9 +3139,9 @@ function CanvasInner() {
       }
     };
     if (selected.data.kind === "aiPrompt") {
-      const inEdges = edges.filter((edge) => edge.target === nodeId);
+      const inEdges = edgesRef.current.filter((edge) => edge.target === nodeId && edge.data?.relation !== "derivation");
       const incomingLabels = inEdges
-        .map((edge) => nodes.find((node) => node.id === edge.source)?.data.label || "")
+        .map((edge) => currentNodes.find((node) => node.id === edge.source)?.data.label || "")
         .filter(Boolean);
       const resultText = await runAI(selected.data.label || "", incomingLabels);
       setNodes((current) => current.map((node) => node.id === nodeId
@@ -2931,7 +3149,7 @@ function CanvasInner() {
         : node));
     }
     setRunningAiNodeId(null);
-  }, [activeMediaProfile, aiRuntimeConfig.model, bridge, commitHistory, edges, markDirty, nodes, t]);
+  }, [activeMediaProfile, aiRuntimeConfig.model, bridge, commitHistory, markDirty, t]);
 
   const runSelectedAI = useCallback(() => {
     if (selectedNodeId) void runNodeAI(selectedNodeId);
@@ -2955,14 +3173,16 @@ function CanvasInner() {
   }, []);
 
   const centerNodeByAbsoluteBounds = useCallback((nodeId: string, duration: number, zoom: number) => {
+    if (!nodesRef.current.some(node => node.id === nodeId)) return;
     const bounds = reactFlowInstance.getNodesBounds([nodeId]);
-    if (![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) return;
+    if (![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) || bounds.width <= 0 || bounds.height <= 0) return;
+    cancelViewportMotion.current?.();
     reactFlowInstance.setCenter(
       bounds.x + bounds.width / 2,
       bounds.y + bounds.height / 2,
-      { duration, zoom },
+      { duration: reducedCameraMotion ? 0 : duration, zoom },
     );
-  }, [reactFlowInstance]);
+  }, [reactFlowInstance, reducedCameraMotion]);
 
   const openNodeComposer = useCallback((nodeId: string) => {
     setInspectorNodeId(null);
@@ -2983,61 +3203,70 @@ function CanvasInner() {
     setComposerNodeId(nodeId);
   }, [markDirty, selectSingleNode]);
 
+  const createImageCreativeDraft = useCallback((sourceId:string,expectedImage:string,recipe:ImageCreativeRecipe)=>{
+    const canvasId=currentCanvasIdRef.current,epoch=canvasLoadEpochRef.current;
+    const original=nodesRef.current.find(node=>node.id===sourceId),normalized=normalizeCreativeRecipe(recipe);
+    if(!canvasId||loadingCanvas||!original||!expectedImage||splitImageSource(original.data)!==expectedImage||!normalized)return;
+    const action=getImageCreativeAction(normalized.id)!;
+    const bounds=reactFlowInstance.getNodesBounds([sourceId]);
+    const position=Number.isFinite(bounds.x)&&Number.isFinite(bounds.y)&&bounds.width>0?{x:bounds.x+bounds.width+80,y:bounds.y}:getViewportCreatePosition('generator');
+    const id=genId(),edgeId=genEdgeId();
+    const cinema=normalizeCinematographySettings(original.data.generationCinematography);
+    const multipleViews=['story-grid','blocking-board','multi-angle','character-sheet','scene-sheet','product-sheet'].includes(normalized.id);
+    const data=normalizeCanvasNodeCapabilityData<SpikeNodeData>({kind:'generator',label:action.label,generationKind:'image',generationPrompt:'',
+      generationModel:original.data.generationKind==='image'?original.data.generationModel:undefined,
+      generationAspect:original.data.generationAspect||'16:9',generationQuality:original.data.generationQuality,generationResolution:original.data.generationResolution,
+      generationCount:1,generationCreativeRecipe:normalized,generationCinematography:multipleViews?{...cinema,framing:'auto',angle:'auto',movement:'auto'}:cinema,
+      sourceGenerationTaskId:original.data.generationTask?.id,derivedFromNodeId:sourceId});
+    const node:SpikeNode={id,type:'spike',position,data,selected:true,dragHandle:'.canvas-node-drag-handle'};
+    const edge:SpikeEdge={id:edgeId,source:sourceId,target:id,sourceHandle:'s-right',targetHandle:'t-left',animated:false,data:{role:'reference',semanticsVersion:1,order:0,referenceMediaUrl:expectedImage}};
+    commitHistory();markDirty();
+    const next=nodesRef.current.map(item=>item.selected?{...item,selected:false}:item).concat(node);
+    nodesRef.current=next;setNodes(next);const nextEdges=[...edgesRef.current,edge];edgesRef.current=nextEdges;setEdges(nextEdges);
+    setSelectedNodeIds([id]);setComposerNodeId(id);setInspectorNodeId(null);setNodeContextMenu(null);
+    requestAnimationFrame(()=>{if(currentCanvasIdRef.current===canvasId&&canvasLoadEpochRef.current===epoch)centerNodeByAbsoluteBounds(id,180,Math.min(1,reactFlowInstance.getZoom()));});
+  },[loadingCanvas,reactFlowInstance,getViewportCreatePosition,commitHistory,markDirty,centerNodeByAbsoluteBounds]);
+
   const getIncomingGenerationInputs = useCallback((nodeId: string): ConnectedGenerationInput[] => {
     return edgesRef.current
-      .filter((edge) => edge.target === nodeId)
+      .filter((edge) => edge.target === nodeId && edge.data?.relation !== "derivation")
       .slice()
       .sort((a, b) => (a.data?.order ?? 0) - (b.data?.order ?? 0))
       .reduce<ConnectedGenerationInput[]>((inputs, edge) => {
         const source = nodesRef.current.find((node) => node.id === edge.source);
-        if (!source) return inputs;
-        const sourceCapabilities = getCanvasNodeCapabilities(source.data);
-        const referenceText = sourceCapabilities.contentKind === "note"
-          ? source.data.refContextText ?? source.data.refSummary ?? ""
-          : sourceCapabilities.contentKind === "text"
-            ? (source.data.kind === "aiResult" ? source.data.result || "" : TEXT_NODE_PLACEHOLDER_LABELS.has(source.data.label.trim()) ? "" : source.data.label)
-            : undefined;
-        inputs.push({
-          edgeId: edge.id,
-          sourceNodeId: source.id,
-          role: edge.data?.role || "generic",
-          reference: {
-            id: source.data.payload || `node:${source.id}`,
-            label: source.data.label || t("editor.canvas.node.untitled"),
-            kind: sourceCapabilities.contentKind === "note" ? "note" : source.data.refKind || sourceCapabilities.contentKind,
-            thumbnailUrl: source.data.refThumbnailUrl || source.data.resultThumbnailUrl,
-            mediaUrl: source.data.refMediaUrl || source.data.resultMediaUrl,
-            text: referenceText,
-          },
-        });
+        const reference = source ? resolvePinnedFocusReference(source, referenceForCanvasNode(source), edge.data?.referenceMediaUrl) : {id:`node:${edge.source}`,label:locale === "en-US" ? "Missing card" : "缺失卡片",kind:"unknown"};
+        inputs.push({edgeId:edge.id,sourceNodeId:edge.source,role:edge.data?.role || "generic",reference,issue:source ? reference.issue : "missing-source"});
         return inputs;
       }, []);
-  }, [t]);
+  }, [locale]);
 
   const updateIncomingEdgeRole = useCallback((edgeId: string, role: CanvasEdgeRole) => {
-    commitHistory();
-    markDirty();
-    setEdges((current) => current.map((edge) => edge.id === edgeId
-      ? { ...edge, data: { ...edge.data, role } }
-      : edge));
-  }, [commitHistory, markDirty, t]);
+    const edge=edgesRef.current.find(item=>item.id===edgeId);if(!edge||edge.data?.relation==='derivation'||edge.data?.role===role)return;
+    const target=nodesRef.current.find(node=>node.id===edge.target);if(!target)return;
+    if((role==='firstFrame'||role==='lastFrame')&&createCanvasReferencePlan(inferGenerationKind(target),getIncomingGenerationInputs(edge.target),resolveStoredCanvasReferences(target,nodesRef.current)).some(entry=>entry.edgeId!==edgeId&&entry.role===role))return;
+    const oldInput=getIncomingGenerationInputs(edge.target).find(input=>input.edgeId===edgeId);
+    commitHistory();markDirty();const next=edgesRef.current.map(item=>item.id===edgeId?{...item,data:{...item.data,role}}:item);edgesRef.current=next;setEdges(next);
+    if(oldInput&&Array.isArray(target.data.generationReferences)){const refs=target.data.generationReferences.filter(ref=>!duplicatesConnectedReference(ref,oldInput));const nextNodes=nodesRef.current.map(node=>node.id===target.id?{...node,data:{...node.data,generationReferences:refs}}:node);nodesRef.current=nextNodes;setNodes(nextNodes);}
+  }, [commitHistory, markDirty, getIncomingGenerationInputs]);
 
-  const moveIncomingEdge = useCallback((edgeId: string, delta: number) => {
-    const edge = edgesRef.current.find(item => item.id === edgeId);
-    if (!edge) return;
-    const peers = edgesRef.current.filter(item => item.target === edge.target && item.data?.role === edge.data?.role).slice().sort((a,b)=>(a.data?.order??0)-(b.data?.order??0));
-    const index = peers.findIndex(item => item.id === edgeId), other = index + delta;
-    if (index < 0 || other < 0 || other >= peers.length) return;
-    [peers[index], peers[other]] = [peers[other], peers[index]];
-    commitHistory(); markDirty();
-    setEdges(current => current.map(item => {const order = peers.findIndex(peer => peer.id === item.id);return order < 0 ? item : {...item, data: {...item.data, order}};}));
-  }, [commitHistory, markDirty]);
+  const reorderCanvasReferences=useCallback((nodeId:string,from:string,to:string)=>{
+    const target=nodesRef.current.find(node=>node.id===nodeId);if(!target)return;
+    const connected=getIncomingGenerationInputs(nodeId),stored=storedCanvasReferences(target);
+    const entries=createCanvasReferencePlan(inferGenerationKind(target),connected,resolveStoredCanvasReferences(target,nodesRef.current),undefined,target.data.generationInputOrder);
+    const plan=planReferenceReorder(entries,from,to);if(!plan)return;
+    const changedConnected=connected.filter(input=>plan.roles.has(input.edgeId));
+    const refs=stored.map((ref,index)=>{const entry=entries.find(item=>item.source==='stored'&&item.storedIndex===index);const role=entry&&plan.roles.get(entry.key);return {...ref,...(entry?{mentionKey:entry.key}:{}),...(role?{role}:{})};}).filter((_,index)=>!changedConnected.some(input=>duplicatesConnectedReference(stored[index],input)));
+    commitHistory();markDirty();const nextNodes=nodesRef.current.map(node=>node.id===nodeId?{...node,data:{...node.data,generationReferences:refs,generationInputOrder:plan.order}}:node);nodesRef.current=nextNodes;setNodes(nextNodes);
+    if(changedConnected.length){const nextEdges=edgesRef.current.map(edge=>plan.roles.has(edge.id)?{...edge,data:{...edge.data,role:plan.roles.get(edge.id)!}}:edge);edgesRef.current=nextEdges;setEdges(nextEdges);}
+  },[getIncomingGenerationInputs,commitHistory,markDirty]);
 
   const removeIncomingEdge = useCallback((edgeId: string) => {
-    commitHistory();
-    markDirty();
-    setEdges((current) => current.filter((edge) => edge.id !== edgeId));
-  }, [commitHistory, markDirty]);
+    const edge=edgesRef.current.find(item=>item.id===edgeId);if(!edge)return;
+    const input=getIncomingGenerationInputs(edge.target).find(item=>item.edgeId===edgeId);
+    commitHistory();markDirty();
+    const nextEdges=edgesRef.current.filter(item=>item.id!==edgeId);edgesRef.current=nextEdges;setEdges(nextEdges);
+    if(input){const nextNodes=nodesRef.current.map(node=>node.id!==edge.target||!Array.isArray(node.data.generationReferences)?node:{...node,data:{...node.data,generationReferences:node.data.generationReferences.filter(ref=>!duplicatesConnectedReference(ref,input))}});nodesRef.current=nextNodes;setNodes(nextNodes);}
+  }, [commitHistory, markDirty, getIncomingGenerationInputs]);
 
   const getCanvasReferenceCandidates = useCallback((nodeId: string): CanvasReferenceCandidate[] => {
     return nodesRef.current.reduce<CanvasReferenceCandidate[]>((candidates, node) => {
@@ -3142,17 +3371,28 @@ function CanvasInner() {
     task: CanvasGenerationTask,
     output?: CanvasGenerationOutput,
   ): Promise<void> => {
+    const previousTask = generationTaskSnapshotsRef.current.get(task.id);
     generationTaskSnapshotsRef.current.set(task.id, task);
     const canvasId = generationTaskCanvasIdsRef.current.get(task.id);
     if (!canvasId) return Promise.resolve();
     if (canvasId === currentCanvasIdRef.current) {
-      setNodes((current) => applyGenerationTaskToNodes(current, task, output));
-      setGenerationHistory((current) => upsertGenerationHistory(current, task, output));
+      // Update persistence refs before flushing; React state may not commit yet.
+      const nextNodes = applyGenerationTaskToNodes(nodesRef.current, task, output);
+      const nextHistory = upsertGenerationHistory(generationHistoryRef.current, task, output);
+      nodesRef.current = nextNodes;
+      generationHistoryRef.current = nextHistory;
+      setNodes(current => applyGenerationTaskToNodes(current, task, output));
+      setGenerationHistory(current => upsertGenerationHistory(current, task, output));
       markDirty();
+      // Checkpoint acceptance immediately through the shared serialized save slot.
+      // Native submission ledger remains authoritative across crashes/save failures.
+      if (task.providerTaskId && task.providerTaskId !== previousTask?.providerTaskId) {
+        return flushPendingAutosave();
+      }
       return Promise.resolve();
     }
     return persistGenerationTaskToCanvas(canvasId, task, output);
-  }, [markDirty, persistGenerationTaskToCanvas]);
+  }, [flushPendingAutosave, markDirty, persistGenerationTaskToCanvas]);
 
   const executeGenerationTask = useCallback(async (task: CanvasGenerationTask) => {
     if (runningGenerationTaskIdsRef.current.has(task.id)) return;
@@ -3172,9 +3412,12 @@ function CanvasInner() {
     }
     if (bridge?.aiVideoGenerate) {
       adapters.push(createCanvasVideoGenerationAdapter(
-        (request, onProgress) => bridge.aiVideoGenerate!(request, onProgress, task.providerTaskId),
+        (request, onProgress) => bridge.aiVideoGenerate!(request, onProgress, task.providerTaskId, task.id),
         (progress) => {
           const currentTask = generationTaskSnapshotsRef.current.get(task.id) || task;
+          // Late progress cannot resurrect a cancelled or completed generation.
+          if (cancelledGenerationTaskIdsRef.current.has(task.id)
+            || currentTask.status === "cancelled" || currentTask.status === "succeeded" || currentTask.status === "failed") return;
           const nextTask: CanvasGenerationTask = {
             ...currentTask,
             status: "running",
@@ -3251,7 +3494,15 @@ function CanvasInner() {
       setSaveStatus("error");
       return;
     }
-    const request = retry?.request || createGenerationRequestSnapshot(
+    const resolvedStoredReferences=resolveStoredCanvasReferences(source,nodesRef.current);
+    const inputPlan=createCanvasReferencePlan(inferGenerationKind(source),getIncomingGenerationInputs(nodeId),resolvedStoredReferences,inferGenerationKind(source) === "video" ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol,source.data.generationInputOrder);
+    if(!retry&&inputPlan.some(entry=>entry.issue)){
+      setSaveError(locale === "en-US" ? "Check the marked references before generating." : "请先处理引用区标出的失效或无内容素材。");setSaveStatus("error");return;
+    }
+    const mentionError = !retry && validateReferenceMentions(source.data.generationPrompt || "", inputPlan);
+    if(mentionError){setSaveError(mentionError.message);setSaveStatus("error");return;}
+    let request:CanvasGenerationRequestSnapshot;
+    try { request = retry?.request || createGenerationRequestSnapshot(
       source,
       getIncomingGenerationInputs(nodeId),
       aiRuntimeConfig.models,
@@ -3262,7 +3513,9 @@ function CanvasInner() {
       aiRuntimeConfig.videoModel,
       activeMediaProfile,
       uiSettings.noteReferenceIncludeTitle,
+      resolvedStoredReferences,
     );
+    } catch (error) {setSaveError(error instanceof Error && error.message === "historical-model-unavailable" ? (locale==='en-US'?'The original model is unavailable in this connection. Select a model to continue.':'当前配置没有原生成模型，请选择模型后继续。') : (locale==='en-US'?'Check creative settings and their image reference before generating.':'请检查创作设定及参考图片后再生成。'));setSaveStatus('error');return;}
     if (!retry && request.kind === "text" && activeMediaProfile?.textProtocol === "openai-chat") {
       if (!activeMediaProfile.apiKeyConfigured) {
         setSaveError(locale === "en-US" ? "Configure this connection's key first." : "请先配置这套画布连接的 Key。");setSaveStatus("error");return;
@@ -3282,11 +3535,12 @@ function CanvasInner() {
       setSaveError(t("editor.canvas.generation.enterContent")); setSaveStatus("error"); return;
     }
     const activeTask = source.data.generationTask;
-    if ([...generationTaskSnapshotsRef.current.values()].some(task => task.sourceNodeId === nodeId && canCancelCanvasGenerationTask(task)) || (activeTask && canCancelCanvasGenerationTask(activeTask))) {
+    if (hasLiveGenerationTask(generationTaskSnapshotsRef.current.values(),nodesRef.current,runningGenerationTaskIdsRef.current,nodeId,activeTask?.status==='succeeded'?activeTask.id:undefined) || (activeTask && canCancelCanvasGenerationTask(activeTask))) {
       setSaveError(t("editor.canvas.error.generationBusy"));
       setSaveStatus("error");
       return;
     }
+    // Ordinary generation always owns this card. Explicit derive commands create new cards.
     const now = new Date().toISOString();
     const task = createCanvasGenerationTask({
       id: `task-${genId()}`,
@@ -3296,10 +3550,19 @@ function CanvasInner() {
       createdAt: now,
       attempt: retry?.attempt || 1,
       adapter: null,
-      parentTaskId: retry?.parentTaskId || activeTask?.id,
+      parentTaskId: retry?.parentTaskId || activeTask?.id || source.data.sourceGenerationTaskId,
     });
     const generationData: Partial<SpikeNodeData> = {
+      ...(source.data.kind === "image" || source.data.kind === "video" ? {
+        kind: "generator" as const,
+        role: "generator" as const,
+        resultMediaUrl: source.data.resultMediaUrl || source.data.refMediaUrl || undefined,
+        resultThumbnailUrl: source.data.resultThumbnailUrl || source.data.refThumbnailUrl || undefined,
+        payload: undefined, refMediaUrl: undefined, refThumbnailUrl: undefined,
+      } : {}),
       generationTask: task,
+      sourceGenerationTaskId:undefined,sourceGenerationHistoryId:undefined,sourceGenerationMediaUrl:undefined,materialGenerationProvenance:undefined,
+      ...(!retry ? {
       generationKind: request.kind === "image" || request.kind === "video" ? request.kind : undefined,
       generationModel: request.model,
       generationAspect: request.aspect,
@@ -3309,30 +3572,33 @@ function CanvasInner() {
       generationResolution: request.resolution,
       generationCount: request.count,
       generationCameraStrength: request.cameraStrength,
-      generationReferences: request.references.filter(reference => !getIncomingGenerationInputs(nodeId).some(input => input.reference.id === reference.id)).map((reference) => ({
+      generationReferences: request.references.map((reference,index) => ({
         id: reference.id,
+        mentionKey: inputPlan.filter(entry=>!entry.issue)[index]?.key,
+        sourceNodeId: reference.sourceNodeId,
         label: reference.label,
         kind: reference.kind,
         role: reference.role,
         thumbnailUrl: reference.thumbnailUrl,
         mediaUrl: reference.mediaUrl,
         text: reference.text,
-      })),
+      })).filter(reference => !getIncomingGenerationInputs(nodeId).some(input => duplicatesConnectedReference(reference,input))),
+      } : {}),
     };
 
     commitHistory();
     markDirty();
     recordGenerationTask(task);
-    setNodes((current) => current.map((node) => node.id === source.id
-      ? { ...node, data: { ...node.data, ...generationData }, selected: true }
-      : node.selected ? { ...node, selected: false } : node));
-    setSelectedNodeIds([source.id]);
+    const nextNodes=nodesRef.current.map(node=>node.id===source.id?{...node,data:{...node.data,...generationData},selected:true}:node.selected?{...node,selected:false}:node);
+    nodesRef.current=nextNodes;setNodes(nextNodes);
+    setSelectedNodeIds([source.id]);setComposerNodeId(source.id);
     setInspectorNodeId(null);
     setNodeContextMenu(null);
     setConnectDropMenu(null);
     cancelledGenerationTaskIdsRef.current.delete(task.id);
     generationTaskCanvasIdsRef.current.set(task.id, currentCanvasIdRef.current);
     generationTaskSnapshotsRef.current.set(task.id, task);
+    return task.id;
   }, [activeMediaProfile, mediaProfiles, aiRuntimeConfig, commitHistory, getIncomingGenerationInputs, markDirty, recordGenerationTask, t, uiSettings.noteReferenceIncludeTitle, locale]);
 
   const cancelGenerationTask = useCallback((task: CanvasGenerationTask, nodeId?: string) => {
@@ -3361,8 +3627,18 @@ function CanvasInner() {
     const node = nodesRef.current.find((candidate) => candidate.id === nodeId);
     const task = node?.data.generationTask;
     if (!task || !canRetryCanvasGenerationTask(task)) return;
+    const resumed = resumeCanvasVideoGenerationTask(task, new Date().toISOString());
+    if (resumed) {
+      // Retry resumes the original provider job, even if the user switched profiles.
+      // Retain the stable client identity so the native ledger can recover a lost ID.
+      if (runningGenerationTaskIdsRef.current.has(task.id)) return;
+      cancelledGenerationTaskIdsRef.current.delete(task.id);
+      generationTaskCanvasIdsRef.current.set(task.id, currentCanvasIdRef.current);
+      void applyGenerationTaskUpdate(resumed);
+      return;
+    }
     submitGenerationFromNode(nodeId, { request: task.request, attempt: task.attempt + 1, parentTaskId: task.id });
-  }, [submitGenerationFromNode]);
+  }, [applyGenerationTaskUpdate, submitGenerationFromNode]);
 
   const rerunGeneration = useCallback((nodeId: string) => {
     const node = nodesRef.current.find((candidate) => candidate.id === nodeId);
@@ -3494,12 +3770,26 @@ function CanvasInner() {
     setNodeContextMenu(null);
   }, [commitHistory, markDirty]);
 
+  const openStoryboard = useCallback((nodeId?:string)=>{
+    if(!currentCanvasId) return;
+    setStoryboardPosition(previous=>({...resolveStoryboardPosition(nodesRef.current,nodeId,previous?.canvasId===currentCanvasId?previous:undefined),canvasId:currentCanvasId}));
+    setCreativePanel({canvasId:currentCanvasId,kind:'storyboard'});
+    setComposerNodeId(null);
+  },[currentCanvasId]);
+
+  const storyboardGroups = new Set(nodes.filter(isStoryboard).map(node => node.id));
+  const storyboardMemberKey = JSON.stringify(nodes.filter(node => node.parentId && storyboardGroups.has(node.parentId) && validShot(node.data.storyboardShot)).map(node => node.id).sort());
+  // Position/selection updates must not invalidate every card's UI context.
+  const storyboardMemberIds = useMemo(() => new Set<string>(JSON.parse(storyboardMemberKey)), [storyboardMemberKey]);
   const nodeUiActions = useMemo<CanvasNodeUiActions>(() => ({
     inlineEditingNodeId,
+    openStoryboard,
+    storyboardMemberIds,
     openNodeComposer,
     startInlineEdit,
     updateInlineLabel: updateNodeLabel,
     updateNodeData,
+    setPrimaryImage,
     openMediaAssetPicker,
     clearMediaAsset,
     openGeneratorAssetPicker,
@@ -3561,7 +3851,7 @@ function CanvasInner() {
     defaultImageModel: aiRuntimeConfig.imageModel,
     videoModels: aiRuntimeConfig.videoModels,
     defaultVideoModel: aiRuntimeConfig.videoModel,
-  }), [inlineEditingNodeId, openNodeComposer, startInlineEdit, updateNodeLabel, updateNodeData, openMediaAssetPicker, clearMediaAsset, openGeneratorAssetPicker, getCanvasReferenceCandidates, addCanvasReference, getIncomingGenerationInputs, updateIncomingEdgeRole, removeIncomingEdge, submitGenerationFromNode, cancelGeneration, retryGeneration, rerunGeneration, deleteNodeById, finishInlineEdit, flushEditHistory, markDirty, runNodeAI, runningAiNodeId, mediaImportingNodeId, aiRuntimeConfig.imageModels, aiRuntimeConfig.imageModel, aiRuntimeConfig.videoModels, aiRuntimeConfig.videoModel]);
+  }), [inlineEditingNodeId, storyboardMemberIds, openStoryboard, openNodeComposer, startInlineEdit, updateNodeLabel, updateNodeData, setPrimaryImage, openMediaAssetPicker, clearMediaAsset, openGeneratorAssetPicker, getCanvasReferenceCandidates, addCanvasReference, getIncomingGenerationInputs, updateIncomingEdgeRole, removeIncomingEdge, submitGenerationFromNode, cancelGeneration, retryGeneration, rerunGeneration, deleteNodeById, finishInlineEdit, flushEditHistory, markDirty, runNodeAI, runningAiNodeId, mediaImportingNodeId, aiRuntimeConfig.imageModels, aiRuntimeConfig.imageModel, aiRuntimeConfig.videoModels, aiRuntimeConfig.videoModel]);
 
   const duplicateNodeById = useCallback((nodeId: string) => {
     const source = nodesRef.current.find((node) => node.id === nodeId);
@@ -3569,22 +3859,63 @@ function CanvasInner() {
     commitHistory();
     markDirty();
     const nextId = genId();
+    const incoming=edgesRef.current.filter(edge=>edge.target===nodeId&&edge.data?.relation!=="derivation");
+    const edgeIds=new Map(incoming.map(edge=>[edge.id,genEdgeId()]));
     const duplicate: SpikeNode = {
       ...source,
       id: nextId,
       position: { x: source.position.x + 32, y: source.position.y + 32 },
       selected: true,
-      data: { ...source.data, _newHighlight: false },
+      data: { ...source.data, _newHighlight: false,
+        generationPrompt: remapReferenceMentions(source.data.generationPrompt || "",edgeIds),
+        generationInputOrder: source.data.generationInputOrder?.map(key=>edgeIds.get(key)||key),
+        generationTask: source.data.generationTask && canCancelCanvasGenerationTask(source.data.generationTask) ? undefined : source.data.generationTask,
+      },
     };
     setNodes((current) => current
       .map((node) => node.selected ? { ...node, selected: false } : node)
       .concat(duplicate));
+    const nextEdges=edgesRef.current.concat(incoming.map(edge=>({...edge,id:edgeIds.get(edge.id)!,target:nextId})));
+    edgesRef.current=nextEdges;setEdges(nextEdges);
     setSelectedNodeIds([nextId]);
     setComposerNodeId(null);
     setInspectorNodeId(null);
     setNodeContextMenu(null);
   }, [commitHistory, markDirty]);
 
+  type MaterialSaveSelection = { names: string[]; libraryId: string; folderId: string | null };
+  const [materialDestinationRequest, setMaterialDestinationRequest] = useState<{ names: string[]; snapshot: CanvasLibraryFolderSnapshot | null; loading: boolean; error: string } | null>(null);
+  const materialDestinationResolver = useRef<((selection: MaterialSaveSelection | null) => void) | null>(null);
+  const materialDestinationRevision = useRef(0);
+  const finishMaterialDestination = useCallback((selection: MaterialSaveSelection | null) => {
+    materialDestinationRevision.current++;
+    const resolve = materialDestinationResolver.current; materialDestinationResolver.current = null;
+    setMaterialDestinationRequest(null); resolve?.(selection);
+  }, []);
+  const loadMaterialDestination = useCallback(async () => {
+    const revision = ++materialDestinationRevision.current;
+    setMaterialDestinationRequest(current => current ? { ...current, loading: true, error: "" } : null);
+    try {
+      if (!bridge?.listCanvasMaterialFolders) throw Error(locale === 'en-US' ? 'Update the desktop folder integration first.' : '请先接入桌面文件夹支持后再保存。');
+      const snapshot = await bridge.listCanvasMaterialFolders();
+      if (revision !== materialDestinationRevision.current) return;
+      setMaterialDestinationRequest(current => current ? { ...current, loading: false, snapshot: { libraryId: snapshot.catalogId, libraryName: locale === 'en-US' ? 'Default material library' : '默认素材库', folders: snapshot.folders } } : null);
+    } catch (error) {
+      if (revision !== materialDestinationRevision.current) return;
+      setMaterialDestinationRequest(current => current ? { ...current, loading: false, error: error instanceof Error ? error.message : String(error) } : null);
+    }
+  }, [bridge, locale]);
+  const requestMaterialDestination = useCallback((candidates: CanvasGenerationLibraryCandidate[], nodeLabel?: string) => {
+    if (materialDestinationResolver.current) return Promise.resolve(null);
+    return new Promise<MaterialSaveSelection | null>(resolve => {
+      materialDestinationResolver.current = resolve;
+      setMaterialDestinationRequest({ names: canvasMaterialDefaultNames(candidates, locale === 'en-US', nodeLabel), snapshot: null, loading: true, error: "" });
+      void loadMaterialDestination();
+    });
+  }, [locale, loadMaterialDestination]);
+  useEffect(() => { finishMaterialDestination(null); }, [currentCanvasId, loadingCanvas, finishMaterialDestination]);
+  useEffect(() => () => { materialDestinationRevision.current++; materialDestinationResolver.current?.(null); materialDestinationResolver.current = null; }, []);
+  const pendingNodeMediaSaves = useRef(new Set<string>());
   const nodeSaveGate = useRef(createCanvasSaveGate());
   const [nodeSaveNotice,setNodeSaveNotice] = useState("");
   useEffect(()=>{if(!nodeSaveNotice)return;const timer=setTimeout(()=>setNodeSaveNotice(""),4500);return()=>clearTimeout(timer);},[nodeSaveNotice]);
@@ -3606,17 +3937,29 @@ function CanvasInner() {
         const candidates=canvasNodeLibraryCandidates(node.data,generationHistory,resolveCanvasMediaUrl);
         if(!candidates.length)throw Error("no-generated-media");
         if(!bridge?.saveCanvasGenerationToLibrary)throw Error("material-channel-unavailable");
-        let pending=false;
-        for(const candidate of candidates){
-          const result=await nodeSaveGate.current.run(JSON.stringify(['media',candidate.kind,candidate.mediaUrl]),async()=>{
-            const saved=await bridge.saveCanvasGenerationToLibrary!(candidate);
-            if(!saved.success||!saved.assetId)throw Error('material-save-failed');return saved.assetId;
-          });pending ||= result.state==='pending';
-        }
-        notify(pending?'正在保存…':`已保存到默认素材库（${candidates.length} 项）`);
+        const key = `${canvasId}:${epoch}:${nodeId}`;
+        if (pendingNodeMediaSaves.current.has(key)) return;
+        pendingNodeMediaSaves.current.add(key);
+        try {
+          const nodeName = node.data.labelIsCustom ? node.data.label : canvasNodeDisplayName(node.data.label, node.data.generationPrompt || candidates[0]?.prompt, candidates[0]?.kind || 'image', locale === 'en-US');
+          const selection = await requestMaterialDestination(candidates.map((candidate, index) => ({ ...candidate, name: nodeName.slice(0, candidates.length > 1 ? 116 : 120) + (candidates.length > 1 ? ` ${String(index + 1).padStart(2, '0')}` : '') })), nodeName);
+          if (!selection || selection.libraryId !== "legacy-material-catalog" || currentCanvasIdRef.current !== canvasId || canvasLoadEpochRef.current !== epoch) return;
+          const messages = new Set<string>(); let savedCount = 0;
+          try {
+            for (const [index, candidate] of candidates.entries()) {
+              if (currentCanvasIdRef.current !== canvasId || canvasLoadEpochRef.current !== epoch) return;
+              const saved = await bridge.saveCanvasGenerationToLibrary!({ ...candidate, name: selection.names[index] }, { catalogId: selection.libraryId, folderId: selection.folderId });
+              if (!saved.success || !saved.assetId) throw Error(saved.message || 'Material save was not confirmed');
+              savedCount++; if (saved.message) messages.add(saved.message);
+            }
+            notify(`${locale === 'en-US' ? `Saved ${savedCount} item(s) to the library` : `已保存到所选文件夹（${savedCount} 项）`}${messages.size ? ` · ${[...messages].join(' · ')}` : ''}`);
+          } catch (error) {
+            notify(`${locale === 'en-US' ? `Saved ${savedCount} item(s); save failed` : `已保存 ${savedCount} 项；保存未完成`}：${error instanceof Error ? error.message : String(error)}`);
+          }
+        } finally { pendingNodeMediaSaves.current.delete(key); }
       }
     }catch{notify(asNote?'未能新建笔记，请确认已打开可写的知识库后重试。':'未能保存生成结果，请确认原文件仍可读取后重试。');}
-  },[bridge,generationHistory]);
+  },[bridge,generationHistory,requestMaterialDestination,locale]);
 
   const runNodeCommand = useCallback((commandId: CanvasNodeCommandId, nodeId: string) => {
     setNodeContextMenu(null);
@@ -3672,11 +4015,11 @@ function CanvasInner() {
   const canGroupSelectedNodes = selectedNodes.length >= 2
     && selectedNodes.every((node) => !node.parentId && node.data.kind !== "group");
   const canUngroupSelectedNodes = useMemo(
-    () => canUngroupCanvasSelection(nodes, selectedNodeIds),
+    () => canUngroupCanvasSelection(nodes, selectedNodeIds) && nodes.filter(n => selectedNodeIds.includes(n.id)).every(n => !n.parentId),
     [nodes, selectedNodeIds],
   );
   const canTransformSelectedNodes = useMemo(
-    () => isSafeCanvasTransformSelection(nodes, selectedNodeIds),
+    () => canLayoutSelection(nodes, selectedNodeIds),
     [nodes, selectedNodeIds],
   );
 
@@ -3705,6 +4048,7 @@ function CanvasInner() {
 
   useEffect(() => {
     const onDeleteKey = (event: KeyboardEvent) => {
+      if (!canvasVisibleRef.current) return;
       if (selectedNodeIds.length === 0) return;
       const command = resolveScopedShortcut(event, "canvas", undefined, { ids: ["canvasDeleteSelection", "canvasDeleteSelectionAlternate"] });
       if (command !== "canvasDeleteSelection" && command !== "canvasDeleteSelectionAlternate") return;
@@ -3725,7 +4069,13 @@ function CanvasInner() {
       if (node.parentId && idSet.has(node.parentId)) idSet.add(node.id);
     });
     const byId = new Map(nodes.map((node) => [node.id, node]));
-    const copiedNodes = nodes.filter((node) => idSet.has(node.id)).map((node) => {
+    const copiedNodes = nodes.filter((node) => idSet.has(node.id)).map((original) => {
+      const plan=createCanvasReferencePlan(inferGenerationKind(original),getIncomingGenerationInputs(original.id),resolveStoredCanvasReferences(original,nodesRef.current),undefined,original.data.generationInputOrder);
+      const copiedReferences=plan.filter(entry=>entry.source==='stored'||!idSet.has(entry.sourceNodeId || "")).map(entry=>{
+        const freeze=entry.sourceNodeId&&!idSet.has(entry.sourceNodeId);
+        return {...entry.reference,issue:entry.reference.issue || (entry.issue==='missing-source'?entry.issue:undefined),role:entry.role,mentionKey:entry.key,...(freeze?{id:`copied:${original.id}:${entry.key}`,sourceNodeId:undefined}:{})};
+      });
+      const node={...original,data:{...original.data,generationReferences:copiedReferences}};
       if (!node.parentId || idSet.has(node.parentId)) return { ...node, selected: false };
       const parent = byId.get(node.parentId);
       const { parentId: _parentId, extent: _extent, ...rest } = node;
@@ -3742,7 +4092,7 @@ function CanvasInner() {
       .filter((e) => idSet.has(e.source) && idSet.has(e.target))
       .map((e) => ({ ...e }));
     clipboardRef.current = { nodes: copiedNodes, edges: copiedEdges };
-  }, [nodes, edges, selectedNodeIds]);
+  }, [nodes, edges, selectedNodeIds, getIncomingGenerationInputs]);
 
   const pasteFromClipboard = useCallback(() => {
     const clip = clipboardRef.current;
@@ -3750,6 +4100,7 @@ function CanvasInner() {
     commitHistory();
     markDirty();
     const idMap = new Map<string, string>(clip.nodes.map((node) => [node.id, genId()]));
+    const edgeIds = new Map(clip.edges.map(edge=>[edge.id,genEdgeId()]));
     const newNodes: SpikeNode[] = clip.nodes.map((n) => {
       const newId = idMap.get(n.id)!;
       const mappedParentId = n.parentId ? idMap.get(n.parentId) : undefined;
@@ -3759,7 +4110,15 @@ function CanvasInner() {
         parentId: mappedParentId,
         position: mappedParentId ? { ...n.position } : { x: n.position.x + 32, y: n.position.y + 32 },
         selected: true,
-        data: { ...n.data },
+        data: { ...n.data,
+          generationPrompt: remapReferenceMentions(n.data.generationPrompt || "",edgeIds),
+          generationInputOrder: n.data.generationInputOrder?.map(key=>edgeIds.get(key)||key),
+          generationReferences: n.data.generationReferences?.map(ref=>{
+            const sourceId=referenceSourceId(ref),mapped=sourceId&&idMap.get(sourceId);
+            return {...ref,...(mapped?{sourceNodeId:mapped,id:ref.id.startsWith(`node:${sourceId}`)?ref.id.replace(`node:${sourceId}`,`node:${mapped}`):ref.id}:{})};
+          }),
+          generationTask: n.data.generationTask && canCancelCanvasGenerationTask(n.data.generationTask) ? undefined : n.data.generationTask,
+        },
       };
     });
     const newEdges: SpikeEdge[] = clip.edges
@@ -3767,7 +4126,7 @@ function CanvasInner() {
         const source = idMap.get(e.source);
         const target = idMap.get(e.target);
         if (!source || !target) return null;
-        return { ...e, id: genEdgeId(), source, target } as SpikeEdge;
+        return { ...e, id: edgeIds.get(e.id)!, source, target } as SpikeEdge;
       })
       .filter((e): e is SpikeEdge => e !== null);
     // 清掉当前选中，加入粘贴节点并选中
@@ -3782,25 +4141,50 @@ function CanvasInner() {
     pasteFromClipboard();
   }, [selectedNodeIds, copySelected, pasteFromClipboard]);
 
-  const alignSelectedLeft = useCallback(() => {
-    const plan = planCanvasLeftAlignment(nodesRef.current, selectedNodeIds);
+  const layoutSelected = useCallback((command: LayoutCommand) => {
+    const plan = planSelectionLayout(nodesRef.current, selectedNodeIds, command);
     if (!plan?.changed) return;
     commitHistory();
-    markDirty();
-    setNodes((nds) => nds.map((node) => plan.positions.has(node.id)
-      ? { ...node, position: { ...node.position, x: plan.positions.get(node.id)! } }
-      : node));
+    const next = applySelectionLayout(nodesRef.current, plan);
+    nodesRef.current = next; setNodes(next); markDirty();
   }, [selectedNodeIds, commitHistory, markDirty]);
 
-  const distributeSelectedHorizontal = useCallback(() => {
-    const plan = planCanvasHorizontalDistribution(nodesRef.current, selectedNodeIds);
-    if (!plan?.changed) return;
-    commitHistory();
-    markDirty();
-    setNodes((nds) => nds.map((node) => plan.positions.has(node.id)
-      ? { ...node, position: { ...node.position, x: plan.positions.get(node.id)! } }
-      : node));
-  }, [selectedNodeIds, commitHistory, markDirty]);
+  useEffect(() => {
+    const held = new Set<string>();
+    const release = (event: KeyboardEvent) => { held.delete(event.code || event.key); };
+    const reset = () => held.clear();
+    const nudge = (event: KeyboardEvent) => {
+      if (!canvasVisibleRef.current) return;
+      if (event.defaultPrevented || event.isComposing || !event.key.startsWith("Arrow")) return;
+      const stage = viewportStageRef.current;
+      if (!stage || stage.offsetParent === null) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('input,textarea,select,button,[contenteditable="true"],[role="dialog"],[role="menu"],[role="listbox"]')) return;
+      if (!stage.contains(document.activeElement) && !stage.matches(":hover")) return;
+      // XYFlow otherwise moves focused nodes for modified arrows without our undo snapshot.
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        if (target?.closest(".react-flow__node, .react-flow__nodesselection-rect")) { event.preventDefault(); event.stopPropagation(); }
+        return;
+      }
+      const ids = nodesRef.current.filter(n => n.selected).map(n => n.id);
+      const amount = event.shiftKey ? 10 : 1;
+      const dx = event.key === "ArrowLeft" ? -amount : event.key === "ArrowRight" ? amount : 0;
+      const dy = event.key === "ArrowUp" ? -amount : event.key === "ArrowDown" ? amount : 0;
+      if (!dx && !dy || !ids.length) return;
+      event.preventDefault(); event.stopPropagation();
+      const plan = planSelectionNudge(nodesRef.current, ids, dx, dy);
+      if (!plan?.changed) return;
+      if (!held.size) commitHistory();
+      held.add(event.code || event.key);
+      const next = applySelectionLayout(nodesRef.current, plan);
+      nodesRef.current = next; setNodes(next); markDirty();
+    };
+    window.addEventListener("keydown", nudge, true);
+    window.addEventListener("keyup", release, true);
+    window.addEventListener("blur", reset);
+    document.addEventListener("pointerdown", reset, true);
+    return () => {window.removeEventListener("keydown", nudge, true); window.removeEventListener("keyup", release, true); window.removeEventListener("blur", reset);document.removeEventListener("pointerdown", reset, true);};
+  }, [currentCanvasId, selectedNodeIds, commitHistory, markDirty]);
 
   const groupSelectedNodes = useCallback(() => {
     if (!canGroupSelectedNodes) return;
@@ -3857,15 +4241,20 @@ function CanvasInner() {
     ));
     setSelectedNodeIds([]);
     setComposerNodeId(null);
+    const arrangedCanvas = currentCanvasIdRef.current;
+    const arrangedEpoch = canvasLoadEpochRef.current;
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        void reactFlowInstance.fitView({ padding: .18, duration: uiSettings.reduceMotion ? 0 : 520 });
+        if (!viewportStageRef.current || currentCanvasIdRef.current !== arrangedCanvas || canvasLoadEpochRef.current !== arrangedEpoch) return;
+        cancelViewportMotion.current?.();
+        void reactFlowInstance.fitView({ padding: .18, duration: reducedCameraMotion ? 0 : 180 });
       });
     });
-  }, [commitHistory, markDirty, reactFlowInstance, uiSettings.reduceMotion]);
+  }, [commitHistory, markDirty, reactFlowInstance, reducedCameraMotion]);
 
   useEffect(() => {
     const onCopyPasteKey = (event: KeyboardEvent) => {
+      if (!canvasVisibleRef.current) return;
       const command = resolveScopedShortcut(event, "canvas", undefined, { ids: ["canvasCopy", "canvasPaste"] });
       if (command === "canvasCopy") {
           if (selectedNodeIds.length === 0) return;
@@ -3884,6 +4273,7 @@ function CanvasInner() {
   // Ctrl+Z 撤销 / Ctrl+Y 或 Ctrl+Shift+Z 重做
   useEffect(() => {
     const onUndoRedoKey = (event: KeyboardEvent) => {
+      if (!canvasVisibleRef.current) return;
       const command = resolveScopedShortcut(event, "canvas", undefined, { ids: ["canvasUndo", "canvasRedo", "canvasRedoAlternate", "canvasSave"] });
       if (!command) return;
       event.preventDefault();
@@ -3913,6 +4303,7 @@ function CanvasInner() {
 
   useEffect(() => {
     const onCanvasHomeRequest = () => {
+      if (!canvasVisibleRef.current) return;
       void handleReturn();
     };
     window.addEventListener("luckyray:canvas-home-request", onCanvasHomeRequest);
@@ -4099,6 +4490,196 @@ function CanvasInner() {
     }
   }, [bridge, t]);
 
+  // Focus mode pins the composer while image clicks describe a selected object.
+  const toggleCanvasFocus = useCallback((targetId: string) => {
+    if (focusSessionRef.current?.targetId === targetId) {
+      stopCanvasFocus();
+      return;
+    }
+    stopCanvasFocus();
+    const target = nodesRef.current.find((node) => node.id === targetId);
+    if (!currentCanvasId || loadingCanvas || !target
+      || getCanvasNodeCapabilities(target.data).composerMode !== "contextual"
+      || ["queued", "running"].includes(target.data.generationTask?.status || "")) return;
+    if (inferGenerationKind(target) === "text") {
+      setNodeSaveNotice(locale === "en-US" ? "Focus references need an image-capable generation target." : "焦点引用需要图片或视频生成卡片，当前文本通道不能传入参考图片。");
+      return;
+    }
+    const independent = activeMediaProfile?.textProtocol === "openai-chat";
+    if (!aiRuntimeConfig.ready || !aiRuntimeConfig.model || activeMediaProfile?.textProtocol === "disabled"
+      || (independent ? !activeMediaProfile?.apiKeyConfigured : !bridge?.aiChatComplete)) {
+      setNodeSaveNotice(locale === "en-US"
+        ? "Configure a vision-capable text model in canvas settings first."
+        : "请先在画布设置中配置支持图片识别的文本模型。");
+      return;
+    }
+    const session: CanvasFocusSession = {
+      canvasId: currentCanvasId,
+      epoch: canvasLoadEpochRef.current,
+      targetId,
+      bindingKey: focusTextBindingKey,
+      model: aiRuntimeConfig.model,
+      ...(independent ? { profileId: activeMediaProfile!.id, profileRevision: activeMediaProfile!.revision } : {}),
+    };
+    focusSessionRef.current = session;
+    setFocusSession(session);
+    setFocusStatus(locale === "en-US" ? "Click an object in another image" : "点击其他图片中的对象");
+    setInspectorNodeId(null);
+    setNodeContextMenu(null);
+    setSelectionContextMenu(null);
+    setQuickAddMenu(null);
+    setConnectDropMenu(null);
+    setInlineEditingNodeId(null);
+    setComposerNodeId(targetId);
+    selectSingleNode(targetId);
+  }, [currentCanvasId, loadingCanvas, activeMediaProfile, aiRuntimeConfig.ready, aiRuntimeConfig.model,
+    bridge, focusTextBindingKey, locale, selectSingleNode, stopCanvasFocus]);
+
+  const recognizeCanvasFocusPoint = useCallback(async (
+    event: ReactMouseEvent,
+    sourceNodeId: string,
+    image: HTMLImageElement,
+    imageIndex = 0,
+  ) => {
+    const session = focusSessionRef.current;
+    if (!session || focusBusyRef.current || sourceNodeId === session.targetId) return;
+    const sourceUrl = (node: SpikeNode | undefined) => {
+      if (!node) return null;
+      const primary = splitImageSource(node.data);
+      if (!primary) return null;
+      return imageIndex > 0 ? node.data.resultMediaItems?.[imageIndex]?.url || null : primary;
+    };
+    const raw = sourceUrl(nodesRef.current.find((node) => node.id === sourceNodeId));
+    if (!raw || !image.complete || !image.naturalWidth || !image.naturalHeight) {
+      setFocusStatus(locale === "en-US" ? "Choose a loaded image" : "请选择已加载完成的图片");
+      return;
+    }
+    const rect = image.getBoundingClientRect();
+    const computed = window.getComputedStyle(image);
+    const percentages = computed.objectPosition.split(/\s+/).map((value) => /^-?\d+(?:\.\d+)?%$/.test(value) ? Number.parseFloat(value) / 100 : 0.5);
+    const point = normalizeCanvasFocusPoint(event.clientX, event.clientY, {
+      left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+      naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight,
+      objectFit: computed.objectFit === "cover" ? "cover" : "contain",
+      objectPosition: { x: percentages[0] ?? 0.5, y: percentages[1] ?? 0.5 },
+    });
+    if (!point) {
+      setFocusStatus(locale === "en-US" ? "Click inside the image, away from its empty border" : "请点击图片内容，避开留白区域");
+      return;
+    }
+
+    const requestId = ++focusRequestRef.current;
+    const controller = new AbortController();
+    focusAbortRef.current = controller;
+    focusBusyRef.current = true;
+    setFocusBusy(true);
+    setFocusStatus(locale === "en-US" ? "Identifying the selected object…" : "正在识别点击的对象…");
+    let objectUrl = "";
+    let timeout = 0;
+    let finished = false;
+    const current = () => {
+      const target = nodesRef.current.find((node) => node.id === session.targetId);
+      return !controller.signal.aborted && focusSessionRef.current === session
+        && focusRequestRef.current === requestId
+        && currentCanvasIdRef.current === session.canvasId
+        && canvasLoadEpochRef.current === session.epoch
+        && focusTextBindingRef.current === session.bindingKey
+        && !!target && getCanvasNodeCapabilities(target.data).composerMode === "contextual"
+        && !["queued", "running"].includes(target.data.generationTask?.status || "")
+        && sourceUrl(nodesRef.current.find((node) => node.id === sourceNodeId)) === raw;
+    };
+    try {
+      const recognize = async () => {
+        const bytes = await readMediaBytes(resolveCanvasMediaUrl(raw), controller.signal, 64 * 1024 * 1024);
+        if (!current()) return null;
+        objectUrl = URL.createObjectURL(new Blob([bytes as BlobPart]));
+        const original = new Image();
+        original.src = objectUrl;
+        await original.decode();
+        if (!current()) return null;
+        const prepared = prepareCanvasFocusImage(original, {
+          width: original.naturalWidth, height: original.naturalHeight, point,
+        });
+        if (!current()) return null;
+        const messages = buildCanvasFocusMessages(prepared.dataUrl, locale);
+        const options = { model: session.model, temperature: 0, maxTokens: 100 };
+        return session.profileId && session.profileRevision
+          ? completeCanvasProfileText(session.profileId, session.profileRevision, messages, options)
+          : bridge!.aiChatComplete!(messages, options);
+      };
+      const response = await Promise.race([
+        recognize(),
+        new Promise<never>((_, reject) => {
+          timeout = window.setTimeout(() => { controller.abort(); reject(Error("focus-timeout")); }, 90_000);
+        }),
+      ]);
+      if (!current() || !response) return;
+      if (!response.success) throw Error(response.error_kind === "profile_changed" ? "focus-profile-changed" : "focus-provider-failed");
+      const phrase = sanitizeCanvasFocusPhrase(response.content);
+      if (!phrase) throw Error("focus-no-object");
+      // Commit the exact source image + object token together. Re-check latest graph
+      // after recognition so typing/reordering during the request is not overwritten.
+      const update = applyFocusReference({ nodes: nodesRef.current, edges: edgesRef.current,
+        targetId: session.targetId, sourceNodeId, sourceMediaUrl: raw, phrase, point, newEdgeId: genEdgeId() });
+      const target = update.nodes.find(node => node.id === session.targetId)!;
+      const inputs = update.edges.filter(edge => edge.target === session.targetId && edge.data?.relation !== "derivation")
+        .slice().sort((a,b) => (a.data?.order || 0) - (b.data?.order || 0)).map(edge => {
+          const source = update.nodes.find(node => node.id === edge.source);
+          const reference = source ? resolvePinnedFocusReference(source, referenceForCanvasNode(source), edge.data?.referenceMediaUrl)
+            : {id:`node:${edge.source}`,kind:"unknown",label:"",issue:"missing-source" as const};
+          return {edgeId:edge.id,sourceNodeId:edge.source,role:edge.data?.role || "generic",reference};
+        });
+      const entries = createCanvasReferencePlan(inferGenerationKind(target), inputs, resolveStoredCanvasReferences(target, update.nodes),
+        inferGenerationKind(target) === "video" ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, target.data.generationInputOrder);
+      if (entries.find(entry => entry.key === update.edgeId)?.issue) throw Error("focus-reference-unsupported");
+      commitHistory();
+      nodesRef.current = update.nodes;
+      edgesRef.current = update.edges;
+      setNodes(update.nodes);
+      setEdges(update.edges);
+      markDirty();
+      finished = true;
+      setFocusStatus(locale === "en-US" ? `Added: ${phrase}` : `已加入：${phrase}`);
+    } catch (error) {
+      if (focusSessionRef.current !== session || focusRequestRef.current !== requestId) return;
+      finished = true;
+      const code = error instanceof Error ? error.message : "";
+      setFocusStatus(code === "focus-reference-unsupported"
+        ? locale === "en-US" ? "This model cannot accept another image reference." : "当前模型无法接收这张参考图，请检查参考图数量或帧角色。"
+        : code === "focus-no-object"
+        ? locale === "en-US" ? "Could not identify that object. Try another point." : "未能识别该对象，请换一个位置。"
+        : code === "focus-timeout"
+          ? locale === "en-US" ? "Recognition timed out. Try again." : "识别超时，请重新点击。"
+          : code === "focus-profile-changed"
+            ? locale === "en-US" ? "Text configuration changed. Re-enter focus mode." : "文本配置已变化，请重新进入聚焦模式。"
+            : code === "focus-provider-failed"
+              ? locale === "en-US" ? "Recognition failed. Check that the text model supports images." : "识别失败，请确认文本模型支持图片。"
+              : locale === "en-US" ? "This image could not be read safely. Try another image." : "无法读取这张图片，请换一张图片。");
+    } finally {
+      window.clearTimeout(timeout);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (focusRequestRef.current === requestId) {
+        focusAbortRef.current = null;
+        focusBusyRef.current = false;
+        setFocusBusy(false);
+        if (!finished && focusSessionRef.current === session) {
+          setFocusStatus(locale === "en-US" ? "The image or target changed. Click again." : "图片或目标已变化，请重新点击。");
+        }
+      }
+    }
+  }, [bridge, commitHistory, markDirty, locale, activeMediaProfile]);
+
+  useEffect(() => {
+    if (!focusSession) return;
+    const target = nodes.find((node) => node.id === focusSession.targetId);
+    if (loadingCanvas || currentCanvasId !== focusSession.canvasId
+      || canvasLoadEpochRef.current !== focusSession.epoch
+      || composerNodeId !== focusSession.targetId || selectedNodeId !== focusSession.targetId
+      || focusTextBindingKey !== focusSession.bindingKey || !target
+      || ["queued", "running"].includes(target.data.generationTask?.status || "")) stopCanvasFocus();
+  }, [focusSession, nodes, currentCanvasId, loadingCanvas, composerNodeId, selectedNodeId, focusTextBindingKey, stopCanvasFocus]);
+  // End focus-mode commands.
+
   // ========== 渲染 ==========
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
   const inspectorNode = nodes.find((n) => n.id === inspectorNodeId);
@@ -4120,23 +4701,7 @@ function CanvasInner() {
     && selectedNode.id === composerNodeId
     && selectedNodeCapabilities?.composerMode === "contextual";
   useEffect(() => {
-    if (!selectedNodeHasComposer || !selectedNodeId) {
-      setMaterialInspectorPortal(null);
-      return;
-    }
-    const frameId = window.requestAnimationFrame(() => {
-      const body = editorBodyRef.current;
-      const element = body
-        ? Array.from(body.querySelectorAll<HTMLElement>(".react-flow__node[data-id]"))
-          .find((candidate) => candidate.dataset.id === selectedNodeId)
-        : null;
-      setMaterialInspectorPortal(element ? { nodeId: selectedNodeId, element } : null);
-    });
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [selectedNodeHasComposer, selectedNodeId]);
-  useEffect(() => {
+    if (!visible) return;
     const isAssetNode = selectedNode?.data.kind === "image" || selectedNode?.data.kind === "video";
     const isNoteNode = selectedNode?.data.kind === "noteRef";
     publishCurrentCanvasContext({
@@ -4159,7 +4724,7 @@ function CanvasInner() {
         updatedAt: selectedNode.data.refUpdatedAt || null,
       } : null,
     });
-  }, [currentCanvasId, currentCanvasName, selectedNode, selectedNodeId, t]);
+  }, [currentCanvasId, currentCanvasName, selectedNode, selectedNodeId, t, visible]);
 
   const saveStatusText =
     saveStatus === "saving" ? t("editor.canvas.save.saving") :
@@ -4173,23 +4738,283 @@ function CanvasInner() {
     saveStatus === "saved" ? "#4ade80" :
     "#8e8e96";
 
-  const nodeSearchResults = useMemo(() => {
-    const query = nodeSearchQuery.trim().toLocaleLowerCase("zh-CN");
-    return nodes
-      .map((node, index) => {
-        const label = node.data.label || canvasNodeKindLabel(node.data.kind, t) || t("editor.canvas.node.untitled");
-        const searchable = [label, node.data.result, node.data.refSummary]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase("zh-CN");
-        const labelKey = label.toLocaleLowerCase("zh-CN");
-        const rank = !query ? 3 : labelKey === query ? 0 : labelKey.startsWith(query) ? 1 : searchable.includes(query) ? 2 : 99;
-        return { node, index, label, rank };
-      })
-      .filter((item) => item.rank < 99)
-      .sort((a, b) => a.rank - b.rank || a.index - b.index)
-      .slice(0, 10);
-  }, [nodes, nodeSearchQuery, t]);
+  const agentGenerationIdentity = JSON.stringify([activeMediaProfile?.id,activeMediaProfile?.revision,aiRuntimeConfig.imageModel,aiRuntimeConfig.videoModel]);
+  const agentGenerationIdentityRef = useRef(agentGenerationIdentity); agentGenerationIdentityRef.current = agentGenerationIdentity;
+  const agentSubmitRef = useRef(submitGenerationFromNode); agentSubmitRef.current = submitGenerationFromNode;
+  const agentCancelRef = useRef(cancelGenerationTask); agentCancelRef.current = cancelGenerationTask;
+  useEffect(() => {
+    canvasAgentExecutionController.current?.abort();
+    canvasAgentSelectionRef.current=[];setCanvasAgentCollapsed(false);setCanvasAgentPicking(false);
+    setCanvasAgentContextIds([]);setCanvasAgentExecution(null);setCanvasAgentActionError('');
+    return () => canvasAgentExecutionController.current?.abort();
+  }, [currentCanvasId]);
+  const getCanvasAgentContext = useCallback(async (signal:AbortSignal, requestedIds?:readonly string[], includeImages=true):Promise<CanvasAgentContext> => {
+    const id = currentCanvasIdRef.current;if(!id||loadingCanvas)throw Error('canvas-agent-canvas-changed');
+    const raw = nodesRef.current;
+    const snapshotRevision=agentGraphRevision(raw,edgesRef.current);
+    const ids = requestedIds ?? (canvasAgentContextIds.length ? canvasAgentContextIds : raw.slice(0,256).map(node=>node.id));
+    const contextNodes = agentContextNodes(raw,ids);
+    let budget = 256*1024;
+    for(const node of contextNodes){
+      let value = node.text.slice(0,24000);
+      while(new TextEncoder().encode(value).length>budget)value=value.slice(0,Math.floor(value.length*.8));
+      node.text=value;budget-=new TextEncoder().encode(value).length;
+    }
+    let imageCount=0;
+    for(const item of contextNodes){
+      const node=raw.find(n=>n.id===item.id)!;
+      if(includeImages && (item.kind==='image'||item.kind==='video')){
+        const source=resolveCanvasMediaUrl(agentNodeMedia(node));
+        if(source){if(++imageCount>8){item.imageUnavailable=true;continue;}try{item.image=await prepareAgentImage(source,signal);}catch(error){if(signal.aborted)throw error;item.imageUnavailable=true;}}
+        else item.imageUnavailable=true;
+      }
+    }
+    const selected=new Set(contextNodes.map(n=>n.id));
+    const imageCaps=mediaCapabilities('image',activeMediaProfile,aiRuntimeConfig.imageModel),videoCaps=mediaCapabilities('video',activeMediaProfile,aiRuntimeConfig.videoModel);
+    const projectOptions=(cap:ReturnType<typeof mediaCapabilities>)=>({aspects:[...cap.aspects].slice(0,32),resolutions:[...(cap.resolutions||[])].slice(0,32),qualities:[...cap.qualities].slice(0,32),durations:[...cap.durations].slice(0,32)});
+    const result:CanvasAgentContext={version:1,canvasId:id,canvasName:currentCanvasName.slice(0,256),snapshotRevision,nodes:contextNodes,
+      connections:edgesRef.current.filter(e=>selected.has(e.source)&&selected.has(e.target)).slice(0,2048).map(e=>({source:e.source,target:e.target})),
+      generation:{imageOptions:projectOptions(imageCaps),videoOptions:projectOptions(videoCaps),imageModels:aiRuntimeConfig.imageModels.slice(0,32),videoModels:aiRuntimeConfig.videoModels.slice(0,32),imageReady:!!activeMediaProfile?.apiKeyConfigured&&activeMediaProfile.imageProtocol!=='disabled'&&!!aiRuntimeConfig.imageModel,videoReady:!!activeMediaProfile?.apiKeyConfigured&&activeMediaProfile.videoProtocol!=='disabled'&&!!aiRuntimeConfig.videoModel}};
+    validateAgentContextCurrent(result,nodesRef.current,currentCanvasIdRef.current||'');
+    if(agentGraphRevision(nodesRef.current,edgesRef.current)!==snapshotRevision)throw Error('canvas-agent-context-stale');
+    return result;
+  }, [canvasAgentContextIds,currentCanvasName,loadingCanvas,activeMediaProfile,aiRuntimeConfig]);
+  const canvasActionExecutorRef = useRef<(action:CanvasAgentPendingAction,signal:AbortSignal)=>Promise<CanvasAgentActionResult>>(async()=>{throw Error('canvas-agent-executor-not-ready');});
+  const canvasActionLedger = useRef(createCanvasActionLedger<CanvasAgentActionResult>());
+  const executeCanvasAction = useCallback((action:CanvasAgentPendingAction,signal:AbortSignal)=>canvasActionExecutorRef.current(action,signal),[]);
+  const canvasAgent = useCanvasAgent(currentCanvasId,canvasAgentOpen,getCanvasAgentContext,executeCanvasAction);
+  const addCanvasAgentReferences = useCallback((ids: readonly string[]) => {
+    const liveIds = new Set(nodesRef.current.map(node => node.id));
+    if (appendAgentReferences(canvasAgentContextIds, ids, liveIds).overflow)
+      setCanvasAgentActionError(locale==='en-US'?'This context batch is full (256 nodes). The agent can inspect more nodes in another batch.':'当前上下文批次已满（256 个节点），Agent 可分批继续读取其他节点。');
+    setCanvasAgentContextIds(current => {
+      const {ids: next} = appendAgentReferences(current, ids, liveIds);
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
+  }, [canvasAgentContextIds, locale]);
+  const addCanvasAgentSelection = useCallback(() => {
+    addCanvasAgentReferences(nodesRef.current.filter(node => node.selected).map(node => node.id));
+  }, [addCanvasAgentReferences]);
+  const openCanvasAgent = useCallback(() => {
+    stopCanvasFocus(); setCanvasAgentCollapsed(false); setCanvasAgentPicking(false); setCanvasAgentOpen(true);
+    addCanvasAgentSelection(); setCreativePanel(null); setComposerNodeId(null);
+  }, [stopCanvasFocus, addCanvasAgentSelection]);
+  const applyCanvasAgentProposal = useCallback(async (rawPlan:CanvasAgentPlan,generate:boolean, options?:{context:CanvasAgentContext;runId:string;signal:AbortSignal;onSubmitted:()=>void;onExecution:(value:CanvasAgentExecution)=>void}) => {
+    const id=currentCanvasIdRef.current,epoch=canvasLoadEpochRef.current,context=options?.context ?? canvasAgent.snapshot?.context;
+    if(!id||!context||loadingCanvas)throw Error('canvas-agent-context-stale');
+    if(canvasAgentExecution?.status==='running')throw Error('canvas-agent-busy');
+    const owner={canvasId:id,loadEpoch:epoch};
+    const isCurrent=()=>currentCanvasIdRef.current===id&&canvasLoadEpochRef.current===epoch;
+    setCanvasAgentActionError('');
+    try{
+      validateAgentContextCurrent(context,nodesRef.current,id);
+      const plan=validateCanvasAgentPlan(rawPlan,context,options?.runId ?? canvasAgent.snapshot?.runId);
+      if(generate&&plan.steps.some(step=>step.kind==='image'&&(!activeMediaProfile?.apiKeyConfigured||activeMediaProfile.imageProtocol==='disabled'||!aiRuntimeConfig.imageModel)||step.kind==='video'&&(!activeMediaProfile?.apiKeyConfigured||activeMediaProfile.videoProtocol==='disabled'||!aiRuntimeConfig.videoModel)))throw Error('canvas-agent-generation-unavailable');
+      for(const step of plan.steps){if(step.kind==='text'||!step.settings)continue;
+        const target=step.targetNodeId?nodesRef.current.find(node=>node.id===step.targetNodeId):undefined;
+        const cap=mediaCapabilities(step.kind,activeMediaProfile,target?.data.generationModel||(step.kind==='image'?aiRuntimeConfig.imageModel:aiRuntimeConfig.videoModel));
+        for(const [key,values] of [['aspect',cap.aspects],['resolution',cap.resolutions||[]],['quality',cap.qualities],['duration',cap.durations]] as const)if(step.settings[key]!==undefined&&!(values as readonly unknown[]).includes(step.settings[key]))throw Error('canvas-agent-generation-config-changed');
+      }
+      const profileIdentity=agentGenerationIdentityRef.current;
+      const referenceBounds=context.nodes.length?reactFlowInstance.getNodesBounds(context.nodes.map(node=>node.id)):null;
+      const origin=referenceBounds&&Number.isFinite(referenceBounds.x)&&referenceBounds.width>0?{x:referenceBounds.x+referenceBounds.width+140,y:referenceBounds.y}:getViewportCreatePosition('generator');
+      const result=applyCanvasAgentPlan<SpikeNode,SpikeEdge>(plan,nodesRef.current,edgesRef.current,{
+        createId:genId,origin,
+        makeNode:(step,nodeId,position)=>withInitialSquareSize({id:nodeId,type:'spike',position,selected:false,data:normalizeCanvasNodeCapabilityData<SpikeNodeData>(step.kind==='text'?{kind:'text',label:step.content}:{kind:'generator',label:step.title,labelIsCustom:true,generationKind:step.kind,generationPrompt:step.content,generationAspect:step.settings?.aspect,generationResolution:step.settings?.resolution,generationQuality:step.settings?.quality,generationDuration:step.settings?.duration,generationCount:1,generationModel:step.kind==='image'?aiRuntimeConfig.imageModel:aiRuntimeConfig.videoModel})}),
+        makeEdge:(source,target,edgeId,currentEdges,currentNodes)=>({id:edgeId,source:source.id,target:target.id,sourceHandle:'s-right',targetHandle:'t-left',animated:false,data:resolveCanvasConnectionData(source.data,target.data,target.id,currentEdges,currentNodes)})
+      });
+      commitHistory();markDirty();nodesRef.current=result.nodes;edgesRef.current=result.edges;setNodes(result.nodes);setEdges(result.edges);setSelectedNodeIds([]);setComposerNodeId(null);setInspectorNodeId(null);
+      const draft:CanvasAgentExecution={planId:plan.id,owner,status:'draft',steps:result.steps};setCanvasAgentExecution(draft);
+      setCanvasAgentContextIds(result.steps.map(step=>step.nodeId).slice(0,256));
+      // Persist the plan marker before any paid submission: after renderer restart,
+      // replay detects the existing plan instead of charging again.
+      await persistCurrentCanvas();
+      if(options?.signal.aborted)throw Error('canvas-agent-cancelled');
+      if(!isCurrent())throw Error('canvas-agent-canvas-changed');
+      if(!generate){options?.onExecution({...draft,status:"completed",steps:draft.steps.map(step=>({...step,status:step.kind==='text'?'succeeded':'draft'}))});return true;}
+      const expectedNodes=new Map(result.steps.map(step=>[step.nodeId,agentNodeRevision(result.nodes.find(node=>node.id===step.nodeId)!)]));
+      const agentNodeIds=new Set(result.steps.map(step=>step.nodeId));
+      const refIds=new Set(result.edges.filter(edge=>agentNodeIds.has(edge.target)).map(edge=>edge.source));
+      for(const node of result.nodes.filter(node=>agentNodeIds.has(node.id)))for(const reference of storedCanvasReferences(node)){const sourceId=referenceSourceId(reference);if(sourceId)refIds.add(sourceId);}
+      const expectedReferences=new Map(result.nodes.filter(node=>refIds.has(node.id)).map(node=>[node.id,agentNodeRevision(node)]));
+      const completedReferenceNodes=new Set<string>();
+      const expectedInputs=new Map(result.steps.map(step=>[step.nodeId,JSON.stringify(result.edges.filter(edge=>edge.target===step.nodeId).map(edge=>[edge.id,edge.source,edge.data]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))))]));
+      const controller=new AbortController();canvasAgentExecutionController.current=controller;
+      const relayAbort=()=>controller.abort();
+      options?.signal.addEventListener('abort',relayAbort,{once:true});
+      if(options?.signal.aborted)controller.abort();
+      const execution = await executeCanvasAgentPlan(plan,result.steps,{
+        signal:controller.signal,
+        assertCurrent:()=>{if(!isCurrent())throw Error('canvas-agent-canvas-changed');if(agentGenerationIdentityRef.current!==profileIdentity)throw Error('canvas-agent-generation-config-changed');},
+        submit:nodeId=>{
+          const current=nodesRef.current.find(node=>node.id===nodeId);
+          const incoming=JSON.stringify(edgesRef.current.filter(edge=>edge.target===nodeId).map(edge=>[edge.id,edge.source,edge.data]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
+          if(!current||agentNodeRevision(current)!==expectedNodes.get(nodeId)||incoming!==expectedInputs.get(nodeId))throw Error('canvas-agent-node-changed');
+          const sourceIds=new Set(edgesRef.current.filter(edge=>edge.target===nodeId).map(edge=>edge.source));
+          for(const reference of storedCanvasReferences(current)){const sourceId=referenceSourceId(reference);if(sourceId)sourceIds.add(sourceId);}
+          for(const sourceId of sourceIds){const source=nodesRef.current.find(node=>node.id===sourceId);if(!source||agentNodeRevision(source)!==expectedReferences.get(sourceId))throw Error('canvas-agent-context-stale');}
+
+          const taskId=agentSubmitRef.current(nodeId);
+          if(taskId)options?.onSubmitted();
+          return taskId;
+        },
+        readTask:nodeId=>nodesRef.current.find(node=>node.id===nodeId)?.data.generationTask,
+        cancel:(nodeId,taskId)=>{if(!isCurrent())return;const task=nodesRef.current.find(node=>node.id===nodeId)?.data.generationTask;if(task?.id===taskId)agentCancelRef.current(task,nodeId);},
+        onUpdate:execution=>{
+          if(!isCurrent())return;
+          for(const step of execution.steps)if(step.status==='succeeded'&&!completedReferenceNodes.has(step.nodeId)){
+            completedReferenceNodes.add(step.nodeId);const node=nodesRef.current.find(node=>node.id===step.nodeId);if(node&&expectedReferences.has(step.nodeId))expectedReferences.set(step.nodeId,agentNodeRevision(node));
+          }
+          setCanvasAgentExecution({...execution,owner});
+        }
+      });
+      options?.signal.removeEventListener('abort',relayAbort);
+      options?.onExecution({...execution,owner});
+      return execution.status === 'completed';
+    }catch(error){if(isCurrent())setCanvasAgentActionError(canvasAgentErrorMessage(error,locale==='en-US'));throw error;}
+  }, [canvasAgent.snapshot,canvasAgentExecution?.status,loadingCanvas,activeMediaProfile,aiRuntimeConfig,getViewportCreatePosition,reactFlowInstance,commitHistory,markDirty,persistCurrentCanvas,locale]);
+  canvasActionExecutorRef.current = (action, signal) => canvasActionLedger.current.run(action, async () => {
+    const canvasId=currentCanvasIdRef.current,epoch=canvasLoadEpochRef.current;
+    if(!canvasId || loadingCanvas || signal.aborted) throw Error('canvas-agent-cancelled');
+    if(action.context && action.context.canvasId!==canvasId)throw Error('canvas-agent-canvas-changed');
+    if(action.kind==='readCreation' || action.kind==='editCreation' || action.kind==='openCreation') {
+      const stillCurrent=()=>{if(signal.aborted||currentCanvasIdRef.current!==canvasId||canvasLoadEpochRef.current!==epoch)throw Error('canvas-agent-canvas-changed');};
+      const readState=():CreationState=>({canvasId,nodes:nodesRef.current,edges:edgesRef.current,history:generationHistoryRef.current,noteReferenceIncludeTitle:uiSettings.noteReferenceIncludeTitle}) as unknown as CreationState;
+      stillCurrent();
+      if(action.kind==='readCreation') {
+        if(!action.creationQuery)throw Error('canvas-agent-creation-invalid');
+        const creation=readCreation(readState(),action.creationQuery);
+        return {status:'completed',summary:locale==='en-US'?`Read ${creation.items.length} creation items of ${creation.total}.`:`已读取 ${creation.items.length} 项创作信息，共 ${creation.total} 项。`,creation,generatedJobs:0};
+      }
+      if(action.execution?.mode!=='autonomous')throw Error('canvas-agent-action-not-authorized');
+      if(action.kind==='openCreation') {
+        if(!action.creationOpen)throw Error('canvas-agent-creation-invalid');
+        const handoff=prepareCreationHandoff(readState(),action.creationOpen);
+        const imageItem=handoff.panel==='editImage'?selectedCanvasMedia(nodesRef.current,handoff.selectedIds,resolveCanvasMediaUrl)[handoff.imageIndex||0]:undefined;
+        if(handoff.panel==='editImage'&&(!imageItem||imageItem.kind!=='image'))throw Error('canvas-agent-creation-select-image');
+        stillCurrent();
+        const selected=new Set(handoff.selectedIds);
+        setSelectedNodeIds(handoff.selectedIds);
+        const next=nodesRef.current.map(node=>({...node,selected:selected.has(node.id)}));
+        nodesRef.current=next;setNodes(next);
+        if(handoff.boardId)setStoryboardPosition({canvasId,boardId:handoff.boardId});
+        setComposerNodeId(null);setInspectorNodeId(null);setCanvasAgentOpen(false);
+        setCreativePanel({canvasId,kind:handoff.panel,imageEdit:handoff.imageEdit,imageNodeId:imageItem?.nodeId,imageIndex:handoff.imageIndex,imageSource:imageItem?.source});
+        const creation={...readCreation(readState(),{scope:'overview'}),completion:'awaiting-user' as const,notice:handoff.summary};
+        return {status:'completed',summary:locale==='en-US'?handoff.summary:'已准备对应创作面板，请确认后继续。尚未完成导入、导出或图片保存。',creation,generatedJobs:0};
+      }
+      if(!action.creationEdit)throw Error('canvas-agent-creation-invalid');
+      if(!bridge?.saveCanvas)throw Error('canvas-agent-not-ready');
+      const result=applyCreation(readState(),action.creationEdit,{createId:genId,origin:getViewportCreatePosition('image'),english:locale==='en-US',noteReferenceIncludeTitle:uiSettings.noteReferenceIncludeTitle});
+      stillCurrent();
+      const applied=readCreation({...readState(),nodes:result.nodes,edges:result.edges,history:result.history},{scope:'overview'});
+      commitHistory();markDirty();
+      const nextNodes=result.nodes as SpikeNode[],nextEdges=result.edges as SpikeEdge[];
+      nodesRef.current=nextNodes;edgesRef.current=nextEdges;generationHistoryRef.current=result.history;
+      setNodes(nextNodes);setEdges(nextEdges);setGenerationHistory(result.history);
+      const receipt=await completeCreationMutation({applied,summary:result.summary,affectedIds:result.affectedIds,assertCurrent:stillCurrent,persist:persistCurrentCanvas,
+        readAfter:async()=>({creation:readCreation(readState(),{scope:'overview'}),context:await getCanvasAgentContext(signal,agentContextWorkingSet(nodesRef.current,result.affectedIds.filter(id=>nodesRef.current.some(node=>node.id===id)).slice(0,256),action.context?.nodes.map(node=>node.id)),false)})});
+      if(receipt.status==='completed')setCanvasAgentExecution({planId:action.actionId,owner:{canvasId,loadEpoch:epoch},status:'completed',steps:nextNodes.filter(node=>result.affectedIds.includes(node.id)).map(node=>({id:node.id,nodeId:node.id,title:node.data.label||'画布节点',kind:'text' as const,status:'succeeded' as const}))});
+      else if(currentCanvasIdRef.current===canvasId)setCanvasAgentActionError(locale==='en-US'?'The canvas was edited, but saving or refresh is unconfirmed. Check before repeating.':'画布已修改，但保存或刷新尚未确认。请先检查画布和保存状态，不要重复执行。');
+      return receipt;
+    }
+    if(action.kind==='readContext') {
+      const offset=Number.isSafeInteger(action.offset)&&Number(action.offset)>=0?Number(action.offset):0;
+      if(action.expectedRevision && action.expectedRevision!==agentGraphRevision(nodesRef.current,edgesRef.current))throw Error('canvas-agent-context-stale');
+      if(offset>0&&!action.expectedRevision)throw Error('canvas-agent-context-stale');
+      const ids=action.nodeIds?.length ? action.nodeIds : nodesRef.current.slice(offset,offset+256).map(node=>node.id);
+      const workingIds=agentContextWorkingSet(nodesRef.current,ids,action.context?.nodes.map(node=>node.id));
+      const context=await getCanvasAgentContext(signal,workingIds,!!action.nodeIds?.length);
+      if(action.expectedRevision && action.expectedRevision!==context.snapshotRevision)throw Error('canvas-agent-context-stale');
+      return {status:'completed',summary:`Read ${ids.length} requested nodes of ${nodesRef.current.length}; offset ${offset}; next offset ${offset+ids.length<nodesRef.current.length?offset+ids.length:"end"}. Snapshot revision ${context.snapshotRevision}; pass expectedRevision for the next page, restart at offset 0 if stale. Current editable working set contains ${context.nodes.length} nodes, capped at 256 with requested nodes first; evicted IDs must be reread by nodeIds. This is not full-canvas coverage. Text is budgeted to 24000 characters per node and 256 KiB per batch; excess text is not read.`,context,generatedJobs:0};
+    }
+    if(action.kind==='editGraph') {
+      if(!action.context||!action.operations)throw Error('canvas-agent-graph-edit-invalid');
+      const edited=editCanvasAgentGraph<SpikeNode,SpikeEdge>(action.context,nodesRef.current,edgesRef.current,action.operations,{
+        canvasId,createId:genId,
+        makeEdge:(source,target,id,edges,nodes)=>({id,source:source.id,target:target.id,sourceHandle:'s-right',targetHandle:'t-left',animated:false,data:resolveCanvasConnectionData(source.data,target.data,target.id,edges,nodes)})
+      });
+      if(signal.aborted)throw Error('canvas-agent-cancelled');
+      commitHistory();markDirty();nodesRef.current=edited.nodes;edgesRef.current=edited.edges;setNodes(edited.nodes);setEdges(edited.edges);
+      await persistCurrentCanvas();
+      if(currentCanvasIdRef.current!==canvasId||canvasLoadEpochRef.current!==epoch)throw Error('canvas-agent-canvas-changed');
+      // These are actual operation results, not IDs inferred from tool history or a plan.
+      const changedIds=new Set(edited.changedIds);
+      setCanvasAgentExecution({planId:action.actionId,owner:{canvasId,loadEpoch:epoch},status:'completed',steps:edited.nodes.filter(node=>changedIds.has(node.id)).map(node=>{const kind=agentNodeKind(node);return {id:node.id,nodeId:node.id,title:node.data.label|| (locale==='en-US'?'Canvas node':'画布节点'),kind:kind==='image'||kind==='video'?kind:'text',status:'succeeded'};})});
+      const context=signal.aborted?undefined:await getCanvasAgentContext(signal,agentContextWorkingSet(nodesRef.current,edited.changedIds,action.context.nodes.map(node=>node.id)),false);
+      return {status:'completed',summary:`Applied ${action.operations.length} canvas structure operations to ${edited.changedIds.length} nodes. No media jobs submitted.`,context,generatedJobs:0,nodes:edited.changedIds.map(id=>({id,status:'completed' as const}))};
+    }
+    if(action.kind!=='applyPlan'||!action.plan||!action.context)throw Error('canvas-agent-plan-invalid');
+    let generatedJobs=0;
+    let outcome:CanvasAgentExecution|undefined;
+    try {
+      await applyCanvasAgentProposal(action.plan,!!action.generate,{context:action.context,runId:action.runId,signal,onSubmitted:()=>{generatedJobs++;},onExecution:value=>{outcome=value;}});
+      const execution=outcome as CanvasAgentExecution|undefined;
+      if(!execution)throw Error('canvas-agent-action-outcome-unknown');
+      const status=execution.status==='completed'?'completed':execution.status==='cancelled'?'cancelled':'failed';
+      const context=signal.aborted?undefined:await getCanvasAgentContext(signal,agentContextWorkingSet(nodesRef.current,execution.steps.map(step=>step.nodeId),action.context.nodes.map(node=>node.id)),true);
+      return {status,summary:`Canvas ${status}; ${execution.steps.length} nodes updated; ${generatedJobs} media jobs submitted. Context text may be truncated at 24000 characters per node / 256 KiB per batch.`,context,generatedJobs,nodes:execution.steps.map(step=>({id:step.nodeId,status:step.status==='failed'?'failed':step.status==='cancelled'?'cancelled':'completed',summary:step.kind==='text'?'Text updated':action.generate?step.status:'Draft created, media not generated'}))};
+    } catch(error) {
+      return {status:signal.aborted?'cancelled':'failed',summary:error instanceof Error?error.message:'canvas-agent-action-failed',generatedJobs};
+    }
+  });
+  const canvasAgentNavigationOwner = !loadingCanvas && currentCanvasId ? {canvasId:currentCanvasId,loadEpoch:canvasLoadEpochRef.current} : null;
+  useEffect(() => {
+    const plan=canvasAgent.snapshot?.plan;
+    if(!plan||!canvasAgentNavigationOwner||plan.canvasId!==currentCanvasId||canvasAgentExecutionOwnerMatches(canvasAgentExecution,canvasAgentNavigationOwner))return;
+    const linked=plan.steps.map(step=>{const node=nodes.find(n=>(n.data.canvasAgentOrigin as {planId?:string;stepId?:string}|undefined)?.planId===plan.id&&(n.data.canvasAgentOrigin as {stepId?:string}).stepId===step.id);return node?{id:step.id,nodeId:node.id,title:step.title,kind:step.kind,status:step.kind==='text'?'succeeded' as const:node.data.generationTask?.status||'draft' as const,error:node.data.generationTask?.error?.message}:null;});
+    const steps=linked.filter((step):step is NonNullable<typeof step>=>step!==null);
+    if(steps.length)setCanvasAgentExecution({planId:plan.id,owner:canvasAgentNavigationOwner,status:steps.every(item=>item.status==='succeeded')?'completed':'draft',steps});
+  }, [canvasAgent.snapshot?.plan,nodes,canvasAgentExecution,currentCanvasId,loadingCanvas,canvasAgentNavigationOwner?.loadEpoch]);
+  const canvasAgentExecutionNodeIds = canvasAgentExecutionNodeIdsFromState(canvasAgentExecution,canvasAgentNavigationOwner,nodes);
+  const locateCanvasAgentExecution = useCallback((execution:CanvasAgentExecution,nodeId?:string) => {
+    const flow=viewportStageRef.current?.querySelector<HTMLElement>('.react-flow');
+    if(!flow?.clientWidth||!flow.clientHeight)return;
+    const readCurrent=()=>({
+      owner:!loadingCanvas&&canvasVisibleRef.current&&currentCanvasIdRef.current ? {canvasId:currentCanvasIdRef.current,loadEpoch:canvasLoadEpochRef.current} : null,
+      execution:canvasAgentExecutionRef.current,nodes:nodesRef.current,
+    });
+    navigateCanvasAgentExecution(execution,nodeId,{
+      readCurrent,getBounds:ids=>reactFlowInstance.getNodesBounds(ids),
+      apply:({nodeIds,bounds,selectAll})=>{
+        cancelViewportMotion.current?.();
+        if(selectAll){
+          stopCanvasFocus();setComposerNodeId(null);setInspectorNodeId(null);setNodeContextMenu(null);setSelectionContextMenu(null);
+          // Programmatic result selection must not add or reorder Agent references.
+          canvasAgentSelectionRef.current=nodeIds;
+          const current=()=>canvasAgentExecutionRef.current===execution&&canvasAgentExecutionOwnerMatches(execution,readCurrent().owner);
+          setNodes(nodes=>current()?synchronizeCanvasNodeSelection(nodes,nodeIds):nodes);
+          setSelectedNodeIds(ids=>current()?nodeIds:ids);
+        }
+        // Immediate camera updates cannot outlive the canvas owner through animation frames.
+        if(selectAll)void reactFlowInstance.setViewport(getViewportForBounds(bounds,flow.clientWidth,flow.clientHeight,CANVAS_MIN_ZOOM,1,.2),{duration:0});
+        else void reactFlowInstance.setCenter(bounds.x+bounds.width/2,bounds.y+bounds.height/2,{duration:0,zoom:Math.max(reactFlowInstance.getZoom(),.9)});
+      },
+    });
+  }, [loadingCanvas,reactFlowInstance,stopCanvasFocus]);
+  const canvasAgentChips = canvasAgentContextIds.map(id => {
+    const node = nodes.find(item => item.id === id);
+    return {
+      id,
+      title: node?.data.label?.slice(0, 80) || (locale === 'en-US' ? 'Removed node' : '已移除节点'),
+      kind: node ? agentNodeKind(node) : 'text' as const,
+      thumbnailUrl: node ? resolveCanvasMediaUrl(agentNodeMedia(node)) : undefined,
+      previewUrl: node && agentNodeKind(node) === 'image' ? resolveCanvasMediaUrl(node.data.resultMediaItems?.[0]?.url || node.data.resultMediaUrl || node.data.refMediaUrl) : undefined,
+      videoUrl: node && agentNodeKind(node) === 'video' ? resolveCanvasMediaUrl(node.data.resultMediaItems?.[0]?.url || node.data.resultMediaUrl || node.data.refMediaUrl) : undefined,
+      previewText: node ? agentContextNodes([node], [id])[0]?.text.slice(0, 600) : undefined,
+    };
+  });
+
+  const nodeSearchRows = useMemo<CanvasNodeSearchRow[]>(() => nodes.map(node => {
+    const data = node.data, kind = canvasNodeSearchKind(data);
+    const label = data.label || canvasNodeKindLabel(data.kind, t) || t("editor.canvas.node.untitled");
+    const primary = data.resultMediaItems?.[0];
+    const media = kind === 'image' ? primary?.thumbnailUrl || primary?.url || data.resultThumbnailUrl || data.resultMediaUrl || data.refThumbnailUrl || data.refMediaUrl
+      : kind === 'video' ? data.resultThumbnailUrl || data.refThumbnailUrl : '';
+    const prompt = data.generationPrompt || data.generationTask?.request.sourcePrompt || data.generationTask?.request.prompt
+      || data.materialGenerationProvenance?.request.sourcePrompt || data.materialGenerationProvenance?.request.prompt;
+    return {id:node.id,label,kind,thumbnailUrl:resolveCanvasMediaUrl(media),snippet:canvasLibraryDisplayText(prompt || data.refSummary || data.refContextText || data.result || (data.kind === 'text' ? data.label : ''))};
+  }), [nodes,t]);
 
   const activeGenerationCount = useMemo(
     () => generationHistory.filter((entry) => entry.status === "queued" || entry.status === "running").length,
@@ -4222,19 +5047,316 @@ function CanvasInner() {
     return statusMatches && kindMatches && matchesGenerationHistory(entry, generationHistoryQuery);
   }), [generationHistory, generationHistoryKindFilter, generationHistoryStatusFilter, generationHistoryQuery]);
 
+  const selectedResultEntry=selectedNode?resultEntryForNode(selectedNode,generationHistory,resolveCanvasMediaUrl):undefined;
   const generationHistoryPreviewEntry = useMemo(
     () => generationHistory.find((entry) => entry.id === generationHistoryPreviewId) || null,
     [generationHistory, generationHistoryPreviewId],
   );
 
+  const [gridSession,setGridSession]=useState<{canvasId:string;epoch:number;item:DeliveryItem;raw:string}|null>(null);
+  const gridSaving=useRef(false);
+  useEffect(()=>setGridSession(null),[currentCanvasId]);
+  const gridSource=useMemo(()=>{
+    if(selectedNodeIds.length!==1||loadingCanvas)return null;
+    const node=nodes.find(n=>n.id===selectedNodeIds[0]);
+    const raw=node?splitImageSource(node.data):null;
+    return node&&raw&&!hasInvalidCanvasReference(node.data)?{node,raw}:null;
+  },[nodes,selectedNodeIds,loadingCanvas]);
+  const gridSessionRef=useRef(gridSession);gridSessionRef.current=gridSession;
+  const splitGrid=useCallback(async(outputs:GridOutput[],spec:GridSpec,signal:AbortSignal)=>{
+    const session=gridSession;
+    if(!session||gridSaving.current||!bridge?.storeCanvasImageSlice)throw Error('split-unavailable');
+    const valid=()=>!signal.aborted&&gridSessionRef.current===session&&currentCanvasIdRef.current===session.canvasId&&canvasLoadEpochRef.current===session.epoch&&splitImageSource(nodesRef.current.find(n=>n.id===session.item.nodeId)?.data||{})===session.raw;
+    gridSaving.current=true;
+    try{
+      const staged=await stageGridOutputs(outputs,png=>bridge.storeCanvasImageSlice!(png),valid);
+      const original=nodesRef.current.find(n=>n.id===session.item.nodeId)!;
+      const bounds=reactFlowInstance.getNodesBounds([original.id]);
+      if(!Number.isFinite(bounds.x)||!Number.isFinite(bounds.y))throw Error('invalid-position');
+      const planned=planGridNodes({sourceId:original.id,label:original.data.label,source:bounds,occupied:nodesRef.current.filter(n=>!n.parentId).map(n=>reactFlowInstance.getNodesBounds([n.id])),staged,spec,id:genId,english:locale==='en-US'});
+      const group:SpikeNode={...planned.group,data:normalizeCanvasNodeCapabilityData<SpikeNodeData>(planned.group.data)};
+      const children:SpikeNode[]=planned.children.map(node=>({...node,data:normalizeCanvasNodeCapabilityData<SpikeNodeData>(node.data)}));
+      const groupId=group.id;
+      if(!valid())throw Error('canvas-changed');
+      commitHistory();markDirty();
+      const next=[...nodesRef.current.map(n=>n.selected?{...n,selected:false}:n),group,...children];
+      nodesRef.current=next;setNodes(next);
+      const nextEdges=[...edgesRef.current,...planned.edges];
+      edgesRef.current=nextEdges;setEdges(nextEdges);
+      setSelectedNodeIds([groupId]);
+      requestAnimationFrame(()=>{if(currentCanvasIdRef.current===session.canvasId&&canvasLoadEpochRef.current===session.epoch)(cancelViewportMotion.current?.(),void reactFlowInstance.fitView({nodes:[{id:groupId}],padding:.18,maxZoom:1,duration:reducedCameraMotion?0:180}));});
+    }finally{gridSaving.current=false;}
+  },[gridSession,bridge,reactFlowInstance,commitHistory,markDirty,locale,reducedCameraMotion]);
+  const commitStoryboardNodes = useCallback((next:SpikeNode[])=>{
+    if(loadingCanvas || !currentCanvasId || currentCanvasIdRef.current!==currentCanvasId)throw Error('canvas-changed');
+    commitHistory();markDirty();nodesRef.current=next;setNodes(next);
+  },[loadingCanvas,currentCanvasId,commitHistory,markDirty]);
+  // A director workspace is a visible native storyboard group, not a second storage system.
+  const directorBoard = useMemo(() => nodes.find(node => node.data.directorDocument !== undefined && isStoryboard(node)), [nodes]);
+  const directorFrameSource = creativePanel?.kind === 'director' && creativePanel.initialId
+    ? nodes.find(node => node.id === creativePanel.initialId)?.data.directorShotSource : undefined;
+  const directorDocument = useMemo(() => {
+    const saved = directorBoard ? sanitizeDirectorDocument(directorBoard.data.directorDocument) : createDirectorDocument();
+    if (!saved) return null;
+    return directorFrameSource ? directorFrameDraft(saved, directorFrameSource) : saved;
+  }, [directorBoard?.data.directorDocument, currentCanvasId, directorFrameSource]);
+  const updateDirectorDocument = useCallback((document: DirectorDocument) => {
+    const clean = sanitizeDirectorDocument(document);
+    if (!clean) throw Error('invalid-director-document');
+    const source = nodesRef.current;
+    const board = source.find(node => node.data.directorDocument !== undefined && isStoryboard(node));
+    if (board) {
+      if (!sanitizeDirectorDocument(board.data.directorDocument)) throw Error('invalid-director-document');
+      commitStoryboardNodes(source.map(node => node.id === board.id ? { ...node, data: { ...node.data, directorDocument: clean } } : node));
+    } else {
+      const group: SpikeNode = { id: `director-${genId()}`, type: 'group', position: getViewportCreatePosition('image'),
+        style: { width: 540, height: 300 }, dragHandle: '.canvas-group-drag-handle',
+        data: normalizeCanvasNodeCapabilityData<SpikeNodeData>({ kind: 'group', label: locale === 'en-US' ? '3D Director' : '3D 导演台', storyboard: { version: 1 }, directorDocument: clean, groupMemberCount: 0 }) };
+      commitStoryboardNodes([...source, group]);
+    }
+    // The selected-frame draft becomes the saved stage only after an explicit user edit.
+    setCreativePanel(panel => panel?.kind === 'director' ? { ...panel, initialId: undefined } : panel);
+  }, [commitStoryboardNodes, getViewportCreatePosition, locale]);
+  const directorExportBusy = useRef(false);
+  useEffect(() => {
+    if (!visible || loadingCanvas || !currentCanvasId || directorExportBusy.current) return;
+    const source = nodesRef.current, next = spaceDirectorStoryboards(source);
+    if (next !== source) commitStoryboardNodes(next);
+    // Run at canvas entry/hot refresh, not on every drag or undo.
+  }, [currentCanvasId, loadingCanvas, visible]);
+  const exportDirectorShot = useCallback(async (shot: DirectorShot, png: string) => {
+    if (!currentCanvasId || loadingCanvas || !bridge?.storeCanvasImageSlice || directorExportBusy.current) throw Error('director-export-unavailable');
+    assertDirectorCapture(png);
+    const normalized = sanitizeDirectorDocument({ version: 1, scene: shot.scene, shots: [shot] });
+    if (!normalized?.shots[0]) throw Error('invalid-director-shot');
+    const cleanShot = normalized.shots[0];
+    const owner = { canvasId: currentCanvasId, epoch: canvasLoadEpochRef.current };
+    const stillCurrent = () => directorSessionMatches(owner, { canvasId: currentCanvasIdRef.current, epoch: canvasLoadEpochRef.current });
+    if (!stillCurrent()) throw Error('canvas-changed');
+    // Establish the visible owning group before asynchronous storage. Do not recreate it if deleted while saving.
+    if (!nodesRef.current.some(node => node.data.directorDocument !== undefined && isStoryboard(node))) updateDirectorDocument({ version: 1, scene: cleanShot.scene, shots: [] });
+    const boardId = nodesRef.current.find(node => node.data.directorDocument !== undefined && isStoryboard(node))!.id;
+    if (storyboardShots(nodesRef.current, boardId).length >= SHOT_LIMIT) throw Error('too-many-shots');
+    retainDirectorExport(nodesRef.current.find(node => node.id === boardId)!.data.directorDocument, cleanShot);
+    directorExportBusy.current = true;
+    try {
+      const stored = await bridge.storeCanvasImageSlice(png);
+      if (!stillCurrent()) throw Error('canvas-changed');
+      const source = nodesRef.current, board = source.find(node => node.id === boardId && isStoryboard(node));
+      if (!board) throw Error('missing-board');
+      if (!stored || typeof stored !== 'string') throw Error('director-storage-failed');
+      const shots = storyboardShots(source, boardId), members = source.filter(node => node.parentId === boardId);
+      if (shots.length >= SHOT_LIMIT) throw Error('too-many-shots');
+      const order = shots.length ? Math.max(...shots.map(node => node.data.storyboardShot!.order)) + 1 : 0;
+      const node: SpikeNode = { id: genId(), type: 'spike', parentId: boardId, extent: 'parent', position: { x: DIRECTOR_STORYBOARD_INSETS.x, y: directorStoryboardAppendY(members) },
+        data: normalizeCanvasNodeCapabilityData<SpikeNodeData>({ kind: 'image', role: 'resource', label: cleanShot.name, labelIsCustom: true,
+          refKind: 'image', refMediaUrl: stored, refThumbnailUrl: stored, directorShotSource: { version: 1, shotId: cleanShot.id, shot: structuredClone(cleanShot) },
+          storyboardShot: { ...defaultShot(order), title: cleanShot.name, description: directorShotDescription(cleanShot), durationSeconds: cleanShot.duration,
+            chosenResult: { key: `director:${cleanShot.id}:${Date.now()}`, kind: 'image', url: stored, thumbnailUrl: stored } } }) };
+      const retainedDocument = retainDirectorExport(board.data.directorDocument, cleanShot);
+      const size = canvasNodeSize(board);
+      const bounds = directorStoryboardBounds([...members, node]);
+      commitStoryboardNodes([...source.map(item => item.id === boardId ? { ...item, style: { ...item.style, width: Math.max(size.width, bounds.width), height: Math.max(size.height, bounds.height) }, data: { ...item.data, directorDocument: retainedDocument, groupMemberCount: members.length + 1 } } : item), node]);
+      await persistCurrentCanvas();
+      if (!stillCurrent()) throw Error('canvas-changed');
+    } finally { directorExportBusy.current = false; }
+  }, [currentCanvasId, loadingCanvas, bridge, updateDirectorDocument, commitStoryboardNodes, persistCurrentCanvas]);
+  const createStoryboard = useCallback((name:string,fromSelection:boolean):string=>{
+    const label=name.trim();if(!label||label.length>60)throw Error('invalid-name');
+    const source=nodesRef.current;
+    const selected=fromSelection?source.filter(n=>selectedNodeIds.includes(n.id)):[];
+    const existing=selected.length===1&&selected[0].data.kind==='group'?selected[0]:null;
+    const members=existing?source.filter(n=>n.parentId===existing.id):selected;
+    if(fromSelection&&(!members.length||members.length>SHOT_LIMIT||members.some(n=>!canBeShot(n)||(n.data.storyboardShot&&!validShot(n.data.storyboardShot)))||(!existing&&members.some(n=>n.parentId))||existing?.data.referencePack||existing&&isStoryboard(existing)))throw Error('invalid-selection');
+    const id=existing?.id||`storyboard-${genId()}`;
+    if(existing){
+      const orders=new Map(members.map((n,i)=>[n.id,i]));
+      commitStoryboardNodes(source.map(n=>n.id===id?{...n,style:{...n.style,height:Math.max(canvasNodeSize(n).height,...members.map(member=>member.position.y+Math.max(canvasNodeSize(member).height,480)+200))},data:{...n.data,label,storyboard:{version:1}}}:orders.has(n.id)?{...n,data:{...n.data,storyboardShot:{...defaultShot(orders.get(n.id)!),...(validShot(n.data.storyboardShot)?n.data.storyboardShot:{}),order:orders.get(n.id)!}}}:n));
+    }else if(members.length){
+      const left=Math.min(...members.map(n=>n.position.x))-42,top=Math.min(...members.map(n=>n.position.y))-58;
+      const draft={id,label,position:{x:left,y:top},width:Math.max(...members.map(n=>n.position.x+canvasNodeSize(n).width))-left+42,height:Math.max(...members.map(n=>n.position.y+canvasNodeSize(n).height))-top+202,memberIds:members.map(n=>n.id)};
+      const group:SpikeNode={id,type:'group',position:draft.position,style:{width:draft.width,height:draft.height},dragHandle:'.canvas-group-drag-handle',data:normalizeCanvasNodeCapabilityData<SpikeNodeData>({kind:'group',label,storyboard:{version:1},groupMemberCount:members.length})};
+      const orders=new Map(members.map((n,i)=>[n.id,i]));
+      commitStoryboardNodes(attachCanvasNodesToGroup(source,draft,group).map(n=>orders.has(n.id)?{...n,data:{...n.data,storyboardShot:{...defaultShot(orders.get(n.id)!),...(validShot(n.data.storyboardShot)?n.data.storyboardShot:{}),order:orders.get(n.id)!}}}:n));
+    }else{
+      const group:SpikeNode={id,type:'group',position:getViewportCreatePosition('image'),style:{width:540,height:700},dragHandle:'.canvas-group-drag-handle',data:normalizeCanvasNodeCapabilityData<SpikeNodeData>({kind:'group',label,storyboard:{version:1},groupMemberCount:1})};
+      const shot:SpikeNode={id:genId(),type:'spike',dragHandle:'.canvas-node-drag-handle',parentId:id,extent:'parent',position:{x:42,y:58},data:normalizeCanvasNodeCapabilityData<SpikeNodeData>({kind:'generator',label:locale==='en-US'?'Shot 1':'镜头 1',generationKind:'image',generationPrompt:'',generationAspect:'16:9',storyboardShot:defaultShot(0)})};
+      group.style = { ...group.style, ...storyboardBounds([shot]) };
+      commitStoryboardNodes([...source,group,shot]);
+    }
+    return id;
+  },[commitStoryboardNodes,selectedNodeIds,getViewportCreatePosition,locale]);
+  const addStoryboardShot = useCallback((id:string)=>{
+    const source=nodesRef.current,board=source.find(n=>n.id===id&&isStoryboard(n));if(!board)throw Error('missing-board');
+    const shots=storyboardShots(source,id);if(shots.length>=SHOT_LIMIT)throw Error('too-many-shots');
+    const members=source.filter(n=>n.parentId===id),y=storyboardAppendY(members);
+    const shot:SpikeNode={id:genId(),type:'spike',dragHandle:'.canvas-node-drag-handle',parentId:id,extent:'parent',position:{x:42,y},data:normalizeCanvasNodeCapabilityData<SpikeNodeData>({kind:'generator',label:locale==='en-US'?`Shot ${shots.length+1}`:`镜头 ${shots.length+1}`,generationKind:'image',generationPrompt:'',generationAspect:'16:9',storyboardShot:defaultShot(shots.length?Math.max(...shots.map(n=>n.data.storyboardShot!.order))+1:0)})};
+    const size=canvasNodeSize(board);
+    commitStoryboardNodes([...source.map(n=>n.id===id?{...n,style:{...n.style,width:Math.max(size.width,540),height:Math.max(size.height,storyboardBounds([...members,shot]).height)},data:{...n.data,groupMemberCount:members.length+1}}:n),shot]);
+  },[commitStoryboardNodes,locale]);
+  const duplicateStoryboardShot = useCallback((boardId: string, id: string) => {
+    const source = nodesRef.current, board = source.find(node => node.id === boardId && isStoryboard(node));
+    const shots = storyboardShots(source, boardId), original = shots.find(node => node.id === id);
+    if (!board || !original) throw Error('missing-shot');
+    if (shots.length >= SHOT_LIMIT) throw Error('too-many-shots');
+    const members = source.filter(node => node.parentId === boardId);
+    const y = storyboardAppendY(members);
+    const nextId = genId();
+    const incoming = edgesRef.current.filter(edge => edge.target === id && edge.source !== id && edge.data?.relation !== 'derivation' && source.some(node => node.id === edge.source));
+    const edgeIds = new Map(incoming.map(edge => [edge.id, genEdgeId()]));
+    const order = shots.findIndex(node => node.id === id) + 1;
+    const ordered = new Map(shots.map((node, index) => [node.id, index < order ? index : index + 1]));
+    const duplicate: SpikeNode = { ...original, id: nextId, selected: false, position: { x: 42, y },
+      data: duplicateStoryboardData(original.data, order, edgeIds) };
+    const size = canvasNodeSize(board);
+    const next = source.map(node => node.id === boardId
+      ? { ...node, style: { ...node.style, width: Math.max(size.width, 540), height: Math.max(size.height, storyboardBounds([...members, duplicate]).height) }, data: { ...node.data, groupMemberCount: members.length + 1 } }
+      : ordered.has(node.id) ? { ...node, data: { ...node.data, storyboardShot: { ...node.data.storyboardShot!, order: ordered.get(node.id)! } } } : node);
+    commitStoryboardNodes([...next, duplicate]);
+    const nextEdges = [...edgesRef.current, ...incoming.map(edge => ({ ...edge, id: edgeIds.get(edge.id)!, target: nextId, selected: false }))];
+    edgesRef.current = nextEdges; setEdges(nextEdges);
+  }, [commitStoryboardNodes]);
+  const editStoryboardReferences = useCallback((boardId: string, id: string) => {
+    if (loadingCanvas || !currentCanvasId || currentCanvasIdRef.current !== currentCanvasId) throw Error('canvas-changed');
+    if (!storyboardShots(nodesRef.current, boardId).some(node => node.id === id)) throw Error('missing-shot');
+    void loadAssetPicker(id, 'reference', null, true);
+  }, [loadAssetPicker, loadingCanvas, currentCanvasId]);
+  const editStoryboardShot = useCallback((boardId:string,id:string,patch:ShotPatch)=>{
+    const next = patchStoryboardShot(nodesRef.current,boardId,id,patch);
+    const bounds = storyboardBounds(next.filter(node=>node.parentId===boardId));
+    commitStoryboardNodes(next.map(node=>node.id===boardId?{...node,style:{...node.style,width:Math.max(canvasNodeSize(node).width,bounds.width),height:Math.max(canvasNodeSize(node).height,bounds.height)}}:node));
+  },[commitStoryboardNodes]);
+  const editStoryboardPrompt = useCallback((boardId:string,id:string,prompt:string)=>commitStoryboardNodes(patchStoryboardPrompt(nodesRef.current,boardId,id,prompt)),[commitStoryboardNodes]);
+  const prepareStoryboardPrompt = useCallback((boardId:string,id:string)=>{
+    const node=storyboardShots(nodesRef.current,boardId).find(n=>n.id===id);
+    if(!node)throw Error('missing-shot');
+    return buildStoryboardPrompt(node,locale==='en-US');
+  },[locale]);
+  const generateStoryboardShot = useCallback((boardId:string,id:string)=>{
+    if(loadingCanvas||!currentCanvasId||currentCanvasIdRef.current!==currentCanvasId)throw Error('canvas-changed');
+    const node=storyboardShots(nodesRef.current,boardId).find(n=>n.id===id);
+    if(!node||node.data.kind!=='generator'||!node.data.generationPrompt?.trim()||['queued','running'].includes(node.data.generationTask?.status||''))throw Error('shot-not-ready');
+    if(storyboardCandidates(nodesRef.current,generationHistoryRef.current,boardId,id).activeTaskIds.length)throw Error('shot-not-ready');
+    // The existing queue registers synchronously, before React publishes the node.
+    if(Array.from(generationTaskSnapshotsRef.current.values()).some(task=>task.sourceNodeId===id&&generationTaskCanvasIdsRef.current.get(task.id)===currentCanvasId&&['queued','running'].includes(task.status)))throw Error('shot-not-ready');
+    setSaveError(null);
+    void submitGenerationFromNode(id);
+  },[loadingCanvas,currentCanvasId,submitGenerationFromNode]);
+  const getStoryboardCandidates = useCallback((boardId:string,id:string)=>storyboardCandidates(nodesRef.current,generationHistoryRef.current,boardId,id),[]);
+  const chooseStoryboardResult = useCallback((boardId:string,id:string,key:string)=>{
+    commitStoryboardNodes(adoptStoryboardCandidate(nodesRef.current,generationHistoryRef.current,boardId,id,key,new Date().toISOString()));
+  },[commitStoryboardNodes]);
+  const clearStoryboardResult = useCallback((boardId:string,id:string)=>{
+    commitStoryboardNodes(clearStoryboardChoice(nodesRef.current,boardId,id));
+  },[commitStoryboardNodes]);
+  const storyboardReferenceSummary = useCallback((boardId:string,id:string)=>{
+    const shot=storyboardShots(nodesRef.current,boardId).find(n=>n.id===id);if(!shot)return {count:0,invalid:0};
+    const plan=createCanvasReferencePlan(inferGenerationKind(shot),getIncomingGenerationInputs(id),resolveStoredCanvasReferences(shot,nodesRef.current),
+      inferGenerationKind(shot)==='video'?activeMediaProfile?.videoProtocol:activeMediaProfile?.imageProtocol,shot.data.generationInputOrder);
+    return {count:plan.length,invalid:plan.filter(entry=>entry.issue).length};
+  },[getIncomingGenerationInputs,activeMediaProfile]);
+  const storyboardReferencePreviews = useCallback((boardId: string, id: string) => {
+    const shot = storyboardShots(nodesRef.current, boardId).find(node => node.id === id);
+    if (!shot) return [];
+    const plan = createCanvasReferencePlan(inferGenerationKind(shot), getIncomingGenerationInputs(id), resolveStoredCanvasReferences(shot, nodesRef.current),
+      inferGenerationKind(shot) === 'video' ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, shot.data.generationInputOrder);
+    return plan.filter(entry => entry.reference.kind === 'image' || !!entry.issue).map(entry => ({
+      key: entry.key, label: entry.reference.label,
+      url: resolveCanvasMediaUrl(entry.reference.thumbnailUrl || entry.reference.mediaUrl || '') || '',
+    }));
+  }, [getIncomingGenerationInputs, activeMediaProfile]);
+  const removeStoryboardReference = useCallback((boardId: string, id: string, key: string) => {
+    if (loadingCanvas || !currentCanvasId || currentCanvasIdRef.current !== currentCanvasId) throw Error('canvas-changed');
+    const shot = storyboardShots(nodesRef.current, boardId).find(node => node.id === id);
+    if (!shot) throw Error('missing-shot');
+    const plan = createCanvasReferencePlan(inferGenerationKind(shot), getIncomingGenerationInputs(id), resolveStoredCanvasReferences(shot, nodesRef.current),
+      inferGenerationKind(shot) === 'video' ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, shot.data.generationInputOrder);
+    const entry = plan.find(item => item.key === key);
+    if (!entry) return;
+    if (entry.source === 'connected' && entry.edgeId) { removeIncomingEdge(entry.edgeId); return; }
+    if (entry.storedIndex === undefined) return;
+    const refs = storedCanvasReferences(shot).map((ref, index) => ({ ...ref,
+      mentionKey: plan.find(item => item.source === 'stored' && item.storedIndex === index)?.key || ref.mentionKey,
+    })).filter((_, index) => index !== entry.storedIndex);
+    commitStoryboardNodes(nodesRef.current.map(node => node.id === id ? { ...node, data: { ...node.data, generationReferences: refs } } : node));
+  }, [loadingCanvas, currentCanvasId, getIncomingGenerationInputs, activeMediaProfile, removeIncomingEdge, commitStoryboardNodes]);
+  const importStoryboardScript = useCallback((boardId:string,payload:StoryboardScriptImport)=>{
+    const source=nodesRef.current,board=source.find(n=>n.id===boardId&&isStoryboard(n));if(!board)throw Error('missing-board');
+    if(typeof payload.sourceText!=='string'||payload.sourceText.length>SCRIPT_TEXT_LIMIT)throw Error('script-too-long');
+    const shots=storyboardShots(source,boardId),reuse=reusableStoryboardDraft(source,edgesRef.current,boardId);
+    validateScriptShots(payload.shots,SHOT_LIMIT-shots.length+(reuse?1:0));
+    const members=source.filter(n=>n.parentId===boardId);
+    const startY=reuse?source.find(n=>n.id===reuse)!.position.y:storyboardAppendY(members);
+    const startOrder=reuse?0:(shots.length?Math.max(...shots.map(n=>n.data.storyboardShot!.order))+1:0);
+    let nextY = startY;
+    const newNodes:SpikeNode[]=payload.shots.map((input,index)=>{
+      const meta={...defaultShot(startOrder+index),title:input.title,description:input.description||'',action:input.action,lighting:input.lighting||'',sound:input.sound||'',cameraMovement:input.cameraMovement||'',dialogue:input.dialogue,framing:input.framing,durationSeconds:input.durationSeconds};
+      const previous=reuse&&index===0?source.find(n=>n.id===reuse):undefined;
+      const generationPrompt=buildStoryboardPrompt({id:'draft',data:{kind:'generator',generationKind:'image',storyboardShot:meta}},locale==='en-US');
+      const node: SpikeNode = previous ? {...previous,data:{...previous.data,storyboardShot:meta,generationPrompt}} : {id:genId(),type:'spike',dragHandle:'.canvas-node-drag-handle',parentId:boardId,extent:'parent',position:{x:42,y:nextY},data:normalizeCanvasNodeCapabilityData<SpikeNodeData>({kind:'generator',label:locale==='en-US'?`Shot ${startOrder+index+1}`:`镜头 ${startOrder+index+1}`,generationKind:'image',generationAspect:'16:9',generationPrompt,storyboardShot:meta})};
+      nextY = storyboardAppendY([node]);
+      return node;
+    });
+    const size=canvasNodeSize(board);
+    const next=source.map(n=>n.id===reuse?newNodes[0]:n.id===boardId?{...n,style:{...n.style,width:Math.max(size.width,540),height:Math.max(size.height,storyboardBounds([...members.filter(n=>n.id!==reuse),...newNodes]).height)},data:{...n.data,storyboard:{...n.data.storyboard!,sourceScript:payload.sourceText},groupMemberCount:members.length+newNodes.length-(reuse?1:0)}}:n);
+    commitStoryboardNodes([...next,...newNodes.filter(n=>n.id!==reuse)]);
+  },[commitStoryboardNodes,locale]);
+  const exportStoryboardBoard = useCallback(async(boardId:string)=>{
+    if(storyboardExportController.current)return;
+    const canvasId=currentCanvasId,epoch=canvasLoadEpochRef.current;
+    if(!canvasId||loadingCanvas||currentCanvasIdRef.current!==canvasId)return;
+    const controller=new AbortController();storyboardExportController.current=controller;
+    const valid=()=>!controller.signal.aborted&&currentCanvasIdRef.current===canvasId&&canvasLoadEpochRef.current===epoch&&nodesRef.current.some(n=>n.id===boardId&&isStoryboard(n));
+    setStoryboardExportState({canvasId,boardId,busy:true,notice:'',error:''});
+    try{
+      const plan=buildStoryboardDeliveryPlan(nodesRef.current,boardId);
+      const bytes=await prepareStoryboardDelivery(plan,controller.signal,()=>{},resolveCanvasMediaUrl);
+      if(!valid())throw Error('canvas-changed');
+      const path=await save({defaultPath:'storyboard-results.zip',filters:[{name:'ZIP',extensions:['zip']}]});
+      if(!valid())throw Error('canvas-changed');
+      if(!path){setStoryboardExportState({canvasId,boardId,busy:false,notice:locale==='en-US'?'Save cancelled.':'已取消保存。',error:''});return;}
+      await writeFile(path,bytes);
+      if(valid())setStoryboardExportState({canvasId,boardId,busy:false,notice:locale==='en-US'?'Storyboard ZIP saved with chosen frames and script manifest.':'分镜 ZIP 已保存，包含选定成品与脚本时长清单。',error:''});
+    }catch{
+      if(valid())setStoryboardExportState({canvasId,boardId,busy:false,notice:'',error:locale==='en-US'?'Export failed. Check chosen media and size limits; nothing was silently omitted.':'导出未完成，请检查选定素材是否可用及大小限制，没有跳过失败镜头。'});
+    }finally{
+      if(storyboardExportController.current===controller){storyboardExportController.current=null;setStoryboardExportState(prev=>prev?.canvasId===canvasId&&prev.boardId===boardId?{...prev,busy:false}:prev);}
+    }
+  },[currentCanvasId,loadingCanvas,locale]);
+  const reorderStoryboardShot = useCallback((boardId:string,id:string,delta:-1|1)=>commitStoryboardNodes(moveStoryboardShot(nodesRef.current,boardId,id,delta)),[commitStoryboardNodes]);
+  const removeStoryboardShot = useCallback((boardId:string,id:string)=>{
+    const source=nodesRef.current,node=storyboardShots(source,boardId).find(n=>n.id===id);if(!node)throw Error('missing-shot');
+    // Detach only. Preserve the shot notes, pixels, references and every edge.
+    const bounds=reactFlowInstance.getNodesBounds([id]);if(!Number.isFinite(bounds.x)||!Number.isFinite(bounds.y))throw Error('invalid-position');
+    commitStoryboardNodes(source.map(n=>{if(n.id===boardId)return {...n,data:{...n.data,groupMemberCount:source.filter(child=>child.parentId===boardId&&child.id!==id).length}};if(n.id!==id)return n;const {parentId:_parentId,extent:_extent,...rest}=n;return {...rest,position:{x:bounds.x,y:bounds.y}};}));
+  },[commitStoryboardNodes,reactFlowInstance]);
+  const renameStoryboard = useCallback((id:string,name:string)=>{
+    if(!name.trim()||name.trim().length>60)throw Error('invalid-name');
+    const source=nodesRef.current;if(!source.some(n=>n.id===id&&isStoryboard(n)))throw Error('missing-board');
+    commitStoryboardNodes(source.map(n=>n.id===id?{...n,data:{...n.data,label:name.trim()}}:n));
+  },[commitStoryboardNodes]);
+  const unmarkStoryboard = useCallback((id:string)=>{
+    const source=nodesRef.current;if(!source.some(n=>n.id===id&&isStoryboard(n)))throw Error('missing-board');
+    commitStoryboardNodes(source.map(n=>n.id===id?{...n,data:{...n.data,storyboard:undefined}}:n));
+  },[commitStoryboardNodes]);
+
   const deliveryItems=useMemo(()=>selectedCanvasMedia(nodes,selectedNodeIds,resolveCanvasMediaUrl),[nodes,selectedNodeIds]);
+  const creativeImageItem=useMemo(()=>{
+    if(creativePanel?.kind==='editImage'&&creativePanel.imageNodeId){
+      const item=selectedCanvasMedia(nodes,[creativePanel.imageNodeId],resolveCanvasMediaUrl)[creativePanel.imageIndex||0];
+      return item?.kind==='image'&&item.source===creativePanel.imageSource?item:undefined;
+    }
+    return deliveryItems.length===1&&deliveryItems[0].kind==='image'?deliveryItems[0]:undefined;
+  },[creativePanel,nodes,deliveryItems]);
   const saveEditedImage=useCallback(async(item:DeliveryItem,blob:Blob,edit:ImageEdit)=>{
     const expectedCanvas=currentCanvasId,expectedEpoch=canvasLoadEpochRef.current;
     if(!expectedCanvas||(currentCanvasIdRef.current!==expectedCanvas||canvasLoadEpochRef.current!==expectedEpoch||loadingCanvas)||!bridge?.importAssets)throw new Error('canvas-unavailable');
     const path=await save({defaultPath:safeDeliveryName(item.label+'-edited',0,'png'),filters:[{name:'PNG',extensions:['png']}]});
     if(!path)return locale==='en-US'?'Save cancelled.':'已取消保存。';
     if((currentCanvasIdRef.current!==expectedCanvas||canvasLoadEpochRef.current!==expectedEpoch||loadingCanvas))throw new Error('canvas-changed');
-    await writeFile(path,new Uint8Array(await blob.arrayBuffer()));
+    // Atomic create-only: a save-dialog overwrite choice must not destroy the original.
+    try { await writeFile(path,new Uint8Array(await blob.arrayBuffer()),{createNew:true}); }
+    catch { throw new Error(locale==='en-US'?'Could not save the copy. Choose a new filename and a writable folder; existing files are not overwritten.':'副本未保存。请选择新的文件名和可写目录；为保护原图，不会覆盖已有文件。'); }
     let asset:any;
     try{const imported=await bridge.importAssets({paths:[path]});asset=imported.assets.find(a=>a.kind==='image');}
     catch{return locale==='en-US'?'PNG saved, but the material library import failed. Canvas unchanged.':'PNG 已保存，但素材库导入失败；画布未改变。';}
@@ -4281,6 +5403,7 @@ function CanvasInner() {
     const source=nodesRef.current;
     const selected=source.filter(node=>selectedNodeIds.includes(node.id));
     const existing=selected.length===1 && selected[0].data.kind==="group" ? selected[0] : null;
+    if(existing?.data.storyboard?.version===1)return "invalid-selection";
     const members=existing?packMembers(source,existing.id):selected;
     if(!members.length || members.some(node=>!usablePackMember(node)))return "missing-content";
     if(existing){
@@ -4329,148 +5452,52 @@ function CanvasInner() {
     centerNodeByAbsoluteBounds(node.id, 360, Math.max(reactFlowInstance.getZoom(), .9));
   }, [centerNodeByAbsoluteBounds, reactFlowInstance, selectSingleNode]);
 
-  const ensureGenerationHistoryResultNode = useCallback((entry: CanvasGenerationHistoryEntry): SpikeNode => {
-    const existing = nodesRef.current.find((node) => node.id === entry.resultNodeId);
-    if (existing && getCanvasNodeCapabilities(existing.data).composerMode !== "none") return existing;
-    const task = generationTaskFromHistory(entry);
-    const kind: NodeKind = entry.kind === "text" ? "text" : "generator";
-    const label = entry.kind === "text"
-      ? sanitizeCanvasTextGenerationOutput(entry.outputText || "").trim() || t("editor.canvas.node.doubleClickEdit")
-      : entry.kind === "video" ? t("editor.canvas.toolbar.videoGenerate") : t("editor.canvas.toolbar.imageGenerate");
-    const data = normalizeCanvasNodeCapabilityData<SpikeNodeData>({
-      label,
-      kind,
-      result: entry.kind === "text" ? entry.outputText || "" : "",
-      resultMediaUrl: entry.outputMediaUrl,
-      resultThumbnailUrl: entry.outputThumbnailUrl,
-      resultMediaItems: entry.outputMediaItems,
-      generationTask: task,
-      generationPrompt: entry.request.prompt,
-      generationKind: entry.kind === "image" || entry.kind === "video" ? entry.kind : undefined,
-      generationModel: entry.request.model,
-      generationAspect: entry.request.aspect,
-      generationDuration: entry.request.duration,
-      generationSound: entry.request.sound,
-      generationQuality: entry.request.quality,
-      generationResolution: entry.request.resolution,
-      generationCount: entry.request.count,
-      generationCameraStrength: entry.request.cameraStrength,
-      generationReferences: entry.request.references.map((reference) => ({
-        id: reference.id,
-        label: reference.label,
-        kind: reference.kind,
-        role: reference.role,
-        thumbnailUrl: reference.thumbnailUrl,
-        mediaUrl: reference.mediaUrl,
-        text: reference.text,
-      })),
-    });
-    const restoredNode: SpikeNode = {
-      id: existing ? genId() : entry.resultNodeId,
-      type: "spike",
-      position: getViewportCreatePosition(kind),
-      selected: true,
-      data,
-      dragHandle: kind === "generator" ? ".canvas-node-drag-handle" : undefined,
-      style: kind === "text" ? textNodeSize(data) : undefined,
-    };
-    commitHistory();
-    markDirty();
-    const nextNodes = nodesRef.current
-      .map((node) => node.selected ? { ...node, selected: false } : node)
-      .concat(restoredNode);
-    nodesRef.current = nextNodes;
-    setNodes(nextNodes);
-    setSelectedNodeIds([restoredNode.id]);
-    return restoredNode;
-  }, [commitHistory, getViewportCreatePosition, markDirty, t]);
+  const createGenerationDraft = useCallback((entry:CanvasGenerationHistoryEntry,mode:'result'|'parameters'='parameters',imageIndex=0,announce=true) => {
+    const canvasId=currentCanvasIdRef.current;if(!canvasId||loadingCanvas||!generationHistoryRef.current.some(item=>item.id===entry.id&&item.taskId===entry.taskId))return null;
+    if(mode==='parameters'&&!uiSettings.noteReferenceIncludeTitle&&entry.request.references.some(ref=>ref.kind==='note'&&ref.label!=='笔记正文')){setGenerationHistoryNotice(locale==='en-US'?'This history includes note titles. Create a fresh prompt to use body-only notes.':'这条历史包含笔记标题，请重新填写需求并引用正文。');return null;}
+    const draft=buildHistoryDraft(entry,mode,imageIndex);if(!draft)return null;
+    const kind:NodeKind=draft.kind;
+    const data=normalizeCanvasNodeCapabilityData<SpikeNodeData>({...draft,label:kind==='text'?sanitizeCanvasTextGenerationOutput(draft.label)||t('editor.canvas.node.doubleClickEdit'):(entry.kind==='video'?t('editor.canvas.toolbar.videoGenerate'):t('editor.canvas.toolbar.imageGenerate'))});
+    const node:SpikeNode={id:genId(),type:'spike',position:getViewportCreatePosition(kind),data,selected:true,dragHandle:kind==='generator'?'.canvas-node-drag-handle':undefined,style:kind==='text'?textNodeSize(data):undefined};
+    commitHistory();markDirty();const next=nodesRef.current.map(item=>item.selected?{...item,selected:false}:item).concat(node);nodesRef.current=next;setNodes(next);setSelectedNodeIds([node.id]);setComposerNodeId(node.id);setInspectorNodeId(null);setGenerationHistoryPreviewId(null);setGenerationHistoryOpen(false);setCreativePanel(null);
+    if(announce)setNodeSaveNotice(locale==='en-US'?'New draft ready. Nothing has been generated.':'已新建草稿，尚未发起生成。');return node;
+  },[loadingCanvas,uiSettings.noteReferenceIncludeTitle,locale,t,getViewportCreatePosition,commitHistory,markDirty]);
 
-  const restoreGenerationHistoryResult = useCallback((entry: CanvasGenerationHistoryEntry) => {
-    const mediaItems = entry.kind === "image"
-      ? entry.outputMediaItems?.length
-        ? entry.outputMediaItems
-        : entry.outputMediaUrl ? [{ url: entry.outputMediaUrl, thumbnailUrl: entry.outputThumbnailUrl }] : []
-      : [];
-    const cardKind: NodeKind = entry.kind === "text" ? "text" : entry.kind;
-    const basePosition = getViewportCreatePosition(cardKind);
-    const commonProvenance = {
-      sourceGenerationTaskId: entry.taskId,
-      sourceGenerationHistoryId: entry.id,
-      refUpdatedAt: entry.updatedAt,
-    };
-    const restoredNodes: SpikeNode[] = entry.kind === "text" && entry.outputText
-      ? [(() => {
-          const data = normalizeCanvasNodeCapabilityData<SpikeNodeData>({
-            label: sanitizeCanvasTextGenerationOutput(entry.outputText || ""),
-            kind: "text",
-            ...commonProvenance,
-          });
-          return {
-            id: genId(),
-            type: "spike",
-            position: basePosition,
-            data,
-            style: textNodeSize(data),
-            selected: true,
-          };
-        })()]
-      : entry.kind === "video" && entry.outputMediaUrl
-        ? [{
-            id: genId(),
-            type: "spike",
-            position: basePosition,
-            data: normalizeCanvasNodeCapabilityData<SpikeNodeData>({
-              label: t("editor.canvas.history.restoredVideo"),
-              kind: "video",
-              refKind: "video",
-              sourceGenerationMediaUrl: entry.outputMediaUrl,
-              refMediaUrl: resolveCanvasMediaUrl(entry.outputMediaUrl),
-              refThumbnailUrl: resolveCanvasMediaUrl(entry.outputThumbnailUrl),
-              _emptyMedia: false,
-              ...commonProvenance,
-            }),
-            selected: true,
-          }]
-        : entry.kind === "image"
-          ? mediaItems.map((item, index) => ({
-              id: genId(),
-              type: "spike" as const,
-              position: {
-                x: Math.round((basePosition.x + index * 340) / CANVAS_SNAP_GRID[0]) * CANVAS_SNAP_GRID[0],
-                y: basePosition.y,
-              },
-              data: normalizeCanvasNodeCapabilityData<SpikeNodeData>({
-                label: t("editor.canvas.history.restoredImage"),
-                kind: "image",
-                refKind: "image",
-                sourceGenerationMediaUrl: item.url,
-                refMediaUrl: resolveCanvasMediaUrl(item.url),
-                refThumbnailUrl: resolveCanvasMediaUrl(item.thumbnailUrl || item.url),
-                _emptyMedia: false,
-                ...commonProvenance,
-              }),
-              selected: true,
-            }))
-          : [];
-    if (!restoredNodes.length) {
-      setGenerationHistoryNotice(t("editor.canvas.history.noRestoreResult"));
-      return;
+  const restoreGenerationHistoryResult = useCallback((entry: CanvasGenerationHistoryEntry, mediaIndex = 0) => {
+    if (loadingCanvas || !currentCanvasIdRef.current || !historyHasResult(entry) || !generationHistoryRef.current.some(item => item.id === entry.id && item.taskId === entry.taskId)) return;
+    if (!uiSettings.noteReferenceIncludeTitle && entry.request.references.some(reference => reference.kind === "note" && reference.label !== "笔记正文")) {
+      setGenerationHistoryNotice(locale === "en-US" ? "This history includes note titles. Create a fresh prompt to use body-only notes." : "这条历史包含笔记标题，请重新填写需求并引用正文。"); return;
     }
-    commitHistory();
-    markDirty();
-    const restoredIds = new Set(restoredNodes.map((node) => node.id));
-    setNodes((current) => current
-      .map((node) => node.selected ? { ...node, selected: false } : node)
-      .concat(restoredNodes));
-    setSelectedNodeIds([...restoredIds]);
-    setGenerationHistoryNotice(restoredNodes.length > 1
-      ? t("editor.canvas.history.restoredMany", { count: restoredNodes.length })
-      : t("editor.canvas.history.restoredOne"));
-    setGenerationHistoryOpen(false);
-    window.requestAnimationFrame(() => focusSearchResult(restoredNodes[0]));
-  }, [commitHistory, focusSearchResult, getViewportCreatePosition, markDirty, t]);
+    const draft = buildHistoryDraft(entry, "parameters");
+    if (!draft) return;
+    const media = entry.outputMediaItems?.length ? entry.outputMediaItems : entry.outputMediaUrl ? [{url:entry.outputMediaUrl,thumbnailUrl:entry.outputThumbnailUrl}] : [];
+    const selected = media[mediaIndex];
+    if (entry.kind !== "text" && !selected?.url) return;
+    const kind: NodeKind = entry.kind === "text" ? "text" : "generator";
+    const data = normalizeCanvasNodeCapabilityData<SpikeNodeData>({
+      ...draft, kind,
+      label: entry.kind === "text" ? sanitizeCanvasTextGenerationOutput(entry.outputText || "") : entry.kind === "video" ? t("editor.canvas.history.restoredVideo") : t("editor.canvas.history.restoredImage"),
+      resultKind: entry.kind,
+      resultMediaUrl: selected?.url,
+      resultMediaItems: entry.kind === "image" ? media.map(item => ({...item})) : undefined,
+      resultThumbnailUrl: selected?.thumbnailUrl,
+      refMediaUrl: selected ? resolveCanvasMediaUrl(selected.url) : undefined,
+      refThumbnailUrl: selected ? resolveCanvasMediaUrl(selected.thumbnailUrl || selected.url) : undefined,
+      sourceGenerationTaskId: entry.taskId, sourceGenerationHistoryId: entry.id,
+      sourceGenerationMediaUrl: selected?.url, refUpdatedAt:entry.updatedAt,
+    });
+    const node: SpikeNode = {id:genId(),type:"spike",position:getViewportCreatePosition(kind),data,selected:true,
+      dragHandle:kind === "generator" ? ".canvas-node-drag-handle" : undefined,style:kind === "text" ? textNodeSize(data) : undefined};
+    commitHistory(); markDirty();
+    const next = nodesRef.current.map(item => item.selected ? {...item,selected:false} : item).concat(node);
+    nodesRef.current = next; setNodes(next); setSelectedNodeIds([node.id]);
+    setGenerationHistoryOpen(false); setGenerationHistoryPreviewId(null); setCreativePanel(null); setComposerNodeId(node.id); setInspectorNodeId(null);
+    const canvasId = currentCanvasIdRef.current, epoch = canvasLoadEpochRef.current;
+    window.requestAnimationFrame(() => {if(currentCanvasIdRef.current!==canvasId||canvasLoadEpochRef.current!==epoch)return;cancelViewportMotion.current?.();void reactFlowInstance.fitView({nodes:[node],padding:.2,maxZoom:1,duration:reducedCameraMotion?0:240});});
+  }, [commitHistory, getViewportCreatePosition, markDirty, t, loadingCanvas, reactFlowInstance, reducedCameraMotion, uiSettings.noteReferenceIncludeTitle, locale]);
 
   const rerunGenerationHistoryEntry = useCallback((entry: CanvasGenerationHistoryEntry) => {
+    if(hasLiveGenerationTask(generationTaskSnapshotsRef.current.values(),nodesRef.current,runningGenerationTaskIdsRef.current,'',entry.taskId)){setGenerationHistoryNotice(t("editor.canvas.error.generationBusy"));return;}
     if (entry.status === "queued" || entry.status === "running") {
       setGenerationHistoryNotice(t("editor.canvas.history.taskActive"));
       return;
@@ -4479,10 +5506,26 @@ function CanvasInner() {
       setGenerationHistoryNotice(locale === "en-US" ? "This history includes note titles. Use a new generation card with a fresh prompt and reconnect the note for body-only generation." : "这条历史包含笔记标题。请新建生成卡、填写需求并重新连接笔记，以仅引用正文生成。");
       return;
     }
-    const existingSource = nodesRef.current.find((node) => node.id === entry.sourceNodeId);
-    const source = existingSource && getCanvasNodeCapabilities(existingSource.data).composerMode !== "none"
-      ? existingSource
-      : ensureGenerationHistoryResultNode(entry);
+    const existingSource=nodesRef.current.find(node=>node.data.generationTask?.id===entry.taskId&&['failed','cancelled'].includes(node.data.generationTask.status));
+    const historyTask = generationTaskFromHistory(entry);
+    if ((entry.status === "failed" || entry.status === "cancelled") && !canRetryCanvasGenerationTask(historyTask)) return;
+    const source=existingSource||createGenerationDraft(entry,'parameters',0,false);if(!source)return;
+    const resumed = resumeCanvasVideoGenerationTask(historyTask, new Date().toISOString());
+    if (resumed) {
+      // History retry is recovery too, including when the old card was deleted.
+      resumed.sourceNodeId = source.id;
+      resumed.resultNodeId = source.id;
+      // A newly restored draft has no task yet; attach the original identity first.
+      const attachedNodes = nodesRef.current.map(node => node.id === source.id
+        ? { ...node, data: { ...node.data, generationTask: resumed } } : node);
+      nodesRef.current = attachedNodes;
+      setNodes(attachedNodes);
+      cancelledGenerationTaskIdsRef.current.delete(resumed.id);
+      generationTaskCanvasIdsRef.current.set(resumed.id, currentCanvasIdRef.current);
+      void applyGenerationTaskUpdate(resumed);
+      setGenerationHistoryOpen(false);
+      return;
+    }
     submitGenerationFromNode(source.id, {
       request: {
         ...entry.request,
@@ -4492,7 +5535,7 @@ function CanvasInner() {
       parentTaskId: entry.taskId,
     });
     setGenerationHistoryOpen(false);
-  }, [ensureGenerationHistoryResultNode, submitGenerationFromNode, t, locale, uiSettings.noteReferenceIncludeTitle]);
+  }, [applyGenerationTaskUpdate, createGenerationDraft, submitGenerationFromNode, t, locale, uiSettings.noteReferenceIncludeTitle]);
 
   const cancelGenerationHistoryEntry = useCallback((entry: CanvasGenerationHistoryEntry) => {
     if (entry.status !== "queued" && entry.status !== "running") return;
@@ -4532,23 +5575,41 @@ function CanvasInner() {
     markDirty();
   }, [generationHistoryClearConfirm, markDirty, t]);
 
-  const saveHistoryEntryToLibrary = useCallback(async (entry: CanvasGenerationHistoryEntry) => {
-    const candidate = toGenerationLibraryCandidate(entry);
-    if (!candidate) {
-      setGenerationHistoryNotice(t("editor.canvas.history.noLibraryMedia"));
-      return;
-    }
-    if (!bridge?.saveCanvasGenerationToLibrary) {
-      setGenerationHistoryNotice(t("editor.canvas.history.libraryChannelReady"));
-      return;
-    }
-    try {
-      const result = await bridge.saveCanvasGenerationToLibrary(candidate);
-      setGenerationHistoryNotice(result.success ? (result.message || t("editor.canvas.history.savedLibrary")) : (result.message || t("editor.canvas.history.saveLibraryFailed")));
-    } catch (error) {
-      setGenerationHistoryNotice(t("editor.canvas.history.saveLibraryError", { error: error instanceof Error ? error.message : String(error) }));
-    }
-  }, [bridge, t]);
+  const [resultSaveNotice,setResultSaveNotice]=useState<{canvasId:string;epoch:number;entryId:string;message:string}|null>(null);
+  const pendingHistorySaves=useRef(new Set<string>());
+  const [historySavingIds,setHistorySavingIds]=useState<Set<string>>(new Set());
+  const historySavePrefix=`${currentCanvasIdRef.current}:${canvasLoadEpochRef.current}:`;
+  const visibleHistorySavingIds=new Set([...historySavingIds].filter(key=>key.startsWith(historySavePrefix)).map(key=>key.slice(historySavePrefix.length)));
+  const saveHistoryEntryToLibrary = useCallback(async (entry:CanvasGenerationHistoryEntry) => {
+    const canvasId=currentCanvasIdRef.current,epoch=canvasLoadEpochRef.current,key=`${canvasId}:${epoch}:${entry.id}`;
+    if(!canvasId||loadingCanvas||!historyHasResult(entry)||pendingHistorySaves.current.has(key))return;
+    const knowledgeSource=entry.kind==='text'?readActiveKnowledgeWriteSource():null;
+    const notify=(message:string)=>{if(currentCanvasIdRef.current===canvasId&&canvasLoadEpochRef.current===epoch){setGenerationHistoryNotice(message);setNodeSaveNotice(message);setResultSaveNotice({canvasId,epoch,entryId:entry.id,message});}};
+    pendingHistorySaves.current.add(key);setHistorySavingIds(ids=>new Set(ids).add(key));let savedCount=0;
+    try{
+      if(entry.kind==='text'){
+        const body=sanitizeCanvasTextGenerationOutput(entry.outputText||'');if(!body.trim()||!knowledgeSource?.vaultId||!bridge?.createNote)throw Error('note-unavailable');
+        const receipt=await nodeSaveGate.current.run(JSON.stringify(['history-note',knowledgeSource.vaultId,entry.id,body]),async()=>{const note=await bridge.createNote!({title:canvasNoteTitle(body),contentText:body});if(!note.id)throw Error('save-unconfirmed');return note.id;});
+        if(readActiveKnowledgeWriteSource()===knowledgeSource)notify(receipt.state==='pending'?(locale==='en-US'?'Saving…':'正在保存…'):(locale==='en-US'?'Saved as a new note':'已保存为新笔记'));return;
+      }
+      const candidates=historyLibraryCandidates(entry);if(!candidates.length||!bridge?.saveCanvasGenerationToLibrary)throw Error('media-unavailable');
+      const selection = await requestMaterialDestination(candidates);
+      if (!selection || selection.libraryId !== "legacy-material-catalog" || currentCanvasIdRef.current !== canvasId || canvasLoadEpochRef.current !== epoch) return;
+      const messages = new Set<string>();
+      for(const [index, candidate] of candidates.entries()){
+        if (currentCanvasIdRef.current !== canvasId || canvasLoadEpochRef.current !== epoch) return;
+        const result=await bridge.saveCanvasGenerationToLibrary({...candidate,name:selection.names[index]}, {catalogId:selection.libraryId,folderId:selection.folderId});
+        if(!result.success||!result.assetId)throw Error(result.message || 'Material save was not confirmed');
+        savedCount++; if(result.message)messages.add(result.message);
+      }
+      notify(`${locale==='en-US'?`Saved ${savedCount} item(s) to the library`:`已保存到素材库（${savedCount}项）`}${messages.size ? ` · ${[...messages].join(' · ')}` : ''}`);
+    }catch(error){notify(entry.kind==='text'?(locale==='en-US'?'Could not create a note. Check the writable vault and retry.':'未能新建笔记，请确认已打开可写知识库后重试。'):`${locale==='en-US'?`Saved ${savedCount} item(s); remaining saves failed.`:`已保存${savedCount}项，其余未完成。`} ${error instanceof Error ? error.message : String(error)}`);}
+    finally{pendingHistorySaves.current.delete(key);setHistorySavingIds(ids=>{const next=new Set(ids);next.delete(key);return next;});}
+  },[bridge,locale,loadingCanvas,requestMaterialDestination]);
+
+
+  const compareGenerationResult=useCallback((entry:CanvasGenerationHistoryEntry)=>{if(!currentCanvasIdRef.current||entry.kind!=='image')return;setCreativePanel({canvasId:currentCanvasIdRef.current,kind:'review',initialId:entry.id});setGenerationHistoryOpen(false);setGenerationHistoryPreviewId(null);},[]);
+
 
   const createQuickNode = useCallback((kind: "text") => {
     if (!quickAddMenu) return;
@@ -4559,6 +5620,7 @@ function CanvasInner() {
   useEffect(() => {
     if (!quickAddMenu && !connectDropMenu) return;
     const closeOnEscape = (event: KeyboardEvent) => {
+      if (!canvasVisibleRef.current) return;
       if (event.key === "Escape") {
         setQuickAddMenu(null);
         setConnectDropMenu(null);
@@ -4568,10 +5630,14 @@ function CanvasInner() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [quickAddMenu, connectDropMenu]);
 
+  const selectedResultActions=selectedNode && selectedNode.data.kind !== "generator"?(<CanvasResultActions task={selectedNode.data.generationTask} english={locale==='en-US'} onRetry={()=>retryGeneration(selectedNode.id)}/>):null;
+
   return (
-    <div className={`canvas-editor-root is-${uiSettings.density} ${uiSettings.showHandles ? "show-handles" : "hide-handles"} ${uiSettings.reduceMotion ? "reduce-motion" : ""}`}>
+    <CanvasDialogScopeProvider host={editorBodyRef} active={visible}><CanvasMotionProvider reduced={uiSettings.reduceMotion}><div className={`canvas-editor-root is-${uiSettings.density} ${uiSettings.showHandles ? "show-handles" : "hide-handles"} ${uiSettings.reduceMotion ? "reduce-motion" : ""} ${focusSession ? "is-focus-mode" : ""}`}>
       <div ref={editorBodyRef} className="canvas-editor-body">
-        <div className="canvas-editor-floating-toolbar" data-tauri-no-drag="true">
+        <div className="canvas-editor-floating-toolbar" data-tauri-no-drag="true" onClickCapture={event => {
+          if ((event.target as HTMLElement).closest('button')) { stopCanvasFocus(); setComposerNodeId(null); setInspectorNodeId(null); }
+        }}>
           <div className="canvas-editor-title-slot">
           {currentCanvasId && renamingId === currentCanvasId ? (
             <>
@@ -4646,52 +5712,9 @@ function CanvasInner() {
           <CanvasToolButton label={t("editor.canvas.toolbar.referenceKnowledge")} onClick={() => { void openNotePicker(); }}>
             <ToolIcon type="note" />
           </CanvasToolButton>
-          <div
-            className="canvas-node-search-anchor"
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as HTMLElement | null)) setNodeSearchOpen(false);
-            }}
-          >
-            <CanvasToolButton
-              label={t("editor.canvas.toolbar.search")}
-              active={nodeSearchOpen}
-              onClick={() => setNodeSearchOpen((open) => !open)}
-            >
-              <ToolIcon type="search" />
-            </CanvasToolButton>
-            {nodeSearchOpen ? (
-              <div className="canvas-node-search-panel">
-                <label className="canvas-node-search-input">
-                  <ToolIcon type="search" />
-                  <input
-                    autoFocus
-                    value={nodeSearchQuery}
-                    onChange={(event) => setNodeSearchQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") setNodeSearchOpen(false);
-                      if (event.key === "Enter" && nodeSearchResults[0]) focusSearchResult(nodeSearchResults[0].node);
-                    }}
-                    placeholder={t("editor.canvas.search.placeholder")}
-                    aria-label={t("editor.canvas.toolbar.search")}
-                  />
-                  <span>{nodeSearchResults.length}</span>
-                </label>
-                <div className="canvas-node-search-results">
-                  {nodeSearchResults.length ? nodeSearchResults.map(({ node, label }) => (
-                    <button key={node.id} type="button" onClick={() => focusSearchResult(node)}>
-                      <span className="canvas-node-search-kind"><ToolIcon type={node.data.kind === "noteRef" ? "note" : node.data.kind === "aiPrompt" ? "aiPrompt" : node.data.kind === "aiResult" ? "aiResult" : node.data.kind === "image" || node.data.kind === "video" ? "asset" : "text"} /></span>
-                      <span className="canvas-node-search-copy">
-                        <strong>{label}</strong>
-                        <small>{canvasNodeKindLabel(node.data.kind, t)}</small>
-                      </span>
-                      <svg className="canvas-node-search-arrow" viewBox="0 0 18 18"><path d="M7 4l5 5-5 5" /></svg>
-                    </button>
-                  )) : (
-                    <div className="canvas-node-search-empty">{nodes.length ? t("editor.canvas.search.empty") : t("editor.canvas.search.noNodes")}</div>
-                  )}
-                </div>
-              </div>
-            ) : null}
+          <div className="canvas-node-search-anchor">
+            <CanvasToolButton label={t("editor.canvas.toolbar.search")} active={nodeSearchOpen} onClick={() => setNodeSearchOpen(open => !open)}><ToolIcon type="search" /></CanvasToolButton>
+            {nodeSearchOpen && <CanvasNodeSearchPanel portalHost={editorBodyRef.current} rows={nodeSearchRows} query={nodeSearchQuery} onQueryChange={setNodeSearchQuery} onClose={() => setNodeSearchOpen(false)} english={locale === 'en-US'} onSelect={id => { const node = nodesRef.current.find(item => item.id === id); if (node) focusSearchResult(node); }} />}
           </div>
           <div
             className="canvas-generation-history-anchor"
@@ -4713,49 +5736,54 @@ function CanvasInner() {
               ) : null}
             </CanvasToolButton>
             {generationHistoryOpen ? (
-              <div className="canvas-generation-history-panel">
-                <div className="canvas-generation-history-heading">
-                  <span><strong>{t("editor.canvas.history.title")}</strong><small>{t("editor.canvas.history.currentOnly")}</small></span>
-                  <div>
-                    <button type="button" disabled={!generationHistory.some((entry) => entry.status === "failed" || entry.status === "cancelled")} onClick={clearFailedGenerationHistory}>
+              <div className="canvas-generation-history-panel canvas-history-compact">
+                <input className="canvas-generation-history-search" type="search" maxLength={200} value={generationHistoryQuery} onChange={event=>setGenerationHistoryQuery(event.target.value)} placeholder={locale === "en-US" ? "Search prompts, models and text results" : "搜索提示词、模型或文字结果"} aria-label={locale === "en-US" ? "Search generation history" : "搜索生成历史"} />
+                <div className="canvas-history-browse-bar">
+                  <div className="canvas-history-kind-tabs" role="group" aria-label={locale === "en-US" ? "Result type" : "结果类型"}>
+                    {([["all", t("editor.canvas.history.filter.allTypes")], ["image", t("editor.canvas.history.filter.image")], ["video", t("editor.canvas.history.filter.video")], ["text", t("editor.canvas.history.filter.text")]] as const).map(([value, label]) => (
+                      <button key={value} type="button" aria-pressed={generationHistoryKindFilter === value} onClick={() => {setGenerationHistoryKindFilter(value);setGenerationHistoryDeleteConfirmId(null);}}>{label}<small>{generationHistory.filter(entry => value === "all" || entry.kind === value).length}</small></button>
+                    ))}
+                  </div>
+                  <div className="canvas-history-actions">
+                    <button className={`canvas-history-clear-failed${generationHistoryClearConfirm ? " is-confirming" : ""}`} type="button" disabled={!generationHistory.some(entry => entry.status === "failed" || entry.status === "cancelled")} onClick={clearFailedGenerationHistory}>
                       {generationHistoryClearConfirm ? t("editor.canvas.history.confirmClear") : t("editor.canvas.history.clearFailed")}
                     </button>
-                    <button type="button" onClick={()=>{if(currentCanvasId){setCreativePanel({canvasId:currentCanvasId,kind:'review'});setGenerationHistoryOpen(false);}}}>{locale === "en-US" ? "Compare images" : "图片对比"}</button>
-                    <b>{filteredGenerationHistory.length}/{generationHistory.length}</b>
+                  <div className="canvas-history-view-toggle" role="group" aria-label={locale === "en-US" ? "History layout" : "历史布局"}>
+                    <button type="button" aria-pressed={generationHistoryView === "grid"} onClick={() => setGenerationHistoryView("grid")}>{locale === "en-US" ? "Grid" : "网格"}</button>
+                    <button type="button" aria-pressed={generationHistoryView === "list"} onClick={() => setGenerationHistoryView("list")}>{locale === "en-US" ? "List" : "列表"}</button>
                   </div>
                 </div>
-                <input className="canvas-generation-history-search" type="search" maxLength={200} value={generationHistoryQuery} onChange={event=>setGenerationHistoryQuery(event.target.value)} placeholder={locale === "en-US" ? "Search prompts, models and text results" : "搜索提示词、模型或文字结果"} aria-label={locale === "en-US" ? "Search generation history" : "搜索生成历史"} />
+                </div>
                 <div className="canvas-generation-history-filters">
                   <div>
                     {([[
                       "all", t("editor.canvas.history.filter.all"),
                     ], ["active", t("editor.canvas.history.filter.active")], ["succeeded", t("editor.canvas.history.filter.completed")], ["failed", t("editor.canvas.history.filter.failed")]] as const).map(([value, label]) => (
-                      <button key={value} type="button" className={generationHistoryStatusFilter === value ? "is-active" : ""} onClick={() => { setGenerationHistoryStatusFilter(value); setGenerationHistoryDeleteConfirmId(null); }}>{label}</button>
+                      <button key={value} type="button" aria-pressed={generationHistoryStatusFilter === value} className={generationHistoryStatusFilter === value ? "is-active" : ""} onClick={() => { setGenerationHistoryStatusFilter(value); setGenerationHistoryDeleteConfirmId(null); }}>{label}</button>
                     ))}
                   </div>
-                  <div>
-                    {([["all", t("editor.canvas.history.filter.allTypes")], ["text", t("editor.canvas.history.filter.text")], ["image", t("editor.canvas.history.filter.image")], ["video", t("editor.canvas.history.filter.video")]] as const).map(([value, label]) => (
-                      <button key={value} type="button" className={generationHistoryKindFilter === value ? "is-active" : ""} onClick={() => setGenerationHistoryKindFilter(value)}>{label}</button>
-                    ))}
-                  </div>
+
                 </div>
                 {generationHistoryNotice ? <div className="canvas-generation-history-notice" role="status"><span>{generationHistoryNotice}</span><button type="button" aria-label={locale === "en-US" ? "Dismiss notice" : "关闭提示"} onClick={()=>setGenerationHistoryNotice("")}>×</button></div> : null}
-                <div className="canvas-generation-history-list">
-                  {filteredGenerationHistory.length ? filteredGenerationHistory.map((entry) => {
-                    const libraryCandidate = toGenerationLibraryCandidate(entry);
+                <div className={`canvas-generation-history-list is-${generationHistoryView}`}>
+                  {filteredGenerationHistory.length ? filteredGenerationHistory.map((entry, entryIndex) => {
+                    const canSaveResult = historyHasResult(entry);
                     const progress = typeof entry.progress === "number" ? Math.max(0, Math.min(100, Math.round(entry.progress))) : null;
                     const isActive = entry.status === "queued" || entry.status === "running";
                     const hasPreview = !!(entry.outputText || entry.outputMediaUrl || entry.outputMediaItems?.length);
                     const previewImage = entry.outputMediaItems?.[0]?.thumbnailUrl || entry.outputMediaItems?.[0]?.url || entry.outputThumbnailUrl || (entry.kind === "image" ? entry.outputMediaUrl : "");
                     return (
-                      <article key={entry.id} className={`is-${entry.status}`}>
-                        <button type="button" className="canvas-generation-history-preview" disabled={!hasPreview} onClick={() => setGenerationHistoryPreviewId(entry.id)} title={hasPreview ? t("editor.canvas.history.previewResult") : t("editor.canvas.history.notReady")}>
+                      <Fragment key={entry.id}>
+                      {entryIndex === 0 || new Date(entry.createdAt).toLocaleDateString(locale) !== new Date(filteredGenerationHistory[entryIndex - 1].createdAt).toLocaleDateString(locale) ? <div className="canvas-history-date-label">{new Date(entry.createdAt).toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" })}</div> : null}
+                      <article className={`is-${entry.status} kind-${entry.kind}`}>
+                        <button type="button" className="canvas-generation-history-preview" disabled={!hasPreview} onClick={() => restoreGenerationHistoryResult(entry)} aria-label={hasPreview ? t("editor.canvas.history.restore") : t("editor.canvas.history.notReady")} title={hasPreview ? t("editor.canvas.history.restore") : t("editor.canvas.history.notReady")}>
                           {previewImage ? (
-                            <img src={resolveCanvasMediaUrl(previewImage)} alt={t("editor.canvas.history.result")} />
-                          ) : <ToolIcon type={entry.kind === "video" ? "video" : entry.kind === "image" ? "image" : "text"} />}
+                            <img loading="lazy" src={resolveCanvasMediaUrl(previewImage)} alt={t("editor.canvas.history.result")} />
+                          ) : entry.kind === "text" && entry.outputText ? <span className="canvas-history-text-thumbnail">{entry.outputText}</span> : <ToolIcon type={entry.kind === "video" ? "video" : entry.kind === "image" ? "image" : "text"} />}
+                          <span className="canvas-history-kind-label">{entry.kind === "video" ? t("editor.canvas.history.filter.video") : entry.kind === "image" ? t("editor.canvas.history.filter.image") : t("editor.canvas.history.filter.text")}{entry.outputMediaItems && entry.outputMediaItems.length > 1 ? ` · ${entry.outputMediaItems.length}` : ""}</span>
                         </button>
                         <div className="canvas-generation-history-copy">
-                          <div><strong>{entry.prompt || t("editor.canvas.history.noPrompt")}</strong><span>{generationHistoryStatusLabel(entry, generationQueuePositions.get(entry.taskId), t)}</span></div>
+                          <div><strong>{entry.prompt || t("editor.canvas.history.noPrompt")}</strong>{entry.status !== "succeeded" ? <span>{generationHistoryStatusLabel(entry, generationQueuePositions.get(entry.taskId), t)}</span> : null}</div>
                           <small>{entry.kind === "video" ? t("editor.canvas.history.filter.video") : entry.kind === "image" ? t("editor.canvas.history.filter.image") : t("editor.canvas.history.filter.text")} · {entry.model || t("editor.canvas.history.defaultModel")} · {new Date(entry.createdAt).toLocaleString(locale, { hour12: false })}</small>
                           {isActive ? <i><b style={{ width: `${progress ?? (entry.status === "running" ? 18 : 5)}%` }} /></i> : null}
                           {entry.errorMessage ? (
@@ -4764,6 +5792,12 @@ function CanvasInner() {
                             </em>
                           ) : null}
                         </div>
+                        <CanvasHistoryDisclosure label={locale === "en-US" ? "Details and actions" : "详情与操作"}>
+                          <div className="canvas-history-entry-details">
+                            <p>{entry.prompt || t("editor.canvas.history.noPrompt")}</p>
+                            <small>{entry.model || t("editor.canvas.history.defaultModel")} · {new Date(entry.createdAt).toLocaleString(locale, { hour12: false })}</small>
+                            {entry.errorMessage ? <p className="is-error">{[entry.errorCode, entry.errorMessage, entry.errorDetail].filter(Boolean).join(" · ")}</p> : null}
+                          </div>
                         <div className="canvas-generation-history-actions">
                           {entry.kind==='image' && entry.status==='succeeded' && hasPreview ? <button type="button" onClick={()=>{if(currentCanvasId){setCreativePanel({canvasId:currentCanvasId,kind:'review',initialId:entry.id});setGenerationHistoryOpen(false);}}}>{locale === "en-US" ? "Compare / pick" : "对比挑选"}{entry.preferredImageIndexes?.length ? ' · '+entry.preferredImageIndexes.length : ''}</button> : null}
                           <button type="button" disabled={!hasPreview} onClick={() => setGenerationHistoryPreviewId(entry.id)}>{t("editor.canvas.history.preview")}</button>
@@ -4773,10 +5807,13 @@ function CanvasInner() {
                           ) : (
                             <button type="button" disabled={entry.status === "failed" && entry.errorRetryable === false} onClick={() => rerunGenerationHistoryEntry(entry)}>{entry.status === "failed" || entry.status === "cancelled" ? t("common.action.retry") : t("editor.canvas.history.generateAgain")}</button>
                           )}
-                          <button type="button" disabled={!libraryCandidate} onClick={() => { void saveHistoryEntryToLibrary(entry); }}>{t("editor.canvas.history.saveLibrary")}</button>
+                          {!isActive&&<button type="button" onClick={()=>createGenerationDraft(entry,entry.status==='succeeded'&&entry.kind!=='video'?'result':'parameters')}>{locale==='en-US'?'New editable draft':'新建修改草稿'}</button>}
+                          <button type="button" disabled={!canSaveResult||visibleHistorySavingIds.has(entry.id)} onClick={() => { void saveHistoryEntryToLibrary(entry); }}>{visibleHistorySavingIds.has(entry.id)?(locale==='en-US'?'Saving…':'保存中…'):entry.kind==='text'?(locale==='en-US'?'Save as note':'存为新笔记'):t("editor.canvas.history.saveLibrary")}</button>
                           <button type="button" className="is-danger" disabled={isActive} onClick={() => deleteGenerationHistoryEntry(entry)}>{generationHistoryDeleteConfirmId === entry.id ? t("editor.canvas.history.confirmDelete") : t("editor.canvas.history.delete")}</button>
                         </div>
+                        </CanvasHistoryDisclosure>
                       </article>
+                      </Fragment>
                     );
                   }) : <div className="canvas-generation-history-empty">{t("editor.canvas.history.empty")}</div>}
                 </div>
@@ -4828,12 +5865,14 @@ function CanvasInner() {
                   <button type="button" role="tab" aria-selected={canvasSettingsTab === "appearance"} onClick={() => setCanvasSettingsTab("appearance")}>{locale === "en-US" ? "Appearance" : "画布外观"}</button>
                 </div>
                 <div hidden={canvasSettingsTab !== "appearance"}>
-                <CanvasSettingToggle label={locale === "en-US" ? "Keep creation tools visible" : "始终显示创作工具"} hint={locale === "en-US" ? "Turn off to reveal tools on hover or keyboard focus." : "关闭后，鼠标移到左侧或键盘聚焦时展开。"} checked={uiSettings.creativeRailAlwaysVisible} onChange={(checked)=>updateUiSetting("creativeRailAlwaysVisible",checked)} />
+                <CanvasAgentOrbPositionSetting english={locale === "en-US"} />
+                <CanvasSettingToggle label={locale === "en-US" ? "Keep creation tools visible" : "始终显示创作工具"} hint={locale === "en-US" ? "Turn off to reveal tools by pausing over the Create handle or using keyboard focus." : "关闭后，在左侧创作按钮上稍作停留，或用键盘聚焦时展开。"} checked={uiSettings.creativeRailAlwaysVisible} onChange={(checked)=>updateUiSetting("creativeRailAlwaysVisible",checked)} />
                 <CanvasSettingToggle label={t("editor.canvas.settings.grid")} hint={t("editor.canvas.settings.gridHint")} checked={uiSettings.showGrid} onChange={(checked) => updateUiSetting("showGrid", checked)} />
                 <CanvasSettingToggle label={t("editor.canvas.settings.snap")} hint={t("editor.canvas.settings.snapHint")} checked={uiSettings.snapToGrid} onChange={(checked) => updateUiSetting("snapToGrid", checked)} />
                 <CanvasSettingToggle label={t("editor.canvas.settings.handles")} hint={t("editor.canvas.settings.handlesHint")} checked={uiSettings.showHandles} onChange={(checked) => updateUiSetting("showHandles", checked)} />
                 <CanvasSettingToggle label={t("editor.canvas.settings.minimap")} hint={t("editor.canvas.settings.minimapHint")} checked={minimapVisible} onChange={(checked) => updateUiSetting("minimap", checked)} />
                 <CanvasSettingToggle label={t("editor.canvas.settings.fan")} hint={t("editor.canvas.settings.fanHint")} checked={uiSettings.fanInspector} onChange={(checked) => updateUiSetting("fanInspector", checked)} experimental />
+                <CanvasSettingToggle label={locale === "en-US" ? "Scroll to pan" : "滚轮平移画布"} hint={locale === "en-US" ? "Off: scroll to zoom. On: scroll to pan, Ctrl + scroll to zoom. Space + drag works in both modes." : "关闭时滚轮缩放；开启时滚轮平移、Ctrl＋滚轮缩放。两种模式均支持空格＋拖动。"} checked={uiSettings.scrollToPan} onChange={checked => updateUiSetting("scrollToPan", checked)} />
                 <CanvasSettingToggle label={t("editor.canvas.settings.motion")} hint={t("editor.canvas.settings.motionHint")} checked={uiSettings.reduceMotion} onChange={(checked) => updateUiSetting("reduceMotion", checked)} />
                 <div className="canvas-settings-density">
                   <span><strong>{t("editor.canvas.settings.density")}</strong><small>{t("editor.canvas.settings.densityHint")}</small></span>
@@ -4853,6 +5892,7 @@ function CanvasInner() {
               </div>
           </div>
         </div>
+        {focusSession ? <CanvasFocusStatus host={editorBodyRef} busy={focusBusy} status={focusStatus} onExit={stopCanvasFocus} english={locale === "en-US"} /> : null}
         <div
           className={`canvas-editor-save-light is-${saveStatus}`}
           style={{ color: saveStatusColor }}
@@ -5128,8 +6168,45 @@ function CanvasInner() {
 
         {/* 中间：画布 */}
         <div
-          className="canvas-editor-stage"
+          className={`canvas-editor-stage${canvasAgentPicking ? " canvas-agent-picking" : ""}`}
+          tabIndex={-1}
+          ref={viewportStageRef}
+          onPointerDownCapture={(event) => {
+            if (focusSessionRef.current && event.button === 0 && event.target instanceof Element && event.target.closest(".react-flow__node")) {
+              if (event.target.closest('button,input,textarea,select,[role="menu"],[contenteditable="true"]')) return;
+              focusPointerRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
+            if (event.button === 0 && event.target instanceof Element && event.target.closest(".canvas-group-drag-handle")) setGroupDragging(true);
+          }}
+          onPointerMoveCapture={(event) => {
+            const pointer = focusPointerRef.current;
+            if (!pointer || pointer.pointerId !== event.pointerId) return;
+            if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) pointer.moved = true;
+          }}
+          onPointerCancelCapture={() => { focusPointerRef.current = null; }}
+          onClickCapture={(event) => {
+            if (!focusSessionRef.current || !(event.target instanceof Element)) return;
+            if (event.detail === 0 || event.target.closest('button,input,textarea,select,[role="menu"],[contenteditable="true"]')) return;
+            const nodeElement = event.target.closest<HTMLElement>(".react-flow__node");
+            if (!nodeElement) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const pointer = focusPointerRef.current;
+            focusPointerRef.current = null;
+            if (!pointer || pointer.moved || Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) return;
+            const image = event.target.closest<HTMLImageElement>("img");
+            const nodeId = nodeElement.dataset.id;
+            if (!image || !nodeId || !nodeElement.contains(image)) return;
+            const resultImage = image.closest<HTMLElement>("[data-result-image-index]");
+            const gallery = image.closest(".canvas-ai-result-gallery");
+            const imageIndex = resultImage ? Number(resultImage.dataset.resultImageIndex) : gallery ? Array.from(gallery.querySelectorAll("img")).indexOf(image) : 0;
+            void recognizeCanvasFocusPoint(event, nodeId, image, Number.isFinite(imageIndex) ? Math.max(0, imageIndex) : 0);
+          }}
           onDoubleClickCapture={(event) => {
+            if (focusSessionRef.current) { event.preventDefault(); event.stopPropagation(); return; }
             const target = event.target as HTMLElement;
             const pane = target.closest(".react-flow__pane");
             const interactiveTarget = target.closest(
@@ -5175,10 +6252,20 @@ function CanvasInner() {
             </div>
           ) : currentCanvasId ? (
             <CanvasNodeUiContext.Provider value={nodeUiActions}>
-            <CanvasCreativeRail alwaysVisible={uiSettings.creativeRailAlwaysVisible} active={creativePanel?.kind as CreativeAction|undefined} english={locale==="en-US"} onAction={kind=>{if(currentCanvasId)setCreativePanel({canvasId:currentCanvasId,kind});}} />
+            {gridSource&&!canvasAgentOpen&&!gridSession&&!focusSession&&!generationHistoryOpen&&!nodeSearchOpen&&!createMenuOpen&&!showAssetPicker&&!showNotePicker ? <CanvasImageToolbar key={gridSource.node.id+gridSource.raw} nodeId={gridSource.node.id} stage={viewportStageRef} source={resolveCanvasMediaUrl(gridSource.raw)} onInteract={() => { stopCanvasFocus(); setComposerNodeId(null); }} english={locale==='en-US'} onCompare={selectedResultEntry?.kind==='image'?()=>compareGenerationResult(selectedResultEntry):undefined} onCreativeRecipe={recipe=>createImageCreativeDraft(gridSource.node.id,gridSource.raw,recipe)} onSplit={()=>{if(currentCanvasId)setGridSession({canvasId:currentCanvasId,epoch:canvasLoadEpochRef.current,raw:gridSource.raw,item:{id:gridSource.node.id,nodeId:gridSource.node.id,label:gridSource.node.data.label,kind:'image',source:resolveCanvasMediaUrl(gridSource.raw)}});}}/> : null}
+            <CanvasCreativeRail alwaysVisible={uiSettings.creativeRailAlwaysVisible} active={canvasAgentOpen?'agent':creativePanel?.kind as CreativeAction|undefined} english={locale==="en-US"} onAction={kind=>{if(kind==='agent'){openCanvasAgent();return;}if(kind==='storyboard'){openStoryboard();return;}if(currentCanvasId){const selectedFrame=kind==='director'&&selectedNodeIds.length===1?nodesRef.current.find(node=>node.id===selectedNodeIds[0]):undefined;setCreativePanel({canvasId:currentCanvasId,kind,initialId:selectedFrame&&readDirectorShotSource(selectedFrame.data.directorShotSource)?selectedFrame.id:undefined});}}} />
+            {nodes.some(isStoryboard) && creativePanel?.kind !== 'storyboard' ? <button type="button" className="canvas-storyboard-return nodrag nopan" onClick={()=>openStoryboard()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v16H3zM3 10h18M10 10v10"/></svg>{locale==='en-US'?'Return to storyboard':'返回脚本与分镜'}<small>{nodes.filter(isStoryboard).length}</small></button> : null}
+
           <ReactFlow
               key={currentCanvasId}
-              nodes={nodes}
+              nodes={nodes.map((node) => {
+                const restored = restoreGridSliceInteraction(node);
+                if (!focusSession) return restored;
+                return { ...restored, className: [restored.className,
+                  node.id === focusSession.targetId ? "canvas-focus-target"
+                    : splitImageSource(node.data) ? "canvas-focus-source" : "canvas-focus-muted",
+                ].filter(Boolean).join(" ") };
+              })}
               edges={edges}
               defaultViewport={canvasViewport}
               onNodesChange={onNodesChange}
@@ -5229,15 +6316,20 @@ function CanvasInner() {
               }}
               isValidConnection={isValidCanvasConnection}
               onPaneClick={() => {
+                if (focusSessionRef.current) return;
                 if (suppressNextPaneClickRef.current) return;
                 setQuickAddMenu(null);
                 setConnectDropMenu(null);
                 setNodeContextMenu(null);
+                setSelectionContextMenu(null);
                 setComposerNodeId(null);
                 setInspectorNodeId(null);
               }}
               onNodeClick={(event, node) => {
-                if (event.shiftKey) return;
+                if (focusSessionRef.current) return;
+                if (event.shiftKey || event.ctrlKey || event.metaKey) { setComposerNodeId(null); setSelectionContextMenu(null); return; }
+                setSelectionContextMenu(null);
+                if (canvasAgentCapturesSelection) { setCanvasAgentPicking(false); selectSingleNode(node.id); addCanvasAgentReferences([node.id]); setComposerNodeId(null); return; }
                 const capabilities = getCanvasNodeCapabilities(node.data);
                 if (capabilities.composerMode === "contextual") openNodeComposer(node.id);
                 else {
@@ -5247,9 +6339,14 @@ function CanvasInner() {
               }}
               onNodeContextMenu={(event, node) => {
                 event.preventDefault();
+                if (focusSessionRef.current) return;
                 setQuickAddMenu(null);
                 setConnectDropMenu(null);
                 setComposerNodeId(null);
+                if (selectedNodeIds.length > 1 && selectedNodeIds.includes(node.id)) {
+                  setNodeContextMenu(null); setSelectionContextMenu({x:Math.max(12,event.clientX),y:Math.max(12,event.clientY)}); return;
+                }
+                setSelectionContextMenu(null);
                 selectSingleNode(node.id);
                 setNodeContextMenu({
                   nodeId: node.id,
@@ -5257,8 +6354,16 @@ function CanvasInner() {
                   screenY: Math.max(12, Math.min(event.clientY, window.innerHeight - 420)),
                 });
               }}
+              onSelectionContextMenu={event => { event.preventDefault(); setNodeContextMenu(null); setComposerNodeId(null); setSelectionContextMenu({x:Math.max(12,event.clientX),y:Math.max(12,event.clientY)}); }}
+              selectionKeyCode={null}
+              multiSelectionKeyCode={["Meta", "Control", "Shift"]}
+              deleteKeyCode={null}
               onSelectionChange={({ nodes: selNodes }) => {
+                if (focusSessionRef.current) return;
                 const newIds = selNodes.map((n) => n.id);
+                const newlySelected = newIds.filter(id => !canvasAgentSelectionRef.current.includes(id));
+                canvasAgentSelectionRef.current = newIds;
+                if (canvasAgentCapturesSelection && !loadingCanvas) { addCanvasAgentReferences(newlySelected); if (newlySelected.length) setCanvasAgentPicking(false); }
                 // 相等性检查：内容相同返回 prev（相同引用），避免每次回调都创建新数组
                 // 触发无限重渲染循环（→ 黑屏）
                 setSelectedNodeIds((prev) => {
@@ -5278,14 +6383,24 @@ function CanvasInner() {
                   generationHistory: generationHistoryRef.current,
                 }) : null;
               }}
-              onNodeDragStop={() => {
+              onNodeDragStop={(_, node, draggedNodes) => {
+                setGroupDragging(false);
                 if (!dragSnapshotRef.current) return;
                 const snap = dragSnapshotRef.current;
+                if (snap.canvasId !== currentCanvasIdRef.current) { dragSnapshotRef.current = null; return; }
+                const latest = new Map(draggedNodes.map(item => [item.id, item]));
+                const current = nodesRef.current.map(item => latest.has(item.id)
+                  ? { ...item, position: latest.get(item.id)!.position, dragging: false } : item);
+                const finalNodes = node.data.kind === "group" && uiSettings.snapToGrid
+                  ? snapCanvasGroupDrop(current, node.id, [...latest.keys()], CANVAS_SNAP_GRID) : current;
+                nodesRef.current = finalNodes;
+                setNodes(finalNodes);
                 const moved = snap.nodes.some((sn) => {
                   const cur = nodesRef.current.find((n) => n.id === sn.id);
                   return cur && (cur.position.x !== sn.position.x || cur.position.y !== sn.position.y);
                 });
                 if (moved && snap.canvasId === currentCanvasIdRef.current) {
+                  markDirty();
                   pastRef.current = appendCanvasHistoryEntry(pastRef.current, snap);
                   futureRef.current = [];
                   setHistoryVersion((v) => v + 1);
@@ -5293,10 +6408,15 @@ function CanvasInner() {
                 dragSnapshotRef.current = null;
               }}
               onMoveEnd={(_, viewport) => {
+                if (viewportMotionActive.current) return;
                 const nextViewport = normalizeCanvasViewport(viewport);
-                const previous = canvasViewport;
+                // Native/library end callbacks may be delayed. Never apply an obsolete view.
+                const actual = reactFlowInstance.getViewport();
+                if (Math.abs(actual.x-nextViewport.x) > .01 || Math.abs(actual.y-nextViewport.y) > .01 || Math.abs(actual.zoom-nextViewport.zoom) > .00001) return;
+                const previous = committedViewportRef.current;
                 if (previous.x === nextViewport.x && previous.y === nextViewport.y && previous.zoom === nextViewport.zoom) return;
                 viewportRef.current = nextViewport;
+                committedViewportRef.current = nextViewport;
                 setCanvasViewport(nextViewport);
                 markDirty();
               }}
@@ -5304,16 +6424,20 @@ function CanvasInner() {
                 viewportRef.current = normalizeCanvasViewport(viewport);
               }}
               nodeTypes={nodeTypes}
-              minZoom={0.08}
-              maxZoom={2.4}
-              snapToGrid={uiSettings.snapToGrid}
+              minZoom={CANVAS_MIN_ZOOM}
+              maxZoom={CANVAS_MAX_ZOOM}
+              snapToGrid={uiSettings.snapToGrid && !groupDragging}
               snapGrid={CANVAS_SNAP_GRID}
-              zoomOnScroll
+              zoomOnScroll={false}
+              panOnScroll={false}
               zoomOnPinch
               zoomOnDoubleClick={false}
               connectionRadius={56}
               panOnDrag={[1]}
-              selectionOnDrag
+              selectionOnDrag={!focusSession}
+              nodesDraggable={!focusSession}
+              nodesConnectable={!focusSession}
+              elementsSelectable={!focusSession}
               selectionMode={SelectionMode.Partial}
               proOptions={{ hideAttribution: true }}
               onlyRenderVisibleElements={nodes.length > 100}
@@ -5374,7 +6498,7 @@ function CanvasInner() {
                   title={t("editor.canvas.controls.fit")}
                   aria-label={t("editor.canvas.controls.fit")}
                   data-tooltip={t("editor.canvas.controls.fit")}
-                  onClick={() => reactFlowInstance?.fitView({ padding: 0.2, duration: 400 })}
+                  onClick={() => { cancelViewportMotion.current?.(); void reactFlowInstance?.fitView({ padding: 0.2, maxZoom: 1, duration: reducedCameraMotion ? 0 : 180 }); }}
                 >
                   <ToolIcon type="fitView" />
                 </button>
@@ -5388,15 +6512,7 @@ function CanvasInner() {
                 >
                   <ToolIcon type="arrange" />
                 </button>
-                <button
-                  type="button"
-                  title={t("editor.canvas.controls.zoomOut")}
-                  aria-label={t("editor.canvas.controls.zoomOut")}
-                  data-tooltip={t("editor.canvas.controls.zoomOut")}
-                  onClick={() => reactFlowInstance?.zoomOut({ duration: 200 })}
-                >
-                  <ToolIcon type="zoomOut" />
-                </button>
+
                 <button
                   type="button"
                   title={t("editor.canvas.controls.center")}
@@ -5410,15 +6526,16 @@ function CanvasInner() {
                 >
                   <ToolIcon type="center" />
                 </button>
-                <button
-                  type="button"
-                  title={t("editor.canvas.controls.zoomIn")}
-                  aria-label={t("editor.canvas.controls.zoomIn")}
-                  data-tooltip={t("editor.canvas.controls.zoomIn")}
-                  onClick={() => reactFlowInstance?.zoomIn({ duration: 200 })}
-                >
-                  <ToolIcon type="zoomIn" />
-                </button>
+                <CanvasViewportControls key={currentCanvasId} stage={viewportStageRef} motionActive={viewportMotionActive} cancelMotion={cancelViewportMotion} reducedMotion={reducedCameraMotion} scrollToPan={uiSettings.scrollToPan} english={locale === "en-US"} onSettled={viewport => {
+                  const next = normalizeCanvasViewport(viewport);
+                  const previous = committedViewportRef.current;
+                  if (previous.x === next.x && previous.y === next.y && previous.zoom === next.zoom) return;
+                  viewportRef.current = next;
+                  committedViewportRef.current = next;
+                  setCanvasViewport(next);
+                  markDirty();
+                }} />
+
               </Panel>
               {minimapVisible && nodes.length < 500 && (
                 <MiniMap
@@ -5607,23 +6724,24 @@ function CanvasInner() {
         </div>
 
         {/* 右侧：节点属性（单选显示详情；多选显示批量操作） */}
-        {selectedNodeHasComposer && selectedNode && materialInspectorPortal?.nodeId === selectedNode.id
-          ? createPortal(
-            <div
-              className="canvas-material-composer-dock nodrag nopan nowheel"
-              onPointerDown={(event) => event.stopPropagation()}
-            >
+        {selectedNodeHasComposer && selectedNode ? (
+          <CanvasAnchoredSurface key={currentCanvasId+":"+selectedNode.id} nodeId={selectedNode.id} stage={viewportStageRef} width={620} reserveToolbar closeLabel={locale === "en-US" ? "Close editor" : "关闭编辑区"} className="canvas-node-editor-surface" onClose={() => { stopCanvasFocus(); setComposerNodeId(null); }}>
               <MaterialCompactComposer
+                screenSpace
                 node={selectedNode}
                 onDataChange={updateSelectedData}
                 onAddReference={(role) => openGeneratorAssetPicker(selectedNode.id, role)}
                 connectedInputs={getIncomingGenerationInputs(selectedNode.id)}
-                canvasReferenceCandidates={getCanvasReferenceCandidates(selectedNode.id)}
-                onSelectCanvasReference={(candidate, role) => addCanvasReference(selectedNode.id, candidate, role)}
-                onConnectedRoleChange={updateIncomingEdgeRole}
+                resolvedStoredReferences={resolveStoredCanvasReferences(selectedNode,nodes)}
+                includeNoteTitles={uiSettings.noteReferenceIncludeTitle}
                 onRemoveConnectedInput={removeIncomingEdge}
-                onMoveConnectedInput={moveIncomingEdge}
+                onReorderReferences={(from,to)=>reorderCanvasReferences(selectedNode.id,from,to)}
+                onToggleFocus={() => toggleCanvasFocus(selectedNode.id)}
+                onCreateCreative={gridSource?.node.id===selectedNode.id?recipe=>createImageCreativeDraft(selectedNode.id,gridSource.raw,recipe):undefined}
+                focusMode={focusSession?.targetId === selectedNode.id}
+                focusBusy={focusBusy}
                 onSubmit={() => submitGenerationFromNode(selectedNode.id)}
+                onCancel={() => cancelGeneration(selectedNode.id)}
                 textModels={aiRuntimeConfig.models}
                 textModelsReady={aiRuntimeConfig.ready}
                 textProviderLabel={aiRuntimeConfig.providerLabel}
@@ -5633,10 +6751,11 @@ function CanvasInner() {
                 defaultVideoModel={aiRuntimeConfig.videoModel}
                 mediaProfile={activeMediaProfile}
               />
-            </div>,
-            materialInspectorPortal.element,
-          )
-          : null}
+              {selectedResultActions}
+          </CanvasAnchoredSurface>
+        ) : null}
+
+
 
         {/* 详情不再跟随普通左键选择，只从节点右键菜单显式打开。 */}
         {inspectorNode ? (
@@ -5660,20 +6779,39 @@ function CanvasInner() {
           )
         ) : null}
 
+        {gridSession&&gridSession.canvasId===currentCanvasId&&gridSession.epoch===canvasLoadEpochRef.current&&!loadingCanvas ? <CanvasGridSplit key={gridSession.canvasId+gridSession.item.id+gridSession.raw} item={gridSession.item} onSplit={splitGrid} onClose={()=>setGridSession(null)} english={locale==='en-US'}/> : null}
         {creativePanel && creativePanel.canvasId===currentCanvasId && !loadingCanvas ? (
-          creativePanel.kind==='review' ? <CanvasVersionReview key={currentCanvasId+'review'} history={generationHistory} initialId={creativePanel.initialId} resolveUrl={url=>resolveCanvasMediaUrl(url)||''} onPick={pickReviewImage} onRestore={restoreGenerationHistoryResult} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
-          : creativePanel.kind==='editImage' ? <CanvasImageTools key={currentCanvasId+'image-tools'} item={deliveryItems.length===1&&deliveryItems[0].kind==='image'?deliveryItems[0]:undefined} onSave={saveEditedImage} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
+          creativePanel.kind==='review' ? <CanvasVersionReview key={currentCanvasId+'review'} history={generationHistory} initialId={creativePanel.initialId} resolveUrl={url=>resolveCanvasMediaUrl(url)||''} onPick={pickReviewImage} onRestore={restoreGenerationHistoryResult} onContinue={(entry,index)=>createGenerationDraft(entry,'result',index)} onSave={(entry,index)=>{const image=entry.outputMediaItems?.[index]||(index===0&&entry.outputMediaUrl?{url:entry.outputMediaUrl,thumbnailUrl:entry.outputThumbnailUrl}:null);if(image)void saveHistoryEntryToLibrary({...entry,outputMediaUrl:image.url,outputMediaItems:[image]});}} savingIds={visibleHistorySavingIds} saveNotice={resultSaveNotice?.canvasId===currentCanvasId&&resultSaveNotice.epoch===canvasLoadEpochRef.current?resultSaveNotice:undefined} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
+          : creativePanel.kind==='director' ? <Suspense fallback={<CanvasDialogPortal><div className="canvas-creative-overlay nodrag nopan nowheel"><div className="canvas-creative-dialog" role="status">{locale==='en-US'?'Opening director…':'正在打开导演台…'}</div></div></CanvasDialogPortal>}>{directorDocument ? (visible ? <DirectorWorkspace key={currentCanvasId+'director'} document={directorDocument} onChange={updateDirectorDocument} onExportShot={exportDirectorShot} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} /> : null) : <CanvasDialogPortal><div className="canvas-creative-overlay nodrag nopan nowheel" onKeyDown={event=>event.stopPropagation()}><div className="canvas-creative-dialog" role="alertdialog" aria-modal="true" aria-label={locale==='en-US'?'Director data unavailable':'导演台数据无法读取'}><p>{locale==='en-US'?'This director document is damaged or from an unsupported version. The original data has been preserved; it will not be replaced with an empty scene.':'导演台数据损坏或版本暂不支持。原始数据已保留，不会替换为空场景。'}</p><button type="button" onClick={()=>setCreativePanel(null)}>{locale==='en-US'?'Close':'关闭'}</button></div></div></CanvasDialogPortal>}</Suspense>
+          : creativePanel.kind==='editImage' ? <CanvasImageTools key={currentCanvasId+'image-tools'} initialEdit={creativePanel.imageEdit} item={creativeImageItem} onSave={saveEditedImage} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
           : creativePanel.kind==='export' ? <CanvasDeliveryPanel key={currentCanvasId+'delivery'} items={deliveryItems} onSave={saveMediaArchive} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
+          : creativePanel.kind==='storyboard' ? <CanvasStoryboard key={currentCanvasId+'storyboard'} nodes={nodes} selectedCount={selectedNodeIds.length} onCreate={createStoryboard} onAdd={addStoryboardShot} onPatch={editStoryboardShot} onMove={reorderStoryboardShot} onRemove={removeStoryboardShot} onRename={renameStoryboard} onUnmark={unmarkStoryboard} position={storyboardPosition?.canvasId===currentCanvasId?storyboardPosition:undefined} onNavigate={position=>{if(storyboardPosition?.boardId!==position.boardId)storyboardExportController.current?.abort();if(currentCanvasId)setStoryboardPosition({...position,canvasId:currentCanvasId});}} onPrompt={editStoryboardPrompt} onBuildPrompt={prepareStoryboardPrompt} onGenerate={generateStoryboardShot} generationError={saveError}
+            getCandidates={getStoryboardCandidates} onChooseResult={chooseStoryboardResult} onClearResult={clearStoryboardResult}
+            getReferenceSummary={storyboardReferenceSummary} getReferencePreviews={storyboardReferencePreviews} onEditReferences={editStoryboardReferences} onRemoveReference={removeStoryboardReference} onDuplicate={duplicateStoryboardShot} onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} onImportScript={importStoryboardScript}
+            getImportCapacity={boardId=>SHOT_LIMIT-storyboardShots(nodesRef.current,boardId).length+(reusableStoryboardDraft(nodesRef.current,edgesRef.current,boardId)?1:0)}
+            textSources={nodes.filter(n=>n.data.kind==='text').map(n=>({id:n.id,label:n.data.label.slice(0,60)||'文本',text:n.data.label}))}
+            onExportBoard={boardId=>{void exportStoryboardBoard(boardId);}}
+            exportBusy={!!storyboardExportState?.busy&&storyboardExportState.canvasId===currentCanvasId}
+            exportError={storyboardExportState?.canvasId===currentCanvasId?storyboardExportState.error:null}
+            exportNotice={storyboardExportState?.canvasId===currentCanvasId?storyboardExportState.notice:undefined} resolveUrl={url=>resolveCanvasMediaUrl(url)||''} onLocate={id=>{storyboardExportController.current?.abort();setCreativePanel(null);centerNodeByAbsoluteBounds(id,360,Math.max(reactFlowInstance.getZoom(),.9));const node=nodesRef.current.find(n=>n.id===id);if(node?.data.kind==='generator')openNodeComposer(id);}} onClose={()=>{storyboardExportController.current?.abort();setCreativePanel(null);}} english={locale==='en-US'} />
           : creativePanel.kind==='workflows' ? <CanvasWorkflowLibrary key={currentCanvasId+'workflows'} selectionCount={selectedNodeIds.length} onInsert={insertWorkflow} onExport={exportWorkflow} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
           : <CanvasReferencePacks key={currentCanvasId+'packs'} nodes={nodes} edges={edges} selectedIds={selectedNodeIds} resolveUrl={url=>resolveCanvasMediaUrl(url)||''} onCreate={createReferencePack} onRename={editReferencePack} onUnmark={id=>editReferencePack(id)} onApply={applyReferencePack} onLocate={id=>centerNodeByAbsoluteBounds(id,360,Math.max(reactFlowInstance.getZoom(),.9))} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
         ) : null}
 
+        {!canvasAgentOpen && currentCanvasId && !loadingCanvas && <CanvasAgentOrb busy={canvasAgent.busy || canvasAgentExecution?.status === 'running'} unavailable={canvasAgent.availability === 'unavailable'} english={locale === 'en-US'} onOpen={openCanvasAgent} />}
+        {canvasAgentOpen && currentCanvasId && !loadingCanvas ? <CanvasAgentPanel key={currentCanvasId} draftKey={currentCanvasId} canvasName={currentCanvasName} snapshot={canvasAgent.snapshot} conversations={canvasAgent.conversations} historyLoading={canvasAgent.historyLoading} historyError={canvasAgent.historyError} onLoadConversations={canvasAgent.loadConversations} onSelectConversation={canvasAgent.selectConversation} models={canvasAgent.models} selectedModel={canvasAgent.selectedModel} onSelectModel={model=>{try{canvasAgent.selectModel(model);setCanvasAgentActionError('');}catch(error){setCanvasAgentActionError(canvasAgentErrorMessage(error,locale==='en-US'));}}} modelsError={canvasAgent.modelsError} modelSelectionUnavailable={canvasAgent.modelSelectionUnavailable} modelSelectionLocked={canvasAgent.modelSelectionLocked} contextChips={canvasAgentChips} execution={canvasAgentExecution} busy={canvasAgent.busy||canvasAgentExecution?.status==='running'} error={canvasAgentActionError||canvasAgent.error||undefined} availability={canvasAgent.availability} english={locale==='en-US'} formatError={message=>message.startsWith('canvas-agent-')?canvasAgentErrorMessage(message,locale==='en-US'):message} onRefresh={canvasAgent.refresh} rotationPending={canvasAgent.rotationPending} onNewConversation={async()=>{if(canvasAgentExecution?.status==='running')throw Error('canvas-agent-busy');const changed=await canvasAgent.newConversation();if(changed){setCanvasAgentExecution(null);setCanvasAgentActionError('');}return changed;}} onSend={canvasAgent.send} onCancel={async()=>{canvasAgentExecutionController.current?.abort();await canvasAgent.cancel();}} onApply={applyCanvasAgentProposal} executionNodeIds={canvasAgentExecutionNodeIds} onLocateExecution={locateCanvasAgentExecution} onLocate={nodeId=>{if(canvasAgentNavigationOwner?.canvasId===currentCanvasIdRef.current&&canvasAgentNavigationOwner?.loadEpoch===canvasLoadEpochRef.current)centerNodeByAbsoluteBounds(nodeId,360,Math.max(reactFlowInstance.getZoom(),.9));}} onRemoveContext={id=>{setCanvasAgentContextIds(current=>current.filter(value=>value!==id));setCanvasAgentActionError('');}} pickingContext={canvasAgentPicking} onPickContext={()=>{stopCanvasFocus();setComposerNodeId(null);setCanvasAgentPicking(value=>!value);viewportStageRef.current?.focus({preventScroll:true});}} onCollapsedChange={collapsed=>{setCanvasAgentCollapsed(collapsed);setCanvasAgentPicking(false);}} onClose={()=>{setCanvasAgentOpen(false);setCanvasAgentCollapsed(false);}} /> : null}
+
         {/* 素材/笔记选择器 */}
         {showAssetPicker ? (
-          <Picker
+          <CanvasLibraryPicker
+            portalHost={creativePanel?.kind === 'storyboard' ? undefined : editorBodyRef.current}
+            english={locale === "en-US"}
+            resolveUrl={resolveCanvasMediaUrl}
             title={assetPickerMediaKind === "video" ? t("editor.canvas.picker.selectVideo") : assetPickerMediaKind === "image" ? t("editor.canvas.picker.selectImage") : t("editor.canvas.picker.selectMaterial")}
             variant="asset"
             items={assets}
+            folders={assetFolders}
+            error={pickerError}
             loading={pickerLoading}
             onPick={pickAsset}
             onImport={bridge?.importAssets ? importAssetFromPicker : undefined}
@@ -5690,10 +6828,15 @@ function CanvasInner() {
           />
         ) : null}
         {showNotePicker ? (
-          <Picker
+          <CanvasLibraryPicker
+            portalHost={editorBodyRef.current}
+            english={locale === "en-US"}
+            resolveUrl={resolveCanvasMediaUrl}
             title={t("editor.canvas.picker.selectNote")}
             variant="note"
             items={notes}
+            folders={noteFolders}
+            error={pickerError}
             loading={pickerLoading}
             onPick={pickNote}
             onClose={() => { setShowNotePicker(false); setPickerCreatePosition(null); }}
@@ -5701,6 +6844,8 @@ function CanvasInner() {
             emptyText={t("editor.canvas.picker.emptyKnowledge")}
           />
         ) : null}
+
+        {materialDestinationRequest ? <CanvasLibraryDestinationDialog initialNames={materialDestinationRequest.names} snapshot={materialDestinationRequest.snapshot} loading={materialDestinationRequest.loading} error={materialDestinationRequest.error} english={locale === 'en-US'} onConfirm={finishMaterialDestination} onCancel={() => finishMaterialDestination(null)} onRetry={() => { void loadMaterialDestination(); }} /> : null}
 
         {createCanvasOpen ? (
           <div
@@ -5815,16 +6960,7 @@ function CanvasInner() {
           </div>
         ) : null}
         {selectedNodeIds.length > 1 || canUngroupSelectedNodes ? (
-          <div className="canvas-multi-selection-bar nodrag nopan" data-tauri-no-drag="true">
-            <span>{canUngroupSelectedNodes && selectedNodeIds.length === 1 ? t("editor.canvas.selection.groupSelected") : t("editor.canvas.selection.nodes", { count: selectedNodeIds.length })}</span>
-            <i />
-            {canGroupSelectedNodes ? <button type="button" onClick={groupSelectedNodes}><ToolIcon type="group" />{t("editor.canvas.selection.group")}</button> : null}
-            {canUngroupSelectedNodes ? <button type="button" onClick={ungroupSelectedNodes}><ToolIcon type="ungroup" />{t("editor.canvas.selection.ungroup")}</button> : null}
-            {!canUngroupSelectedNodes ? <button type="button" onClick={alignSelectedLeft} disabled={!canTransformSelectedNodes || selectedNodeIds.length < 2} title={!canTransformSelectedNodes ? t("editor.canvas.selection.sameSpace") : undefined}>{t("editor.canvas.selection.alignLeft")}</button> : null}
-            {!canUngroupSelectedNodes ? <button type="button" onClick={distributeSelectedHorizontal} disabled={!canTransformSelectedNodes || selectedNodeIds.length < 3} title={!canTransformSelectedNodes ? t("editor.canvas.selection.sameSpace") : undefined}>{t("editor.canvas.selection.distribute")}</button> : null}
-            <button type="button" onClick={duplicateSelected}><ToolIcon type="duplicate" />{t("editor.canvas.selection.copy")}</button>
-            <button type="button" className="danger" onClick={deleteSelectedNode}><ToolIcon type="delete" />{t("editor.canvas.selection.delete")}</button>
-          </div>
+          <CanvasSelectionToolbar key={JSON.stringify([...selectedNodeIds].sort())} count={selectedNodeIds.length} layoutCount={selectedLayoutRoots(nodes,selectedNodeIds)?.length ?? 0} canGroup={canGroupSelectedNodes} canUngroup={canUngroupSelectedNodes} canLayout={canTransformSelectedNodes} allowedLayouts={(["left","centerX","right","top","centerY","bottom","distributeX","distributeY"] as LayoutCommand[]).filter(kind => !!planSelectionLayout(nodes,selectedNodeIds,kind)?.changed)} english={locale === "en-US"} onGroup={groupSelectedNodes} onUngroup={ungroupSelectedNodes} onLayout={layoutSelected} onArrange={arrangeCanvas} onDuplicate={duplicateSelected} onDelete={deleteSelectedNode} onClear={() => {setSelectedNodeIds([]);setNodes(current => synchronizeCanvasNodeSelection(current,[]));setSelectionContextMenu(null);}} context={selectionContextMenu} onDismissContext={() => setSelectionContextMenu(null)} />
         ) : null}
       </div>
 
@@ -5845,7 +6981,7 @@ function CanvasInner() {
           </>
         ) : null}
       </div>
-    </div>
+    </div></CanvasMotionProvider></CanvasDialogScopeProvider>
   );
 }
 
@@ -5879,6 +7015,113 @@ function resolveTextGenerationPrompt(node: SpikeNode): string {
   return `待处理文本：\n${cardText}\n\n生成要求：\n${composerPrompt}`;
 }
 
+function referenceForCanvasNode(source: SpikeNode): GenerationReference {
+  const capabilities = getCanvasNodeCapabilities(source.data);
+  const kind =
+    capabilities.contentKind === "note"
+      ? "note"
+      : source.data.refKind || capabilities.contentKind;
+  const text =
+    kind === "note"
+      ? (source.data.refContextText ?? source.data.refSummary ?? "")
+      : kind === "text"
+        ? source.data.kind === "aiResult"
+          ? source.data.result || ""
+          : TEXT_NODE_PLACEHOLDER_LABELS.has(source.data.label.trim())
+            ? ""
+            : source.data.label
+        : undefined;
+  const mediaUrl = source.data.refMediaUrl || source.data.resultMediaUrl;
+  const issue: ReferenceIssue | undefined = hasInvalidCanvasReference(
+    source.data,
+  )
+    ? "invalid-source"
+    : (kind === "image" || kind === "video") && !mediaUrl
+      ? "missing-media"
+      : undefined;
+  return {
+    id: source.data.payload || `node:${source.id}`,
+    sourceNodeId: source.id,
+    label: source.data.label,
+    kind,
+    thumbnailUrl: source.data.refThumbnailUrl || source.data.resultThumbnailUrl,
+    mediaUrl,
+    text,
+    issue,
+  };
+}
+function storedCanvasReferences(node: SpikeNode): GenerationReference[] {
+  return Array.isArray(node.data.generationReferences)
+    ? node.data.generationReferences
+    : (node.data.kind === "image" || node.data.kind === "video") &&
+        node.data.payload
+      ? [
+          {
+            id: node.data.payload,
+            label: node.data.label,
+            kind: node.data.refKind || node.data.kind,
+            thumbnailUrl: node.data.refThumbnailUrl,
+            mediaUrl: node.data.refMediaUrl,
+          },
+        ]
+      : [];
+}
+function resolveStoredCanvasReferences(
+  node: SpikeNode,
+  nodes: SpikeNode[],
+): GenerationReference[] {
+  return storedCanvasReferences(node).map((ref) => {
+    const sourceId = referenceSourceId(ref);
+    if (!sourceId) return ref;
+    const source = nodes.find((item) => item.id === sourceId);
+    if (!source) return { ...ref, issue: "missing-source" };
+    const fresh = referenceForCanvasNode(source);
+    return { ...fresh, id: ref.id, mentionKey: ref.mentionKey, role: ref.role, sourceNodeId: sourceId };
+  });
+}
+
+function resolveCanvasConnectionData(
+  sourceData: SpikeNodeData,
+  targetData: SpikeNodeData,
+  targetId: string,
+  current: SpikeEdge[],
+  nodes: SpikeNode[],
+) {
+  const target = nodes.find((node) => node.id === targetId);
+  const inputs = current
+    .filter(
+      (edge) =>
+        edge.target === targetId && edge.data?.relation !== "derivation",
+    )
+    .map((edge) => {
+      const source = nodes.find((node) => node.id === edge.source);
+      return {
+        edgeId: edge.id,
+        sourceNodeId: edge.source,
+        role: edge.data?.role || "generic",
+        reference: source
+          ? resolvePinnedFocusReference(source, referenceForCanvasNode(source), edge.data?.referenceMediaUrl)
+          : { id: `node:${edge.source}`, label: "", kind: "unknown" },
+      };
+    });
+  const stored = target ? resolveStoredCanvasReferences(target, nodes) : [];
+  const reserved = createCanvasReferencePlan(
+    target ? inferGenerationKind(target) : targetData.generationKind || "text",
+    inputs,
+    stored,
+  )
+    .filter((entry) => entry.source === "stored")
+    .map((entry) => ({
+      source: entry.key,
+      target: targetId,
+      data: { role: entry.role },
+    }));
+  return resolveCanvasEdgeSemanticData(sourceData, targetData, targetId, [
+    ...current,
+    ...reserved,
+  ]);
+}
+
 function createGenerationRequestSnapshot(
   node: SpikeNode,
   connectedInputs: ConnectedGenerationInput[],
@@ -5890,6 +7133,7 @@ function createGenerationRequestSnapshot(
   defaultVideoModel = "",
   mediaProfile: CanvasMediaProfile | null = null,
   includeNoteTitles = false,
+  resolvedStoredReferences?: GenerationReference[],
 ): CanvasGenerationRequestSnapshot {
   const kind = inferGenerationKind(node);
   const models = kind === "text" ? [...textModels] : kind === "video" ? [...videoModels] : [...imageModels];
@@ -5902,31 +7146,13 @@ function createGenerationRequestSnapshot(
         thumbnailUrl: node.data.refThumbnailUrl,
         mediaUrl: node.data.refMediaUrl,
       }] : [];
-  const occupiedRoles = new Set(connectedInputs.map((input) => input.role));
-  const connectedIds = new Set(connectedInputs.map((input) => input.reference.id));
-  const references: CanvasGenerationRequestSnapshot["references"] = connectedInputs.map((input) => ({
-    ...input.reference,
-    sourceNodeId: input.sourceNodeId,
-    role: input.role,
-  }));
+  const inputPlan = createCanvasReferencePlan(kind, connectedInputs, resolvedStoredReferences ?? storedReferences,kind === "video" ? mediaProfile?.videoProtocol : mediaProfile?.imageProtocol,node.data.generationInputOrder);
+  const mentioned = compileMentionedPrompt(node.data.generationPrompt || "",inputPlan,{kind,includeNoteTitles});
+  const references = canvasReferenceSnapshots(inputPlan);
+  const editor = captureGenerationEditorSnapshot(node.data.generationPrompt || "", inputPlan.filter(entry=>!entry.issue).map(entry=>entry.key), node.data.generationCinematography, node.data.generationCreativeRecipe);
+  const promptNode = {...node,data:{...node.data,generationPrompt:mentioned.prompt}};
 
-  for (const reference of storedReferences) {
-    if (connectedIds.has(reference.id)) continue;
-    let role: CanvasEdgeRole = isCanvasEdgeRole(reference.role) ? reference.role : "reference";
-    if (!isCanvasEdgeRole(reference.role)) {
-      if (reference.kind === "text" || reference.kind === "note") role = "promptContext";
-      else if (kind === "video" && reference.kind === "video") role = "videoReference";
-      else if (kind === "video" && !occupiedRoles.has("firstFrame")) role = "firstFrame";
-      else if (kind === "video" && !occupiedRoles.has("lastFrame")) role = "lastFrame";
-    }
-    occupiedRoles.add(role);
-    references.push({
-      ...reference,
-      sourceNodeId: /^node:([^:]+)/.exec(reference.id)?.[1],
-      role,
-    });
-  }
-
+  if (node.data.sourceGenerationHistoryId && node.data.generationModel && !models.includes(node.data.generationModel)) throw Error("historical-model-unavailable");
   const model = models.includes(node.data.generationModel || "")
     ? node.data.generationModel!
     : kind === "text" ? defaultTextModel || models[0] || ""
@@ -5935,13 +7161,16 @@ function createGenerationRequestSnapshot(
   if (kind === "text") {
     const compiled = compileCanvasGenerationInputs({
       kind,
-      prompt: resolveTextGenerationPrompt(node),
+      prompt: resolveTextGenerationPrompt(promptNode),
       references,
       includeNoteTitles,
+      referenceAliases: mentioned.referenceAliases,
     });
     return {
       kind,
       prompt: compiled.prompt,
+      sourcePrompt: node.data.generationPrompt || "",
+      editor,
       model,
       references: compiled.references,
     };
@@ -5951,15 +7180,28 @@ function createGenerationRequestSnapshot(
   const aspect = mediaOption(capabilities.aspects, node.data.generationAspect);
   const quality = mediaQualityOption(capabilities.qualities, node.data.generationQuality);
 
+  let directedPrompt=mentioned.prompt.trim();
+  if(node.data.generationCreativeRecipe!==undefined){
+    if(kind!=="image")throw Error("invalid-creative-recipe");
+    const hasImageReference=references.some(ref=>ref.kind==='image'&&!!ref.mediaUrl?.trim());
+    const hasPrompt=parseReferenceMentions(node.data.generationPrompt||"").some(part=>part.type==='text'&&!!part.text.trim())||references.some(ref=>(ref.kind==='text'||ref.kind==='note')&&!!ref.text?.trim());
+    const recipeError=validateCreativeRecipeInput(node.data.generationCreativeRecipe,{hasImageReference,hasPrompt});
+    if(recipeError)throw Error(recipeError==='image-required'?'creative-reference-required':recipeError==='prompt-required'?'creative-prompt-required':'invalid-creative-recipe');
+    directedPrompt=compileCreativeRecipePrompt(directedPrompt,node.data.generationCreativeRecipe,{hasImageReference,hasPrompt});
+  }
+  directedPrompt=compileCinematographyPrompt(directedPrompt,node.data.generationCinematography,kind);
   const compiled = compileCanvasGenerationInputs({
     kind,
-    prompt: node.data.generationPrompt?.trim() || "",
+    prompt: directedPrompt,
     references,
     includeNoteTitles,
+    referenceAliases: mentioned.referenceAliases,
   });
   return {
     kind,
     prompt: compiled.prompt,
+    sourcePrompt: node.data.generationPrompt || "",
+    editor,
     model,
     aspect,
     quality,
@@ -5977,12 +7219,14 @@ function MaterialCompactComposer({
   onDataChange,
   onAddReference,
   connectedInputs = [],
-  canvasReferenceCandidates = [],
-  onSelectCanvasReference,
-  onConnectedRoleChange,
+  onToggleFocus,
+  onCreateCreative,
+  focusMode = false,
+  focusBusy = false,
   onRemoveConnectedInput,
-  onMoveConnectedInput,
+  onReorderReferences,
   onSubmit,
+  onCancel,
   textModels = [],
   textModelsReady = true,
   textProviderLabel = "",
@@ -5992,17 +7236,22 @@ function MaterialCompactComposer({
   defaultVideoModel = "",
   mediaProfile = null,
   embedded = false,
+  screenSpace = false,
+  resolvedStoredReferences,
+  includeNoteTitles = false,
 }: {
   node: SpikeNode;
   onDataChange: (patch: Partial<SpikeNodeData>) => void;
   onAddReference: (role?: CanvasEdgeRole) => void;
   connectedInputs?: ConnectedGenerationInput[];
-  canvasReferenceCandidates?: CanvasReferenceCandidate[];
-  onSelectCanvasReference?: (candidate: CanvasReferenceCandidate, role: CanvasEdgeRole) => void;
-  onConnectedRoleChange?: (edgeId: string, role: CanvasEdgeRole) => void;
+  onToggleFocus?: () => void;
+  onCreateCreative?: (recipe:ImageCreativeRecipe)=>void;
+  focusMode?: boolean;
+  focusBusy?: boolean;
   onRemoveConnectedInput?: (edgeId: string) => void;
-  onMoveConnectedInput?: (edgeId: string, delta: number) => void;
+  onReorderReferences?: (from:string,to:string)=>void;
   onSubmit?: () => void;
+  onCancel?: () => void;
   textModels?: readonly string[];
   textModelsReady?: boolean;
   textProviderLabel?: string;
@@ -6012,10 +7261,13 @@ function MaterialCompactComposer({
   defaultVideoModel?: string;
   mediaProfile?: CanvasMediaProfile | null;
   embedded?: boolean;
+  screenSpace?: boolean;
+  resolvedStoredReferences?: GenerationReference[];
+  includeNoteTitles?: boolean;
 }) {
   const { t, locale } = useI18n();
   const { zoom } = useViewport();
-  const viewScale = embedded ? 1 : Math.min(2.25, Math.max(1, Math.pow(1 / Math.max(zoom, .1), .95)));
+  const viewScale = embedded || screenSpace ? 1 : Math.min(2.25, Math.max(1, Math.pow(1 / Math.max(zoom, .1), .95)));
   const isVideo = node.data.kind === "video"
     || node.data.generationKind === "video"
     || (node.data.kind === "aiResult" && node.data.resultKind === "video");
@@ -6024,7 +7276,7 @@ function MaterialCompactComposer({
     || (node.data.kind === "aiResult" && node.data.resultKind === "image");
   const isText = !isVideo && !isImage;
   const models = isText ? [...textModels] : isVideo ? [...videoModels] : [...imageModels];
-  const model = models.includes(node.data.generationModel || "")
+  const model = node.data.sourceGenerationHistoryId && node.data.generationModel ? node.data.generationModel : models.includes(node.data.generationModel || "")
     ? node.data.generationModel!
     : isImage ? defaultImageModel || models[0] || node.data.generationModel || t("editor.canvas.generation.modelUnavailable")
       : isVideo ? defaultVideoModel || models[0] || node.data.generationModel || t("editor.canvas.generation.modelUnavailable")
@@ -6051,47 +7303,32 @@ function MaterialCompactComposer({
       thumbnailUrl: node.data.refThumbnailUrl,
       mediaUrl: node.data.refMediaUrl,
     }] : [];
-  const connectedReferenceIds = new Set(connectedInputs.map((input) => input.reference.id));
-  const references = storedReferences.filter((reference) => !connectedReferenceIds.has(reference.id));
-  const inputCount = connectedInputs.length + references.length;
-  const inferredStoredRoles = (() => {
-    const occupied = new Set(connectedInputs.map((input) => input.role));
-    return references.map((reference): CanvasEdgeRole => {
-      if (isCanvasEdgeRole(reference.role)) {
-        occupied.add(reference.role);
-        return reference.role;
-      }
-      if (!isVideo) return reference.kind === "text" || reference.kind === "note" ? "promptContext" : "reference";
-      if (reference.kind === "video") return "videoReference";
-      if (reference.kind === "text" || reference.kind === "note") return "promptContext";
-      if (!occupied.has("firstFrame")) {
-        occupied.add("firstFrame");
-        return "firstFrame";
-      }
-      if (!occupied.has("lastFrame")) {
-        occupied.add("lastFrame");
-        return "lastFrame";
-      }
-      return "reference";
-    });
-  })();
-  const [openPanel, setOpenPanel] = useState<"model" | "settings" | null>(null);
+  const referenceEntries=createCanvasReferencePlan(isText ? "text" : isVideo ? "video" : "image",connectedInputs,resolvedStoredReferences ?? storedReferences,isVideo ? mediaProfile?.videoProtocol : mediaProfile?.imageProtocol,node.data.generationInputOrder);
+  const inputCount=referenceEntries.length;
+  const [openReference,setOpenReference]=useState<string|null>(null);
+  const [openPanel, setOpenPanel] = useState<"model" | "settings" | "camera" | "creative" | null>(null);
   const [popoverDirection, setPopoverDirection] = useState<"up" | "down">("up");
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(520);
-  const [focusEditorOpen, setFocusEditorOpen] = useState(false);
-  const [showHint, setShowHint] = useState(false);
+  const promptEditorRef = useRef<CanvasPromptEditorHandle>(null);
+  const pendingReferenceKeys = useRef<GenerationReference[] | null>(null);
+  const stableStoredReferences = () => storedReferences.map((ref,index)=>({...ref,mentionKey:referenceEntries.find(entry=>entry.storedIndex===index)?.key || ref.mentionKey}));
   const composerRef = useRef<HTMLDivElement>(null);
+  const popoverAnchorRef = useRef<HTMLElement>(null);
+  const popoverPortalRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!openPanel && !focusEditorOpen) return;
+    if (!openPanel && !openReference) return;
     const closeOverlays = (event: globalThis.PointerEvent) => {
-      if (composerRef.current?.contains(event.target as globalThis.Node)) return;
+      if (composerRef.current?.contains(event.target as globalThis.Node) || popoverPortalRef.current?.contains(event.target as globalThis.Node)) return;
       setOpenPanel(null);
-      setFocusEditorOpen(false);
+      setOpenReference(null);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
+      // A retained, hidden workspace must not consume another page's Escape.
+      if (!composerRef.current?.getClientRects().length) return;
       if (event.key !== "Escape") return;
+      event.preventDefault(); event.stopPropagation();
       setOpenPanel(null);
-      setFocusEditorOpen(false);
+      setOpenReference(null);
     };
     document.addEventListener("pointerdown", closeOverlays, true);
     document.addEventListener("keydown", closeOnEscape);
@@ -6099,13 +7336,14 @@ function MaterialCompactComposer({
       document.removeEventListener("pointerdown", closeOverlays, true);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [focusEditorOpen, openPanel]);
+  }, [openPanel, openReference]);
   useEffect(() => {
     setOpenPanel(null);
-    setFocusEditorOpen(false);
+    setOpenReference(null);
   }, [node.id]);
-  const togglePanel = (event: ReactMouseEvent<HTMLButtonElement>, panel: "model" | "settings") => {
-    setFocusEditorOpen(false);
+  const togglePanel = (event: ReactMouseEvent<HTMLButtonElement>, panel: "model" | "settings" | "camera" | "creative") => {
+    popoverAnchorRef.current = event.currentTarget;
+    setOpenReference(null);
     if (openPanel === panel) {
       setOpenPanel(null);
       return;
@@ -6120,109 +7358,53 @@ function MaterialCompactComposer({
     setOpenPanel(panel);
   };
   const commit = (patch: Partial<SpikeNodeData>) => {
-    setShowHint(false);
-    onDataChange(patch);
+    const keyed=pendingReferenceKeys.current; pendingReferenceKeys.current=null;
+    onDataChange({...keyed ? {generationReferences:keyed} : {},...patch});
   };
   const removeReference = (index: number) => {
-    commit({ generationReferences: references.filter((_, itemIndex) => itemIndex !== index) });
+    commit({ generationReferences: stableStoredReferences().filter((_, itemIndex) => itemIndex !== index) });
   };
   const roleLabel = (role: CanvasEdgeRole) => role === "firstFrame" ? t("editor.canvas.generation.firstFrame")
     : role === "lastFrame" ? t("editor.canvas.generation.lastFrame")
     : role === "videoReference" ? t("editor.canvas.type.video")
     : role === "promptContext" ? t("editor.canvas.generation.context")
     : t("editor.canvas.generation.reference");
-  const unsortedReferenceEntries: ComposerReferenceEntry[] = [
-    ...connectedInputs.map((input) => ({
-      key: input.edgeId,
-      source: "connected" as const,
-      role: input.role,
-      reference: input.reference,
-      edgeId: input.edgeId,
-    })),
-    ...references.map((reference, index) => ({
-      key: `stored:${reference.id}:${index}`,
-      source: "stored" as const,
-      role: inferredStoredRoles[index],
-      reference,
-      storedIndex: index,
-    })),
-  ];
-  const referenceOrder = orderCanvasGenerationReferences(unsortedReferenceEntries.map(entry => ({...entry.reference, id: entry.key, role: entry.role}))).map(ref => ref.id);
-  const referenceEntries = referenceOrder.map(key => unsortedReferenceEntries.find(entry => entry.key === key)!);
   const imageEntries = referenceEntries.filter(entry => entry.reference.kind === "image");
-  const selectedCanvasReferenceNodeIds = new Set([
-    ...connectedInputs.map((input) => input.sourceNodeId),
-    ...references.map((reference) => /^node:([^:]+):/.exec(reference.id)?.[1]).filter((id): id is string => !!id),
-  ]);
-  const firstFrameEntry = referenceEntries.find((entry) => entry.role === "firstFrame");
-  const lastFrameEntry = referenceEntries.find((entry) => entry.role === "lastFrame");
-  const otherReferenceEntries = isVideo
-    ? referenceEntries.filter((entry) => entry !== firstFrameEntry && entry !== lastFrameEntry)
-    : referenceEntries;
-  const renderReferenceEntry = (entry: ComposerReferenceEntry) => {
-    const { reference } = entry;
-
-    const canCycleRole = entry.source === "connected" && isVideo && reference.kind === "image" && !!onConnectedRoleChange;
-    const peers = referenceEntries.filter(item => item.source === entry.source && item.role === entry.role);
-    const peerIndex = peers.indexOf(entry);
-    const move = (delta: number) => {
-      if (entry.source === "connected") { if (entry.edgeId) onMoveConnectedInput?.(entry.edgeId, delta); return; }
-      const other = peers[peerIndex + delta];
-      if (!other || entry.storedIndex === undefined || other.storedIndex === undefined) return;
-      const next = references.map((ref,index) => ({...ref,role: inferredStoredRoles[index]}));
-      [next[entry.storedIndex], next[other.storedIndex]] = [next[other.storedIndex], next[entry.storedIndex]];
-      commit({generationReferences: next});
-    };
-    const connectedInput = entry.source === "connected"
-      ? connectedInputs.find((input) => input.edgeId === entry.edgeId)
-      : null;
-    return (
-      <span
-        className={`canvas-composer-reference-item ${entry.source === "connected" ? "is-connected" : ""}`}
-        key={entry.key}
-        data-reference-label={roleLabel(entry.role)}
-      >
-        {reference.kind === "image" || reference.kind === "video" ? <CanvasReferencePreview thumbnail={reference.thumbnailUrl} original={reference.kind === "image" ? reference.mediaUrl : undefined} label={reference.label} unavailable={locale === "en-US" ? "Unavailable" : "图片失效"} /> : <ToolIcon type="text" />}
-        {reference.kind === "image" ? <b className="canvas-reference-number">{imageEntries.indexOf(entry) + 1}</b> : null}
-        {peers.length > 1 && (entry.source === "stored" || onMoveConnectedInput) ? <span className="canvas-reference-order">
-          <button type="button" disabled={peerIndex === 0} onClick={() => move(-1)} aria-label={t("editor.canvas.generation.moveForward")}>‹</button>
-          <button type="button" disabled={peerIndex === peers.length - 1} onClick={() => move(1)} aria-label={t("editor.canvas.generation.moveBack")}>›</button>
-        </span> : null}
-        {entry.source === "connected" && canCycleRole ? (
-          <button
-            type="button"
-            className="canvas-composer-reference-role is-switchable"
-            onClick={() => connectedInput && cycleConnectedRole(connectedInput)}
-            aria-label={t("editor.canvas.generation.switchRole", { label: reference.label, role: roleLabel(entry.role) })}
-          />
-        ) : null}
-        <button
-          type="button"
-          className="canvas-composer-reference-remove"
-          onClick={() => entry.source === "connected"
-            ? entry.edgeId && onRemoveConnectedInput?.(entry.edgeId)
-            : typeof entry.storedIndex === "number" && removeReference(entry.storedIndex)}
-          aria-label={entry.source === "connected" ? t("editor.canvas.generation.disconnectReference") : t("editor.canvas.generation.removeReference")}
-        >×</button>
-      </span>
-    );
-  };
-  const cycleConnectedRole = (input: ConnectedGenerationInput) => {
-    if (!isVideo || input.reference.kind !== "image" || !onConnectedRoleChange) return;
-    const nextRole: CanvasEdgeRole = input.role === "firstFrame"
-      ? "lastFrame"
-      : input.role === "lastFrame" ? "reference" : "firstFrame";
-    onConnectedRoleChange(input.edgeId, nextRole);
+  const firstFrameEntry = referenceEntries.find((entry) => (entry.effectiveRole||entry.role) === "firstFrame");
+  const lastFrameEntry = referenceEntries.find((entry) => (entry.effectiveRole||entry.role) === "lastFrame");
+  const otherReferenceEntries = referenceEntries;
+  const selectedReference=referenceEntries.find(entry=>entry.key===openReference);
+  const referenceDrag = useReferencePointerReorder(node.id, referenceEntries, onReorderReferences, () => setOpenReference(null));
+  const {suppressClick:suppressReferenceClick,dragKey:dragReferenceKey,dropKey:dropReferenceKey}=referenceDrag;
+  const renderReferenceEntry=(entry:ComposerReferenceEntry)=>{
+    const ref=entry.reference,media=ref.kind==='image'||ref.kind==='video';
+    const showPreview=(anchor:HTMLElement)=>{if(dragReferenceKey)return;popoverAnchorRef.current=anchor;setOpenPanel(null);setOpenReference(entry.key);};
+    return <span className={`canvas-composer-reference-item ${entry.source==='connected'?'is-connected':''} ${entry.issue?'is-unavailable':''} ${dragReferenceKey===entry.key?'is-dragging':''} ${dropReferenceKey===entry.key?'is-drop-target':''}`} key={entry.key} data-reference-key={entry.key} data-reference-label={roleLabel(entry.effectiveRole||entry.role)} onMouseLeave={()=>setOpenReference(null)}>
+      <button type="button" className="canvas-reference-open" draggable={false} aria-label={`${ref.label} · ${roleLabel(entry.role)}`} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" onMouseEnter={event=>showPreview(event.currentTarget)} onFocus={event=>showPreview(event.currentTarget)} onBlur={()=>setOpenReference(null)} onPointerDown={event=>referenceDrag.pointerDown(event,entry.key)} onPointerMove={referenceDrag.pointerMove} onPointerUp={referenceDrag.pointerUp} onPointerCancel={referenceDrag.pointerCancel} onLostPointerCapture={referenceDrag.pointerCancel} onClick={event=>{if(suppressReferenceClick.current){event.preventDefault();event.stopPropagation();return;}if(!dragReferenceKey){pendingReferenceKeys.current=stableStoredReferences();promptEditorRef.current?.insertReference(entry.key);}}}
+       onDragStart={event=>event.preventDefault()}
+       onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')suppressReferenceClick.current=false;if(!event.altKey||!['ArrowLeft','ArrowRight'].includes(event.key)||!onReorderReferences)return;const peers=referenceEntries.filter(item=>item.role===entry.role),index=peers.indexOf(entry),other=peers[index+(event.key==='ArrowLeft'?-1:1)];if(other){event.preventDefault();event.stopPropagation();onReorderReferences(entry.key,other.key);}}}>
+        {media?<CanvasReferencePreview thumbnail={ref.thumbnailUrl} original={ref.kind==='image'?ref.mediaUrl:undefined} label={ref.label} unavailable={locale==='en-US'?'No preview':'无预览'}/>:<svg className="canvas-reference-text-glyph" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M5 6h14M5 12h9M5 18h12"/></svg>}
+      </button>
+      {ref.kind==='image'&&!isText?<b className="canvas-reference-number">{imageEntries.indexOf(entry)+1}</b>:null}
+      <button type="button" className="canvas-composer-reference-remove" onClick={()=>{setOpenReference(null);if(entry.source==='connected'){if(entry.edgeId)onRemoveConnectedInput?.(entry.edgeId);}else if(entry.storedIndex!==undefined)removeReference(entry.storedIndex);}} aria-label={entry.source==='connected'?t("editor.canvas.generation.disconnectReference"):t("editor.canvas.generation.removeReference")}>×</button>
+    </span>;
   };
   const summary = !isText && capabilities.promptOnly ? "模型默认参数" : isVideo
-    ? `${aspect} · ${mediaParameterLabel(quality, parameterKind)} · ${duration}s${supportsSoundControl && node.data.generationSound ? ` · ${t("editor.canvas.generation.sound")}` : ""}`
+    ? videoParameterSummary({aspect,quality:mediaParameterLabel(quality, parameterKind),duration,sound:supportsSoundControl && node.data.generationSound ? t("editor.canvas.generation.sound") : undefined}) || (locale === 'en-US' ? 'Model defaults' : '模型默认参数')
     : isText ? "1×" : t("editor.canvas.generation.imageSummary", { aspect, quality: [aspect !== "auto" ? resolution : undefined, mediaParameterLabel(quality, parameterKind)].filter(Boolean).join(" · "), count });
-  const compiledRequest = createGenerationRequestSnapshot(node, connectedInputs, textModels, textModels[0] || "", imageModels, defaultImageModel, videoModels, defaultVideoModel, mediaProfile);
+  const mentionError = validateReferenceMentions(node.data.generationPrompt || "",referenceEntries);
+  let generationInputError=mentionError?.message || "";
+  let creativeNeedsInput=false;
+  let compiledRequest:Pick<CanvasGenerationRequestSnapshot,'prompt'|'references'>={prompt:"",references:[]};
+  if(!generationInputError){try{compiledRequest=createGenerationRequestSnapshot(node, connectedInputs, textModels, textModels[0] || "", imageModels, defaultImageModel, videoModels, defaultVideoModel, mediaProfile, includeNoteTitles, resolvedStoredReferences);}catch(error){const code=error instanceof Error?error.message:'';creativeNeedsInput=code==='creative-prompt-required'||code==='creative-reference-required';generationInputError=code==='historical-model-unavailable'?(locale==='en-US'?'The original model is unavailable in this connection. Select a model to continue.':'当前配置没有原生成模型，请选择模型后继续。'):code==='creative-prompt-required'?(locale==='en-US'?'Describe your subject, or add a text/image reference.':'描述要创作的主体，或添加文本/图片参考。'):code==='creative-reference-required'?(locale==='en-US'?'Add an image reference to use this editing preset.':'此编辑预设需要先添加参考图片。'):(locale==='en-US'?'Check or remove the creative preset.':'请检查或移除该创作预设。');}}
+
   const busy = !!node.data.generationTask && canCancelCanvasGenerationTask(node.data.generationTask);
+  const submissionLabel = canvasGenerationSubmissionLabel(node.data.generationTask, locale === 'en-US');
+  const hasComposerSettings = !capabilities.promptOnly && !!(capabilities.aspects.length || qualities.length || resolutions.length || capabilities.durations.length || supportsSoundControl || capabilities.camera || (!isVideo && imageGenerationCounts.length > 1));
   const configured = isText ? textModelsReady && models.length > 0
     : models.length > 0 && !!mediaProfile?.apiKeyConfigured && (isVideo ? mediaProfile.videoProtocol : mediaProfile.imageProtocol) !== "disabled";
   const hasContent = !!compiledRequest.prompt.trim() || (!isText && compiledRequest.references.some(ref => ref.kind === "image" && !!ref.mediaUrl));
-  const canSubmit = configured && hasContent && !busy;
+  const canSubmit = configured && hasContent && !busy && !generationInputError && !referenceEntries.some(entry=>entry.issue);
 
   return (
     <div
@@ -6231,53 +7413,21 @@ function MaterialCompactComposer({
       style={{ "--composer-view-scale": viewScale } as React.CSSProperties}
     >
       <div className={`canvas-composer-reference-row ${embedded ? "canvas-node-drag-handle" : ""}`}>
-        <div className="canvas-composer-reference-strip nodrag nopan">
+        <div ref={referenceDrag.stripRef} className="canvas-composer-reference-strip nodrag nopan">
           <div className="canvas-composer-focus-anchor">
-            <button
-              type="button"
-              className={`canvas-composer-assist ${focusEditorOpen ? "is-active" : ""}`}
-              onClick={() => { setOpenPanel(null); setFocusEditorOpen((open) => !open); }}
-              title={t("editor.canvas.generation.focusEdit")}
-              aria-label={t("editor.canvas.generation.focusEditAria")}
-            ><ToolIcon type="focusEdit" /></button>
-            {focusEditorOpen ? (
-              <div className="canvas-composer-focus-popover">
-                <div><strong>{t("editor.canvas.generation.focusEdit")}</strong><small>{t("editor.canvas.generation.focusEditHint")}</small></div>
-                <section>
-                  {canvasReferenceCandidates.length ? canvasReferenceCandidates.map((candidate) => {
-
-                    const alreadySelected = selectedCanvasReferenceNodeIds.has(candidate.nodeId);
-                    return (
-                      <button
-                        type="button"
-                        key={candidate.nodeId}
-                        className={alreadySelected ? "is-selected" : ""}
-                        disabled={inputCount >= 4 && !alreadySelected}
-                        onClick={() => {
-                          const role: CanvasEdgeRole = isVideo
-                            ? !firstFrameEntry ? "firstFrame" : !lastFrameEntry ? "lastFrame" : "reference"
-                            : "reference";
-                          onSelectCanvasReference?.(candidate, role);
-                          setFocusEditorOpen(false);
-                        }}
-                      >
-                        <span><CanvasReferencePreview thumbnail={candidate.thumbnailUrl} original={candidate.kind === "image" ? candidate.mediaUrl : undefined} label={candidate.label} unavailable={locale === "en-US" ? "Unavailable" : "图片失效"} /></span>
-                        <em><strong>{candidate.label}</strong><small>{alreadySelected ? t("editor.canvas.generation.referenced") : candidate.kind === "video" ? t("editor.canvas.type.video") : t("editor.canvas.type.image")}</small></em>
-                      </button>
-                    );
-                  }) : <p>{t("editor.canvas.generation.noCanvasMedia")}</p>}
-                </section>
-              </div>
-            ) : null}
+            <button type="button" className={`canvas-composer-assist ${focusMode ? "is-active" : ""}`} aria-pressed={focusMode}
+              onClick={() => { setOpenPanel(null); setOpenReference(null); onToggleFocus?.(); }}
+              disabled={!onToggleFocus} title={focusBusy ? "正在识别所选内容" : "焦点编辑：点击画布素材提取内容"}
+              aria-label="焦点编辑"><ToolIcon type="focusEdit" /></button>
           </div>
           <span className="canvas-composer-vertical-divider" aria-hidden="true" />
           {isVideo ? (
             <>
-              {firstFrameEntry ? renderReferenceEntry(firstFrameEntry) : (
+              {firstFrameEntry ? null : (
                 <button type="button" className="canvas-composer-add-reference is-slot" data-slot-label={t("editor.canvas.generation.firstFrame")} onClick={() => onAddReference("firstFrame")} disabled={inputCount >= 4} aria-label={t("editor.canvas.generation.addFirstFrame")}><ToolIcon type="plus" /></button>
               )}
               <svg className="canvas-composer-frame-swap" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7h12l-2.7-2.7M17 13H5l2.7 2.7" /></svg>
-              {lastFrameEntry ? renderReferenceEntry(lastFrameEntry) : (
+              {lastFrameEntry ? null : (
                 <button type="button" className="canvas-composer-add-reference is-slot" data-slot-label={t("editor.canvas.generation.lastFrame")} onClick={() => onAddReference("lastFrame")} disabled={inputCount >= 4} aria-label={t("editor.canvas.generation.addLastFrame")}><ToolIcon type="plus" /></button>
               )}
             </>
@@ -6290,22 +7440,19 @@ function MaterialCompactComposer({
         </div>
       </div>
 
-      {!isText ? <PromptStarterSelect kind={isVideo ? "video" : "image"} prompt={node.data.generationPrompt || ""} english={locale === "en-US"} onInsert={value => commit({ generationPrompt: value })} /> : null}
 
-      <textarea
-        className="canvas-composer-prompt nodrag nopan nowheel"
-        value={node.data.generationPrompt || ""}
-        onFocus={() => { setOpenPanel(null); setFocusEditorOpen(false); }}
-        onPointerDown={() => { setOpenPanel(null); setFocusEditorOpen(false); }}
-        onChange={(event) => commit({ generationPrompt: event.target.value })}
-        placeholder={node.data.kind === "text"
-          ? t("editor.canvas.generation.extraPrompt")
-          : isText ? t("editor.canvas.generation.textPrompt")
-            : isVideo ? t("editor.canvas.generation.videoPrompt")
-              : t("editor.canvas.generation.imagePrompt")}
-        rows={3}
+      {selectedReference&&<CanvasComposerPopover key={selectedReference.key} enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={selectedReference.reference.kind==='text'||selectedReference.reference.kind==='note'?220:150}><CanvasReferenceHover entry={selectedReference} english={locale==='en-US'}/></CanvasComposerPopover>}
+
+      {!isText&&node.data.generationCreativeRecipe!==undefined?<CanvasCreativeRecipeEditor value={node.data.generationCreativeRecipe} onChange={generationCreativeRecipe=>commit({generationCreativeRecipe})} onSwitchRequest={anchor=>{popoverAnchorRef.current=anchor;setOpenReference(null);setOpenPanel('creative');}} english={locale==='en-US'}/>:null}
+      <CanvasPromptEditor ref={promptEditorRef} owner={node.id} entries={referenceEntries}
+        className="canvas-composer-prompt nodrag nopan nowheel" value={node.data.generationPrompt || ""}
+        onFocus={() => { setOpenPanel(null); setOpenReference(null); }}
+        onChange={value => commit({ generationPrompt: value })}
+        placeholder={node.data.kind === "text" ? t("editor.canvas.generation.extraPrompt")
+          : isText ? t("editor.canvas.generation.textPrompt") : isVideo ? t("editor.canvas.generation.videoPrompt") : t("editor.canvas.generation.imagePrompt")}
       />
 
+      {generationInputError ? <small className={creativeNeedsInput?"canvas-creative-input-hint":"canvas-prompt-reference-error"} role={creativeNeedsInput?"status":"alert"}>{generationInputError}</small> : null}
       <div className="canvas-composer-footer nodrag nopan">
         <div className="canvas-composer-options">
           <div className="canvas-composer-anchor">
@@ -6313,25 +7460,25 @@ function MaterialCompactComposer({
               <ToolIcon type="aiPrompt" /><strong>{model}</strong>
             </button>
             {openPanel === "model" ? (
-              <div className={`canvas-composer-popover canvas-composer-model-popover ${popoverDirection === "down" ? "opens-down" : ""}`}>
+              <CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={350}><div className={`canvas-composer-popover canvas-composer-model-popover ${popoverDirection === "down" ? "opens-down" : ""}`}>
                 <small>{isText && textProviderLabel ? `${textProviderLabel} · ${t("editor.canvas.generation.selectModel")}` : t("editor.canvas.generation.selectModel")}</small>
                 {models.map((item) => (
-                  <button type="button" key={item} className={model === item ? "is-selected" : ""} onClick={() => { commit({ generationModel: item }); setOpenPanel(null); }}>
+                  <button type="button" key={item} className={model === item ? "is-selected" : ""} aria-pressed={model === item} onClick={() => { commit({ generationModel: item }); setOpenPanel(null); }}>
                     <span><ToolIcon type={isText ? "text" : isVideo ? "video" : "image"} /><strong>{item}</strong></span>
                     <em>{isText ? t("editor.canvas.connect.textGenerate") : isVideo ? t("editor.canvas.toolbar.videoGenerate") : t("editor.canvas.toolbar.imageGenerate")}</em>
                     {model === item ? <b>✓</b> : null}
                   </button>
                 ))}
-              </div>
+              </div></CanvasComposerPopover>
             ) : null}
           </div>
 
-          {!isText && !capabilities.promptOnly ? <div className="canvas-composer-anchor">
+          {!isText && hasComposerSettings ? <div className="canvas-composer-anchor">
             <button type="button" className={openPanel === "settings" ? "is-active" : ""} onClick={(event) => togglePanel(event, "settings")}>
               <span>{summary}</span><svg viewBox="0 0 18 18"><path d="m6 7 3 3 3-3" /></svg>
             </button>
             {openPanel === "settings" ? (
-              <div style={{maxHeight:popoverMaxHeight}} className={`canvas-composer-popover canvas-composer-settings-popover ${popoverDirection === "down" ? "opens-down" : ""}`}>
+              <CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={390}><div style={{maxHeight:popoverMaxHeight}} className={`canvas-composer-popover canvas-composer-settings-popover ${popoverDirection === "down" ? "opens-down" : ""}`}>
                 <div className="canvas-composer-setting"><small>{t("editor.canvas.generation.aspect")}</small><CanvasAspectOptions options={capabilities.aspects} value={aspect} label={t("editor.canvas.generation.aspect")} onChange={(item) => commit({ generationAspect: item })} /></div>
                 {resolutions.length > 0 && aspect !== "auto" ? <div className="canvas-composer-setting"><small>分辨率</small><div>{resolutions.map((item) => <button type="button" key={item} className={resolution === item ? "is-selected" : ""} aria-pressed={resolution === item} onClick={() => commit({ generationResolution: item })}>{item}</button>)}</div></div> : null}
                 {mediaPixelSize(isVideo ? "video" : "image", mediaProfile, model, aspect || "", resolution) ? <div className="canvas-media-pixel-readout"><span>输出尺寸</span><strong>{mediaPixelSize(isVideo ? "video" : "image", mediaProfile, model, aspect || "", resolution)}</strong></div> : null}
@@ -6345,26 +7492,37 @@ function MaterialCompactComposer({
                 ) : (
                   <div className="canvas-composer-setting"><small>{t("editor.canvas.generation.count")}</small><div>{imageGenerationCounts.map((item) => <button type="button" key={item} className={count === item ? "is-selected" : ""} onClick={() => commit({ generationCount: item })}>{t("editor.canvas.generation.images", { count: item })}</button>)}</div></div>
                 )}
-              </div>
+              </div></CanvasComposerPopover>
             ) : null}
           </div> : <span className="canvas-composer-text-count">{summary}</span>}
+          {!isText?<div className="canvas-composer-anchor">
+            <button type="button" aria-label={locale==='en-US'?'Camera and lens':'摄影机与镜头'} title={locale==='en-US'?'Camera and lens direction':'摄影机、镜头与构图指导'} className={openPanel==='camera'||cinematographyHasDirections(node.data.generationCinematography,isVideo?'video':'image')?'is-active':''} onClick={event=>togglePanel(event,'camera')}>
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3"/><path d="m8 3 5 4m4 1-4 5m-1 4-5-4m-4-1 4-5"/></svg>
+            </button>
+            {openPanel==='camera'?<CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={380}><CanvasCinematography value={node.data.generationCinematography} onChange={generationCinematography=>commit({generationCinematography})} kind={isVideo?'video':'image'} english={locale==='en-US'}/></CanvasComposerPopover>:null}
+          </div>:null}
+          {isImage?<div className="canvas-composer-anchor">
+            <button type="button" aria-label={locale==='en-US'?'Image creative tools':'图像创作工具'} title={onCreateCreative&&!node.data.generationCreativeRecipe?(locale==='en-US'?'Create a linked draft from this image':'基于此图创建连线创作草稿'):(locale==='en-US'?'Choose or switch a creative preset':'选择或切换创作预设')} className={openPanel==='creative'?'is-active':''} onClick={event=>togglePanel(event,'creative')}>
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"><rect x="3" y="3" width="5" height="5" rx="1"/><rect x="3" y="12" width="5" height="5" rx="1"/><rect x="12" y="12" width="5" height="5" rx="1"/><path d="M14.5 2v7M11 5.5h7"/></svg>
+            </button>
+            {openPanel==='creative'?<CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={380}><CanvasImageCreativeMenu english={locale==='en-US'} currentId={normalizeCreativeRecipe(node.data.generationCreativeRecipe)?.id} context={onCreateCreative&&!node.data.generationCreativeRecipe?'derive':'draft'} hasImageReference={(!!onCreateCreative&&!node.data.generationCreativeRecipe)||imageEntries.some(entry=>!entry.issue&&!!entry.reference.mediaUrl)} onSelect={recipe=>{setOpenPanel(null);if(normalizeCreativeRecipe(node.data.generationCreativeRecipe)?.id===recipe.id)return;if(onCreateCreative&&!node.data.generationCreativeRecipe){onCreateCreative(recipe);}else{commit({generationCreativeRecipe:recipe});}}}/></CanvasComposerPopover>:null}
+          </div>:null}
         </div>
-        {compiledRequest.references.some(ref => (ref.kind === "text" || ref.kind === "note") && ref.text?.trim()) ? <details className="canvas-prompt-context"><summary>{locale === "en-US" ? "Combined prompt · local instructions, then connected text" : "合并提示词 · 本节点要求在前，上游文本按连线顺序追加"}</summary><pre>{compiledRequest.prompt}</pre></details> : null}
         <div className="canvas-composer-submit-wrap">
-          {showHint ? <span>{t("editor.canvas.generation.taskCreated")}</span> : null}
+          {submissionLabel ? <span role="status">{submissionLabel}</span> : null}
           <button
             type="button"
             className="canvas-composer-submit"
-            disabled={!canSubmit}
-            title={!canSubmit
-              ? busy ? t("editor.canvas.error.generationBusy") : !textModelsReady ? t("editor.canvas.generation.loadingModels")
+            disabled={busy ? !onCancel : !canSubmit}
+            title={busy ? t("editor.canvas.history.cancelTask") : !canSubmit
+              ? generationInputError || (busy ? t("editor.canvas.error.generationBusy") : !textModelsReady ? t("editor.canvas.generation.loadingModels")
                 : !configured ? t("editor.canvas.generation.configureModel")
-                  : t("editor.canvas.generation.enterContent")
-              : undefined}
-            onClick={() => { setOpenPanel(null); setShowHint(true); onSubmit?.(); }}
-            aria-label={isText ? t("editor.canvas.generation.generateText") : isVideo ? t("editor.canvas.generation.generateVideo") : t("editor.canvas.generation.generateImage")}
+                  : referenceEntries.some(entry=>entry.issue)?referenceIssueText(referenceEntries.find(entry=>entry.issue)?.issue,locale==='en-US'):t("editor.canvas.generation.enterContent"))
+              : node.data.generationTask?.status==='succeeded'?(locale==='en-US'?'Generate on this card':'在当前节点生成'):undefined}
+            onClick={() => { setOpenPanel(null); if (busy) { onCancel?.(); } else { onSubmit?.(); } }}
+            aria-label={busy ? t("editor.canvas.history.cancelTask") : isText ? t("editor.canvas.generation.generateText") : isVideo ? t("editor.canvas.generation.generateVideo") : t("editor.canvas.generation.generateImage")}
           >
-            <svg viewBox="0 0 18 18"><path d="M9 14V4M5 8l4-4 4 4" /></svg>
+            {busy ? <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1" fill="currentColor" stroke="none" /></svg> : <svg viewBox="0 0 18 18"><path d="M9 14V4M5 8l4-4 4 4" /></svg>}
           </button>
         </div>
       </div>
@@ -6389,8 +7547,8 @@ function MaterialGenerationInspector({
 }) {
   const { t } = useI18n();
   const isVideo = node.data.kind === "video" || node.data.generationKind === "video";
-  const models = mediaProfile ? [isVideo ? mediaProfile.videoModel : mediaProfile.imageModel].filter(Boolean) : [];
-  const selectedModel = models.includes(node.data.generationModel || "") ? node.data.generationModel! : models[0] || "";
+  const models = mediaProfile ? Array.from(new Set([isVideo ? mediaProfile.videoModel : mediaProfile.imageModel, ...(isVideo ? mediaProfile.videoModels || [] : mediaProfile.imageModels || [])].filter(Boolean))) : [];
+  const selectedModel = node.data.sourceGenerationHistoryId && node.data.generationModel ? node.data.generationModel : models.includes(node.data.generationModel || "") ? node.data.generationModel! : models[0] || "";
   const capabilities = mediaCapabilities(isVideo ? "video" : "image", mediaProfile, selectedModel);
   const imageGenerationCounts = capabilities.counts;
   const supportsSoundControl = capabilities.sound;
@@ -6516,6 +7674,7 @@ function MaterialGenerationInspector({
 
       <div className="canvas-generation-settings">
         {capabilities.promptOnly ? <small>该协议当前使用模型默认参数</small> : null}
+        {!capabilities.promptOnly ? <>
         <div className="canvas-generation-setting">
           <div className="canvas-generation-label"><span>{t("editor.canvas.generation.outputAspect")}</span></div>
           <CanvasAspectOptions options={capabilities.aspects} value={selectedAspect} label={t("editor.canvas.generation.outputAspect")} onChange={(aspect) => commit({ generationAspect: aspect })} />
@@ -6588,6 +7747,7 @@ function MaterialGenerationInspector({
             </div>
           </div>
         )}
+        </> : null}
       </div>
 
       <div className="canvas-generation-footer">
@@ -6743,135 +7903,6 @@ function NodeInspector({
   );
 }
 
-// ========== 素材 / 笔记选择器 ==========
-function Picker<T>({
-  title,
-  variant,
-  items,
-  loading,
-  onPick,
-  onImport,
-  onClose,
-  renderItem,
-  emptyText,
-}: {
-  title: string;
-  variant: "asset" | "note";
-  items: T[];
-  loading: boolean;
-  onPick: (it: T) => void;
-  onImport?: () => void;
-  onClose: () => void;
-  renderItem: (it: T) => string;
-  emptyText: string;
-}) {
-  const { t, locale } = useI18n();
-  const [query, setQuery] = useState("");
-  const visibleItems = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase();
-    if (!normalized) return items;
-    return items.filter((item) => renderItem(item).toLocaleLowerCase().includes(normalized));
-  }, [items, query, renderItem]);
-
-  return (
-    <div
-      className="canvas-picker-backdrop"
-      onClick={onClose}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
-      }}
-      role="presentation"
-    >
-      <div
-        className="canvas-picker"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-      >
-        <div className="canvas-picker-header">
-          <span className="canvas-picker-header-icon">
-            <ToolIcon type={variant === "asset" ? "asset" : "note"} />
-          </span>
-          <div className="canvas-picker-heading">
-            <div className="canvas-picker-kicker">{variant === "asset" ? t("editor.canvas.picker.materials") : t("editor.canvas.picker.knowledge")}</div>
-            <div className="canvas-picker-title">{title}</div>
-          </div>
-          <span className="canvas-picker-count">{items.length}</span>
-          <button type="button" className="canvas-picker-close" onClick={onClose} aria-label={t("editor.canvas.action.close")}>
-            <svg viewBox="0 0 18 18"><path d="M5 5l8 8M13 5l-8 8" /></svg>
-          </button>
-        </div>
-
-        <label className="canvas-picker-search">
-          <svg viewBox="0 0 18 18"><circle cx="8" cy="8" r="4.5" /><path d="M11.5 11.5L15 15" /></svg>
-          <input
-            autoFocus
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={variant === "asset" ? t("editor.canvas.picker.searchMaterials") : t("editor.canvas.picker.searchNotes")}
-          />
-          {query ? (
-            <button type="button" onClick={() => setQuery("")} aria-label={t("editor.canvas.picker.clearSearch")}>{t("editor.canvas.picker.clear")}</button>
-          ) : null}
-        </label>
-
-        <div className="canvas-picker-list">
-          {loading ? (
-            <div className="canvas-picker-empty">
-              <span className="canvas-picker-loading-dot" />
-              {t("editor.canvas.status.loadingShort")}
-            </div>
-          ) : visibleItems.length === 0 ? (
-            <div className="canvas-picker-empty">
-              <span>{query ? t("editor.canvas.picker.noMatches") : emptyText}</span>
-              {query ? <small>{t("editor.canvas.picker.tryAnother")}</small> : null}
-            </div>
-          ) : (
-            visibleItems.map((it: any, i) => {
-              const label = renderItem(it);
-              const thumbnail = variant === "asset" && typeof it.thumbnailUrl === "string" ? it.thumbnailUrl : "";
-              const meta = variant === "asset"
-                ? (it.kind === "video" ? t("editor.canvas.type.video") : it.kind === "audio" ? t("editor.canvas.type.audio") : t("editor.canvas.type.image"))
-                : (it.updatedAt ? formatRelativeTime(it.updatedAt, locale) : t("editor.canvas.type.note"));
-              return (
-              <button
-                type="button"
-                key={it.id || i}
-                onClick={() => onPick(it)}
-                className="canvas-picker-item"
-              >
-                <span className={`canvas-picker-preview ${thumbnail ? "has-image" : ""}`}>
-                  {thumbnail ? (
-                    <img src={thumbnail} alt="" />
-                  ) : (
-                    <ToolIcon type={variant === "asset" ? "asset" : "note"} />
-                  )}
-                </span>
-                <span className="canvas-picker-item-copy">
-                  <strong>{label}</strong>
-                  <small>{meta}</small>
-                </span>
-                <svg className="canvas-picker-item-arrow" viewBox="0 0 18 18"><path d="M6 4l5 5-5 5" /></svg>
-              </button>
-              );
-            })
-          )}
-        </div>
-        <div className="canvas-picker-footer">
-          {variant === "asset" && onImport ? (
-            <button type="button" className="canvas-picker-import" onClick={onImport} disabled={loading}>
-              <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 12V3M5.5 6.5 9 3l3.5 3.5M3 11v3.5h12V11" /></svg>
-              {t("editor.canvas.picker.importLocal")}
-            </button>
-          ) : <span>{t("editor.canvas.picker.clickToSelect")}</span>}
-          <span><kbd>Esc</kbd> {t("editor.canvas.action.close")}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ========== 样式常量 ==========
 const btn: React.CSSProperties = {
   padding: "5px 10px",
@@ -6886,14 +7917,13 @@ const btn: React.CSSProperties = {
 const btnAccent: React.CSSProperties = { ...btn, background: "rgba(124,138,255,.18)", borderColor: "rgba(124,138,255,.4)", color: "#9aa4ff" };
 const btnDanger: React.CSSProperties = { ...btn, color: "#fb7185", borderColor: "rgba(251,113,133,.3)" };
 
-export default function CanvasSpike() {
+export default function CanvasSpike({ visible = true }: { visible?: boolean }) {
   const locale = useSavedLocale();
   return (
     <I18nProvider locale={locale}>
       <ReactFlowProvider>
-        <CanvasInner />
+        <CanvasInner visible={visible} />
       </ReactFlowProvider>
     </I18nProvider>
   );
 }
-

@@ -13,10 +13,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 mod index;
+mod saved_scopes;
+pub(crate) use saved_scopes::SavedKnowledgeScope;
 #[cfg(test)]
 mod native_read_concurrency_tests;
 pub(crate) use index::resolve_wiki_target;
 mod live_sync;
+mod companion_folders;
+mod companion_import;
+pub(crate) use companion_import::companion_import_path_key;
 pub(crate) use live_sync::{KnowledgeEditingStatus, KnowledgeEditingLease, KnowledgeCommittedChange, KnowledgeCommittedCheckpoint};
 mod attachment_inventory_cache;
 mod markdown_links;
@@ -510,6 +515,10 @@ impl KnowledgeService {
             attachment_fault_after_steps: Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX)),
         };
         service.recover_registered_vault_if_present()?;
+        if service.current_vault_path().is_file() {
+            let vault = service.current_vault_unlocked()?;
+            service.migrate_saved_vaults(&[vault.registration])?;
+        }
         Ok(service)
     }
 
@@ -555,6 +564,7 @@ impl KnowledgeService {
                 "Vault registration is invalid",
             )
         })?;
+        self.remember_current_saved_unlocked(&normalized)?;
         atomic_write(&self.current_vault_path(), &bytes, true)?;
         ui_source.epoch = ui_source.epoch.saturating_add(1).max(1);
         ui_source.active_vault_id = None;
@@ -979,7 +989,11 @@ impl KnowledgeService {
 
     pub(crate) fn companion_has_unsaved_draft(&self) -> Result<bool, KnowledgeError> {
         let source = self.ui_source.lock().map_err(|_| error("knowledge-lock-poisoned", "Knowledge source unavailable"))?;
-        Ok(!source.dirty_paths.is_empty())
+        let owns_source = match &self.workspace_scope {
+            Some((registration, _)) => source.active_vault_id.as_deref() == Some(registration.id.as_str()),
+            None => source.active_vault_id.is_some(),
+        };
+        Ok(owns_source && !source.dirty_paths.is_empty())
     }
 
     pub(crate) fn companion_document_identity(&self, document_ref: &KnowledgeDocumentRef, expected: &KnowledgeTargetIdentity) -> Result<Option<String>, KnowledgeError> {

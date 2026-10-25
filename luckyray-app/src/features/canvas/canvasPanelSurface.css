@@ -1,0 +1,4 @@
+/* One theme-aware surface for canvas floating panels. */
+:root { --canvas-panel-surface: var(--theme-glass-bg, rgba(20,20,23,.985)); }
+.canvas-panel-overlay { position: fixed; inset: 0; box-sizing: border-box; display: flex; align-items: flex-start; justify-content: center; padding: 74px 16px 16px; }
+.canvas-panel-overlay.is-canvas-relative { position: absolute; }

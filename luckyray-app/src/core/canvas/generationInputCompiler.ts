@@ -20,9 +20,8 @@ const ROLE_PRIORITY: Record<CanvasGenerationReferenceSnapshot["role"], number> =
   generic: 5,
 };
 
-function contextText(reference: CanvasGenerationReferenceSnapshot): string {
-  const text = reference.text?.trim() || "";
-  return text; // A display label is not prompt content; explicit empty text stays empty.
+export function canvasReferenceText(reference: {text?:string|null}): string {
+  return (reference.text || "").trim().slice(0, 8000); // Display titles are never a body fallback.
 }
 
 export function orderCanvasGenerationReferences(
@@ -32,7 +31,7 @@ export function orderCanvasGenerationReferences(
     .map((reference, index) => ({
       reference: {
         ...reference,
-        text: typeof reference.text === "string" ? reference.text.trim().slice(0, 8000) : reference.text,
+        text: typeof reference.text === "string" ? canvasReferenceText(reference) : reference.text,
       },
       index,
     }))
@@ -47,6 +46,7 @@ export function compileCanvasGenerationInputs(input: {
   kind: CanvasGenerationKind;
   prompt: string;
   includeNoteTitles?: boolean;
+  referenceAliases?: readonly string[];
   references: readonly CanvasGenerationReferenceSnapshot[];
 }): { prompt: string; references: CanvasGenerationReferenceSnapshot[] } {
   const references = orderCanvasGenerationReferences(input.references).map(reference => reference.kind === "note" ? {
@@ -55,7 +55,7 @@ export function compileCanvasGenerationInputs(input: {
     text: reference.text || "",
   } : reference);
   const contexts = references
-    .map((reference) => ({ reference, text: contextText(reference) }))
+    .map((reference,index) => ({ reference, alias: input.referenceAliases?.[index], text: canvasReferenceText(reference) }))
     .filter(({ reference, text }) => !!text && (
       reference.role === "promptContext"
       || reference.kind === "text"
@@ -66,7 +66,7 @@ export function compileCanvasGenerationInputs(input: {
   if (!contexts.length) return { prompt, references };
 
   const contextBlock = contexts
-    .map(({ reference, text }) => `【${reference.label || "未命名上下文"}】\n${text}`)
+    .map(({ reference, alias, text }) => `【${alias || reference.label || "未命名上下文"}】\n${text}`)
     .join("\n\n");
   const instruction = prompt || (input.kind === "text"
     ? "请根据画布上下文生成可直接使用的文本。"

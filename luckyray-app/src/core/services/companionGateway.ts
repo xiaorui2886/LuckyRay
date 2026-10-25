@@ -71,7 +71,13 @@ export type CompanionRevokeResult = {
   lightseek: null;
 };
 
+export type CompanionAuthorizationMode = "manual" | "trusted";
+
 export type CompanionServiceGrantState = {
+  authorizationMode?: CompanionAuthorizationMode;
+  authorizationConfigured?: boolean;
+  savedLibraries?: Array<{ scopeKind: "catalog" | "vault"; scopeId: string; label: string; available: boolean }>;
+  serviceOverrides?: Array<{ grantClass: string; scopeKind: string }>;
   permissionRevision: number;
   grants: Array<{ grantClass: "content.read" | "content.write" | "ingest.write" | "desktop.open"; scopeKind: "catalog" | "vault"; scopeId: string }>;
   currentVault: { vaultId: string; label: string } | null;
@@ -150,7 +156,7 @@ export function createCompanionGatewayClient(invoke: Invoke) {
     start: (bindAddress: string) => invoke("companion_gateway_start", { bindAddress }) as Promise<CompanionGatewayStatus>,
     stop: () => invoke("companion_gateway_stop") as Promise<CompanionGatewayStatus>,
     restart: (bindAddress: string) => invoke("companion_gateway_restart", { bindAddress }) as Promise<CompanionGatewayStatus>,
-    issuePairing: (replaceExisting = false) => invoke("companion_gateway_issue_pairing", { replaceExisting }) as Promise<PairingPresentation>,
+    issuePairing: (replaceExisting = false, authorizationMode: CompanionAuthorizationMode = "manual") => invoke("companion_gateway_issue_pairing", { replaceExisting, authorizationMode }) as Promise<PairingPresentation>,
     cancelPairing: (pairingId: string) => invoke("companion_gateway_cancel_pairing", { pairingId }) as Promise<boolean>,
     listInterfaces: () => invoke("companion_gateway_list_interfaces") as Promise<LanIpv4Interface[]>,
     listDevices: () => invoke("companion_gateway_list_devices") as Promise<PairedCompanionDevice[]>,
@@ -158,6 +164,8 @@ export function createCompanionGatewayClient(invoke: Invoke) {
     revokeDevice: (deviceId: string) => invoke("companion_gateway_revoke_device", { deviceId }) as Promise<CompanionRevokeResult>,
     setLshRemoteGrant: (deviceId: string, granted: boolean) => invoke("companion_gateway_lsh_remote_set_grant", { deviceId, granted }) as Promise<void>,
     lshRemoteState: (deviceId: string) => invoke("companion_gateway_lsh_remote_state", { deviceId }) as Promise<{ granted: boolean; runtimeAvailable: boolean }>,
+    setAuthorizationMode: (deviceId: string, authorizationMode: CompanionAuthorizationMode, expectedPermissionRevision: number) =>
+      invoke("companion_gateway_set_authorization_mode", { deviceId, authorizationMode, expectedPermissionRevision }) as Promise<void>,
     serviceGrants: (deviceId: string) => invoke("companion_gateway_service_grants", { deviceId }) as Promise<CompanionServiceGrantState>,
     setServiceGrants: (deviceId: string, changes: CompanionGrantChange[], expectedPermissionRevision: number, expectedCurrentVaultId: string | null) =>
       invoke("companion_gateway_service_set_grants", { deviceId, changes, expectedPermissionRevision, expectedCurrentVaultId }) as Promise<void>,
@@ -176,10 +184,10 @@ export function createCompanionPairingSession(client: CompanionGatewayClient) {
   let disposed = false;
   let revision = 0;
   return {
-    async issue(replaceExisting: boolean): Promise<PairingPresentation | null> {
+    async issue(replaceExisting: boolean, authorizationMode: CompanionAuthorizationMode = "manual"): Promise<PairingPresentation | null> {
       if (disposed) return null;
       const requestedRevision = ++revision;
-      const presentation = await client.issuePairing(replaceExisting);
+      const presentation = await client.issuePairing(replaceExisting, authorizationMode);
       if (disposed || requestedRevision !== revision) {
         await client.cancelPairing(presentation.pairingId);
         return null;

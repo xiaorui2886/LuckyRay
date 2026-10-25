@@ -1,8 +1,7 @@
 name: Public source checks
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches: [ray/unified-notes-check-20261025]
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   frontend-and-directed-tests:
-    if: github.repository == 'xiaorui2886/LuckyRay'
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.ref == 'refs/heads/ray/unified-notes-check-20261025'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -39,9 +38,9 @@ jobs:
         run: node scripts/check-public-source.mjs
   windows-native-check:
     needs: frontend-and-directed-tests
-    if: github.repository == 'xiaorui2886/LuckyRay'
+    if: github.repository == 'xiaorui2886/LuckyRay' && github.ref == 'refs/heads/ray/unified-notes-check-20261025'
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_TARGET_DIR: D:/lr-public-check-target

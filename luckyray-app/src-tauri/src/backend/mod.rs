@@ -14,7 +14,7 @@ use crate::tools::{
 
 mod schema_compat;
 
-const SCHEMA_VERSION: u32 = 26;
+const SCHEMA_VERSION: u32 = 27;
 #[derive(Clone, Copy)]
 struct TableSpec {
     name: &'static str,
@@ -57,6 +57,19 @@ struct TriggerSpec {
 }
 
 const REQUIRED_TABLES: &[TableSpec] = &[
+    TableSpec { name: "companion_manual_override", columns: &[
+        column("device_id", ColumnRequirement::NotNullPrimaryKey),
+        column("grant_class", ColumnRequirement::NotNullPrimaryKey),
+        column("scope_kind", ColumnRequirement::NotNullPrimaryKey),
+        column("scope_id", ColumnRequirement::NotNullPrimaryKey)] },
+    TableSpec { name: "companion_phone_policy", columns: &[
+        column("device_id", ColumnRequirement::NotNullPrimaryKey),
+        column("mode", ColumnRequirement::NotNull)] },
+    TableSpec { name: "companion_service_override", columns: &[
+        column("device_id", ColumnRequirement::NotNullPrimaryKey),
+        column("grant_class", ColumnRequirement::NotNullPrimaryKey),
+        column("scope_kind", ColumnRequirement::NotNullPrimaryKey),
+        column("enabled", ColumnRequirement::NotNull)] },
     TableSpec { name: "companion_service_grant", columns: &[
         column("device_id", ColumnRequirement::NotNullPrimaryKey),
         column("grant_class", ColumnRequirement::NotNullPrimaryKey),
@@ -1520,6 +1533,9 @@ fn migrate_schema(
     if current_version < 26 {
         materials::migrate_transfer_schema_v26(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-library-transfer-migration-failed",message:error.message})?;
         transaction.execute("INSERT INTO backend_schema_migration(version,name,applied_at) VALUES(26,'material-library-move-r3',?1)",[chrono::Utc::now().to_rfc3339()]).map_err(|error|database_error("backend-migration-record-failed",error))?;
+    }
+    if current_version < 27 {
+        transaction.execute_batch(include_str!("../companion_gateway/trust_schema.sql")).map_err(|error| database_error("backend-companion-trust-schema-failed",error))?;
     }
     materials::verify_transfer_schema(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-library-transfer-schema-invalid",message:error.message})?;
     repair_reintroduced_empty_retired_note_schema(&transaction)?;
@@ -3590,6 +3606,48 @@ mod material_library_r2_tests;
 mod tests {
     use super::*;
     use crate::materials::{MaterialBytesInput, MaterialFilter, MaterialImportOptions};
+
+    #[test]
+    fn phone_trust_v26_upgrade_preserves_grants_and_does_not_authorize_devices() {
+        let app_data = temp_app_data("phone-trust-v26-upgrade");
+        let backend = BackendServices::initialize(&app_data).unwrap();
+        let connection = backend.open_write().unwrap();
+        // Synthetic v26 fixture only: restore the exact former grant constraint.
+        connection.execute_batch("DROP TABLE companion_manual_override;
+            DROP TABLE companion_phone_policy;
+            DROP TABLE companion_service_override;
+            DROP TABLE companion_service_grant;
+            CREATE TABLE companion_service_grant (
+                device_id TEXT NOT NULL REFERENCES companion_device(device_id) ON DELETE CASCADE,
+                grant_class TEXT NOT NULL CHECK(grant_class IN ('content.read','content.write','ingest.write','desktop.open')),
+                scope_kind TEXT NOT NULL CHECK(scope_kind IN ('catalog','vault')),
+                scope_id TEXT NOT NULL, granted_at TEXT NOT NULL,
+                PRIMARY KEY(device_id,grant_class,scope_kind,scope_id),
+                CHECK((scope_kind='catalog' AND scope_id='') OR (scope_kind='vault' AND length(scope_id)>0)));
+            CREATE INDEX idx_companion_service_grant_device ON companion_service_grant(device_id,scope_kind,scope_id);
+            DELETE FROM backend_schema_migration WHERE version=27;
+            INSERT INTO companion_device(device_id,label,credential_verifier,created_at) VALUES('migration-fixture','Synthetic',X'01020304','before');
+            INSERT INTO companion_service_grant VALUES('migration-fixture','content.read','catalog','','before');
+            INSERT INTO companion_service_grant VALUES('migration-fixture','content.write','vault','saved-fixture','before');").unwrap();
+        drop(connection);
+        drop(backend);
+        for _ in 0..2 {
+            let upgraded = BackendServices::initialize(&app_data).unwrap();
+            assert_eq!(upgraded.status().schema_version, 27);
+            // SQLite FTS5 quick_check requires a writable synthetic connection.
+            let connection = upgraded.open_write().unwrap();
+            assert_eq!(connection.query_row("SELECT COUNT(*) FROM backend_schema_migration WHERE version=27", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+            assert_eq!(connection.query_row("SELECT COUNT(*) FROM companion_service_grant WHERE device_id='migration-fixture' AND granted_at='before'", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
+            for table in ["companion_phone_policy", "companion_service_override", "companion_manual_override"] {
+                assert_eq!(connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+            }
+            assert_eq!(connection.query_row("SELECT credential_verifier FROM companion_device WHERE device_id='migration-fixture'", [], |r| r.get::<_, Vec<u8>>(0)).unwrap(), vec![1,2,3,4]);
+            assert_eq!(connection.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0)).unwrap(), "ok");
+            let mut foreign_keys = connection.prepare("PRAGMA foreign_key_check").unwrap();
+            assert!(foreign_keys.query([]).unwrap().next().unwrap().is_none());
+        }
+        std::fs::remove_dir_all(app_data).unwrap();
+    }
 
     #[test]
     fn material_library_r1_bootstrap_ledger24_restart_and_default_boundary() {
@@ -7723,6 +7781,9 @@ mod tests {
                 "companion_content_operation",
                 "companion_content_upload",
                 "companion_service_grant",
+                "companion_phone_policy",
+                "companion_service_override",
+                "companion_manual_override",
                 "companion_service_operation",
                 "companion_service_upload",
                 "companion_service_change",
@@ -7776,6 +7837,9 @@ mod tests {
                  DROP TRIGGER companion_service_asset_tag_delete;
                  DROP TRIGGER companion_service_source_page_insert;
                  DROP TABLE companion_service_grant;
+                 DROP TABLE companion_phone_policy;
+                 DROP TABLE companion_service_override;
+                 DROP TABLE companion_manual_override;
                  DROP TABLE companion_service_operation;
                  DROP TABLE companion_service_upload;
                  DROP TABLE companion_service_change;

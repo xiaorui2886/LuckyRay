@@ -81,7 +81,7 @@ mod tests {
         let raw = [7_u8; 32];
         let config = serde_json::json!({"schema":1,"state":"approved-production","feedUrl":FEED,
             "publicKey":URL_SAFE_NO_PAD.encode(raw),"fingerprintSha256":format!("{:x}",Sha256::digest(raw)),
-            "centralReview":"https://github.com/xiaorui2886/LuckyRay/blob/main/docs/development/lsh-trust.md#review-20261016"});
+            "centralReview":"https://github.com/xiaorui2886/LuckyRay/blob/main/docs/development/lsh-trust.md#review-123"});
         assert_eq!(reviewed_production_key(&config, &[]), Ok(config["publicKey"].as_str().map(str::to_owned)));
         for name in ["LUCKYRAY_DSH_UPDATE_FEED", "LUCKYRAY_DSH_UPDATE_PUBLIC_KEY", "LUCKYRAY_DEV_DSH_UPDATE_FEED",
             "LUCKYRAY_DEV_DSH_UPDATE_PUBLIC_KEY", "LUCKYRAY_DEV_DSH_UPDATE_CA_PEM"] {
@@ -91,7 +91,7 @@ mod tests {
             ("publicKey",serde_json::json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB")),
             ("fingerprintSha256",serde_json::json!("0".repeat(64))), ("feedUrl",serde_json::json!(FEED.replace("/main/", "/other/"))),
             ("centralReview",serde_json::json!("https://github.com/other/repo/issues/195#issuecomment-123")),
-            ("centralReview",serde_json::json!("https://github.com/xiaorui2886/LuckyRay/blob/main/docs/development/lsh-trust.md#review-20261016?x=y")),
+            ("centralReview",serde_json::json!("https://github.com/xiaorui2886/LuckyRay/blob/main/docs/development/lsh-trust.md#review-123?x=y")),
             ("extra",serde_json::json!("ignored"))] {
             let mut changed = config.clone(); changed[field] = wrong;
             assert!(reviewed_production_key(&changed, &[]).is_err(), "{field}");

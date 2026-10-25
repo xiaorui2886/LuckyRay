@@ -8,3 +8,6 @@ dsh-host/records/launch-manifest.json text eol=lf
 dsh-host/records/runtime-manifest.json text eol=lf
 dsh-host/records/THIRD-PARTY-NOTICES.txt text eol=lf
 third-party-notices/** -text
+
+# Preserve exact SHA-256 provenance bytes of the reviewed upstream source.
+src/features/canvas/dsh-reference/** -text

@@ -31,6 +31,46 @@ const GROUP_PADDING_BOTTOM = 42;
 const COLUMN_GAP = 168;
 const ROW_GAP = 88;
 
+/** Align a dropped group once, moving selected roots by one shared offset. */
+export function snapCanvasGroupDrop<T extends CanvasArrangementNode>(
+  nodes: readonly T[], leaderId: string, movedIds: readonly string[], grid: readonly [number, number],
+): T[] {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const leader = byId.get(leaderId);
+  if (leader?.data?.kind !== "group") return nodes as T[];
+  const moved = new Set(movedIds);
+  const roots = nodes.filter(node => {
+    if (!moved.has(node.id)) return false;
+    let parent = node.parentId;
+    const seen = new Set<string>();
+    while (parent && !seen.has(parent)) {
+      if (moved.has(parent)) return false;
+      seen.add(parent); parent = byId.get(parent)?.parentId;
+    }
+    return true;
+  });
+  if (!roots.some(node => node.id === leaderId)) return nodes as T[];
+  let dx = Math.round(leader.position.x / grid[0]) * grid[0] - leader.position.x;
+  let dy = Math.round(leader.position.y / grid[1]) * grid[1] - leader.position.y;
+  // Keep co-selected nodes inside their existing parent/explicit extents.
+  for (const node of roots) {
+    const parent = node.parentId ? byId.get(node.parentId) : undefined;
+    const size = canvasNodeSize(node);
+    const extent = node.extent === "parent" && parent
+      ? [[0, 0], [canvasNodeSize(parent).width - size.width, canvasNodeSize(parent).height - size.height]]
+      : Array.isArray(node.extent) ? node.extent as number[][] : null;
+    if (extent) {
+      dx = Math.max(extent[0][0] - node.position.x, Math.min(extent[1][0] - node.position.x, dx));
+      dy = Math.max(extent[0][1] - node.position.y, Math.min(extent[1][1] - node.position.y, dy));
+    }
+  }
+  if (!dx && !dy) return nodes as T[];
+  const rootIds = new Set(roots.map(node => node.id));
+  return nodes.map(node => rootIds.has(node.id)
+    ? { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } }
+    : node);
+}
+
 function dimension(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
   if (typeof value === "string") {

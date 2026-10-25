@@ -19,6 +19,7 @@ pub(super) struct RemoteEditing {
 }
 
 struct Session {
+    target: Option<KnowledgeTargetIdentity>,
     generation: u64,
     until: Instant,
     editing: bool,
@@ -64,10 +65,9 @@ pub(crate) struct KnowledgeEditingLease {
 
 impl RemoteEditing {
     fn scope(&mut self, target: &KnowledgeTargetIdentity) {
-        if self.target.as_ref() != Some(target) {
-            self.sessions.clear();
-            self.target = Some(target.clone());
-        }
+        // Selecting another saved Vault never erases live sessions in the first.
+        // Each opaque lease remains bound to its captured root identity.
+        self.target = Some(target.clone());
     }
 
     fn open(
@@ -95,6 +95,7 @@ impl RemoteEditing {
         self.sessions.insert(
             (device.into(), path.into(), session_id.clone()),
             Session {
+                target: self.target.clone(),
                 generation: 0,
                 until: now + LEASE,
                 editing: false,
@@ -118,7 +119,8 @@ impl RemoteEditing {
         // Only POST may allocate a token. Removing a released/expired token is safe:
         // a late PUT is never allowed to recreate it, even with a higher generation.
         self.sessions.retain(|_, session| session.until > now);
-        let entry = self.sessions.get_mut(&key).ok_or_else(|| {
+        let target = &self.target;
+        let entry = self.sessions.get_mut(&key).filter(|session| session.target.as_ref() == target.as_ref()).ok_or_else(|| {
             error(
                 "knowledge-presence-expired",
                 "Editing session is released or expired",
@@ -324,7 +326,8 @@ impl KnowledgeService {
             remote.scope(expected);
             let now = Instant::now();
             Ok::<_, KnowledgeError>(remote.sessions.iter().any(|((device, path, _), session)| {
-                Some(device.as_str()) != exclude_device
+                session.target.as_ref() == Some(expected)
+                    && Some(device.as_str()) != exclude_device
                     && path == &document.relative_path
                     && session.editing
                     && session.until > now
@@ -673,6 +676,23 @@ mod tests {
             .to_string_lossy()
             .starts_with(".lrk-create-")));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn saved_vault_selection_preserves_other_vault_leases_but_cannot_use_them() {
+        let mut leases = RemoteEditing::default();
+        let now = Instant::now();
+        let first = KnowledgeTargetIdentity { target_id: "a".into(), identity_digest: "first-root".into(), label: "A".into() };
+        let second = KnowledgeTargetIdentity { target_id: "b".into(), identity_digest: "second-root".into(), label: "B".into() };
+        leases.scope(&first);
+        let session = leases.open("phone", "note.md", now).unwrap();
+        let key = ("phone".into(), "note.md".into(), session.session_id);
+        leases.set(key.clone(), 1, true, now).unwrap();
+        leases.scope(&second);
+        assert!(leases.set(key.clone(), 2, true, now).is_err());
+        assert_eq!(leases.sessions.len(), 1);
+        leases.scope(&first);
+        assert!(leases.set(key, 2, true, now).unwrap().editing);
     }
 
     #[test]

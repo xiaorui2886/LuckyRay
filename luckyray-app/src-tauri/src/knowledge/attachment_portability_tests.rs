@@ -403,3 +403,60 @@ fn portability_export_collects_absolute_file_uri_inside_source_vault() {
         b"inside pixels"
     );
 }
+
+#[test]
+fn note_archive_exports_only_selected_note_and_deduplicated_attachments() {
+    let (service, root, registration) = fixture("single-note-zip");
+    std::fs::create_dir_all(root.join("notes")).unwrap();
+    std::fs::create_dir_all(root.join("pictures")).unwrap();
+    std::fs::write(root.join("pictures/a.png"), b"image").unwrap();
+    let original = "![[pictures/a.png|300]]\n![same](../pictures/a.png)\n[website](https://example.invalid/remote.png)";
+    std::fs::write(root.join("notes/n.md"), original).unwrap();
+    std::fs::write(root.join("private-other.md"), "must not export").unwrap();
+    let output = root.parent().unwrap().join("note.zip");
+    let epoch = service.activate_ui_source(&registration.id).unwrap().source_epoch;
+    let reference = KnowledgeDocumentRef { vault_id: registration.id.clone(), relative_path: "notes/n.md".into() };
+    let result = service.export_note_archive(epoch, &output, &[], &reference).unwrap();
+    assert_eq!(result.document_count, 1);
+    assert_eq!(result.attachment_count, 1);
+    let mut zip = zip::ZipArchive::new(File::open(&output).unwrap()).unwrap();
+    assert_eq!(zip.len(), 3);
+    assert!(zip.by_name("private-other.md").is_err());
+    let mut markdown = String::new();
+    zip.by_name("notes/n.md").unwrap().read_to_string(&mut markdown).unwrap();
+    assert!(markdown.contains("![[attachments/a.png|300]]"));
+    assert!(markdown.contains("../attachments/a.png"));
+    assert!(markdown.contains("https://example.invalid/remote.png"));
+    assert!(zip.by_name("LuckyRay-export-receipt.json").is_ok());
+    assert_eq!(std::fs::read_to_string(root.join("notes/n.md")).unwrap(), original);
+    let before = std::fs::read(&output).unwrap();
+    assert!(service.export_note_archive(epoch, &output, &[], &reference).is_err());
+    assert_eq!(std::fs::read(&output).unwrap(), before);
+}
+
+#[test]
+fn note_archive_rejects_source_overlap_path_escape_and_stale_source() {
+    let (service, root, registration) = fixture("note-zip-boundaries");
+    std::fs::write(root.join("n.md"), "safe").unwrap();
+    let epoch = service.activate_ui_source(&registration.id).unwrap().source_epoch;
+    let reference = KnowledgeDocumentRef { vault_id: registration.id.clone(), relative_path: "n.md".into() };
+    assert!(service.export_note_archive(epoch, &root.join("inside.zip"), &[], &reference).is_err());
+    assert!(!root.join("inside.zip").exists());
+    let outside = root.parent().unwrap().join("outside.zip");
+    assert!(service.export_note_archive(epoch + 1, &outside, &[], &reference).is_err());
+    let escaped = KnowledgeDocumentRef { vault_id: registration.id, relative_path: "../secret.md".into() };
+    assert!(service.export_note_archive(epoch, &outside, &[], &escaped).is_err());
+    assert!(!outside.exists());
+}
+
+#[test]
+fn note_archive_reports_missing_and_ambiguous_attachments_without_guessing() {
+    let (service, root, registration) = fixture("note-zip-missing");
+    std::fs::create_dir(root.join("one")).unwrap(); std::fs::create_dir(root.join("two")).unwrap();
+    std::fs::write(root.join("one/a.png"), b"one").unwrap(); std::fs::write(root.join("two/a.png"), b"two").unwrap();
+    std::fs::write(root.join("n.md"), "![[a.png]]\n![[missing.png]]").unwrap();
+    let epoch = service.activate_ui_source(&registration.id).unwrap().source_epoch;
+    let reference = KnowledgeDocumentRef { vault_id: registration.id, relative_path: "n.md".into() };
+    let result = service.export_note_archive(epoch, &root.parent().unwrap().join("missing.zip"), &[], &reference).unwrap();
+    assert_eq!(result.status, "partial"); assert_eq!(result.attachment_count, 0); assert_eq!(result.issues.len(), 2);
+}

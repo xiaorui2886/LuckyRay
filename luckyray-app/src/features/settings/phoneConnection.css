@@ -26,10 +26,13 @@
 /* Polling stays live without making the whole pane blink or remount every two seconds. */
 .phone-connection-dialog .phone-connection-status button:disabled,
 .phone-connection-right[aria-busy="true"] .phone-permission-switch:disabled { opacity: 1; }
-.phone-pairing-area { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.phone-pairing-area { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; }
 .phone-pairing-area:has(.phone-qr-frame) { align-items: center; text-align: center; }
 .phone-pairing-area label { text-align: start; display: grid; gap: 6px; width: 100%; font-size: 12px; }
 .phone-pairing-area select { width: 100%; }
+.phone-pairing-intro { width: min(240px, 100%); min-height: 140px; box-sizing: border-box; margin-top: 4px; padding: 20px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elevated); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.phone-pairing-intro > svg { width: 30px; height: 30px; color: var(--text-secondary); }
+.phone-pairing-area > .phone-authorization-choice { margin: 4px 0; }
 .phone-qr-frame { width: min(240px, 100%); aspect-ratio: 1; padding: 10px; border-radius: 10px; background: white; }
 .phone-qr-frame svg { width: 100%; height: 100%; display: block; }
 .phone-qr-pending { width: 100%; height: 100%; display: grid; place-items: center; color: #53535f; font-size: 12px; }
@@ -68,3 +71,15 @@
 @media (max-height: 560px) { .phone-connection-left, .phone-connection-right { padding-left: 18px; padding-right: 18px; } .phone-connection-aux { padding: 0 18px 12px; } }
 @media (prefers-reduced-motion: reduce) { .phone-permission-switch i { transition: none; } }
 :root[data-animations="off"] .phone-permission-switch i { transition: none; }
+
+/* Keep the quick-phone entry consistent with the global device settings. */
+.phone-connection-dialog, .phone-revoke-dialog { border-color: var(--theme-border-strong); background: var(--theme-surface-panel); }
+.phone-connection-dialog :is(.phone-device-list-title, .phone-kicker),
+.phone-device > svg { color: var(--text-secondary); }
+.phone-connection-dialog select:focus-visible,
+.phone-revoke-dialog button:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 3px; }
+.phone-connection-dialog .phone-error { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--danger) 6%, var(--theme-surface-panel)); color: var(--danger); }
+.phone-revoke-dialog { max-height: calc(100dvh - 48px); overflow: auto; overflow-wrap: anywhere; }
+.phone-revoke-dialog p { color: var(--text-secondary); line-height: 1.6; }
+.phone-revoke-dialog button { min-height: 32px; white-space: normal; margin-bottom: 6px; }
+.phone-connection-status { flex-wrap: wrap; }

@@ -1,3 +1,4 @@
+import { acknowledgeNoteSave, shouldPauseConflictAutosave } from "./noteSaveAcknowledgment";
 import {NoteRouteVisibilityContext} from "./noteRouteVisibility";
 import {InsertReferencePicker,type InsertPickerState} from './InsertReferencePicker';
 import {findSourceEditorTokenAt,toggleMarkdownTaskAtBodyLine,detectAutocompleteTrigger,scoreAutocompleteLabel,wikiNoteSearchPart,wikiNoteSuffixPart,autocompletePopupPosition,sourceTextareaPositionFromPoint,applySourceListIndent,applySourceListEnter,applySourceListBackspace,type AutocompleteKind,type AutocompleteItem,type AutocompleteState} from './sourceNoteEditor';
@@ -16,7 +17,7 @@ import { registerAttachmentDraftSession, readAttachmentRelinkRequest, subscribeA
 import { AttachmentRelinkDialog } from "./AttachmentRelinkDialog";
 import { Activity, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { resolveScopedShortcut } from "../../app/shortcuts";
-import { attachmentContextIsCurrent, captureAttachmentContext, publishVaultAttachment, getVaultAttachmentWorkflow } from "../../core/services/vaultAttachments";
+import { attachmentContextIsCurrent, captureAttachmentContext, exportNoteArchive, publishVaultAttachment, getVaultAttachmentWorkflow } from "../../core/services/vaultAttachments";
 import { readActiveKnowledgeWriteSource } from "../../core/services/knowledgeSource";
 import type { ImportReceipt } from "../../core/services/vaultAttachmentWorkflow";
 import { VaultAttachmentsPanel } from "./VaultAttachmentsPanel";
@@ -1615,6 +1616,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   const realVaultUserDirtyRef = useRef<Set<string>>(new NotesNativeDraftSet());
   const realVaultSaveInFlightRef = useRef<Set<string>>(new NotesNativeSaveSet());
   const realVaultSaveCompletionRef = useRef(new Map<string, Promise<void>>());
+  const realVaultSaveEpochRef = useRef(new Map<string, number>());
   const notesInlineCommittedContentRef = useRef<{ noteId: string; content: string; revision: string } | null>(null);
   const openTabsRef = useRef<NotesOpenTab[]>([]);
   const liveEditorRef = useRef<LiveMarkdownEditorHandle | null>(null);
@@ -1653,8 +1655,9 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     return {...adapter,saveDocument:async(documentRef:Parameters<typeof adapter.saveDocument>[0],content:string)=>{
       const origin={source:readActiveKnowledgeWriteSource(),generation:vaultSessionRef.current.latest()};
       const saved=await adapter.saveDocument(documentRef,content);
-      if(saved.contentText!==content||!saved.revision)throw new Error('Saved document did not acknowledge the exact content');
-      acknowledgeSavedReadProof(realVaultNoteId(saved.relativePath||saved.id),saved.contentText,saved.revision,origin);
+      acknowledgeNoteSave(realVaultSavedContentRef.current, realVaultNoteId(saved.relativePath || saved.id), content, saved,
+        () => readActiveKnowledgeWriteSource() === origin.source && vaultSessionRef.current.isCurrent(origin.generation),
+        () => acknowledgeSavedReadProof(realVaultNoteId(saved.relativePath || saved.id), saved.contentText, saved.revision!, origin));
       return saved;
     },openDocument:async(path:string)=>{
       const generation=vaultSessionRef.current.latest(),source=readActiveKnowledgeWriteSource(),finishRead=notesNativeViews.beginRead();
@@ -2375,7 +2378,8 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     const relativePath = normalizeVaultRelativePath(realVaultRelativePathFromNoteId(noteId));
     const realNoteId = realVaultNoteId(relativePath);
     const source = readActiveKnowledgeWriteSource();
-    if (!source || selectedNoteIdRef.current !== realNoteId) return false;
+    if (!source || selectedNoteIdRef.current !== realNoteId || realVaultDocumentReadsRef.current.deferIfComposing(realNoteId)
+      || realVaultDocumentReadsRef.current.deferIfFocused(realNoteId)) return false;
     const draftBeforeRead = realVaultLatestContentRef.current.get(realNoteId);
     const requestId = noteLoadRequestRef.current + 1;
     noteLoadRequestRef.current = requestId;
@@ -2384,6 +2388,8 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       if (noteLoadRequestRef.current !== requestId
         || source !== readActiveKnowledgeWriteSource()
         || selectedNoteIdRef.current !== realNoteId
+        || realVaultDocumentReadsRef.current.deferIfComposing(realNoteId)
+        || realVaultDocumentReadsRef.current.deferIfFocused(realNoteId)
         || realVaultLatestContentRef.current.get(realNoteId) !== draftBeforeRead) return false;
       const note = noteFromKnowledgeDocument(document, t("editor.notes.untitled"));
       realVaultSavedContentRef.current.set(realNoteId, note.contentText || "");
@@ -2428,6 +2434,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       const realNoteId = realVaultNoteId(relativePath);
       const isChangingNote = realNoteId !== selectedNoteId;
       if (isChangingNote) {
+        setStatus(current => current === t("editor.notes.status.diskChanged") ? "" : current);
         const viewport = liveEditorRef.current?.getVisibleLines();
         if (viewport && selectedNoteId) mediaViewportLinesRef.current.set(selectedNoteId, viewport);
         const currentNoteId = selectedNoteIdRef.current;
@@ -3170,11 +3177,28 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     const isCurrent = () => source === readActiveKnowledgeWriteSource() && selectedNoteIdRef.current === noteId;
     return realVaultDocumentReadsRef.current.requestExternalCheck(async () => {
       if (!isCurrent() || realVaultSavedContentRef.current.get(noteId) === undefined) return;
+      // A read during our own commit can see either side of the write. Wait for
+      // its acknowledgment before interpreting disk contents as an external edit.
       const relativePath = normalizeVaultRelativePath(realVaultRelativePathFromNoteId(noteId));
       try {
-        const baselineBeforeRead = realVaultSavedContentRef.current.get(noteId);
-        const latestDocument = await realVaultDocumentSource.openDocument(relativePath);
-        if (!isCurrent()) return;
+        let baselineBeforeRead;
+        let latestDocument;
+        // A save can start after the watcher read starts, or finish before it
+        // returns. In both cases discard that observation and read after ACK.
+        for (;;) {
+          let saving;
+          while ((saving = realVaultSaveCompletionRef.current.get(noteId))) {
+            await saving;
+            if (!isCurrent()) return;
+          }
+          if (!isCurrent() || realVaultDocumentReadsRef.current.deferIfComposing(noteId)) return;
+          const epoch = realVaultSaveEpochRef.current.get(noteId);
+          baselineBeforeRead = realVaultSavedContentRef.current.get(noteId);
+          latestDocument = await realVaultDocumentSource.openDocument(relativePath);
+          if (!isCurrent() || realVaultDocumentReadsRef.current.deferIfComposing(noteId)) return;
+          if (realVaultSaveCompletionRef.current.has(noteId) || epoch !== realVaultSaveEpochRef.current.get(noteId)) continue;
+          break;
+        }
         const latestContent = latestDocument.contentText || "";
         const latestBaseline = realVaultSavedContentRef.current.get(noteId);
         // A watcher read can capture the old disk contents just before our save
@@ -3182,6 +3206,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
         if (baselineBeforeRead !== latestBaseline && latestContent === baselineBeforeRead) return;
         if (latestBaseline === undefined || latestContent === latestBaseline) {
           setRealVaultExternalConflict((current) => current?.noteId === noteId ? null : current);
+          setStatus(current => current === t("editor.notes.status.diskChanged") ? "" : current);
           return;
         }
 
@@ -3215,6 +3240,15 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       }
     });
   }, [knowledgeStorageMode, realVaultDocumentSource, reloadCurrentRealVaultDocumentFromDisk, t]);
+
+  const finishRealVaultComposition = useCallback((noteId: string) => {
+    if (!realVaultDocumentReadsRef.current.setComposing(noteId, false)) return;
+    // Windows TSF can commit through input without compositionend. Wait until
+    // the editor has published that input before checking any deferred change.
+    queueMicrotask(() => {
+      if (selectedNoteIdRef.current === noteId) void checkCurrentRealVaultExternalChange({ force: true, silent: true });
+    });
+  }, [checkCurrentRealVaultExternalChange]);
 
   useEffect(() => {
     const syncFromStore = () => {
@@ -3382,7 +3416,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
           if (selectedNoteIdRef.current === noteId) {
             realVaultKeepEditingAfterConflictRef.current.delete(noteId);
             setRealVaultExternalConflict({ noteId, detectedAt: Date.now() });
-            setStatus(t("editor.notes.status.diskRefreshRequired"));
+            setStatus(t("editor.notes.status.diskChanged"));
           }
           return null;
         }
@@ -3403,7 +3437,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       if (selectedNoteIdRef.current === noteId) {
         realVaultKeepEditingAfterConflictRef.current.delete(noteId);
         setRealVaultExternalConflict({ noteId, detectedAt: Date.now() });
-        setStatus(t("editor.notes.status.diskRefreshRequired"));
+        setStatus(t("editor.notes.status.diskChanged"));
       }
       return null;
     }
@@ -3412,6 +3446,9 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   const savePatch = useCallback(async (patch: { title?: string; contentText?: string }, noteIdOverride?: string | null, reason: RealVaultWriteReason = "user-edit-autosave") => {
     const noteId = noteIdOverride || selectedNoteIdRef.current;
     if (!noteId) return;
+    // A known external conflict is resolved explicitly using the inline actions.
+    // Keep new input in the draft; do not reread the whole note on every keystroke.
+    if (shouldPauseConflictAutosave(reason, noteId, realVaultExternalConflict?.noteId, realVaultKeepEditingAfterConflictRef.current)) return;
     const requestId = saveRequestRef.current + 1;
     saveRequestRef.current = requestId;
     let realVaultSaveLocked = false;
@@ -3469,6 +3506,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
           return;
         }
         realVaultSaveInFlightRef.current.add(noteId);
+        realVaultSaveEpochRef.current.set(noteId, (realVaultSaveEpochRef.current.get(noteId) ?? 0) + 1);
         completion = new Promise<void>(resolve => { completeRealVaultSave = resolve; });
         realVaultSaveCompletionRef.current.set(noteId, completion);
         realVaultSaveLocked = true;
@@ -3477,7 +3515,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
         if (!savedDocument) return;
         realVaultWriteSucceeded = true;
         if (selectedNoteIdRef.current === noteId) setStatus(current =>
-          (["editor.notes.status.saveFailed", "editor.notes.status.diskStateInvalid"] as const).some(key => current === t(key)) ? "" : current);
+          (["editor.notes.status.saveFailed", "editor.notes.status.diskStateInvalid", "editor.notes.status.diskChanged", "editor.notes.status.diskRefreshRequired"] as const).some(key => current === t(key)) ? "" : current);
         // Saving updates shared attachment candidates even if focus moved to
         // another note while the write was pending.
         void knowledgeStore.invalidate({ reason: "notes-save", modifiedPaths: [relativePath] });
@@ -3539,7 +3577,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       }
       if (saveRequestRef.current === requestId) setSaving(false);
     }
-  }, [bridge, editContent, loadNoteRelations, refreshRealVaultMarkdownIndex, selectedNote, selectedNoteId, updateNoteLocal, writeRealVaultDocumentIfAllowed, t]);
+  }, [bridge, editContent, loadNoteRelations, refreshRealVaultMarkdownIndex, selectedNote, selectedNoteId, updateNoteLocal, writeRealVaultDocumentIfAllowed, realVaultExternalConflict, t]);
 
   const attachmentPathsAreDirty = useCallback((paths: string[]) => paths.some(path => {
     const id = realVaultNoteId(path);
@@ -3881,6 +3919,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
         realVaultUserDirtyRef.current.delete(selectedNoteId);
         realVaultKeepEditingAfterConflictRef.current.delete(selectedNoteId);
         setRealVaultExternalConflict((current) => current?.noteId === selectedNoteId ? null : current);
+        setStatus(current => current === t("editor.notes.status.diskChanged") ? "" : current);
         if (pendingPatchNoteIdRef.current === selectedNoteId || pendingPatchNoteIdRef.current === null) {
           delete pendingPatchRef.current.contentText;
           if (!Object.keys(pendingPatchRef.current).length && saveTimerRef.current) {
@@ -4565,7 +4604,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
         if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("不支持此图片地址");
         const destination = url.href.replace(/\(/g, "%28").replace(/\)/g, "%29");
         replaceEditorRange(`![图片](${destination})`, selection);
-        setStatus("已插入远程图片链接");
+        setStatus(t("editor.notes.status.remoteImageInserted"));
         return;
       }
 
@@ -4990,6 +5029,32 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   });
 
   useEffect(()=>setImportNotice(null),[currentVault?.id,currentVault?.rootPath]);
+
+  const [exportingNoteArchive, setExportingNoteArchive] = useState(false);
+  const exportNoteWithAttachments = useCallback(async (note: Note) => {
+    const source = readActiveKnowledgeWriteSource();
+    if (!currentVault || !source || !isRealVaultNoteId(note.id) || exportingNoteArchive) return;
+    setExportingNoteArchive(true);
+    try {
+      const relativePath = realVaultRelativePathFromNoteId(note.id);
+      await saveAffectedAttachmentNotes([relativePath]);
+      if (source !== readActiveKnowledgeWriteSource()) return;
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const targetPath = await save({ title: t("editor.notes.context.exportArchive"), defaultPath: `${noteTitle(note).replace(/[\\/:*?"<>|]/g, "_")}.zip`, filters: [{ name: "ZIP", extensions: ["zip"] }] });
+      if (!targetPath || source !== readActiveKnowledgeWriteSource()) return;
+      // Input may continue while the destination picker is open. Flush again,
+      // then use native revision guards while collecting the package.
+      await saveAffectedAttachmentNotes([relativePath]);
+      if (source !== readActiveKnowledgeWriteSource()) return;
+      const result = await exportNoteArchive({ vaultId: currentVault.id, relativePath }, targetPath);
+      if (source !== readActiveKnowledgeWriteSource()) return;
+      setStatus(result.issues.length
+        ? t("editor.notes.status.archivePartial", { count: result.issues.length })
+        : t("editor.notes.status.archiveExported", { count: result.attachmentCount }));
+    } catch (error) {
+      if (source === readActiveKnowledgeWriteSource()) setStatus(error instanceof Error ? error.message : String(error));
+    } finally { setExportingNoteArchive(false); }
+  }, [currentVault, exportingNoteArchive, saveAffectedAttachmentNotes, t]);
 
   const exportRealVaultMarkdown = useCallback(async () => {
     if (!currentVault || !bridge?.exportNotesVaultMarkdownFile) {
@@ -5663,7 +5728,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       const source = readActiveKnowledgeWriteSource();
       if (selectedNoteIdRef.current === documentId) { commitCurrentEditorDraftRef.current(); flushPendingSave(); }
       await saveAffectedAttachmentNotes([realVaultRelativePathFromNoteId(documentId)]);
-      if (source !== readActiveKnowledgeWriteSource()) throw new Error("知识库已切换，请在当前笔记中重试");
+      if (source !== readActiveKnowledgeWriteSource()) throw new Error(t("editor.notes.status.sourceChangedRetry"));
       if (blockRealVaultDocumentOperationIfDirty(documentId)) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
       const document = await realVaultDocumentSource.renameDocument(realVaultRelativePathFromNoteId(documentId), name);
       if (source !== readActiveKnowledgeWriteSource()) return;
@@ -6765,7 +6830,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   }, []);
 
   const enterRealVaultMode = useCallback(() => {
-    if(notesNativeViews.hasFrozenViews()){setStatus("笔记正在安全移动，请等待完成。");return;}
+    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
     if (!currentVault) {
       setStatus(t("editor.notes.status.setupOrOpenVault"));
       return;
@@ -6783,7 +6848,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   }, [currentVault, loadRealVaultTree, resetActiveDocumentForSource, t]);
 
   const activateRealVault = useCallback((vault: BridgeVaultMetadata, message: string) => {
-    if(notesNativeViews.hasFrozenViews()){setStatus("笔记正在安全移动，请等待完成。");return;}
+    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
     // Flush any dirty old-vault draft while the OLD write source is still
     // active: the reset's savePatch captures the write source at entry, and
     // flipping to the new vault first would route an old note's content into
@@ -6809,6 +6874,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
     realVaultUserDirtyRef.current.clear();
     realVaultSaveInFlightRef.current.clear();
     realVaultSaveCompletionRef.current.clear();
+    realVaultSaveEpochRef.current.clear();
     realVaultKeepEditingAfterConflictRef.current.clear();
     setRealVaultExternalConflict(null);
     setNotesIndexPanel(null);
@@ -6817,7 +6883,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   }, [resetActiveDocumentForSource]);
 
   const switchKnownVault = useCallback(async (candidate: BridgeVaultMetadata) => {
-    if(notesNativeViews.hasFrozenViews()){setStatus("笔记正在安全移动，请等待完成。");return;}
+    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
     if (candidate.id === currentVault?.id || vaultSwitchInFlightRef.current || !bridge?.openNotesVault) return;
     vaultSwitchInFlightRef.current = candidate.id;
     setSwitchingVaultId(candidate.id);
@@ -6851,7 +6917,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   );
 
   const createVaultFromPicker = useCallback(async () => {
-    if(notesNativeViews.hasFrozenViews()){setStatus("笔记正在安全移动，请等待完成。");return;}
+    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
     if (!bridge?.selectVaultDirectory || !bridge?.createNotesVault) {
       setStatus(t("editor.notes.status.createVaultUnsupported"));
       return;
@@ -6869,7 +6935,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   }, [activateRealVault, bridge, t]);
 
   const openVaultFromPicker = useCallback(async () => {
-    if(notesNativeViews.hasFrozenViews()){setStatus("笔记正在安全移动，请等待完成。");return;}
+    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
     if (!bridge?.selectVaultDirectory || !bridge?.openNotesVault) {
       setStatus(t("editor.notes.status.openVaultUnsupported"));
       return;
@@ -7539,7 +7605,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
     return registerIntegratedLayout("notes", {
       capture, validate,
       checkpoint: () => {
-        if(selectedNoteId && (selectedNoteRef.current?.id!==selectedNoteId || selectedNoteIdRef.current!==selectedNoteId))throw Error('当前笔记仍在加载，请加载完成后再应用布局。');
+        if(selectedNoteId && (selectedNoteRef.current?.id!==selectedNoteId || selectedNoteIdRef.current!==selectedNoteId))throw Error(t("editor.notes.status.loadingBeforeLayout"));
         restoreMutationStarted=false;
         const checkpointSession = vaultSessionRef.current.latest();
         const content = commitCurrentEditorDraft();
@@ -7581,7 +7647,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
       restore: async (value) => {
         if(notesNativeViews.hasFrozenViews())return false;
         if (!validateNotesLayoutSnapshot(value, currentVault.id, state, canReopenSavedNote) || sourceComposingRef.current || workspaceCompositionActive()) return false;
-        if(selectedNoteId && (selectedNoteRef.current?.id!==selectedNoteId || selectedNoteIdRef.current!==selectedNoteId))throw Error('当前笔记仍在加载，请加载完成后再应用布局。');
+        if(selectedNoteId && (selectedNoteRef.current?.id!==selectedNoteId || selectedNoteIdRef.current!==selectedNoteId))throw Error(t("editor.notes.status.loadingBeforeLayout"));
         cancelNotesTabPointerDrag();
         const content = commitCurrentEditorDraft();
         captureNotesEditorSessions();
@@ -8135,7 +8201,23 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
       locale={locale}
       viewRefs={viewRefs}
       areaEvents={{"onPointerDownCapture": () => { if (!isActive) flushSync(() => activateNotesSplitPane(paneId, tab.id)); },
-"onFocusCapture": () => { if (!isActive) flushSync(() => activateNotesSplitPane(paneId, tab.id)); },
+"onCompositionStartCapture": () => { realVaultDocumentReadsRef.current.setComposing(tab.id, true); },
+"onCompositionEndCapture": () => finishRealVaultComposition(tab.id),
+"onInputCapture": (event) => { if (!(event.nativeEvent as InputEvent).isComposing) finishRealVaultComposition(tab.id); },
+"onBlurCapture": (event) => {
+                const next = event.relatedTarget as Element | null;
+                if (!next?.closest?.(".cm-content, textarea")) {
+                  finishRealVaultComposition(tab.id);
+                  if (realVaultDocumentReadsRef.current.setFocused(tab.id, false)) queueMicrotask(() => {
+                    if (selectedNoteIdRef.current === tab.id) void checkCurrentRealVaultExternalChange({ force: true, silent: true });
+                  });
+                }
+              },
+"onKeyUpCapture": (event) => { if (event.key === "Escape") finishRealVaultComposition(tab.id); },
+"onFocusCapture": (event) => {
+                if (!isActive) flushSync(() => activateNotesSplitPane(paneId, tab.id));
+                if ((event.target as Element).closest(".cm-content, textarea")) realVaultDocumentReadsRef.current.setFocused(tab.id, true);
+              },
 "onContextMenuCapture": (event) => {
                 if (!isActive) flushSync(() => activateNotesSplitPane(paneId, tab.id));
                 if (tab.kind !== "empty" && (selectedNoteIdRef.current !== tab.id || selectedNoteRef.current?.id !== tab.id)) { event.preventDefault(); event.stopPropagation(); }
@@ -8153,6 +8235,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
                 if (selectedNoteIdRef.current !== tab.id || selectedNoteRef.current?.id !== tab.id) { event.preventDefault(); event.stopPropagation(); }
               },
 "onKeyDownCapture": (event) => {
+                if (event.nativeEvent.isComposing || event.keyCode === 229 || event.key === "Process") realVaultDocumentReadsRef.current.setComposing(tab.id, true);
                 if (event.key === "Tab" || (event.target as Element).closest("[data-notes-dock-tabs]")) return;
                 if (tab.kind !== "empty" && (selectedNoteIdRef.current !== tab.id || selectedNoteRef.current?.id !== tab.id)) { event.preventDefault(); event.stopPropagation(); }
               },
@@ -8547,8 +8630,8 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
                     className="lr-attachment-resize-handle"
                     role="separator"
                     aria-orientation="vertical"
-                    aria-label="调整附件栏宽度"
-                    title="拖动调整宽度，拖到最左侧收起"
+                    aria-label={t("editor.notes.attachments.resize")}
+                    title={t("editor.notes.attachments.resizeHint")}
                     onPointerDown={startAttachmentSidebarResize}
                   />
                   <NoteAttachmentSidebar
@@ -8620,7 +8703,7 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
                   onPointerDown={beginNotesSplitResize}
                   role="separator"
                   aria-orientation={notesSplit.direction === "left" || notesSplit.direction === "right" ? "vertical" : "horizontal"}
-                  aria-label="调整分屏大小"
+                  aria-label={t("editor.notes.pane.resize")}
                 />
               )}
             </div>
@@ -8833,10 +8916,10 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
       {noteCtx && (
         <div className="note-ctx-react" style={{ left: noteCtx.x, top: noteCtx.y }} onPointerDown={(event) => event.stopPropagation()}>
           <div role="menuitem" className="note-ctx-item-react" tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.click(); } }} onClick={() => { openCreateDocumentDialog(noteCtx.note.folderId || null); setNoteCtx(null); }}>
-            <IconPlus /><span>新建笔记</span>
+            <IconPlus /><span>{t("editor.notes.newDocument")}</span>
           </div>
           <div role="menuitem" className="note-ctx-item-react" tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.click(); } }} onClick={() => { setDialog({ kind: "folder", parentId: noteCtx.note.folderId || null, name: "" }); setNoteCtx(null); }}>
-            <IconPlus /><span>新建文件夹</span>
+            <IconPlus /><span>{t("editor.notes.dialog.newFolder")}</span>
           </div>
           <div className="note-ctx-sep-react" />
           <div className="note-ctx-item-react" onClick={() => { void selectNote(noteCtx.note.id, { scrollList: true, tabMode: "open" }); setNoteCtx(null); }}>
@@ -8882,6 +8965,13 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
                 <span>{t("editor.notes.context.reveal")}</span>
               </div>
             </>
+          )}
+          {isRealVaultNoteId(noteCtx.note.id) && (
+            <div role="menuitem" tabIndex={0} aria-disabled={exportingNoteArchive} className="note-ctx-item-react"
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.click(); } }}
+              onClick={() => { if (!exportingNoteArchive) { void exportNoteWithAttachments(noteCtx.note); setNoteCtx(null); } }}>
+              <IconCopy /><span>{t("editor.notes.context.exportArchive")}</span>
+            </div>
           )}
           <div className="note-ctx-sep-react" />
           <div className="note-ctx-item-react" onClick={() => { void copyTextToClipboard(`[[${noteTitle(noteCtx.note)}]]`, t("editor.notes.status.linkCopied")); setNoteCtx(null); }}>

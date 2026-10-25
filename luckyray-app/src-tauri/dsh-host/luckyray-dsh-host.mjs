@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { zstdDecompressSync } from "node:zlib";
 import { createChildResourceRouter } from "./luckyray-dsh-resource-tools/index.mjs";
+import { validCreationPayload } from "./luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs";
 import {
   COMPAT_CHECKER_VERSION,
   PLUGIN_COMPAT_GUARD_FILENAME,
@@ -25,7 +26,11 @@ import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 
 export const DSH_HOST_PROTOCOL = 1;
-export const DSH_HOST_MAX_FRAME_BYTES = 384 * 1024;
+export const DSH_HOST_MAX_FRAME_BYTES = 3 * 1024 * 1024;
+// This channel shares the existing authenticated pipe and its frame bound.
+// A model run never occupies a control request: the carrier returns a snapshot.
+export const CANVAS_AGENT_MAX_JSON_BYTES = 2 * 1024 * 1024;
+export const CANVAS_AGENT_MAX_ENCODED_BYTES = Math.ceil(CANVAS_AGENT_MAX_JSON_BYTES / 3) * 4;
 const DSH_HOST_MAX_PENDING_RESOURCE_CALLS = 128;
 const DSH_HOST_MAX_RESOURCE_RESULT_BYTES = 12 * 1024 * 1024;
 const DSH_NATIVE_PROBE_TEXT = "LUCKYRAY_DSH_NATIVE_PROBE";
@@ -66,6 +71,7 @@ const FRAME_FIELDS = Object.freeze({
   "model-sync": new Set(["type", "protocol", "generation", "seq", "requestId", "mac"]),
   "open-intent": new Set(["type", "protocol", "generation", "seq", "requestId", "payload", "mac"]),
   "open-intent-status": new Set(["type", "protocol", "generation", "seq", "requestId", "payload", "mac"]),
+  "canvas-agent": new Set(["type", "protocol", "generation", "seq", "requestId", "payload", "mac"]),
   "compat-status": new Set(["type", "protocol", "generation", "seq", "requestId", "mac"]),
   "compat-check": new Set(["type", "protocol", "generation", "seq", "requestId", "payload", "mac"]),
   "compat-apply": new Set(["type", "protocol", "generation", "seq", "requestId", "payload", "mac"]),
@@ -182,7 +188,7 @@ export function parseStrictHostFrame(line) {
     throw invalidFrame();
   }
   if (["probe", "surface-open", "surface-close", "model-sync", "open-intent", "open-intent-status", "compat-status", "compat-check", "compat-apply", "resource-result", "resource-result-chunk",
-    "remote-authority-set", "remote-session-mint", "remote-session-drop", "update-prepare", "update-cancel", "update-stop"].includes(frame.type)
+    "remote-authority-set", "remote-session-mint", "remote-session-drop", "update-prepare", "update-cancel", "update-stop", "canvas-agent"].includes(frame.type)
     && (typeof frame.requestId !== "string" || !/^[a-z0-9-]{1,64}$/u.test(frame.requestId))) {
     throw invalidFrame();
   }
@@ -236,6 +242,153 @@ export function verifyCanonicalHostFrameMac(challenge, direction, frame, receive
 
 function encodeResultPayload(value) {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+const CANVAS_AGENT_PUBLIC_ERRORS = new Set(["canvas-agent-invalid-request", "canvas-agent-invalid-response", "canvas-agent-request-failed", "canvas-agent-unavailable", "canvas-agent-transport-busy", "canvas-agent-busy", "canvas-agent-capacity", "canvas-agent-conversation-conflict", "canvas-agent-request-conflict", "canvas-agent-request-already-used", "canvas-agent-run-conflict", "canvas-agent-storage-unavailable", "canvas-agent-model-unavailable", "canvas-agent-runtime-unavailable", "canvas-agent-cancelled", "canvas-agent-disposed", "canvas-agent-host-paused", "canvas-agent-execution-unauthorized", "canvas-agent-generation-unauthorized", "canvas-agent-media-budget", "canvas-agent-generation-unavailable", "canvas-agent-action-conflict", "canvas-agent-conversation-not-found"]);
+
+function canvasAgentError(code = "canvas-agent-invalid-request") {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+export function decodeCanvasAgentPayload(payload) {
+  if (typeof payload !== "string" || payload.length === 0
+    || payload.length > CANVAS_AGENT_MAX_ENCODED_BYTES || !/^[A-Za-z0-9_-]+$/u.test(payload)) {
+    throw canvasAgentError();
+  }
+  const bytes = Buffer.from(payload, "base64url");
+  if (bytes.length > CANVAS_AGENT_MAX_JSON_BYTES || bytes.toString("base64url") !== payload) throw canvasAgentError();
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch { throw canvasAgentError(); }
+}
+
+const canvasObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
+const canvasKeys = (v, allowed, required = allowed) => canvasObject(v) && Object.keys(v).every(k => allowed.includes(k)) && required.every(k => Object.hasOwn(v, k));
+const canvasIdValid = v => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u.test(v);
+const canvasText = (v, max, empty = true) => typeof v === "string" && v.length <= max && (empty || v.trim().length > 0) && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(v);
+const canvasCount = (v, max) => Number.isSafeInteger(v) && v >= 0 && v <= max;
+const canvasArray = (v, max, check) => Array.isArray(v) && v.length <= max && v.every(check);
+function canvasContextValid(c, canvasId, images = false) {
+  if (!canvasKeys(c, ["version","canvasId","canvasName","nodes","connections","generation","snapshotRevision"],["version","canvasId","canvasName","nodes","connections","generation"]) || (c.snapshotRevision!==undefined && (typeof c.snapshotRevision!=="string" || !/^[a-f0-9]{16}$/.test(c.snapshotRevision))) || c.version !== 1 || c.canvasId !== canvasId || !canvasText(c.canvasName,256)) return false;
+  if (!canvasArray(c.nodes,256,n => canvasKeys(n,["id","title","kind","text","editable","revision","layout","imageUnavailable",...(images?["image"]:[])],["id","title","kind","text","editable","revision"])
+    && canvasIdValid(n.id) && canvasText(n.title,256) && ["text","image","video","note","group"].includes(n.kind) && canvasText(n.text,24000) && typeof n.editable === "boolean" && /^[a-f0-9]{16}$/u.test(n.revision)
+    && (n.layout===undefined || canvasKeys(n.layout,["x","y","parentId"],["x","y"]) && [n.layout.x,n.layout.y].every(v=>typeof v==="number"&&Number.isFinite(v)&&Math.abs(v)<=1e7) && (n.layout.parentId===undefined||canvasIdValid(n.layout.parentId)))
+    && (n.imageUnavailable === undefined || typeof n.imageUnavailable === "boolean")
+    && (n.image === undefined || ["image","video"].includes(n.kind) && canvasKeys(n.image,["mimeType","data"]) && ["image/jpeg","image/png"].includes(n.image.mimeType) && typeof n.image.data === "string" && /^[A-Za-z0-9+/]*={0,2}$/u.test(n.image.data) && n.image.data.length>0 && Buffer.from(n.image.data,"base64").toString("base64")===n.image.data && Buffer.from(n.image.data,"base64").length <= 128*1024))) return false;
+  const ids = new Set(c.nodes.map(n=>n.id));
+  if (ids.size !== c.nodes.length || !canvasArray(c.connections,2048,e=>canvasKeys(e,["source","target"]) && ids.has(e.source) && ids.has(e.target) && e.source!==e.target)) return false;
+  if (Buffer.byteLength(c.nodes.map(n=>n.text).join(""),"utf8") > 256*1024 || c.nodes.filter(n=>n.image).length > 8 || c.nodes.reduce((sum,n)=>sum+(n.image?Buffer.from(n.image.data,"base64").length:0),0)>1024*1024) return false;
+  const g=c.generation;
+  return canvasKeys(g,["imageModels","videoModels","imageReady","videoReady","imageOptions","videoOptions"],["imageModels","videoModels","imageReady","videoReady"])
+    && [g.imageReady,g.videoReady].every(v=>typeof v==="boolean") && [g.imageModels,g.videoModels].every(v=>canvasArray(v,32,m=>canvasText(m,160,false)))
+    && [g.imageOptions,g.videoOptions].every(o=>o===undefined || canvasKeys(o,["aspects","resolutions","qualities","durations"]) && [o.aspects,o.resolutions,o.qualities].every(v=>canvasArray(v,32,x=>canvasText(x,160,false))) && canvasArray(o.durations,32,v=>typeof v==="number"&&Number.isFinite(v)&&v>0));
+}
+function canvasPlanValid(p, canvasId, runId) {
+  return Buffer.byteLength(JSON.stringify(p),"utf8")<=256*1024 && canvasKeys(p,["version","id","canvasId","runId","title","summary","steps"]) && p.version===1 && canvasIdValid(p.id) && p.canvasId===canvasId && p.runId===runId && canvasText(p.title,160) && canvasText(p.summary,2000)
+    && Array.isArray(p.steps) && p.steps.length>0 && p.steps.length<=64 && p.steps.every(s=>canvasKeys(s,["id","kind","title","content","references","targetNodeId","settings"],["id","kind","title","content","references"])
+      && canvasIdValid(s.id) && ["text","image","video"].includes(s.kind) && canvasText(s.title,160) && canvasText(s.content,16000) && canvasArray(s.references,256,canvasIdValid) && (s.targetNodeId===undefined||canvasIdValid(s.targetNodeId))
+      && (s.settings===undefined||canvasKeys(s.settings,["aspect","resolution","quality","duration"],[]) && Object.entries(s.settings).every(([k,v])=>k==="duration"?typeof v==="number"&&Number.isFinite(v):canvasText(v,160,false))));
+}
+function canvasExecutionValid(e, snapshot = false) {
+  return canvasKeys(e,["mode","allowGeneration","maxMediaJobs",...(snapshot?["reservedMediaJobs"]:[])],["mode","allowGeneration","maxMediaJobs"]) && ["plan","autonomous"].includes(e.mode) && typeof e.allowGeneration==="boolean" && canvasCount(e.maxMediaJobs,1000) && (e.reservedMediaJobs===undefined||canvasCount(e.reservedMediaJobs,e.maxMediaJobs)) && (!e.allowGeneration || e.mode==="autonomous" && e.maxMediaJobs>0);
+}
+// Reuse the pinned adapter validator; duplicated schema exceeds the carrier byte limit.
+function canvasCreationActionValid(a) {
+ const kinds={readCreation:['read','creationQuery'],editCreation:['edit','creationEdit'],openCreation:['open','creationOpen']};
+ const selected=kinds[a.kind];
+ if(!selected)return ['creationQuery','creationEdit','creationOpen'].every(k=>a[k]===undefined);
+ return ['plan','generate','operations','nodeIds','offset','expectedRevision'].every(k=>a[k]===undefined) && a.context!==undefined
+   && (selected[0]==='read'||a.execution?.mode==='autonomous')
+   && ['creationQuery','creationEdit','creationOpen'].every(k=>k===selected[1]?validCreationPayload(a[k],selected[0]):a[k]===undefined);
+}
+function canvasActionResultValid(r, canvasId) {
+  return canvasKeys(r,["status","summary","context","generatedJobs","nodes","creation"],["status","summary","generatedJobs"]) && ["completed","failed","cancelled"].includes(r.status) && canvasText(r.summary,8000) && canvasCount(r.generatedJobs,1000)
+    && (r.creation===undefined||(validCreationPayload(r.creation,"result") && (r.creation.completion === "applied-unconfirmed" ? r.status === "failed" : r.status === "completed"))) && (r.context===undefined||canvasContextValid(r.context,canvasId,true)) && (r.nodes===undefined||canvasArray(r.nodes,256,n=>canvasKeys(n,["id","status","summary"],["id","status"])&&canvasIdValid(n.id)&&["completed","failed","cancelled"].includes(n.status)&&(n.summary===undefined||canvasText(n.summary,4000))));
+}
+export function validateCanvasAgentRequest(request) {
+  if (!canvasObject(request) || !canvasIdValid(request.canvasId) || Buffer.byteLength(JSON.stringify(request),"utf8") > CANVAS_AGENT_MAX_JSON_BYTES) throw canvasAgentError();
+  const op=request.op;
+  if (["status","models","history"].includes(op) && canvasKeys(request,["op","canvasId"])) return request;
+  if (op==="cancel" && canvasKeys(request,["op","canvasId","runId"]) && canvasIdValid(request.runId)) return request;
+  if (op==="newConversation" && canvasKeys(request,["op","canvasId","requestId","expectedConversationId"]) && canvasIdValid(request.requestId) && canvasIdValid(request.expectedConversationId)) return request;
+  if (op==="resumeConversation" && canvasKeys(request,["op","canvasId","requestId","expectedConversationId","conversationId"]) && [request.requestId,request.expectedConversationId,request.conversationId].every(canvasIdValid)) return request;
+  if (op==="actionResult" && canvasKeys(request,["op","canvasId","runId","actionId","result"]) && [request.runId,request.actionId].every(canvasIdValid) && canvasActionResultValid(request.result,request.canvasId)) return request;
+  if (op!=="start" || !canvasKeys(request,["op","canvasId","conversationId","requestId","prompt","context","modelSelection","execution"],["op","canvasId","conversationId","requestId","prompt","context"])
+    || ![request.conversationId,request.requestId].every(canvasIdValid) || !canvasText(request.prompt,48000,false) || !canvasContextValid(request.context,request.canvasId,true) || request.execution!==undefined&&!canvasExecutionValid(request.execution)) throw canvasAgentError();
+  if (request.modelSelection!==undefined && (!canvasKeys(request.modelSelection,["provider","model","reasoningEffort"],["provider","model"]) || !Object.values(request.modelSelection).every(v=>canvasText(v,160,false)))) throw canvasAgentError();
+  return request;
+}
+
+function canvasGraphOperationsValid(operations) {
+  return Array.isArray(operations) && operations.length>0 && operations.length<=64 && operations.every(o=> {
+    if (o?.op==="move") return canvasKeys(o,["op","nodeId","x","y"]) && canvasIdValid(o.nodeId) && [o.x,o.y].every(n=>typeof n==="number"&&Number.isFinite(n)&&Math.abs(n)<=1000000);
+    if (["connect","disconnect"].includes(o?.op)) return canvasKeys(o,["op","source","target"])&&canvasIdValid(o.source)&&canvasIdValid(o.target)&&o.source!==o.target;
+    return o?.op==="arrange" && canvasKeys(o,["op","nodeIds","layout"]) && Array.isArray(o.nodeIds)&&o.nodeIds.length>0 && canvasArray(o.nodeIds,256,canvasIdValid) && new Set(o.nodeIds).size===o.nodeIds.length && ["grid","horizontal","vertical"].includes(o.layout);
+  });
+}
+const canvasReasoningFields=["reasoningStartedAt","reasoningEndedAt","reasoningDurationMs"];
+function canvasReasoningValid(v,active=false) {
+ const f=active?[...canvasReasoningFields,"reasoningActiveStartedAt"]:canvasReasoningFields;
+ return f.every(k=>v[k]===undefined||canvasCount(v[k],Number.MAX_SAFE_INTEGER))&&(!f.slice(1).some(k=>v[k]!==undefined)||v.reasoningStartedAt!==undefined)&&["reasoningEndedAt","reasoningActiveStartedAt"].every(k=>v[k]===undefined||v[k]>=v.reasoningStartedAt);
+}
+function validateCanvasAgentExtensions(value, canvasId) {
+  const optional=(key,valid)=>value[key]===undefined||valid(value[key]);
+  return optional("error",v=>typeof v==="string"&&/^canvas-agent-[a-z-]+$/u.test(v)) && optional("model",v=>canvasText(v,160,false)) && optional("updatedAt",v=>canvasCount(v,Number.MAX_SAFE_INTEGER)) && optional("execution",v=>canvasExecutionValid(v,true)) && optional("context",c=>canvasContextValid(c,canvasId)) && optional("plan",p=>canvasPlanValid(p,canvasId,value.runId))
+    && optional("stream",v=>canvasKeys(v,["attemptId","text","status","reasoning","reasoningText","turnId","startedAt",...canvasReasoningFields,"reasoningActiveStartedAt"],["attemptId","text","status","reasoning"])&&canvasReasoningValid(v,true)&&(v.turnId===undefined||canvasIdValid(v.turnId)&&v.turnId===value.runId)&&(v.startedAt===undefined||canvasCount(v.startedAt,Number.MAX_SAFE_INTEGER))&&canvasIdValid(v.attemptId)&&canvasText(v.text,256000)&&["streaming","settled","interrupted"].includes(v.status)&&typeof v.reasoning==="boolean"&&(v.reasoningText===undefined||canvasText(v.reasoningText,256000)))
+    && optional("progress",v=>canvasArray(v,64,p=>canvasKeys(p,["id","summary","createdAt"])&&canvasIdValid(p.id)&&canvasText(p.summary,4000)&&canvasCount(p.createdAt,Number.MAX_SAFE_INTEGER)))
+    && optional("tools",v=>canvasArray(v,128,t=>canvasKeys(t,["callId","name","status","startedAt","endedAt","summary","turnId","eventSeq","displayTitle","displayTitleEn"],["callId","name","status","startedAt"])&&["displayTitle","displayTitleEn"].every(k=>t[k]===undefined||canvasText(t[k],240))&&(t.eventSeq===undefined||canvasCount(t.eventSeq,Number.MAX_SAFE_INTEGER))&&(t.turnId===undefined||canvasIdValid(t.turnId))&&canvasIdValid(t.callId)&&canvasText(t.name,160,false)&&["running","completed","failed"].includes(t.status)&&canvasCount(t.startedAt,Number.MAX_SAFE_INTEGER)&&(t.endedAt===undefined||canvasCount(t.endedAt,Number.MAX_SAFE_INTEGER)&&t.endedAt>=t.startedAt)&&(t.summary===undefined||canvasText(t.summary,4000))))
+    && optional("conversations",v=>canvasArray(v,256,c=>canvasKeys(c,["conversationId","sessionId","title","updatedAt","messageCount"])&&canvasIdValid(c.conversationId)&&(c.sessionId===null||canvasIdValid(c.sessionId))&&canvasText(c.title,200)&&canvasCount(c.updatedAt,Number.MAX_SAFE_INTEGER)&&canvasCount(c.messageCount,Number.MAX_SAFE_INTEGER)))
+    && optional("pendingAction",a=>value.status==="running"&&canvasKeys(a,["actionId","runId","kind","nodeIds","offset","plan","operations","context","generate","execution","expectedRevision","creationQuery","creationEdit","creationOpen"],["actionId","runId","kind"])&&canvasIdValid(a.actionId)&&(a.expectedRevision===undefined||typeof a.expectedRevision==="string"&&/^[a-f0-9]{16}$/.test(a.expectedRevision))&&a.runId===value.runId&&canvasIdValid(a.runId)&&["readContext","applyPlan","editGraph","readCreation","editCreation","openCreation"].includes(a.kind)&&canvasCreationActionValid(a)&&(a.nodeIds===undefined||canvasArray(a.nodeIds,256,canvasIdValid))&&(a.offset===undefined||canvasCount(a.offset,1000000))&&(a.context===undefined||canvasContextValid(a.context,canvasId))&&(a.generate===undefined||typeof a.generate==="boolean")&&(a.execution===undefined||canvasExecutionValid(a.execution,true))&&(a.kind==="applyPlan"?canvasPlanValid(a.plan,canvasId,a.runId)&&a.operations===undefined&&a.context!==undefined&&a.execution?.mode==="autonomous"&&(!a.generate||a.execution.allowGeneration):a.kind==="editGraph"?canvasGraphOperationsValid(a.operations)&&a.plan===undefined&&a.context!==undefined&&a.execution?.mode==="autonomous"&&!a.generate:a.plan===undefined&&a.operations===undefined&&!a.generate));
+}
+
+export function validateCanvasAgentResult(payload, canvasId) {
+  const value = decodeCanvasAgentPayload(payload);
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw canvasAgentError("canvas-agent-invalid-response");
+  if (Object.keys(value).join(",") === "error") throw canvasAgentError(CANVAS_AGENT_PUBLIC_ERRORS.has(value.error) ? value.error : "canvas-agent-request-failed");
+  const allowed = new Set(["canvasId", "conversationId", "activity", "sessionId", "runId", "requestId", "status", "messages", "context", "plan", "error", "model", "models", "pendingAction", "conversations", "stream", "progress", "tools", "updatedAt", "execution"]);
+  if (Object.keys(value).some(key => !allowed.has(key)) || value.canvasId !== canvasId
+    || typeof value.conversationId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u.test(value.conversationId)
+    || ![value.sessionId, value.runId].every(id => id === null || typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u.test(id))
+    || (value.requestId !== undefined && (typeof value.requestId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u.test(value.requestId)))
+    || !["idle", "running", "completed", "failed", "cancelled"].includes(value.status)
+    || !Array.isArray(value.messages) || value.messages.length > 128
+    || value.messages.some(message => !message || !canvasKeys(message,["role","text","reasoningText","turnId","messageId","attemptId","createdAt","eventSeq",...canvasReasoningFields],["role","text"])
+      || !canvasReasoningValid(message) || ["turnId","messageId","attemptId"].some(key=>message[key]!==undefined&&!canvasIdValid(message[key])) || (message.createdAt!==undefined&&!canvasCount(message.createdAt,Number.MAX_SAFE_INTEGER)) || (message.eventSeq!==undefined&&!canvasCount(message.eventSeq,Number.MAX_SAFE_INTEGER))
+      || !["user", "assistant"].includes(message.role) || !canvasText(message.text,256000)||(message.reasoningText!==undefined&&!canvasText(message.reasoningText,256000)))) {
+    throw canvasAgentError("canvas-agent-invalid-response");
+  }
+  if (value.activity !== undefined) {
+    const labels = new Set(["preparing", "resolving-model", "opening-session", "waiting-model", "reading-context", "proposing-plan", "finalizing", "stopping"]);
+    if (!Array.isArray(value.activity) || value.activity.length > 24 || value.activity.some(entry => !entry || typeof entry !== "object" || Array.isArray(entry)
+      || !["id,kind,label,startedAt,status", "endedAt,id,kind,label,startedAt,status"].includes(Object.keys(entry).sort().join(","))
+      || typeof entry.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u.test(entry.id)
+      || !["phase", "tool"].includes(entry.kind) || !labels.has(entry.label) || !["running", "completed", "failed"].includes(entry.status)
+      || !Number.isSafeInteger(entry.startedAt) || entry.startedAt < 0 || (entry.endedAt !== undefined && (!Number.isSafeInteger(entry.endedAt) || entry.endedAt < entry.startedAt))))
+      throw canvasAgentError("canvas-agent-invalid-response");
+  }
+  if (value.models !== undefined) {
+    const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
+    const text = (value, max=160) => typeof value === "string" && value.trim() && value.length <= max && !/[\u0000-\u001f\u007f]/u.test(value);
+    const selection = value => object(value) && Object.keys(value).every(key=>["provider","model","reasoningEffort"].includes(key))
+      && text(value.provider) && text(value.model) && (value.reasoningEffort === undefined || text(value.reasoningEffort));
+    const reasoning = r => r === undefined || (object(r) && Object.keys(r).every(k=>["efforts","defaultEffort"].includes(k))
+      && Array.isArray(r.efforts) && r.efforts.length>0 && r.efforts.length<=32
+      && r.efforts.every(e=>object(e)&&Object.keys(e).every(k=>["id","name","description"].includes(k))&&text(e.id)&&text(e.name)&&(e.description===undefined||text(e.description,640)))
+      && new Set(r.efforts.map(e=>e.id)).size===r.efforts.length && (r.defaultEffort===undefined||r.efforts.some(e=>e.id===r.defaultEffort)));
+    const models = value.models;
+    if (!object(models) || Object.keys(models).sort().join(",") !== "available,currentModel,defaultModel"
+      || ![models.defaultModel,models.currentModel].every(value=>value===null||selection(value))
+      || !Array.isArray(models.available) || models.available.length>256 || models.available.some(item=>!object(item)
+        || !["inputModalities,label,model,provider","inputModalities,label,model,provider,reasoning"].includes(Object.keys(item).sort().join(",")) || !reasoning(item.reasoning)
+        || !text(item.provider) || !text(item.model) || !text(item.label,323) || !Array.isArray(item.inputModalities)
+        || item.inputModalities.length>2 || item.inputModalities.some(value=>!["text","image"].includes(value))))
+      throw canvasAgentError("canvas-agent-invalid-response");
+  }
+  if (!validateCanvasAgentExtensions(value, canvasId)) throw canvasAgentError("canvas-agent-invalid-response");
+
+  return value;
 }
 
 export function createDshHostProtocol({ writeFrame, nativeProbe, nativeSurface, pluginCompat = null, failureProbe = null }) {
@@ -322,6 +475,22 @@ export function createDshHostProtocol({ writeFrame, nativeProbe, nativeSurface, 
     }
     if (frame.type === "ping") {
       emit("pong", { stage: "protocol-authenticated" });
+      return;
+    }
+    if (frame.type === "canvas-agent") {
+      // Authenticated envelope failures remain fatal. Only bounded application
+      // validation/service failures stay isolated to this new request channel.
+      try {
+        const request = validateCanvasAgentRequest(decodeCanvasAgentPayload(frame.payload));
+        if (busy) throw canvasAgentError("canvas-agent-transport-busy");
+        if (typeof nativeSurface?.canvasAgent !== "function") throw canvasAgentError("canvas-agent-unavailable");
+        const result = await nativeSurface.canvasAgent(frame.payload);
+        validateCanvasAgentResult(result?.payload, request.canvasId);
+        emit("canvas-agent-result", { requestId: frame.requestId, outcome: "accepted", payload: result.payload });
+      } catch (error) {
+        const reason = CANVAS_AGENT_PUBLIC_ERRORS.has(error?.code) ? error.code : "canvas-agent-unavailable";
+        emit("canvas-agent-result", { requestId: frame.requestId, outcome: "rejected", reason });
+      }
       return;
     }
     if (["update-prepare", "update-cancel", "update-stop"].includes(frame.type)) {
@@ -613,7 +782,7 @@ export function createSurfaceControlChannel({
   };
   lines.on("line", (line) => {
     try {
-      if (invalid || Buffer.byteLength(line, "utf8") > 352 * 1024) throw probeFailure();
+      if (invalid || Buffer.byteLength(line, "utf8") > DSH_HOST_MAX_FRAME_BYTES) throw probeFailure();
       const frame = JSON.parse(line);
       if (!frame || typeof frame.type !== "string") throw probeFailure();
       if (frame.type === "surface-state") {
@@ -628,7 +797,7 @@ export function createSurfaceControlChannel({
       }
       const fields = Object.keys(frame).sort().join(",");
       const resultShape = (["model-sync-result", "open-intent-status-result", "remote-session-mint-result",
-        "update-prepare-result", "update-cancel-result", "update-stop-result"].includes(frame.type))
+        "update-prepare-result", "update-cancel-result", "update-stop-result", "canvas-agent-result"].includes(frame.type))
         && fields === "outcome,payload,seq,type"
         && typeof frame.payload === "string"
         && Buffer.byteLength(frame.payload, "utf8") <= 350 * 1024;
@@ -642,6 +811,7 @@ export function createSurfaceControlChannel({
       pending.delete(frame.seq);
       clearTimeout(item.timeout);
       item.resolve(frame);
+      if (item.timedOut && typeof item.onLateAck === "function") item.onLateAck(frame);
     } catch {
       invalidate();
     }
@@ -660,18 +830,19 @@ export function createSurfaceControlChannel({
       if (invalid || !Number.isSafeInteger(seq) || seq <= 0 || pending.has(seq)
         || !["binding-open-ack", "binding-close-ack", "model-sync-result", "open-intent-result", "open-intent-status-result",
           "remote-authority-ack", "remote-session-mint-result", "remote-session-drop-ack",
-          "update-prepare-result", "update-cancel-result", "update-stop-result"].includes(type)) {
+          "update-prepare-result", "update-cancel-result", "update-stop-result", "canvas-agent-result"].includes(type)) {
         return Promise.reject(probeFailure());
       }
       return new Promise((resolveAck, rejectAck) => {
         const timeout = setTimeout(() => {
+          const item = pending.get(seq); if (item) item.timedOut = true;
           if (options.preserveOnTimeout !== true) pending.delete(seq);
           rejectAck(probeFailure());
           if (options.preserveOnTimeout !== true) invalidate();
         }, timeoutMs);
         pending.set(seq, {
           type, resolve: resolveAck, reject: rejectAck, timeout,
-          acceptsRejected: options.acceptsRejected === true,
+          acceptsRejected: options.acceptsRejected === true, timedOut: false, onLateAck: options.onLateAck,
         });
       });
     },
@@ -847,10 +1018,12 @@ export function createNativeSurfaceOwner({
   // cold starts until the failed sweep settles or shutdown() proves clean.
   let cleanupBlocked = false;
   let lastUnconfirmedChild = null;
-  const control = async (owned, command) => {
+  let canvasAgentPending = null;
+  const control = async (owned, command, options = {}) => {
     owned.controlSeq += 1;
     const frame = { ...command, seq: owned.controlSeq };
     const replyType = command.type.startsWith("update-") ? `${command.type}-result`
+      : command.type === "canvas-agent" ? "canvas-agent-result"
       : command.type === "model-sync" ? "model-sync-result"
       : command.type === "open-intent" ? "open-intent-result"
         : command.type === "open-intent-status" ? "open-intent-status-result"
@@ -858,7 +1031,8 @@ export function createNativeSurfaceOwner({
           : `${command.type}-ack`;
     const acknowledged = owned.router.waitAck(owned.controlSeq, replyType, command.type.startsWith("update-") ? 20_000 : 5_000, {
       acceptsRejected: command.type === "remote-session-mint",
-      preserveOnTimeout: command.type.startsWith("update-"),
+      preserveOnTimeout: command.type.startsWith("update-") || command.type === "canvas-agent",
+      onLateAck: options.onLateAck,
     });
     owned.child.stdio[5].write(`${JSON.stringify(frame)}\n`);
     return acknowledged;
@@ -1202,6 +1376,7 @@ export function createNativeSurfaceOwner({
         bootstrapPath: ready.bootstrapPath, bootstrapRef: ready.bootstrapRef,
         rssBytes: process.memoryUsage().rss, ownedProcessCount: 2,
       });
+      canvasAgentPending = null;
       current = {
         child, ready: projection, port: ready.port, controlSeq: 0,
         router, resourceRouter, bindingGeneration: authority.generation,
@@ -1256,6 +1431,30 @@ export function createNativeSurfaceOwner({
         carrierGeneration,
         rssBytes: process.memoryUsage().rss, ownedProcessCount: owned?.child.exitCode === null ? 2 : 1,
       });
+    },
+    async canvasAgent(payload) {
+      const request = validateCanvasAgentRequest(decodeCanvasAgentPayload(payload));
+      const owned = current;
+      if (!owned || owned.child.exitCode !== null || owned.bindingGeneration <= 0 || owned.updateStopping)
+        throw canvasAgentError("canvas-agent-unavailable");
+      if (canvasAgentPending) throw canvasAgentError("canvas-agent-transport-busy");
+      const flight = {}; canvasAgentPending = flight;
+      try {
+        const result = await control(owned, { type: "canvas-agent", payload }, { onLateAck: frame => {
+          // The exact authenticated late reply must also pass the Canvas schema
+          // before a recovering channel can be reused. An application failure
+          // is settled too; malformed/cross-canvas data remains fail-closed.
+          try { validateCanvasAgentResult(frame.payload, request.canvasId); }
+          catch (caught) { if (caught?.code === "canvas-agent-invalid-response" || caught?.code === "canvas-agent-invalid-request") return; }
+          if (canvasAgentPending === flight && current === owned) canvasAgentPending = null;
+        } });
+        if (canvasAgentPending === flight) canvasAgentPending = null;
+        return Object.freeze({ payload: result.payload });
+      } catch {
+        // Keep at most this one unresolved private ACK. A valid late ACK may
+        // reopen this lane; never restart or terminate unrelated LSH work.
+        throw canvasAgentError("canvas-agent-unavailable");
+      }
     },
     async syncModel() {
       const owned = current;

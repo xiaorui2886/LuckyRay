@@ -3,6 +3,26 @@ use super::*;
 use crate::materials::{MaterialBytesInput, MaterialFilter, MaterialImportOptions};
 use serde_json::{json, Value};
 
+// These downgrade fixtures must remove later trust DDL as well as its ledger.
+// Only synthetic profiles are used; retain every former service-grant row.
+fn downgrade_synthetic_trust_to_v26(c: &Connection) {
+    c.execute_batch("DROP TABLE companion_manual_override;
+        DROP TABLE companion_phone_policy;
+        DROP TABLE companion_service_override;
+        CREATE TABLE companion_service_grant_old (
+            device_id TEXT NOT NULL REFERENCES companion_device(device_id) ON DELETE CASCADE,
+            grant_class TEXT NOT NULL CHECK(grant_class IN ('content.read','content.write','ingest.write','desktop.open')),
+            scope_kind TEXT NOT NULL CHECK(scope_kind IN ('catalog','vault')),
+            scope_id TEXT NOT NULL, granted_at TEXT NOT NULL,
+            PRIMARY KEY(device_id,grant_class,scope_kind,scope_id),
+            CHECK((scope_kind='catalog' AND scope_id='') OR (scope_kind='vault' AND length(scope_id)>0)));
+        INSERT INTO companion_service_grant_old SELECT * FROM companion_service_grant;
+        DROP TABLE companion_service_grant;
+        ALTER TABLE companion_service_grant_old RENAME TO companion_service_grant;
+        CREATE INDEX idx_companion_service_grant_device ON companion_service_grant(device_id,scope_kind,scope_id);
+        DELETE FROM backend_schema_migration WHERE version=27;").unwrap();
+}
+
 fn snapshot(connection: &Connection) -> Value {
     let names = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('backend_schema_migration','material_library_transfer') ORDER BY name").unwrap()
         .query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
@@ -64,6 +84,8 @@ fn material_library_r2_real_v24_bootstrap_rollback_upgrade_restart_and_drift() {
     let media_before = std::fs::read(&media).unwrap();
     let identity_before = std::fs::read(root.join("library.json")).unwrap();
     let mut connection = backend.open_write().unwrap();
+    let expected_current = snapshot(&connection);
+    downgrade_synthetic_trust_to_v26(&connection);
     connection.execute_batch("DROP TABLE material_library_transfer; DELETE FROM backend_schema_migration WHERE version>=25;").unwrap();
     let before = snapshot(&connection);
     // Fail at the ledger insert, after the actual v25 DDL has run inside bootstrap.
@@ -104,7 +126,7 @@ fn material_library_r2_real_v24_bootstrap_rollback_upgrade_restart_and_drift() {
         let upgraded = BackendServices::initialize(profile.path()).unwrap();
         assert_eq!(upgraded.status().schema_version, SCHEMA_VERSION);
         let connection = upgraded.open_read().unwrap();
-        assert_eq!(snapshot(&connection), before);
+        assert_eq!(snapshot(&connection), expected_current);
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM backend_schema_migration WHERE version=25 AND name='material-library-transfer-r2'", [], |r| r.get::<_,i64>(0)).unwrap(), 1);
         crate::materials::verify_transfer_schema(&connection).unwrap();
         assert_eq!(
@@ -142,7 +164,7 @@ fn material_library_r2_real_v24_bootstrap_rollback_upgrade_restart_and_drift() {
         "backend-material-library-transfer-schema-invalid"
     );
     let connection = open_bootstrap_connection(&profile.path().join("luckyray.db")).unwrap();
-    assert_eq!(snapshot(&connection), before);
+    assert_eq!(snapshot(&connection), expected_current);
     assert_eq!(std::fs::read(media).unwrap(), media_before);
 }
 
@@ -158,6 +180,7 @@ fn transfer_snapshot(c: &Connection) -> Value {
     json!({"schema":schema,"rows":rows})
 }
 fn downgrade_synthetic_transfer_to_v25(c: &Connection) {
+    downgrade_synthetic_trust_to_v26(c);
     c.execute_batch("DROP TABLE material_library_transfer; DELETE FROM backend_schema_migration WHERE version>=26;").unwrap();
     c.execute_batch(include_str!("library_transfer_schema_v25.sql")).unwrap();
     c.execute_batch("CREATE INDEX material_library_transfer_existing_phase ON material_library_transfer(phase,updated_at);").unwrap();
@@ -178,7 +201,9 @@ fn material_library_r3_real_v25_upgrade_rolls_back_preserves_ledger_and_restarts
     catalog.select_library(&library.id).unwrap();
     let media = std::fs::read(asset.library_path.as_ref().unwrap()).unwrap();
     let identity = std::fs::read(root.join("library.json")).unwrap();
-    let connection = backend.open_write().unwrap(); downgrade_synthetic_transfer_to_v25(&connection);
+    let connection = backend.open_write().unwrap();
+    let expected_current = snapshot(&connection);
+    downgrade_synthetic_transfer_to_v25(&connection);
     let before = snapshot(&connection); let ledger = transfer_snapshot(&connection);
     connection.execute_batch("CREATE TRIGGER reject_r3_migration BEFORE INSERT ON backend_schema_migration WHEN NEW.version=26 BEGIN SELECT RAISE(ABORT,'injected-after-r3-rebuild'); END;").unwrap();
     drop(connection); drop(scoped); drop(catalog); drop(backend);
@@ -193,7 +218,7 @@ fn material_library_r3_real_v25_upgrade_rolls_back_preserves_ledger_and_restarts
     let mut migrated_schema = None;
     for _ in 0..2 {
         let upgraded = BackendServices::initialize(profile.path()).unwrap();
-        assert_eq!(upgraded.status().schema_version,26);
+        assert_eq!(upgraded.status().schema_version,SCHEMA_VERSION);
         let connection = upgraded.open_read().unwrap();
         let upgraded_ledger = transfer_snapshot(&connection);
         assert_eq!(upgraded_ledger["rows"],ledger["rows"]);
@@ -202,7 +227,7 @@ fn material_library_r3_real_v25_upgrade_rolls_back_preserves_ledger_and_restarts
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM sqlite_schema WHERE name='material_library_transfer_existing_phase'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM backend_schema_migration WHERE version=26 AND name='material-library-move-r3'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
         crate::materials::verify_transfer_schema(&connection).unwrap();
-        assert_eq!(snapshot(&connection),before);
+        assert_eq!(snapshot(&connection),expected_current);
         assert_eq!(upgraded.material_catalog().library_state().unwrap().1,library.id);
         assert_eq!(upgraded.material_catalog().for_library(&library.id).unwrap().get_assets(&[asset.id.clone()]).unwrap()[0],asset);
         assert_eq!(std::fs::read(asset.library_path.as_ref().unwrap()).unwrap(),media);
