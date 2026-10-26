@@ -1,11 +1,13 @@
 param(
  [Parameter(Mandatory)][string]$InputRoot,
  [Parameter(Mandatory)][string]$EvidenceRoot,
- [Parameter(Mandatory)][ValidateSet('fresh','old020','old021')][string]$Case
+ [Parameter(Mandatory)][ValidateSet('fresh','old020','old021')][string]$Case,
+ [switch]$PreservationOnly
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_REPOSITORY -cne 'xiaorui2886/LuckyRay' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:RUNNER_OS -cne 'Windows' -or $env:USERNAME -cne 'runneradmin'){throw 'disposable-manual-windows-only'}
+if($PreservationOnly -and $Case -ceq 'fresh'){throw 'preservation-scope-requires-an-old-install'}
 foreach($entry in @(Get-ChildItem Env:)){
  if($entry.Name -match '(?i)(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)' -or $entry.Name -match '^(LUCKYRAY_|VITE_)' -or $entry.Name -eq 'NODE_OPTIONS'){Remove-Item -LiteralPath ('Env:'+$entry.Name)}
 }
@@ -15,7 +17,7 @@ $syntheticProfileRoot=Join-Path ([Environment]::GetFolderPath('ApplicationData')
 if((Test-Path -LiteralPath $installRoot) -or (Test-Path -LiteralPath $syntheticProfileRoot) -or @(Get-Process -Name 'luckyray-app' -ErrorAction SilentlyContinue).Count){throw 'disposable-target-not-fresh'}
 if(Test-Path -LiteralPath $EvidenceRoot){throw 'evidence-target-not-fresh'}
 New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
-$record=[ordered]@{schema=1;case=$Case;status='FAIL';stage='preflight';source=$spec.source;installerSha256=$spec.candidate.sha256;actualProductExe=$true;modelRequests=0;userData=$false;realAndroid='NOT_RUN';userInstalled='NOT_RUN';rawLogsPublic=$false;checks=@()}
+$record=[ordered]@{schema=1;case=$Case;preservationOnly=[bool]$PreservationOnly;status='FAIL';stage='preflight';source=$spec.source;installerSha256=$spec.candidate.sha256;actualProductExe=$true;modelRequests=0;userData=$false;realAndroid='NOT_RUN';userInstalled='NOT_RUN';rawLogsPublic=$false;checks=@()}
 $script:cdpSequence=0; $script:cdpPort=50891; $script:app=$null
 $slot=Join-Path $installRoot 'lr-lsh\199-1'
 $exe=Join-Path $installRoot 'luckyray-app.exe'
@@ -82,7 +84,7 @@ function Start-Product([switch]$Legacy) {
   $script:app.Refresh();if($script:app.HasExited){throw 'actual-product-exited'}
   try{
    $connected=Evaluate 'Boolean(window.__TAURI_INTERNALS__)'
-   $domReady=if($Legacy){$connected}else{Evaluate 'Boolean(document.querySelector(".nav-item[data-control-id=ai]"))'}
+   $domReady=if($Legacy){Evaluate 'Boolean(document.querySelector(".nav-item"))'}else{Evaluate 'Boolean(document.querySelector(".nav-item[data-control-id=ai]"))'}
    if($connected -and $domReady){break}
   }catch{}
   Start-Sleep -Milliseconds 700
@@ -90,7 +92,7 @@ function Start-Product([switch]$Legacy) {
  Check 'actual-main-window' ($connected -and $script:app.MainWindowHandle.ToInt64() -ne 0 -and $script:app.Responding)
  if(-not $script:record.Contains('mainWindowReadiness')){$script:record.mainWindowReadiness=@()}
  $script:record.mainWindowReadiness+=@{legacy=[bool]$Legacy;ipcReady=[bool]$connected;sidebarReady=[bool]$domReady;elapsedMs=[int]([DateTime]::UtcNow-$began).TotalMilliseconds}
- if(-not $Legacy){Check 'actual-rendered-sidebar-ready' ([bool]$domReady)}
+ Check $(if($Legacy){'old-rendered-sidebar-ready'}else{'actual-rendered-sidebar-ready'}) ([bool]$domReady)
 }
 function Stop-Product {
  if($null -eq $script:app -or $script:app.HasExited){return}
@@ -266,7 +268,8 @@ try{
  if($Case -ne 'fresh'){
   $record.stage='preserved-old-data-readback';Stop-Product
   Synthetic-Check 'read' (Join-Path $slot 'deepseek-harness') (Join-Path $slot 'dsh-host')
-  $record.stage='actual-draft';Start-Product;Surface-Check 'preserved-reopen';Draft-Check -Write
+  $record.stage='actual-preserved-reopen';Start-Product;Surface-Check 'preserved-reopen'
+  if($PreservationOnly){$record.newDraft='NOT_RUN_IN_THIS_PRESERVATION_SCOPE_PRIOR_UI_FAILURE_RETAINED'}else{$record.stage='actual-draft';Draft-Check -Write}
  }
  $compat=Evaluate '(async()=>{try{const s=await window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_apply",{action:{kind:"compatible"}});return {ok:s?.applied===true&&s.failed!==true&&Array.isArray(s.quarantineSet)&&Array.isArray(s.unquarantinable)&&s.unquarantinable.length===0&&Array.isArray(s.skippedEntryIds)&&s.skippedEntryIds.length===0,quarantineSet:s.quarantineSet,guardActive:s.guardActive,code:"structured-action-result"}}catch(e){return {ok:false,code:typeof e==="string"&&/^[a-z][a-z0-9-]{2,100}$/.test(e)?e:"unknown"}}})()'
  if(-not $compat.ok){$record.lastCompatibleCode=$compat.code};Check 'compatible-start-accepted' $compat.ok
@@ -276,7 +279,7 @@ try{
  Confirm-CompatStatus $compat $compatStatus
  Stop-Product
  if($Case -ne 'fresh'){Synthetic-Check 'read' (Join-Path $slot 'deepseek-harness') (Join-Path $slot 'dsh-host')}
- $record.stage='actual-reopen';Start-Product;Surface-Check 'reopen';if($Case -ne 'fresh'){Draft-Check};Stop-Product
+ $record.stage='actual-reopen';Start-Product;Surface-Check 'reopen';if($Case -ne 'fresh' -and -not $PreservationOnly){Draft-Check};Stop-Product
  # Deliberately incomplete synthetic extraction; reinstall must retain it,
  # restore exact bytes and not admit the contaminated slot before repair.
  $record.stage='repeat-interrupted-repair'
@@ -293,7 +296,7 @@ try{
  Start-Product;Surface-Check 'repaired';Stop-Product
  if($Case -ne 'fresh'){Synthetic-Check 'read' (Join-Path $slot 'deepseek-harness') (Join-Path $slot 'dsh-host')}
  if($Case -eq 'fresh'){$record.stage='gateway-product-recovery';Gateway-Product-Check}
- $record.stage='completed';$record.status='PASS_ACTUAL_PRODUCT_INSTALLED_PATHS'
+ $record.stage='completed';$record.status=if($PreservationOnly){'PASS_INSTALLED_STARTUP_AND_OLD_DATA_DRAFT_UI_NOT_VERIFIED'}else{'PASS_ACTUAL_PRODUCT_INSTALLED_PATHS'}
  if(-not $record.Contains('newDraft')){$record.newDraft='NOT_RUN'};if(-not $record.Contains('gatewayProductRecovery')){$record.gatewayProductRecovery='NOT_RUN'};if(-not $record.Contains('legacySignedActive')){$record.legacySignedActive='NOT_RUN'};$record.androidRecovery='NOT_RUN'
 }catch{
  $message=$_.Exception.Message
@@ -314,4 +317,4 @@ try{
  $record | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath (Join-Path $EvidenceRoot 'green-result.json') -Encoding utf8
  $record | ConvertTo-Json -Depth 7
 }
-if($record.status -cne 'PASS_ACTUAL_PRODUCT_INSTALLED_PATHS'){exit 1}
+if($record.status -cnotin @('PASS_ACTUAL_PRODUCT_INSTALLED_PATHS','PASS_INSTALLED_STARTUP_AND_OLD_DATA_DRAFT_UI_NOT_VERIFIED')){exit 1}

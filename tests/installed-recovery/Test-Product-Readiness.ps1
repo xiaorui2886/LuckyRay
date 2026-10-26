@@ -14,7 +14,7 @@ try{
   # Only extracted test-harness functions execute. The process launcher and
   # CDP transport are mocks; no product EXE, environment impersonation or
   # user's profile is involved in this timing regression.
-  $script:record=[ordered]@{checks=@()};$script:navReads=0
+  $script:record=[ordered]@{checks=@()};$script:navReads=0;$script:legacyNavReads=0
   $installRoot='synthetic-only';$exe='never-launched.exe'
   function Start-Process {
    param($FilePath,$WorkingDirectory,$WindowStyle,[switch]$PassThru)
@@ -29,6 +29,7 @@ try{
    if($expression -ceq 'Boolean(document.querySelector(".nav-item[data-control-id=ai]"))'){
     $script:navReads++;return $script:navReads -ge 3
    }
+   if($expression -ceq 'Boolean(document.querySelector(".nav-item"))'){$script:legacyNavReads++;return $script:legacyNavReads -ge 2}
    throw 'synthetic-evaluation-invalid'
   }
   foreach($name in @('Check','Start-Product')){
@@ -38,7 +39,7 @@ try{
   Start-Product
   if($script:navReads -ne 3 -or -not $script:record.mainWindowReadiness[0].sidebarReady){throw 'ipc-mistaken-for-dom-ready'}
   $prior=$script:navReads;Start-Product -Legacy
-  if($script:navReads -ne $prior -or -not $script:record.mainWindowReadiness[1].legacy){throw 'legacy-window-contract-invalid'}
+  if($script:navReads -ne $prior -or $script:legacyNavReads -ne 2 -or -not $script:record.mainWindowReadiness[1].legacy){throw 'legacy-window-contract-invalid'}
  }
  Write-Output 'Synthetic early-IPC/delayed-sidebar readiness regression passed; no product executed.'
 }finally{$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=$before}

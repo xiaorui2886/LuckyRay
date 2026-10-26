@@ -10,6 +10,7 @@ on:
         options:
           - all
           - old-upgrades
+          - old-preservation
 permissions:
   contents: read
 concurrency:
@@ -21,10 +22,10 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 25
     strategy:
-      fail-fast: ${{ inputs.suite != 'old-upgrades' }}
+      fail-fast: ${{ inputs.suite == 'all' }}
       max-parallel: 1
       matrix:
-        case: ${{ fromJSON(inputs.suite == 'old-upgrades' && '["old020","old021"]' || '["fresh","old020","old021"]') }}
+        case: ${{ fromJSON(inputs.suite == 'all' && '["fresh","old020","old021"]' || '["old020","old021"]') }}
     defaults:
       run:
         shell: pwsh
@@ -45,7 +46,10 @@ jobs:
       - name: Install frozen repair and exercise actual product EXE
         env:
           INSTALL_CASE: ${{ matrix.case }}
-        run: ./tests/installed-recovery/Run-Green.ps1 -Case $env:INSTALL_CASE -InputRoot "$env:RUNNER_TEMP/lr-private-inputs" -EvidenceRoot "$env:RUNNER_TEMP/lr-public-evidence"
+          INSTALL_SUITE: ${{ inputs.suite }}
+        run: |
+          $preservationOnly = $env:INSTALL_SUITE -ceq 'old-preservation'
+          ./tests/installed-recovery/Run-Green.ps1 -Case $env:INSTALL_CASE -PreservationOnly:$preservationOnly -InputRoot "$env:RUNNER_TEMP/lr-private-inputs" -EvidenceRoot "$env:RUNNER_TEMP/lr-public-evidence"
       - name: Publish allowlisted sanitized synthetic result only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
