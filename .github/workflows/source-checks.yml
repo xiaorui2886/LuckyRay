@@ -26,7 +26,9 @@ jobs:
           persist-credentials: false
           sparse-checkout: tests/installed-recovery
       - name: Verify synthetic WebSocket collector before any install
-        run: ./tests/installed-recovery/Test-Cdp-Projection.ps1 -ScriptName Run-Green.ps1
+        run: |
+          ./tests/installed-recovery/Test-Cdp-Projection.ps1 -ScriptName Run-Green.ps1
+          ./tests/installed-recovery/Test-Product-Readiness.ps1
       - name: Fetch only fixed, hash-pinned private test inputs
         env:
           LUCKYRAY_FIXED_ASSET_DOWNLOAD_URL: ${{ secrets.LUCKYRAY_FIXED_ASSET_DOWNLOAD_URL }}
