@@ -166,12 +166,16 @@ function Prepare-Qualified020 {
 function Draft-Check([switch]$Write){
  $saved=Get-Content -LiteralPath $proof -Raw | ConvertFrom-Json
  $key='dsh.conversation.'+[string]$saved.sessionId
+ $sessionJs=ConvertTo-Json -InputObject ([string]$saved.sessionId) -Compress
+ $before=Evaluate ('(()=>{const k="session:"+'+$sessionJs+';const rows=[...document.querySelectorAll("[data-row-key]")];const row=rows.find(x=>x.getAttribute("data-row-key")===k);return {seedRowSeen:Boolean(row),seedSelected:row?.getAttribute("aria-selected")==="true"}})()') -Lsh
+ if(-not $script:record.Contains('draftSessionSelection')){$script:record.draftSessionSelection=@()}
+ $script:record.draftSessionSelection+=@{write=[bool]$Write;seedRowInitiallySeen=$before.seedRowSeen;seedInitiallySelected=$before.seedSelected}
  $deadline=[DateTime]::UtcNow.AddSeconds(20);$editable=$false
  while([DateTime]::UtcNow -lt $deadline){
-  $editable=Evaluate '(()=>{const notice=[...document.querySelectorAll("button")].filter(x=>["继续","Continue"].includes(x.textContent.trim())&&x.getBoundingClientRect().height>0);if(notice.length===1){notice[0].click();return false}const e=document.querySelector("[contenteditable=true]");if(e&&e.getBoundingClientRect().height>0)return true;for(const label of ["LR installed synthetic preservation","LUCKYRAY_DSH_NATIVE_PROBE"]){const matches=[...document.querySelectorAll("button,[role=button],[role=treeitem],span,div")].filter(x=>x.childElementCount===0&&x.textContent.trim()===label);if(matches.length){const x=matches[0];(x.closest("button,[role=button],[role=treeitem],a")||x).click();break}}return false})()' -Lsh
+  $editable=Evaluate ('(()=>{const notice=[...document.querySelectorAll("button")].filter(x=>["继续","Continue"].includes(x.textContent.trim())&&x.getBoundingClientRect().height>0);if(notice.length===1){notice[0].click();return false}const target="session:"+'+$sessionJs+';const row=[...document.querySelectorAll("[data-row-key]")].find(x=>x.getAttribute("data-row-key")===target);if(row){if(row.getAttribute("aria-selected")!=="true"){row.click();return false}const e=document.querySelector("[contenteditable=true]");return Boolean(e&&e.getBoundingClientRect().height>0)}const labels=[...document.querySelectorAll("span,div")].filter(x=>x.childElementCount===0&&x.textContent.trim()==="LR installed synthetic preservation");for(const label of labels){const group=label.closest("[role=treeitem]");if(group?.getAttribute("aria-expanded")==="false"){group.click();break}}return false})()') -Lsh
   if($editable){break};Start-Sleep -Milliseconds 400
  }
- Check 'synthetic-session-editor-visible' ([bool]$editable)
+ Check 'exact-synthetic-session-selected-and-editor-visible' ([bool]$editable)
  if($Write){
   $focused=Evaluate '(()=>{const e=document.querySelector("[contenteditable=true]");if(!e||e.getBoundingClientRect().height===0)return {ok:false,reason:"not-visible"};e.focus();const r=document.createRange();r.selectNodeContents(e);const s=getSelection();s.removeAllRanges();s.addRange(r);return {ok:document.activeElement===e,tag:e.tagName,chars:e.textContent.length}})()' -Lsh
   $script:record.draftInputObservation=@{focused=$focused.ok;tag=if($focused.PSObject.Properties.Name -contains 'tag'){$focused.tag}else{'unknown'};method='trusted-CDP-text-input';rawTextRecorded=$false}
@@ -259,7 +263,11 @@ try{
   Check 'original-signed-journal-kept-exact' ((Hash (Join-Path $syntheticProfileRoot 'dsh-engine-updates\transaction.json')) -ceq $legacyJournalHash)
   $record.legacySignedActive='PASS_ACTUAL_EXE_ADOPTED_QUALIFIED_SYNTHETIC_020'
  }
- if($Case -ne 'fresh'){Draft-Check -Write}
+ if($Case -ne 'fresh'){
+  $record.stage='preserved-old-data-readback';Stop-Product
+  Synthetic-Check 'read' (Join-Path $slot 'deepseek-harness') (Join-Path $slot 'dsh-host')
+  $record.stage='actual-draft';Start-Product;Surface-Check 'preserved-reopen';Draft-Check -Write
+ }
  $compat=Evaluate '(async()=>{try{const s=await window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_apply",{action:{kind:"compatible"}});return {ok:s?.applied===true&&s.failed!==true&&Array.isArray(s.quarantineSet)&&Array.isArray(s.unquarantinable)&&s.unquarantinable.length===0&&Array.isArray(s.skippedEntryIds)&&s.skippedEntryIds.length===0,quarantineSet:s.quarantineSet,guardActive:s.guardActive,code:"structured-action-result"}}catch(e){return {ok:false,code:typeof e==="string"&&/^[a-z][a-z0-9-]{2,100}$/.test(e)?e:"unknown"}}})()'
  if(-not $compat.ok){$record.lastCompatibleCode=$compat.code};Check 'compatible-start-accepted' $compat.ok
  Stop-Product;Start-Product
