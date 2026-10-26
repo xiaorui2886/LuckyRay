@@ -26,7 +26,7 @@ try{
   $httpStatus=[int]$response.StatusCode
   if(-not $response.IsSuccessStatusCode){throw 'fixed-private-download-rejected'}
   $asset=$spec.red.assets[0];$output=Join-Path $root 'red-setup.exe';$stream=[IO.File]::Create($output)
-  try{$response.Content.CopyToAsync($stream).GetAwaiter().GetResult()}finally{$stream.Dispose()}
+  try{[void]$response.Content.CopyToAsync($stream).GetAwaiter().GetResult()}finally{$stream.Dispose()}
   $phase='private-identity';$actualBytes=(Get-Item -LiteralPath $output).Length
   if($actualBytes -ne $asset.bytes -or (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant() -cne $asset.sha256){throw 'private-identity-mismatch'}
  }finally{$response.Dispose()}
@@ -44,7 +44,7 @@ try{
  try{
   if(-not $response.IsSuccessStatusCode){throw 'old-public-download-rejected'}
   $output=Join-Path $root 'old-setup.exe';$stream=[IO.File]::Create($output)
-  try{$response.Content.CopyToAsync($stream).GetAwaiter().GetResult()}finally{$stream.Dispose()}
+  try{[void]$response.Content.CopyToAsync($stream).GetAwaiter().GetResult()}finally{$stream.Dispose()}
   $phase='old-public-identity';$actualBytes=(Get-Item -LiteralPath $output).Length
   if($actualBytes -ne $spec.oldPublic.bytes -or (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant() -cne $spec.oldPublic.sha256){throw 'old-public-identity-mismatch'}
  }finally{$response.Dispose()}

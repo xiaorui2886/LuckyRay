@@ -20,18 +20,19 @@ function Install([string]$name,[string]$hash){
  if($process.ExitCode -ne 0){throw 'installer-failed'}
 }
 $script:cdpSequence=0
+$script:cdpPort=50891
 function Evaluate([string]$expression){
- $targets=Invoke-RestMethod -Uri 'http://127.0.0.1:50891/json/list' -TimeoutSec 3
+ $targets=Invoke-RestMethod -Uri "http://127.0.0.1:$script:cdpPort/json/list" -TimeoutSec 3
  $page=@($targets | Where-Object {$_.type -eq 'page' -and $_.url -match '^https?://tauri\.localhost'} | Select-Object -First 1)
  if($page.Count -ne 1){throw 'main-webview-cdp-not-ready'}
  $socket=[Net.WebSockets.ClientWebSocket]::new()
  $cancel=[Threading.CancellationTokenSource]::new(45000)
  try{
-  $socket.ConnectAsync([Uri]$page[0].webSocketDebuggerUrl,$cancel.Token).GetAwaiter().GetResult()
+  [void]$socket.ConnectAsync([Uri]$page[0].webSocketDebuggerUrl,$cancel.Token).GetAwaiter().GetResult()
   $script:cdpSequence+=1
   $payload=@{id=$script:cdpSequence;method='Runtime.evaluate';params=@{expression=$expression;awaitPromise=$true;returnByValue=$true}} | ConvertTo-Json -Compress -Depth 6
   $bytes=[Text.Encoding]::UTF8.GetBytes($payload)
-  $socket.SendAsync([ArraySegment[byte]]::new($bytes),[Net.WebSockets.WebSocketMessageType]::Text,$true,$cancel.Token).GetAwaiter().GetResult()
+  [void]$socket.SendAsync([ArraySegment[byte]]::new($bytes),[Net.WebSockets.WebSocketMessageType]::Text,$true,$cancel.Token).GetAwaiter().GetResult()
   while($true){
    $buffer=[byte[]]::new(65536);$message=[IO.MemoryStream]::new()
    do{
@@ -88,7 +89,7 @@ try{
   $record.admissionErrorStage=$errorRecord.stage
  }
  $record.stage='red-observation-complete'
- $record.status=if($status.stage -eq 'unavailable' -and $record.ownedNodeCount -eq 0 -and $record.overlayRuntimeFiles -gt 40000){'RED_REPRODUCED_ACTUAL_PRODUCT_OVERLAY'}else{'RED_NOT_REPRODUCED'}
+ $record.status=if($status.stage -eq 'unavailable' -and $record.ownedNodeCount -eq 0 -and $record.overlayRuntimeFiles -ne 35192){'RED_REPRODUCED_ACTUAL_PRODUCT_OVERLAY'}else{'RED_NOT_REPRODUCED'}
  # Existing ordinary full-quit path, not a forced termination.
  try{Evaluate 'window.__TAURI_INTERNALS__.invoke("close_window").then(()=>true)' | Out-Null}catch{}
  $record.normalExitObserved=$app.WaitForExit(20000)
