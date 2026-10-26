@@ -22,6 +22,17 @@ $exe=Join-Path $installRoot 'luckyray-app.exe'
 $proof=Join-Path $InputRoot 'synthetic-protected.json'
 function Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
 function Check([string]$name,[bool]$ok){$script:record.checks+=@{name=$name;passed=$ok};if(-not $ok){throw ('check-failed-'+$name)}}
+function Confirm-CompatStatus($applied,$status){
+ $expected=@($applied.quarantineSet | Sort-Object -Unique)
+ $actual=@($status.quarantineSet | Sort-Object -Unique)
+ Check 'compatible-quarantine-selection-preserved' (@(Compare-Object -ReferenceObject $expected -DifferenceObject $actual).Count -eq 0)
+ # Native compatMode means that a real guard overlay was loaded. An empty
+ # third-party composition has no guard, even after an accepted compatible
+ # action. Do not invent an isolated plugin or claim that isolation was tested.
+ Check 'compatible-guard-state-matches-real-selection' ($status.compatMode -eq ($expected.Count -gt 0) -and $applied.guardActive -eq ($expected.Count -gt 0))
+ $script:record.compatibleTargetCount=$expected.Count
+ $script:record.compatibleExtensionIsolation=if($expected.Count){'PASS_GUARD_SELECTED'}else{'NOT_APPLICABLE_NO_THIRD_PARTY_TARGETS'}
+}
 function Install([string]$name,[string]$hash){
  $file=Join-Path $InputRoot $name
  if((Hash $file) -cne $hash){throw 'installer-hash-mismatch'}
@@ -233,12 +244,12 @@ try{
   $record.legacySignedActive='PASS_ACTUAL_EXE_ADOPTED_QUALIFIED_SYNTHETIC_020'
  }
  if($Case -ne 'fresh'){Draft-Check -Write}
- $compat=Evaluate '(async()=>{try{const s=await window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_apply",{action:{kind:"compatible"}});return {ok:s?.applied===true&&s.failed!==true&&(!Array.isArray(s.unquarantinable)||s.unquarantinable.length===0),code:"structured-action-result"}}catch(e){return {ok:false,code:typeof e==="string"&&/^[a-z][a-z0-9-]{2,100}$/.test(e)?e:"unknown"}}})()'
+ $compat=Evaluate '(async()=>{try{const s=await window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_apply",{action:{kind:"compatible"}});return {ok:s?.applied===true&&s.failed!==true&&Array.isArray(s.quarantineSet)&&Array.isArray(s.unquarantinable)&&s.unquarantinable.length===0&&Array.isArray(s.skippedEntryIds)&&s.skippedEntryIds.length===0,quarantineSet:s.quarantineSet,guardActive:s.guardActive,code:"structured-action-result"}}catch(e){return {ok:false,code:typeof e==="string"&&/^[a-z][a-z0-9-]{2,100}$/.test(e)?e:"unknown"}}})()'
  if(-not $compat.ok){$record.lastCompatibleCode=$compat.code};Check 'compatible-start-accepted' $compat.ok
  Stop-Product;Start-Product
  Surface-Check 'compatible'
- $compatStatus=Evaluate 'window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_status").then(s=>({compatMode:s.compatMode}))'
- Check 'compatible-mode-actually-selected' ($compatStatus.compatMode -eq $true)
+ $compatStatus=Evaluate 'window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_status").then(s=>({compatMode:s.compatMode,quarantineSet:s.quarantineSet}))'
+ Confirm-CompatStatus $compat $compatStatus
  Stop-Product
  if($Case -ne 'fresh'){Synthetic-Check 'read' (Join-Path $slot 'deepseek-harness') (Join-Path $slot 'dsh-host')}
  $record.stage='actual-reopen';Start-Product;Surface-Check 'reopen';if($Case -ne 'fresh'){Draft-Check};Stop-Product
