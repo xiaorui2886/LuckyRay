@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "repository": "xiaorui2886/luckyray-app",
+  "source": "c30621b39e648ed11af2b61673266058ac050d59",
+  "version": "1.9.9",
+  "asset": {
+    "id": 678744116,
+    "bytes": 610392650,
+    "sha256": "c1905d5be591a2a40a316fc9edf3595f40db6386e415b9c2c663fe9ea115cbfa"
+  },
+  "candidate": {
+    "sha256": "612e03d3136a95b44769a94c58bb77287dc20c3218a44e1341a6855256658d88",
+    "bytes": 206308595
+  },
+  "exeSha256": "0b7388b1ca737e1ac182980653bcb17a76f3d305d12f34c5c08292595f1cbb84",
+  "old021": {
+    "sha256": "c749d03b16e137293692a721336866e4c3385621c191979a38834b832e4386d8",
+    "bytes": 206225108
+  },
+  "old020Fixture": {
+    "sha256": "c2e02d3245829e18d180a7cdef04ac5a77c2fdbd76f64c4f7e39f62bae58ae34",
+    "bytes": 197858591,
+    "journalSha256": "141d36082419a916cdf946422e72944e992a9886acbf8a37f88d214d28ee7ff2",
+    "activeSha256": "7e3ea276370a257705c411f23a8666d621783f994b0bac92dcf97382c11083a2"
+  },
+  "oldPublic": {
+    "sha256": "2aa1d70187b706e523c576ddbdde2e981a84c31a59e9c003e155d1e766aa5a7e",
+    "url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.8/LuckyRay_1.9.8_x64-setup.exe",
+    "bytes": 200811896,
+    "bundledEngine": "0.1.7-rc.2"
+  }
+}

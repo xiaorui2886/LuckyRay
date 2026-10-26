@@ -1,8 +1,8 @@
-param([switch]$BeforeFix)
+param([switch]$BeforeFix,[ValidateSet('Run-Red.ps1','Run-Green.ps1')][string]$ScriptName='Run-Red.ps1')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $errors=$null;$tokens=$null
-$source=if($BeforeFix){(& git show 'fe54fc3a07c9b0515e5d5d3f08b2973648ae13c3:tests/installed-recovery/Run-Red.ps1' | Out-String).Replace("'http://127.0.0.1:50891/json/list'",'"http://127.0.0.1:$script:cdpPort/json/list"')}else{Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Run-Red.ps1') -Raw}
+$source=if($BeforeFix){(& git show 'fe54fc3a07c9b0515e5d5d3f08b2973648ae13c3:tests/installed-recovery/Run-Red.ps1' | Out-String).Replace("'http://127.0.0.1:50891/json/list'",'"http://127.0.0.1:$script:cdpPort/json/list"')}else{Get-Content -LiteralPath (Join-Path $PSScriptRoot $ScriptName) -Raw}
 $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'harness-syntax-invalid'}
 $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Evaluate'},$true)

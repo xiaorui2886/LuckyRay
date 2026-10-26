@@ -7,10 +7,15 @@ concurrency:
   group: installed-lsh-recovery-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  real-installed-red:
+  real-installed-green:
     if: github.repository == 'xiaorui2886/LuckyRay' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/qa/installed-lsh-recovery-20261026'
     runs-on: windows-2022
     timeout-minutes: 25
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        case: [fresh, old020, old021]
     defaults:
       run:
         shell: pwsh
@@ -21,18 +26,20 @@ jobs:
           persist-credentials: false
           sparse-checkout: tests/installed-recovery
       - name: Verify synthetic WebSocket collector before any install
-        run: ./tests/installed-recovery/Test-Cdp-Projection.ps1
-      - name: Fetch only fixed, hash-pinned installers
+        run: ./tests/installed-recovery/Test-Cdp-Projection.ps1 -ScriptName Run-Green.ps1
+      - name: Fetch only fixed, hash-pinned private test inputs
         env:
           LUCKYRAY_FIXED_ASSET_DOWNLOAD_URL: ${{ secrets.LUCKYRAY_FIXED_ASSET_DOWNLOAD_URL }}
-        run: ./tests/installed-recovery/Download-Inputs.ps1 -Destination "$env:RUNNER_TEMP/lr-private-inputs"
-      - name: Install old product then overlay frozen failing candidate; run actual EXE
-        run: ./tests/installed-recovery/Run-Red.ps1 -InputRoot "$env:RUNNER_TEMP/lr-private-inputs" -EvidenceRoot "$env:RUNNER_TEMP/lr-public-evidence"
+        run: ./tests/installed-recovery/Download-Green.ps1 -Destination "$env:RUNNER_TEMP/lr-private-inputs"
+      - name: Install frozen repair and exercise actual product EXE
+        env:
+          INSTALL_CASE: ${{ matrix.case }}
+        run: ./tests/installed-recovery/Run-Green.ps1 -Case $env:INSTALL_CASE -InputRoot "$env:RUNNER_TEMP/lr-private-inputs" -EvidenceRoot "$env:RUNNER_TEMP/lr-public-evidence"
       - name: Publish allowlisted sanitized synthetic result only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: installed-lsh-red-sanitized-${{ github.run_id }}
-          path: ${{ runner.temp }}/lr-public-evidence/red-result.json
+          name: installed-lsh-green-${{ matrix.case }}-sanitized-${{ github.run_id }}
+          path: ${{ runner.temp }}/lr-public-evidence/green-result.json
           if-no-files-found: ignore
           retention-days: 7
