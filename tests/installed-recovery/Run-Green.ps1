@@ -205,7 +205,8 @@ function Gateway-Product-Check {
   Check 'gateway-confirmed-same-interface-new-port' ($running.state -ceq 'running' -and $running.bindAddress -ceq $address -and $running.port -gt 0 -and $running.port -ne $port)
   $listening=@(Get-NetTCPConnection -State Listen -LocalAddress $address -LocalPort $running.port -ErrorAction SilentlyContinue)
   Check 'gateway-os-listener-owned-by-actual-product' (@($listening | Where-Object {$_.OwningProcess -eq $script:app.Id}).Count -eq 1)
-  Check 'gateway-does-not-steal-occupied-port' ($blocker.Server.IsBound)
+  $oldListening=@(Get-NetTCPConnection -State Listen -LocalAddress $address -LocalPort $port -ErrorAction SilentlyContinue)
+  Check 'gateway-does-not-steal-occupied-port' (@($oldListening | Where-Object {$_.OwningProcess -eq $PID}).Count -eq 1)
   Check 'gateway-original-identity-and-pin-preserved' ($running.desktopInstanceId -ceq $initial.desktopInstanceId -and $running.certificateFingerprint -ceq $initial.certificateFingerprint)
   $presentation=Evaluate 'window.__TAURI_INTERNALS__.invoke("companion_gateway_endpoint_recovery_presentation")'
   Check 'gateway-recovery-envelope-exact-fields' ((@($presentation.envelope.PSObject.Properties.Name | Sort-Object) -join ',') -ceq 'baseUrl,certificateFingerprint,desktopInstanceId,kind,schema')
@@ -282,6 +283,9 @@ try{
  $message=$_.Exception.Message
  $record.failure=if($message -cmatch '^[a-z][a-z0-9-]{2,110}$'){$message}else{'unexpected-details-withheld'}
  $record.errorType=$_.Exception.GetType().Name
+ $record.harnessLine=$_.InvocationInfo.ScriptLineNumber
+ if($_.FullyQualifiedErrorId -cmatch '^[A-Za-z0-9_.-]{1,100}$'){$record.harnessErrorId=$_.FullyQualifiedErrorId}
+ if($record.errorType -ceq 'PropertyNotFoundException' -and $message -cmatch "property '([A-Za-z][A-Za-z0-9]{0,60})'"){$record.missingProperty=$Matches[1]}
 }finally{
  $errorFile=Join-Path $profile 'dsh-engine-updates\last-switch-error.json'
  if(Test-Path -LiteralPath $errorFile){
