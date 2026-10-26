@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "red": {
+    "repository": "xiaorui2886/luckyray-app",
+    "releaseId": 424207031,
+    "source": "839c53911e32ac21e58b4f61c354677a33425fea",
+    "assets": [
+      {"id": 678062686, "name": "red-setup.exe", "bytes": 206229870, "sha256": "4ac3f8cc7a1c8b8740ed62cd3ec97f01f6e26069b0ed0657c92039e957ed6b43"}
+    ]
+  },
+  "oldPublic": {
+    "url": "https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.8/LuckyRay_1.9.8_x64-setup.exe",
+    "bytes": 200811896,
+    "sha256": "2aa1d70187b706e523c576ddbdde2e981a84c31a59e9c003e155d1e766aa5a7e"
+  }
+}
