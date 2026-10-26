@@ -22,7 +22,7 @@ jobs:
           sparse-checkout: tests/installed-recovery
       - name: Fetch only fixed, hash-pinned installers
         env:
-          LUCKYRAY_CANDIDATE_READ_TOKEN: ${{ secrets.LUCKYRAY_CANDIDATE_READ_TOKEN }}
+          LUCKYRAY_FIXED_ASSET_DOWNLOAD_URL: ${{ secrets.LUCKYRAY_FIXED_ASSET_DOWNLOAD_URL }}
         run: ./tests/installed-recovery/Download-Inputs.ps1 -Destination "$env:RUNNER_TEMP/lr-private-inputs"
       - name: Install old product then overlay frozen failing candidate; run actual EXE
         run: ./tests/installed-recovery/Run-Red.ps1 -InputRoot "$env:RUNNER_TEMP/lr-private-inputs" -EvidenceRoot "$env:RUNNER_TEMP/lr-public-evidence"
