@@ -78,18 +78,26 @@ function Stop-Product {
  $script:app=$null
 }
 function Surface-Check([string]$label){
- $status=Evaluate '(async()=>{const s=await window.__TAURI_INTERNALS__.invoke("dsh_host_status");return {stage:s.stage,canProbe:s.canProbe,canRetry:s.canRetry}})()'
- Check ($label+'-host-admitted') ($status.stage -ne 'unavailable')
- $opened=Evaluate '(async()=>{try{const s=await window.__TAURI_INTERNALS__.invoke("dsh_native_surface_open",{bounds:{x:100,y:100,width:700,height:500}});return {ok:true,stage:s.stage}}catch(e){return {ok:false,code:typeof e==="string"&&/^[a-z][a-z0-9-]{2,100}$/.test(e)?e:"unknown"}}})()'
- if(-not $opened.ok){$script:record.lastSurfaceCode=$opened.code;throw 'actual-product-surface-open-failed'}
- $deadline=[DateTime]::UtcNow.AddSeconds(45);$surface=$null;$dom=$false
+ # Drive the existing frontend coordinator, which joins its one startup flight.
+ # Direct native open bypassed that queue and raced the app-owned preload.
+ # Do not add a fixed sleep, retry a failed startup, or manufacture readiness.
+ $clicked=Evaluate '(()=>{const row=document.querySelector(".nav-item[data-control-id=ai]");if(!row)return false;row.click();return true})()'
+ Check ($label+'-actual-sidebar-entry') ([bool]$clicked)
+ $deadline=[DateTime]::UtcNow.AddSeconds(120);$surface=$null;$dom=$false;$status=$null
+ $observed=[Collections.Generic.List[string]]::new()
  while([DateTime]::UtcNow -lt $deadline){
   try{
+   $status=Evaluate 'window.__TAURI_INTERNALS__.invoke("dsh_host_status").then(s=>({stage:s.stage,latestProbePassed:s.latestProbePassed}))'
+   if(-not $observed.Contains([string]$status.stage)){$observed.Add([string]$status.stage)}
+   if($status.stage -ceq 'unavailable'){break}
    $dom=Evaluate 'Boolean(document.body && document.body.children.length && document.readyState==="complete")' -Lsh
    $surface=Evaluate 'window.__TAURI_INTERNALS__.invoke("dsh_native_surface_status").then(s=>({stage:s.stage,ready:s.ready}))'
   }catch{}
   if($dom -and $null -ne $surface -and $surface.ready -and $surface.stage -in @('client-ready','session-open')){break}; Start-Sleep -Milliseconds 500
  }
+ if(-not $script:record.Contains('hostTransitions')){$script:record.hostTransitions=@()}
+ $script:record.hostTransitions+=@{label=$label;stages=@($observed.ToArray());lastSurfaceStage=if($null -ne $surface){$surface.stage}else{'unknown'}}
+ Check ($label+'-host-probe-completed') ($null -ne $status -and $status.stage -ceq 'probe-completed' -and $status.latestProbePassed)
  Check ($label+'-lsh-webview-client-ready') ([bool]$dom -and $null -ne $surface -and $surface.ready -and $surface.stage -in @('client-ready','session-open'))
  $all=@(Get-CimInstance Win32_Process);$owned=@($script:app.Id)
  do{$new=@($all | Where-Object {$_.ParentProcessId -in $owned -and $_.ProcessId -notin $owned} | Select-Object -ExpandProperty ProcessId);$owned+=$new}while($new.Count)
@@ -225,9 +233,12 @@ try{
   $record.legacySignedActive='PASS_ACTUAL_EXE_ADOPTED_QUALIFIED_SYNTHETIC_020'
  }
  if($Case -ne 'fresh'){Draft-Check -Write}
- $compat=Evaluate '(async()=>{try{const s=await window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_apply",{action:{kind:"compatible"}});return {ok:true,outcome:s?.outcome??"unknown"}}catch(e){return {ok:false,code:typeof e==="string"&&/^[a-z][a-z0-9-]{2,100}$/.test(e)?e:"unknown"}}})()'
+ $compat=Evaluate '(async()=>{try{const s=await window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_apply",{action:{kind:"compatible"}});return {ok:s?.applied===true&&s.failed!==true&&(!Array.isArray(s.unquarantinable)||s.unquarantinable.length===0),code:"structured-action-result"}}catch(e){return {ok:false,code:typeof e==="string"&&/^[a-z][a-z0-9-]{2,100}$/.test(e)?e:"unknown"}}})()'
  if(-not $compat.ok){$record.lastCompatibleCode=$compat.code};Check 'compatible-start-accepted' $compat.ok
+ Stop-Product;Start-Product
  Surface-Check 'compatible'
+ $compatStatus=Evaluate 'window.__TAURI_INTERNALS__.invoke("dsh_plugin_compat_status").then(s=>({compatMode:s.compatMode}))'
+ Check 'compatible-mode-actually-selected' ($compatStatus.compatMode -eq $true)
  Stop-Product
  if($Case -ne 'fresh'){Synthetic-Check 'read' (Join-Path $slot 'deepseek-harness') (Join-Path $slot 'dsh-host')}
  $record.stage='actual-reopen';Start-Product;Surface-Check 'reopen';if($Case -ne 'fresh'){Draft-Check};Stop-Product
