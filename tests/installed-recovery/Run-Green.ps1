@@ -40,7 +40,7 @@ function Install([string]$name,[string]$hash){
  if(-not $process.WaitForExit(300000)){throw 'installer-timed-out'}
  if($process.ExitCode -ne 0){throw 'installer-failed'}
 }
-function Evaluate([string]$expression,[switch]$Lsh){
+function Evaluate([string]$expression,[switch]$Lsh,[switch]$TextInput){
  $targets=Invoke-RestMethod -Uri "http://127.0.0.1:$script:cdpPort/json/list" -TimeoutSec 3
  $page=@($targets | Where-Object {
   if($_.type -ne 'page'){return $false}
@@ -53,7 +53,8 @@ function Evaluate([string]$expression,[switch]$Lsh){
  try{
   [void]$socket.ConnectAsync([Uri]$page[0].webSocketDebuggerUrl,$cancel.Token).GetAwaiter().GetResult()
   $script:cdpSequence+=1
-  $payload=@{id=$script:cdpSequence;method='Runtime.evaluate';params=@{expression=$expression;awaitPromise=$true;returnByValue=$true}} | ConvertTo-Json -Compress -Depth 6
+  $command=if($TextInput){@{id=$script:cdpSequence;method='Input.insertText';params=@{text=$expression}}}else{@{id=$script:cdpSequence;method='Runtime.evaluate';params=@{expression=$expression;awaitPromise=$true;returnByValue=$true}}}
+  $payload=$command | ConvertTo-Json -Compress -Depth 6
   $bytes=[Text.Encoding]::UTF8.GetBytes($payload)
   [void]$socket.SendAsync([ArraySegment[byte]]::new($bytes),[Net.WebSockets.WebSocketMessageType]::Text,$true,$cancel.Token).GetAwaiter().GetResult()
   while($true){
@@ -65,7 +66,9 @@ function Evaluate([string]$expression,[switch]$Lsh){
    }while(-not $received.EndOfMessage)
    $value=[Text.Encoding]::UTF8.GetString($message.ToArray()) | ConvertFrom-Json; $message.Dispose()
    if($value.PSObject.Properties.Name -contains 'id' -and $value.id -eq $script:cdpSequence){
-    if($value.PSObject.Properties.Name -contains 'error' -or $value.result.PSObject.Properties.Name -contains 'exceptionDetails'){throw 'cdp-evaluation-failed'}
+    if(@($value.PSObject.Properties | Select-Object -ExpandProperty Name) -contains 'error'){throw 'cdp-evaluation-failed'}
+    if($TextInput){return $true}
+    if(@($value.result.PSObject.Properties | Select-Object -ExpandProperty Name) -contains 'exceptionDetails'){throw 'cdp-evaluation-failed'}
     return $value.result.result.value
    }
   }
@@ -170,7 +173,12 @@ function Draft-Check([switch]$Write){
  }
  Check 'synthetic-session-editor-visible' ([bool]$editable)
  if($Write){
-  $inserted=Evaluate '(()=>{const e=document.querySelector("[contenteditable=true]");if(!e)return false;e.focus();document.execCommand("selectAll",false);document.execCommand("insertText",false,"LR 合成未发送草稿 — installed recovery");return e.textContent.includes("LR 合成未发送草稿")})()' -Lsh
+  $focused=Evaluate '(()=>{const e=document.querySelector("[contenteditable=true]");if(!e||e.getBoundingClientRect().height===0)return {ok:false,reason:"not-visible"};e.focus();const r=document.createRange();r.selectNodeContents(e);const s=getSelection();s.removeAllRanges();s.addRange(r);return {ok:document.activeElement===e,tag:e.tagName,chars:e.textContent.length}})()' -Lsh
+  $script:record.draftInputObservation=@{focused=$focused.ok;tag=if($focused.PSObject.Properties.Name -contains 'tag'){$focused.tag}else{'unknown'};method='trusted-CDP-text-input';rawTextRecorded=$false}
+  Check 'real-editor-focus' ([bool]$focused.ok)
+  $delivered=Evaluate 'LR 合成未发送草稿 — installed recovery' -Lsh -TextInput
+  Check 'real-input-event-delivered' ([bool]$delivered)
+  $inserted=Evaluate 'Boolean(document.querySelector("[contenteditable=true]")?.textContent.includes("LR 合成未发送草稿"))' -Lsh
   Check 'real-editor-draft-input' ([bool]$inserted)
  }
  $keyJs=ConvertTo-Json -InputObject $key -Compress

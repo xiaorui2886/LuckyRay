@@ -4,6 +4,7 @@ import hashlib
 import http.server
 import json
 import struct
+import sys
 import threading
 
 
@@ -41,21 +42,27 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         mask = self.rfile.read(4)
         data = self.rfile.read(length)
         request = json.loads(bytes(byte ^ mask[index % 4] for index, byte in enumerate(data)))
-        expression = request["params"]["expression"]
-        result = {"type": "boolean", "value": True} if expression == "Boolean(window.__TAURI_INTERNALS__)" else {"type": "object", "value": {"stage": "unavailable", "canProbe": False, "canRetry": False}}
-        response = json.dumps({"id": request["id"], "result": {"result": result}}).encode()
+        if request['method'] == 'Input.insertText':
+            assert request['params'] == {'text': 'LR synthetic input'}
+            response = json.dumps({'id': request['id'], 'result': {}}).encode()
+        else:
+            assert request['method'] == 'Runtime.evaluate'
+            expression = request["params"]["expression"]
+            result = {"type": "boolean", "value": True} if expression == "Boolean(window.__TAURI_INTERNALS__)" else {"type": "object", "value": {"stage": "unavailable", "canProbe": False, "canRetry": False}}
+            response = json.dumps({"id": request["id"], "result": {"result": result}}).encode()
         header = bytes([0x81, len(response)]) if len(response) < 126 else bytes([0x81, 126]) + struct.pack("!H", len(response))
         self.wfile.write(header + response)
         self.wfile.flush()
         with self.server.count_lock:
             self.server.completed += 1
-            if self.server.completed >= 2:
+            if self.server.completed >= self.server.expected:
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
 
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
 server.daemon_threads = True
 server.completed = 0
+server.expected = 3 if '--input-check' in sys.argv else 2
 server.count_lock = threading.Lock()
 print(server.server_port, flush=True)
 timer = threading.Timer(15, server.shutdown)

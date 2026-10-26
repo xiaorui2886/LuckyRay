@@ -12,6 +12,8 @@ $script:cdpSequence=0
 $fixture=Join-Path $PSScriptRoot 'cdp-synthetic-fixture.py'
 $processInfo=[Diagnostics.ProcessStartInfo]::new('python')
 $processInfo.ArgumentList.Add($fixture)
+$inputCheck=$ScriptName -ceq 'Run-Green.ps1' -and -not $BeforeFix
+if($inputCheck){$processInfo.ArgumentList.Add('--input-check')}
 $processInfo.UseShellExecute=$false;$processInfo.CreateNoWindow=$true;$processInfo.RedirectStandardOutput=$true
 $process=[Diagnostics.Process]::Start($processInfo)
 try{
@@ -25,5 +27,9 @@ try{
  }
  if($boolean.Count -ne 1 -or $boolean[0] -isnot [bool] -or $boolean[0] -ne $true){throw 'projection-boolean-contaminated'}
  if($status.Count -ne 1 -or $status[0].stage -cne 'unavailable' -or $status[0].canProbe -ne $false){throw 'projection-object-contaminated'}
+ if($inputCheck){
+  $inserted=@(Evaluate 'LR synthetic input' -TextInput)
+  if($inserted.Count -ne 1 -or $inserted[0] -isnot [bool] -or -not $inserted[0]){throw 'projection-input-result-invalid'}
+ }
  Write-Output 'Real WebSocket projection: one boolean and one exact synthetic status; no output contamination.'
 }finally{if(-not $process.WaitForExit(20000)){throw 'synthetic-fixture-did-not-retire'}}
