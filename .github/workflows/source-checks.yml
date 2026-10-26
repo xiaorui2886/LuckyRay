@@ -1,6 +1,15 @@
 name: Isolated installed LSH recovery acceptance
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Run all cases, or resume the two old upgrades without repeating an already-passed fresh case
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - old-upgrades
 permissions:
   contents: read
 concurrency:
@@ -15,7 +24,7 @@ jobs:
       fail-fast: true
       max-parallel: 1
       matrix:
-        case: [fresh, old020, old021]
+        case: ${{ fromJSON(inputs.suite == 'old-upgrades' && '["old020","old021"]' || '["fresh","old020","old021"]') }}
     defaults:
       run:
         shell: pwsh

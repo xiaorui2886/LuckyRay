@@ -2,6 +2,12 @@ $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $errors=$null;$tokens=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Run-Green.ps1'),[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'harness-syntax-invalid'}
+$reserved=@('host','home','args','profile','input','error','pid','pshome','codex_home')
+$collisions=@($ast.FindAll({param($node)
+ ($node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath.ToLowerInvariant() -in $reserved) -or
+ ($node -is [Management.Automation.Language.ParameterAst] -and $node.Name.VariablePath.UserPath.ToLowerInvariant() -in $reserved)
+},$true))
+if($collisions.Count){throw 'harness-system-variable-collision'}
 $before=$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 try{
  & {

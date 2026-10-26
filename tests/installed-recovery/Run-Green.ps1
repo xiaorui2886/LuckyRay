@@ -11,8 +11,8 @@ foreach($entry in @(Get-ChildItem Env:)){
 }
 $spec=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'inputs-green.json') -Raw | ConvertFrom-Json
 $installRoot='D:\LuckyRay 中文 安装验收'
-$profile=Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'com.luckyray.desktop'
-if((Test-Path -LiteralPath $installRoot) -or (Test-Path -LiteralPath $profile) -or @(Get-Process -Name 'luckyray-app' -ErrorAction SilentlyContinue).Count){throw 'disposable-target-not-fresh'}
+$syntheticProfileRoot=Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'com.luckyray.desktop'
+if((Test-Path -LiteralPath $installRoot) -or (Test-Path -LiteralPath $syntheticProfileRoot) -or @(Get-Process -Name 'luckyray-app' -ErrorAction SilentlyContinue).Count){throw 'disposable-target-not-fresh'}
 if(Test-Path -LiteralPath $EvidenceRoot){throw 'evidence-target-not-fresh'}
 New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
 $record=[ordered]@{schema=1;case=$Case;status='FAIL';stage='preflight';source=$spec.source;installerSha256=$spec.candidate.sha256;actualProductExe=$true;modelRequests=0;userData=$false;realAndroid='NOT_RUN';userInstalled='NOT_RUN';rawLogsPublic=$false;checks=@()}
@@ -122,19 +122,19 @@ function Surface-Check([string]$label){
  $nodes=@($all | Where-Object {$_.ProcessId -in $owned -and $_.Name -eq 'node.exe'})
  Check ($label+'-owned-node-carrier') ($nodes.Count -ge 2)
  Check ($label+'-selected-owned-node') (@($nodes | Where-Object {$_.ExecutablePath -ieq (Join-Path $slot 'deepseek-harness\node\node.exe')}).Count -eq $nodes.Count)
- $active=Get-Content -LiteralPath (Join-Path $profile 'dsh-engine-updates\active.json') -Raw | ConvertFrom-Json
+ $active=Get-Content -LiteralPath (Join-Path $syntheticProfileRoot 'dsh-engine-updates\active.json') -Raw | ConvertFrom-Json
  Check ($label+'-selected-rc3') ($active.schema -eq 2 -and $active.version -ceq '0.2.1-rc.3')
  $script:record.selected='0.2.1-rc.3';$script:record.ownedNodeCount=$nodes.Count
 }
-function Synthetic-Check([string]$mode,[string]$runtime,[string]$host){
+function Synthetic-Check([string]$mode,[string]$runtime,[string]$hostRoot){
  $node=Join-Path $runtime 'node\node.exe'
- & $node (Join-Path $PSScriptRoot 'Synthetic-Data.mjs') $mode $runtime $host $profile $proof *> (Join-Path $InputRoot ("synthetic-$mode-private.log"))
+ & $node (Join-Path $PSScriptRoot 'Synthetic-Data.mjs') $mode $runtime $hostRoot $syntheticProfileRoot $proof *> (Join-Path $InputRoot ("synthetic-$mode-private.log"))
  Check ('synthetic-data-'+$mode) ($LASTEXITCODE -eq 0)
 }
 function Prepare-Qualified020 {
  $archive=Join-Path $InputRoot 'old020-fixture.zip'
  Check 'qualified020-fixture-identity' ((Hash $archive) -ceq $spec.old020Fixture.sha256)
- $store=Join-Path $profile 'dsh-engine-updates'
+ $store=Join-Path $syntheticProfileRoot 'dsh-engine-updates'
  if(Test-Path -LiteralPath $store){throw 'synthetic-update-store-not-fresh'}
  New-Item -ItemType Directory -Path $store -Force | Out-Null
  $prefix=[IO.Path]::GetFullPath($store).TrimEnd('\')+'\'
@@ -198,10 +198,10 @@ function Gateway-Product-Check {
   $failed=Evaluate 'window.__TAURI_INTERNALS__.invoke("companion_gateway_status")'
   Check 'gateway-occupied-resume-failure' ($failed.state -ceq 'resume-failed' -and $failed.bindFailure.kind -ceq 'address-in-use' -and $failed.port -eq $port)
   $script:record.gatewayBindFailure=@{stage=$failed.bindFailure.stage;kind=$failed.bindFailure.kind;osCode=$failed.bindFailure.osCode;attempts=$failed.bindFailure.attempts}
-  $args='{expectedAddress:'+$addressJs+',expectedPort:'+$port+',confirmed:'
-  $cancel=Evaluate ('window.__TAURI_INTERNALS__.invoke("companion_gateway_recover_endpoint",'+$args+'false}).then(()=>"unexpected",e=>e.code)')
+  $recoveryArgs='{expectedAddress:'+$addressJs+',expectedPort:'+$port+',confirmed:'
+  $cancel=Evaluate ('window.__TAURI_INTERNALS__.invoke("companion_gateway_recover_endpoint",'+$recoveryArgs+'false}).then(()=>"unexpected",e=>e.code)')
   Check 'gateway-cancel-does-not-recover' ($cancel -ceq 'gateway-recovery-confirmation-required')
-  $running=Evaluate ('window.__TAURI_INTERNALS__.invoke("companion_gateway_recover_endpoint",'+$args+'true})')
+  $running=Evaluate ('window.__TAURI_INTERNALS__.invoke("companion_gateway_recover_endpoint",'+$recoveryArgs+'true})')
   Check 'gateway-confirmed-same-interface-new-port' ($running.state -ceq 'running' -and $running.bindAddress -ceq $address -and $running.port -gt 0 -and $running.port -ne $port)
   $listening=@(Get-NetTCPConnection -State Listen -LocalAddress $address -LocalPort $running.port -ErrorAction SilentlyContinue)
   Check 'gateway-os-listener-owned-by-actual-product' (@($listening | Where-Object {$_.OwningProcess -eq $script:app.Id}).Count -eq 1)
@@ -223,18 +223,18 @@ try{
   $record.stage='old-install'
   if($Case -eq 'old020'){Install 'old-setup.exe' $spec.oldPublic.sha256}else{Install 'old021-setup.exe' $spec.old021.sha256}
   $record.oldProductVersion=(Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
-  $runtime=Join-Path $installRoot 'deepseek-harness';$host=Join-Path $installRoot 'dsh-host'
+  $runtime=Join-Path $installRoot 'deepseek-harness';$hostRoot=Join-Path $installRoot 'dsh-host'
   $record.oldEngineVersion=(Get-Content -LiteralPath (Join-Path $runtime 'host\node_modules\@deepseek-ai\dsh\package.json') -Raw | ConvertFrom-Json).version
   $expected=if($Case -eq 'old020'){'0.1.7-rc.2'}else{'0.2.1-rc.2'}
   Check 'old-installed-engine-version' ($record.oldEngineVersion -ceq $expected)
   if($Case -eq 'old020'){$runtime=Prepare-Qualified020;$record.syntheticSignedSelectedVersion='0.2.0-rc.2'}
-  Synthetic-Check 'seed' $runtime $host
+  Synthetic-Check 'seed' $runtime $hostRoot
   $record.stage='actual-old-product';Start-Product -Legacy;Stop-Product
   # A deliberate, synthetic legacy file stays outside the new owned namespace.
   [IO.File]::WriteAllText((Join-Path $installRoot 'deepseek-harness\synthetic-legacy-leftover.txt'),'preserve-synthetic-legacy')
   if($Case -eq 'old020'){
-   $legacyActiveHash=Hash (Join-Path $profile 'dsh-engine-updates\active.json')
-   $legacyJournalHash=Hash (Join-Path $profile 'dsh-engine-updates\transaction.json')
+   $legacyActiveHash=Hash (Join-Path $syntheticProfileRoot 'dsh-engine-updates\active.json')
+   $legacyJournalHash=Hash (Join-Path $syntheticProfileRoot 'dsh-engine-updates\transaction.json')
   }
  }
  $record.stage='candidate-install';Install 'candidate-setup.exe' $spec.candidate.sha256
@@ -245,10 +245,10 @@ try{
  if($Case -ne 'fresh'){Check 'legacy-leftover-retained' ((Get-Content -LiteralPath (Join-Path $installRoot 'deepseek-harness\synthetic-legacy-leftover.txt') -Raw) -ceq 'preserve-synthetic-legacy')}
  $record.stage='actual-normal';Start-Product;Surface-Check 'normal'
  if($Case -eq 'old020'){
-  $history=Join-Path $profile 'dsh-engine-updates\desktop-install-history'
+  $history=Join-Path $syntheticProfileRoot 'dsh-engine-updates\desktop-install-history'
   Check 'original-signed-active-archived-exact' ((Hash (Join-Path $history ($legacyActiveHash+'.json'))) -ceq $legacyActiveHash)
   Check 'original-signed-journal-archived-exact' ((Hash (Join-Path $history ($legacyJournalHash+'.json'))) -ceq $legacyJournalHash)
-  Check 'original-signed-journal-kept-exact' ((Hash (Join-Path $profile 'dsh-engine-updates\transaction.json')) -ceq $legacyJournalHash)
+  Check 'original-signed-journal-kept-exact' ((Hash (Join-Path $syntheticProfileRoot 'dsh-engine-updates\transaction.json')) -ceq $legacyJournalHash)
   $record.legacySignedActive='PASS_ACTUAL_EXE_ADOPTED_QUALIFIED_SYNTHETIC_020'
  }
  if($Case -ne 'fresh'){Draft-Check -Write}
@@ -287,7 +287,7 @@ try{
  if($_.FullyQualifiedErrorId -cmatch '^[A-Za-z0-9_.-]{1,100}$'){$record.harnessErrorId=$_.FullyQualifiedErrorId}
  if($record.errorType -ceq 'PropertyNotFoundException' -and $message -cmatch "property '([A-Za-z][A-Za-z0-9]{0,60})'"){$record.missingProperty=$Matches[1]}
 }finally{
- $errorFile=Join-Path $profile 'dsh-engine-updates\last-switch-error.json'
+ $errorFile=Join-Path $syntheticProfileRoot 'dsh-engine-updates\last-switch-error.json'
  if(Test-Path -LiteralPath $errorFile){
   try{
    $admission=Get-Content -LiteralPath $errorFile -Raw | ConvertFrom-Json
