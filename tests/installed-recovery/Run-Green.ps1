@@ -71,16 +71,23 @@ function Evaluate([string]$expression,[switch]$Lsh){
   }
  }finally{$socket.Dispose();$cancel.Dispose()}
 }
-function Start-Product {
+function Start-Product([switch]$Legacy) {
  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=50891 --remote-debugging-address=127.0.0.1'
  $script:app=Start-Process -FilePath $exe -WorkingDirectory $installRoot -WindowStyle Normal -PassThru
- $deadline=[DateTime]::UtcNow.AddSeconds(90);$connected=$false
+ $began=[DateTime]::UtcNow;$deadline=$began.AddSeconds(90);$connected=$false;$domReady=$false
  while([DateTime]::UtcNow -lt $deadline){
   $script:app.Refresh();if($script:app.HasExited){throw 'actual-product-exited'}
-  try{$connected=Evaluate 'Boolean(window.__TAURI_INTERNALS__)';if($connected){break}}catch{}
+  try{
+   $connected=Evaluate 'Boolean(window.__TAURI_INTERNALS__)'
+   $domReady=if($Legacy){$connected}else{Evaluate 'Boolean(document.querySelector(".nav-item[data-control-id=ai]"))'}
+   if($connected -and $domReady){break}
+  }catch{}
   Start-Sleep -Milliseconds 700
  }
  Check 'actual-main-window' ($connected -and $script:app.MainWindowHandle.ToInt64() -ne 0 -and $script:app.Responding)
+ if(-not $script:record.Contains('mainWindowReadiness')){$script:record.mainWindowReadiness=@()}
+ $script:record.mainWindowReadiness+=@{legacy=[bool]$Legacy;ipcReady=[bool]$connected;sidebarReady=[bool]$domReady;elapsedMs=[int]([DateTime]::UtcNow-$began).TotalMilliseconds}
+ if(-not $Legacy){Check 'actual-rendered-sidebar-ready' ([bool]$domReady)}
 }
 function Stop-Product {
  if($null -eq $script:app -or $script:app.HasExited){return}
@@ -221,7 +228,7 @@ try{
   Check 'old-installed-engine-version' ($record.oldEngineVersion -ceq $expected)
   if($Case -eq 'old020'){$runtime=Prepare-Qualified020;$record.syntheticSignedSelectedVersion='0.2.0-rc.2'}
   Synthetic-Check 'seed' $runtime $host
-  $record.stage='actual-old-product';Start-Product;Stop-Product
+  $record.stage='actual-old-product';Start-Product -Legacy;Stop-Product
   # A deliberate, synthetic legacy file stays outside the new owned namespace.
   [IO.File]::WriteAllText((Join-Path $installRoot 'deepseek-harness\synthetic-legacy-leftover.txt'),'preserve-synthetic-legacy')
   if($Case -eq 'old020'){
