@@ -1,0 +1,8 @@
+{
+  "name": "synthetic-windows-edge-primitives",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generic platform primitives only; not LuckyRay product acceptance",
+  "dependencies": { "playwright-core": "1.56.1" }
+}

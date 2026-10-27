@@ -1,0 +1,37 @@
+name: Synthetic Windows Edge isolation primitives
+on:
+  push:
+    branches: [qa/doubao-background-isolation-20261028]
+    paths:
+      - .github/workflows/windows-edge-primitives.yml
+      - tests/windows-edge-primitives/**
+permissions:
+  contents: read
+concurrency:
+  group: synthetic-edge-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  synthetic-edge:
+    if: github.repository == 'xiaorui2886/LuckyRay'
+    runs-on: windows-2022
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: tests/windows-edge-primitives
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          sparse-checkout: tests/windows-edge-primitives
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Install exact official browser automation package without browser download
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm install --ignore-scripts --no-audit --no-fund --package-lock=false --save-exact playwright-core@1.56.1
+      - name: Check generic synthetic fixture syntax
+        run: node --check edge-primitives.test.mjs
+      - name: Exercise real installed Edge with disposable synthetic profiles only
+        run: node --test edge-primitives.test.mjs
