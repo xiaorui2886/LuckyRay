@@ -5,7 +5,7 @@ export type OpenInLightSeekLocalResource = Readonly<{
   assetId: string;
   libraryId?: string;
   canonicalPath: string;
-  delivery: "image-attachment" | "path-reference";
+  delivery: "image-attachment" | "file-attachment" | "path-reference";
 }>;
 
 export type OpenInLightSeekRequest = {
@@ -80,8 +80,8 @@ function normalizeLocalResources(
     if (libraryId !== undefined && (typeof libraryId !== "string" || !libraryId || libraryId.length > 256
       || libraryId.trim() !== libraryId || /[\u0000-\u001f\u007f]/u.test(libraryId))) throw new Error("lightseek-open-intent-invalid");
     if (resource?.kind !== "material" || !assetId || assetId.length > 256 || assetId.trim() !== assetId
-      || (delivery !== "image-attachment" && delivery !== "path-reference")
-      || (delivery === "image-attachment" && !IMAGE_ATTACHMENT_SOURCES.has(source))
+      || !["image-attachment", "file-attachment", "path-reference"].includes(delivery)
+      || (delivery !== "path-reference" && !IMAGE_ATTACHMENT_SOURCES.has(source))
       || /[\u0000-\u001f\u007f]/u.test(assetId)
       || !canonicalPath || canonicalPath.trim() !== canonicalPath
       || utf8Length(canonicalPath) > MAX_LOCAL_RESOURCE_PATH_BYTES

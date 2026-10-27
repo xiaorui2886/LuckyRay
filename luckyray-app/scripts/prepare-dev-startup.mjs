@@ -18,7 +18,7 @@ const powershell = (file, ...args) => ['powershell.exe', ['-NoProfile', '-Execut
 const stages = [
   { name: 'media', inputs: ['third_party/media-engine'], outputs: ['src-tauri/media-engine'], command: powershell('prepare-media-engine.ps1') },
   { name: 'dsh-package', inputs: dshInputs, outputs: ['src-tauri/dsh'], command: powershell('prepare-dsh-package-runtime.ps1') },
-  { name: 'dsh-debug', inputs: dshInputs, outputs: ['src-tauri/target/debug/deepseek-harness'], command: powershell('prepare-dsh-dev-runtime.ps1') },
+  { name: 'dsh-debug', inputs: dshInputs, outputs: ['src-tauri/target/debug/lr-lsh/199-1/deepseek-harness'], command: powershell('prepare-dsh-dev-runtime.ps1') },
   { name: 'sidecars', inputs: ['src-tauri/src','src-tauri/build.rs','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json','config/release-extension-origins.json','browser-extension-prototype/manifest.json'], outputs: ['src-tauri/binaries/luckyray-cli-x86_64-pc-windows-msvc.exe','src-tauri/binaries/luckyray-cli-x86_64-pc-windows-msvc.exe.identity.json','src-tauri/target/debug/luckyray-cli.exe','src-tauri/target/debug/luckyray-browser-host.exe'],
     // Written only by -Release (all four binaries). Development does not create
     // this file, but changes to an existing release contract must invalidate it.

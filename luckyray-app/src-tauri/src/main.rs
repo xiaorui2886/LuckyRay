@@ -2,6 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--verify-installed-lsh") {
+        if std::env::args().len() != 2 { std::process::exit(2); }
+        match luckyray_app_lib::verify_installed_lsh() {
+            Ok(()) => std::process::exit(0),
+            Err(code) => { eprintln!("{code}"); std::process::exit(3); }
+        }
+    }
     #[cfg(all(debug_assertions, feature = "workspace-runtime-fixture"))]
     if std::env::args().nth(1).as_deref() == Some("--workspace-runtime-fixture") {
         return luckyray_app_lib::run_workspace_fixture();

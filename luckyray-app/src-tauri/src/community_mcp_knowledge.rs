@@ -2,7 +2,7 @@
 //! or filesystem note writes. Receipt metadata is separate from vault content.
 use crate::{
     assets_import_file::{download_with_limits, validate_file_name, DownloadLimits},
-    knowledge::{KnowledgeCreateInput, KnowledgeService},
+    knowledge::{KnowledgeCreateInput, KnowledgeDocumentRef, KnowledgeService},
     local_transport::{AdapterResponse, VerifiedTransportPrincipal},
 };
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ struct ImportInput {
     #[serde(default)]
     folder: Option<String>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Receipt {
     request_digest: String,
@@ -117,10 +117,64 @@ fn bounded_read(path: &Path) -> Result<Option<Vec<u8>>, String> {
         _ => Err("receipt-invalid".into()),
     }
 }
+// Reuse Knowledge's existing read-only create preview. Reject an invalid parent
+// before downloading or persisting intent; the actual create still revalidates
+// under its own mutation/identity gate. A later race remains indeterminate.
+fn requested_reference(service: &KnowledgeService, input: &ImportInput, filename: &str) -> Result<KnowledgeDocumentRef, String> {
+    let relative_path = match input.folder.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        Some(folder) => format!("{folder}/{filename}"),
+        None => filename.to_owned(),
+    };
+    Ok(KnowledgeDocumentRef {
+        vault_id: service.current_vault_id().map_err(|e| e.code.to_owned())?,
+        relative_path,
+    })
+}
+fn validate_destination(service: &KnowledgeService, input: &ImportInput, filename: &str) -> Result<(), String> {
+    let reference = requested_reference(service, input, filename)?;
+    service.preview_agent_create_revision(&reference, "").map(|_| ()).map_err(|e| {
+        if e.code == "knowledge-name-conflict" { "note-name-exists".to_owned() } else { e.code.to_owned() }
+    })
+}
+
+fn completed_receipt(service: &KnowledgeService, input: &ImportInput, filename: &str, directory: &Path) -> Result<Option<Receipt>, String> {
+    let finished = directory.join(format!("{}.complete.json", digest(input.request_id.as_bytes())));
+    let Some(bytes) = bounded_read(&finished)? else { return Ok(None); };
+    let receipt: Receipt = serde_json::from_slice(&bytes).map_err(|_| "receipt-invalid")?;
+    if [&receipt.request_digest, &receipt.content_sha256].iter().any(|value| value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return Err("receipt-invalid".into());
+    }
+    let reference = KnowledgeService::parse_document_id(&receipt.note_id).map_err(|e| e.code.to_owned())?;
+    let expected = requested_reference(service, input, filename)?;
+    // The receipt is already namespaced by the authenticated grant. Restoring
+    // that grant's frozen scope binds the physical Vault identity; the note ID
+    // pins its relative destination. An attachment ID or URL cannot retarget it.
+    if reference != expected || receipt.vault_id != expected.vault_id || receipt.file_name != filename {
+        return Err("request-id-conflict".into());
+    }
+    Ok(Some(receipt))
+}
 fn import(
     principal: &VerifiedTransportPrincipal,
     service: &KnowledgeService,
     input: ImportInput,
+) -> Result<Value, String> {
+    import_with_download(principal, service, input, |url| {
+        download_with_limits(url, &DownloadLimits {
+            max_bytes: MAX_MARKDOWN,
+            total_timeout: Duration::from_secs(60),
+            max_redirects: 3,
+        }).map_err(|_| "markdown-download-failed".to_owned())
+    })
+}
+
+// The only injected seam is external network I/O. Tests still exercise the
+// actual authorization, receipt and formal KnowledgeService save/read chain.
+fn import_with_download(
+    principal: &VerifiedTransportPrincipal,
+    service: &KnowledgeService,
+    input: ImportInput,
+    download: impl FnOnce(&str) -> Result<Vec<u8>, String>,
 ) -> Result<Value, String> {
     if !(8..=128).contains(&input.request_id.len())
         || !input
@@ -134,74 +188,70 @@ fn import(
         return Err("download-url-invalid".into());
     }
     let filename = name(&input.file_name)?;
-    let fingerprint = digest(
+    // Keep the original on-disk field/encoding for old readers and sealed
+    // pending intents. It is historical data, NOT the stable identity check:
+    // a temporary download URL can change while the verified bytes do not.
+    let legacy_request_digest = digest(
         serde_json::to_string(&json!([input.url, filename, input.folder]))
             .unwrap()
             .as_bytes(),
     );
-    // Read the confirmed receipt BEFORE fetching a potentially expired temporary URL.
-    let existing = principal.with_knowledge_mcp(|scope, grant, root| {
+    // Check scope/destination and old unknown outcomes before any network I/O.
+    let (initial_target, prior_receipt) = principal.with_knowledge_mcp(|scope, grant, root| {
         let scoped = service
             .restore_workspace_scope(scope)
             .map_err(|e| e.code.to_owned())?;
+        let target = scoped.current_target_identity().map_err(|e| e.code.to_owned())?;
         let directory = root.join("community-mcp-receipts").join(grant);
         let key = digest(input.request_id.as_bytes());
-        let finished = directory.join(format!("{key}.complete.json"));
-        if let Some(bytes) = bounded_read(&finished)? {
-            let r: Receipt = serde_json::from_slice(&bytes).map_err(|_| "receipt-invalid")?;
-            if r.request_digest != fingerprint {
-                return Err("request-id-conflict".into());
-            }
-            let document_ref =
-                KnowledgeService::parse_document_id(&r.note_id).map_err(|e| e.code.to_owned())?;
-            let target = scoped
-                .current_target_identity()
-                .map_err(|e| e.code.to_owned())?;
-            let doc = scoped
-                .read_document_for_target(&target, &document_ref)
-                .map_err(|e| e.code.to_owned())?;
-            // KnowledgeService's revision hashes original bytes, including BOM.
-            // Its content projection intentionally omits the leading UTF-8 BOM.
-            if doc.revision != r.content_sha256 {
-                return Err("imported-note-changed".into());
-            }
-            return Ok(Some(
-                json!({"noteId":r.note_id,"vaultId":r.vault_id,"fileName":r.file_name,
-                "disposition":"duplicate","contentSha256":r.content_sha256,"warnings":r.warnings}),
-            ));
+        if let Some(receipt) = completed_receipt(&scoped, &input, &filename, &directory)? {
+            return Ok((target, Some(receipt)));
         }
         if bounded_read(&directory.join(format!("{key}.pending.json")))?.is_some() {
             return Err("import-outcome-unknown".into());
         }
-        Ok(None)
+        validate_destination(&scoped, &input, &filename)?;
+        Ok((target, None))
     })?;
-    if let Some(result) = existing {
-        return Ok(result);
-    }
-    let bytes = download_with_limits(
-        &input.url,
-        &DownloadLimits {
-            max_bytes: MAX_MARKDOWN,
-            total_timeout: Duration::from_secs(60),
-            max_redirects: 3,
-        },
-    )
-    .map_err(|_| "markdown-download-failed")?;
+    // Even an unchanged URL/file_id is not evidence of identical bytes. Use the
+    // existing HTTPS/SSRF/redirect/size guarded downloader on EVERY retry.
+    let bytes = download(&input.url)?;
     let content = text(bytes)?;
+    let content_sha256 = digest(content.as_bytes());
     principal.with_knowledge_mcp(|scope,grant,root|{
         let scoped=service.restore_workspace_scope(scope).map_err(|e|e.code.to_owned())?;
         let target=scoped.current_target_identity().map_err(|e|e.code.to_owned())?;
+        if target != initial_target { return Err("knowledge-target-changed".into()); }
         let vault_id=scoped.current_vault_id().map_err(|e|e.code.to_owned())?;
         let directory=root.join("community-mcp-receipts").join(grant);
         safe_metadata_path(&directory)?;
-        fs::create_dir_all(&directory).map_err(|_|"receipt-directory-failed")?;
+        // A concurrent successful request may have finished during download.
+        // Re-read completion BEFORE pending; never replay a pending-only intent.
+        if let Some(receipt) = completed_receipt(&scoped, &input, &filename, &directory)? {
+            if prior_receipt.as_ref().is_some_and(|prior| prior != &receipt) {
+                return Err("receipt-invalid".into());
+            }
+            if receipt.content_sha256 != content_sha256 {
+                return Err("request-id-conflict".into());
+            }
+            let reference = KnowledgeService::parse_document_id(&receipt.note_id).map_err(|e| e.code.to_owned())?;
+            let doc = scoped.read_document_for_target(&target, &reference).map_err(|e| e.code.to_owned())?;
+            if doc.revision != receipt.content_sha256 { return Err("imported-note-changed".into()); }
+            return Ok(json!({"noteId":receipt.note_id,"vaultId":receipt.vault_id,"fileName":receipt.file_name,
+                "disposition":"duplicate","contentSha256":receipt.content_sha256,"warnings":receipt.warnings}));
+        }
+        if prior_receipt.is_some() { return Err("import-outcome-unknown".into()); }
         // A durable, exclusive intent prevents duplicate writes after crashes and
         // concurrent retries. An interrupted intent is explicitly indeterminate.
         let key=digest(input.request_id.as_bytes());
         let pending=directory.join(format!("{key}.pending.json"));
         if pending.exists(){return Err("import-outcome-unknown".into());}
+        // Recheck after the network wait, still before intent. A concurrently
+        // created intent must win over preflight and remains indeterminate.
+        validate_destination(&scoped,&input,&filename)?;
+        fs::create_dir_all(&directory).map_err(|_|"receipt-directory-failed")?;
         if fs::read_dir(&directory).map_err(|_|"receipt-read-failed")?.take(8193).count()>8192{return Err("receipt-capacity-reached".into());}
-        write_new(&pending,serde_json::to_string(&json!({"requestDigest":fingerprint})).unwrap().as_bytes())?;
+        write_new(&pending,serde_json::to_string(&json!({"requestDigest":legacy_request_digest})).unwrap().as_bytes())?;
         // The formal API accepts a complete .md name; retain case and repeated extensions.
         let title=filename.clone();
         let created=scoped.create_document_for_target(&target,&KnowledgeCreateInput{title,parent_relative_path:input.folder.clone(),content:content.clone()});
@@ -214,18 +264,29 @@ fn import(
             }
         };
         let doc=scoped.read_document_for_target(&target,&result.document.summary.document_ref).map_err(|_|"import-outcome-unknown")?;
-        if doc.revision!=digest(content.as_bytes())
+        if doc.revision!=content_sha256
             || doc.content!=content.strip_prefix('\u{feff}').unwrap_or(&content){return Err("import-outcome-unknown".into());}
         let mut warnings=Vec::new();
         if content.contains("](")||content.contains("![["){warnings.push("referenced-files-not-imported".into());}
         if result.index_stale{warnings.push("knowledge-index-pending".into());}
-        let receipt=Receipt{request_digest:fingerprint.clone(),note_id:KnowledgeService::document_id(&doc.summary.document_ref),
-            vault_id,file_name:filename.clone(),content_sha256:digest(content.as_bytes()),warnings};
+        let receipt=Receipt{request_digest:legacy_request_digest.clone(),note_id:KnowledgeService::document_id(&doc.summary.document_ref),
+            vault_id,file_name:filename.clone(),content_sha256,warnings};
         write_new(&directory.join(format!("{key}.complete.json")),&serde_json::to_vec(&receipt).map_err(|_|"receipt-save-failed")?)
             .map_err(|_|"import-outcome-unknown")?;
         Ok(json!({"noteId":receipt.note_id,"vaultId":receipt.vault_id,"fileName":receipt.file_name,
             "disposition":"imported","contentSha256":receipt.content_sha256,"warnings":receipt.warnings}))
     })
+}
+
+#[cfg(test)]
+pub(crate) fn test_import_with_download(
+    principal: &VerifiedTransportPrincipal,
+    service: &KnowledgeService,
+    body: Value,
+    download: impl FnOnce(&str) -> Result<Vec<u8>, String>,
+) -> Result<Value, String> {
+    let input = serde_json::from_value(body).map_err(|_| "input-invalid".to_owned())?;
+    import_with_download(principal, service, input, download)
 }
 
 pub(crate) fn route(

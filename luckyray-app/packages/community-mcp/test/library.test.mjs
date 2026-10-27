@@ -33,7 +33,7 @@ const c = {
 };
 const credential = "c".repeat(64),
   target = { exe: c.desktopExe, pid: 7, created: "fixture", ports: [37419] };
-function transport(mutate = (d) => d) {
+function transport(mutate = (d) => d, operationResponse) {
   const calls = [];
   const http = async (port, path, { body, credential: bearer } = {}) => {
     calls.push({ path, bearer });
@@ -70,7 +70,7 @@ function transport(mutate = (d) => d) {
         .digest("hex");
       return { status: 200, body: { ok: true, data: mutate(d) } };
     }
-    return {
+    return operationResponse ?? {
       status: 200,
       body: { ok: true, data: { vaultId: c.vaultId, notes: [] } },
     };
@@ -158,6 +158,38 @@ test("markdown requires HTTPS original MD name and stable request id", () => {
     markdownInput({ ...valid, folder: "资料/本周" }).folder,
     "资料/本周",
   );
+});
+
+test("missing knowledge parent is reported explicitly without retrying the import", async () => {
+  const {client, calls} = transport(undefined, {
+    status: 400,
+    body: {ok: false, error: {code: "knowledge-parent-missing"}},
+  });
+  await assert.rejects(client.call("/api/v1/library-mcp/knowledge/import-markdown", {
+    url: "https://example.com/synthetic.md", fileName: "中文.md",
+    requestId: "missing-parent-001", folder: "不存在",
+  }), {code: "knowledge-parent-missing"});
+  assert.equal(calls.filter(c => c.path.endsWith("import-markdown")).length, 1);
+});
+
+test("an unknown Markdown outcome stays unknown and is not retried or reported as success", async () => {
+  const {client, calls} = transport(undefined, {
+    status: 409,
+    body: {ok: false, error: {code: "import-outcome-unknown"}},
+  });
+  const tools = new LibraryTools(client, () => assert.fail("unknown import is not success"));
+  await assert.rejects(tools.run("import_markdown", {
+    url: "https://example.com/synthetic.md", fileName: "中文.md",
+    requestId: "existing-pending-001",
+  }), {code: "import-outcome-unknown"});
+  assert.equal(calls.filter(c => c.path.endsWith("import-markdown")).length, 1);
+});
+
+test("Markdown folder contract distinguishes existing knowledge directories from materials", () => {
+  const tool = TOOLS.find(t => t.name === "import_markdown");
+  assert.match(tool.description, /Omit folder to use the vault root/);
+  assert.match(tool.inputSchema.properties.folder.description, /Existing relative directory/);
+  assert.match(tool.inputSchema.properties.folder.description, /not a material-library folder/);
 });
 test("import requires a real note receipt and records web success only afterward", async () => {
   let seen = 0,

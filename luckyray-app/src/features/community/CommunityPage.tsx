@@ -18,11 +18,13 @@ import { extensionPackages, parseLocalPackage, type InstalledPackage } from "../
 import { extensionTemplates } from "../../core/extensions/templates";
 import type { TemplateResource } from "../../core/extensions/packages";
 import OfficialMcpCard from "./mcp/OfficialMcpCard";
+import CollectorServiceStatus from "./CollectorServiceStatus";
 import { ScriptPackagesPanel } from "./ScriptPlugins";
 import { PackagesPanel, extensionErrorCopyKey } from "./ExtensionPackagesPanel";
 import { TemplateFlow } from "./TemplateFlow";
 import { EXT_PACKAGE_MESSAGES } from "./extensionMessages";
 import "./community.css";
+import "../../components/editorialContentChrome.css";
 import { defineMessages, useMessages, type Locale } from "../../core/i18n/index";
 import { KNOWLEDGE_SOURCE_CHANGED_EVENT } from "../../core/services/knowledgeSource";
 import { CommunityDrawer, CommunityDrawerBoundary, CommunityFilters, CommunityIcon, CommunityState, communityMatchesStatus, type CommunityStatusFilter } from "./CommunityPresentation";
@@ -43,7 +45,7 @@ const COPY = defineMessages({
   "template.tech.name": { "zh-CN": "技术笔记", "en-US": "Technical note" },
   "template.tech.desc": { "zh-CN": "问题、尝试、结论、参考链接结构", "en-US": "Structure a problem, attempts, conclusions, and references" },
   "header.title": { "zh-CN": "社区", "en-US": "Community" },
-  "header.description": { "zh-CN": "找到顺手的扩展，让创作更自在。", "en-US": "Find useful extensions and make room for creation." },
+  "header.description": { "zh-CN": "管理扩展、主题与创作工具", "en-US": "Manage extensions, themes, and creative tools" },
   "header.install": { "zh-CN": "安装本地扩展", "en-US": "Install local extension" },
   "header.search": { "zh-CN": "搜索名称或 ID", "en-US": "Search by name or ID" },
   "header.local": { "zh-CN": "你的扩展", "en-US": "Your extensions" },
@@ -86,12 +88,12 @@ const COPY = defineMessages({
 type CommunityTab = "skills" | "packages" | "extensions" | "templates" | "status";
 type CommunityTemplateFilter = "all" | "builtin" | "packages" | "workflows";
 
-const TABS: Array<{ key: CommunityTab; labelKey: "tab.skills" | "tab.packages" | "tab.extensions" | "tab.templates" | "tab.status" }> = [
-  { key: "extensions", labelKey: "tab.extensions" },
-  { key: "packages", labelKey: "tab.packages" },
-  { key: "templates", labelKey: "tab.templates" },
-  { key: "skills", labelKey: "tab.skills" },
-  { key: "status", labelKey: "tab.status" },
+const TABS: Array<{ key: CommunityTab; labelKey: "tab.skills" | "tab.packages" | "tab.extensions" | "tab.templates" | "tab.status"; icon: "plugin" | "theme" | "workflow" | "note" | "browser" }> = [
+  { key: "extensions", labelKey: "tab.extensions", icon: "plugin" },
+  { key: "packages", labelKey: "tab.packages", icon: "theme" },
+  { key: "templates", labelKey: "tab.templates", icon: "workflow" },
+  { key: "skills", labelKey: "tab.skills", icon: "note" },
+  { key: "status", labelKey: "tab.status", icon: "browser" },
 ];
 
 const TEMPLATES = [
@@ -366,19 +368,19 @@ function CommunityPageContent() {
   ];
 
   return (
-    <div id="page-community" className="community-page page">
+    <div id="page-community" className="community-page page editorial-page-surface">
       <div className="community-rail">
       <div className="community-toolbar">
-      <div className="page-header">
-        <div><span className="community-eyebrow">LUCKYRAY / COMMUNITY</span><h1 className="page-title is-shell">{t("header.title")}</h1><p className="page-sub">{t("header.description")}</p></div>
-        <label className="lr-cap-run community-install plugin-file-button"><CommunityIcon name="plus" />{t("header.install")}<input type="file" aria-label={t("header.install")} accept=".json,.lrpack.json,application/json" disabled={installBusy || packagesBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void install(file); }} /></label>
-      </div>
+      <header className="page-header editorial-page-heading">
+        <div><h1>{t("header.title")}</h1><p>{t("header.description")}</p></div>
+        <label className="lr-cap-run secondary community-install plugin-file-button"><CommunityIcon name="plus" />{t("header.install")}<input type="file" aria-label={t("header.install")} accept=".json,.lrpack.json,application/json" disabled={installBusy || packagesBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void install(file); }} /></label>
+      </header>
       <div className="community-library-head">
       <div className="community-tabs" role="tablist" aria-label={t("tabs.aria")}>
         {TABS.map((tab, index) => <button key={tab.key} id={`community-tab-${tab.key}`} role="tab" aria-controls="community-panel" aria-selected={activeTab === tab.key} tabIndex={activeTab === tab.key ? 0 : -1} className={`community-tab${activeTab === tab.key ? " active" : ""}`} onClick={() => selectTab(tab.key)} onKeyDown={event => {
           const next = event.key === "ArrowRight" ? (index + 1) % TABS.length : event.key === "ArrowLeft" ? (index + TABS.length - 1) % TABS.length : event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1 : -1;
           if (next < 0) return; event.preventDefault(); selectTab(TABS[next].key); document.getElementById(`community-tab-${TABS[next].key}`)?.focus();
-        }}>{t(tab.labelKey)}{countReady(tab.key) && <span className="community-tab-count">{counts[tab.key]}</span>}</button>)}
+        }}><CommunityIcon name={tab.icon} />{t(tab.labelKey)}{countReady(tab.key) && <span className="community-tab-count">{counts[tab.key]}</span>}</button>)}
       </div>
       </div>
       </div>
@@ -443,7 +445,7 @@ function CommunityPageContent() {
         <CommunityGuide onOpen={setGuide} />
       </>}
       {activeTab === "status" && <>
-        <section className="community-collector"><div className="community-collector-copy"><span className="community-eyebrow">LUCKYRAY / COLLECTOR</span><h2>{t("community.collectorTitle")}</h2><p>{t("community.collectorDesc")}</p><div className="community-source-path"><span>{t("community.collectorSource")}</span><code tabIndex={0}>{EXTENSION_DIR}</code></div><button className="lr-cap-run secondary" onClick={() => void copyExtensionDir()}><CommunityIcon name="copy" />{t("action.copyPath")}</button></div><div className="community-collector-art" aria-hidden="true"><div className="community-collector-mini"><div className="community-collector-mini-head"><CommunityIcon name="browser" /><strong>{t("community.collectorPreview")}</strong><small>{t("community.illustration")}</small></div><div className="community-collector-mini-tabs"><span>{t("community.images")}</span><span>{t("community.article")}</span><span>{t("community.link")}</span></div><div className="community-collector-mini-items"><i /><i /><i /></div><div className="community-collector-mini-location">{t("community.previewLocation")}</div><div className="community-collector-mini-action">{t("community.previewSave")}</div></div></div></section>
+        <section className="community-collector"><div className="community-collector-copy"><span className="community-eyebrow">LUCKYRAY / COLLECTOR</span><h2>{t("community.collectorTitle")}</h2><p>{t("community.collectorDesc")}</p><CollectorServiceStatus /><div className="community-source-path"><span>{t("community.collectorSource")}</span><code tabIndex={0}>{EXTENSION_DIR}</code></div><button className="lr-cap-run secondary" onClick={() => void copyExtensionDir()}><CommunityIcon name="copy" />{t("action.copyPath")}</button></div><div className="community-collector-art" aria-hidden="true"><div className="community-collector-mini"><div className="community-collector-mini-head"><CommunityIcon name="browser" /><strong>{t("community.collectorPreview")}</strong><small>{t("community.illustration")}</small></div><div className="community-collector-mini-tabs"><span>{t("community.images")}</span><span>{t("community.article")}</span><span>{t("community.link")}</span></div><div className="community-collector-mini-items"><i /><i /><i /></div><div className="community-collector-mini-location">{t("community.previewLocation")}</div><div className="community-collector-mini-action">{t("community.previewSave")}</div></div></div></section>
         <ReadOnlyCapabilitySection title={t("extensions.capabilities")} items={groups.extensions} {...capabilityProps} />
       </>}
       {activeTab === "templates" && (templateFilter === "all" || templateFilter === "workflows") && <ReadOnlyCapabilitySection title={t("workflows.title")} items={groups.workflows} {...capabilityProps} filter="all" />}

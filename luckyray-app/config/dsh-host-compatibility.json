@@ -7,6 +7,8 @@
     "native-surface-loopback-v1",
     "resource-intents-v1",
     "plugin-quarantine-v1",
-    "signed-closure-switch-v1"
+    "signed-closure-switch-v1",
+    "closure-budget-40000-v1",
+    "loader-login-relay-ready-v1"
   ]
 }

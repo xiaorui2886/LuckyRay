@@ -1,0 +1,91 @@
+.canvas-composer-floating-layer > .canvas-reference-hover {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent;
+  box-shadow: 0 4px 16px #0003;
+  border-radius: 8px;
+  pointer-events: none;
+  overflow: hidden !important;
+}
+.canvas-reference-hover > img {
+  display: block;
+  width: 100%;
+  max-height: 170px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: transparent;
+}
+.canvas-reference-hover > pre {
+  margin: 0;
+  max-height: 170px;
+  overflow: hidden;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--theme-glass-bg);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.canvas-reference-hover > small,
+.canvas-reference-hover > .canvas-reference-unavailable {
+  display: block;
+  padding: 6px 8px;
+  background: var(--theme-glass-bg);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.canvas-reference-open {
+  display: grid;
+  place-items: center;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+  padding: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.canvas-reference-open img {
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+.canvas-reference-open:active {
+  cursor: grabbing;
+}
+.canvas-reference-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.canvas-composer-reference-item.is-unavailable {
+  border-color: var(--rose, #d87989);
+}
+.canvas-composer-reference-item.is-dragging {
+  opacity: 0.35;
+}
+.canvas-composer-reference-item.is-drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.canvas-composer-reference-item:focus-within
+  > .canvas-composer-reference-remove {
+  display: inline-flex;
+}
+.canvas-reference-number.is-text {
+  font-size: 9px;
+  background: var(--theme-selected);
+  color: var(--text-primary);
+}
+/* The media preview replaces the old duplicate role bubble. */
+.canvas-generation-composer .canvas-composer-reference-item::after {
+  display: none;
+}

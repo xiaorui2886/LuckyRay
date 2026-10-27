@@ -1,3 +1,5 @@
+import PhoneAuthorizationChoice, { PHONE_AUTHORIZATION_COPY } from "./PhoneAuthorizationChoice";
+import type { CompanionAuthorizationMode } from "../../core/services/companionGateway";
 import PhoneAccessManager from "./PhoneAccessManager";
 import { companionInterfaceHint, orderedCompanionInterfaces, selectedCompanionAddress } from "../../core/services/companionAccess";
 import { useEffect, useRef, useState } from "react";
@@ -8,6 +10,7 @@ import { companionDeviceDisplayLabel, companionGrantKey, type CompanionPresentat
 import {
   assertCanonicalPairingEnvelope,
   type CompanionServiceGrantState,
+  type EndpointRecoveryPresentation,
 
   type PairedCompanionDevice,
 } from "../../core/services/companionGateway";
@@ -62,8 +65,8 @@ export const COMPANION_COPY = defineMessages({
   "devices.revoke": { "zh-CN": "撤销", "en-US": "Revoke" },
   "devices.lshRemote": { "zh-CN": "LSH 远程", "en-US": "LSH remote" },
   "devices.lshRemoteHint": { "zh-CN": "允许此设备在手机上打开本机的 LSH 会话界面", "en-US": "Allow this device to open this desktop's LSH session on the phone" },
-  "devices.services": { "zh-CN": "跨端服务权限（默认关闭）", "en-US": "Cross-device service access (off by default)" },
-  "devices.servicesHint": { "zh-CN": "只对这台已配对设备和显示的范围生效；关闭后新请求立即被拒绝。", "en-US": "Applies only to this paired device and the shown scope; new requests are denied when turned off." },
+  "devices.services": { "zh-CN": "跨端服务权限", "en-US": "Cross-device service access" },
+  "devices.servicesHint": { "zh-CN": "信任模式下，开关对所有已保存及未来的库生效；手动模式按显示的库授权。关闭后新请求立即被拒绝。", "en-US": "In Trusted mode, switches apply to every saved and future library. Manual mode uses the shown scope. New requests are denied when turned off." },
   "devices.materialRead": { "zh-CN": "读取素材库", "en-US": "Read materials" },
   "devices.materialWrite": { "zh-CN": "修改素材元数据/移除管理记录", "en-US": "Edit metadata / remove managed records" },
   "devices.materialIngest": { "zh-CN": "导入素材", "en-US": "Import materials" },
@@ -96,8 +99,17 @@ export const COMPANION_COPY = defineMessages({
   "action.refresh": { "zh-CN": "刷新", "en-US": "Refresh" },
   "error.interfaces": { "zh-CN": "无法读取可用的局域网接口。", "en-US": "Could not read available local network interfaces." },
   "error.interfaceInvalid": { "zh-CN": "只能选择当前可用的本机局域网 IPv4 接口。", "en-US": "Choose an available private IPv4 interface on this computer." },
-  "error.bindConflict": { "zh-CN": "该局域网接口暂时无法监听，请稍后重试。", "en-US": "That local network interface cannot listen right now. Try again later." },
-  "error.firewall": { "zh-CN": "Windows 网络权限可能阻止监听，请检查专用网络访问权限后重试。", "en-US": "Windows network permissions may be blocking the listener. Check Private network access and retry." },
+  "error.bindConflict": { "zh-CN": "原端口已被其他服务占用。可重试原地址，或确认后选择同一接口的可用端口。", "en-US": "The saved port is in use. Retry it, or confirm selection of an available port on the same interface." },
+  "recovery.select": { "zh-CN": "选择可用端口", "en-US": "Choose available port" },
+  "recovery.confirmTitle": { "zh-CN": "恢复手机连接地址", "en-US": "Recover phone connection address" },
+  "recovery.confirmBody": { "zh-CN": "只为当前接口选择可用端口，成功后保存新地址。已配对手机需用下方恢复资料核验原电脑后更新地址；设备、证书和权限保留。", "en-US": "Select a port only on the current interface and save it after success. Paired phones must verify this same computer using the recovery details before updating the address. Devices, certificate and access are preserved." },
+  "recovery.confirm": { "zh-CN": "确认选择新端口", "en-US": "Confirm new port" },
+  "recovery.share": { "zh-CN": "已配对手机更新地址", "en-US": "Update paired phone address" },
+  "recovery.shareBody": { "zh-CN": "在已配对手机的连接页面选择“更新电脑连接地址”，扫描或粘贴这份资料。手机会先核验原电脑身份和证书；此码不授予新设备权限。", "en-US": "On a paired phone, choose Update computer connection address and scan or paste these details. The phone verifies the original computer and certificate first. This code does not authorize a new device." },
+  "recovery.copy": { "zh-CN": "复制恢复资料", "en-US": "Copy recovery details" },
+  "recovery.copied": { "zh-CN": "已复制", "en-US": "Copied" },
+  "recovery.copyFailed": { "zh-CN": "复制失败，请重试", "en-US": "Copy failed; retry" },
+  "error.firewall": { "zh-CN": "Windows 拒绝绑定此地址或端口，可能涉及系统保留端口或网络策略；尚不能确定是防火墙。", "en-US": "Windows denied binding this address or port. An excluded port or network policy may be involved; a firewall cause has not been established." },
   "error.rateLimited": { "zh-CN": "配对码生成过于频繁，请稍后再试。", "en-US": "Pairing codes were requested too quickly. Try again later." },
   "error.transition": { "zh-CN": "连接服务正在切换状态，请稍后再试。", "en-US": "The connection service is changing state. Try again shortly." },
   "error.listenerConfig": { "zh-CN": "无法读取或保存监听配置。请停止服务后重新启动；若仍失败，请检查本地数据访问权限。", "en-US": "The listener configuration could not be read or saved. Stop and start again; if it still fails, check access to local app data." },
@@ -148,7 +160,7 @@ export function gatewayErrorMessage(error: unknown, t: ReturnType<typeof useMess
     return t("error.interfaceInvalid");
   }
   if (code === "gateway-bind-conflict") return t("error.bindConflict");
-  if (code === "firewall/manual-permission-required") return t("error.firewall");
+  if (code === "gateway-bind-access-denied" || code === "firewall/manual-permission-required") return t("error.firewall");
   if (code === "pairing-rate-limited") return t("error.rateLimited");
   if (code === "gateway-transition-in-progress") return t("error.transition");
   if (code === "gateway-listener-config-unavailable") return t("error.listenerConfig");
@@ -167,6 +179,8 @@ export default function CompanionGatewayPanel() {
 
 function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentationStore }) {
   const { locale, t } = useMessages(COMPANION_COPY);
+  const { t: auth } = useMessages(PHONE_AUTHORIZATION_COPY);
+  const [authorizationMode, setAuthorizationMode] = useState<CompanionAuthorizationMode | null>(null);
   const { state, owner, seconds: secondsRemaining } = useCompanionView(store, true);
   const { status, devices, audit, services: serviceGrants, busy } = state;
   const interfaces = orderedCompanionInterfaces(state.interfaces);
@@ -178,6 +192,9 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
   const error = state.error ? gatewayErrorMessage(state.error, t) : "";
   const [pairViewOpen, setPairViewOpen] = useState(false);
   const [closingPairing, setClosingPairing] = useState(false);
+  const [recoveryTarget, setRecoveryTarget] = useState<{ address: string; port: number } | null>(null);
+  const [recoveryInfo, setRecoveryInfo] = useState<EndpointRecoveryPresentation | null>(null);
+  const [recoveryCopy, setRecoveryCopy] = useState<"copied" | "failed" | null>(null);
   useEffect(() => {
     setSelectedAddress(current => selectedCompanionAddress(current, state.interfaces, status));
   }, [status, state.interfaces]);
@@ -186,7 +203,13 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
   const startGateway = () => { if (selectedAddress) void store.run("start", client => client.start(selectedAddress)); };
   const stopGateway = () => void store.run("stop", client => client.stop());
   const restartGateway = () => { if (selectedAddress) void store.run("restart", client => client.restart(selectedAddress)); };
-  const issuePairing = (replace: boolean) => { setPairViewOpen(true); void store.issuePairing(owner, replace); };
+  const shareRecovery = () => void store.run("recovery-info", async client => {
+    const info = await client.endpointRecoveryPresentation(); setRecoveryCopy(null); setRecoveryInfo(info);
+  });
+  const confirmRecovery = () => { if (recoveryTarget) void store.run("recover", async client => {
+    await client.recoverEndpoint(recoveryTarget.address, recoveryTarget.port); setRecoveryTarget(null);
+  }); };
+  const issuePairing = (replace: boolean) => { if (authorizationMode) void store.issuePairing(owner, replace, authorizationMode); };
   const closePairing = async () => {
     if (closingPairing) return;
     setClosingPairing(true);
@@ -210,6 +233,9 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
   const askToRevoke = setRevokeTarget;
   const pairingModal = useApplicationModalSurface<HTMLDivElement>(pairViewOpen, () => void closePairing());
   const revokeModal = useApplicationModalSurface<HTMLDivElement>(Boolean(revokeTarget), () => setRevokeTarget(null));
+  const recoveryModal = useApplicationModalSurface<HTMLDivElement>(Boolean(recoveryTarget), () => { if (!busy) setRecoveryTarget(null); });
+  const liveRecoveryInfo = status?.state === "running" && recoveryInfo?.envelope.baseUrl === `https://${status.bindAddress}:${status.port}` && recoveryInfo.envelope.desktopInstanceId === status.desktopInstanceId && recoveryInfo.envelope.certificateFingerprint === status.certificateFingerprint ? recoveryInfo : null;
+  const recoveryInfoModal = useApplicationModalSurface<HTMLDivElement>(Boolean(liveRecoveryInfo), () => setRecoveryInfo(null));
 
   const stateLabel = busy === "start"
     ? t("state.starting")
@@ -237,8 +263,8 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
         </span>
       </div>
 
-      {error && <div className="companion-inline-error" role="alert">{error}</div>}
-      {resumeFailed && <div className="companion-inline-error" role="alert">{t("gateway.resumeFailed")} {gatewayErrorMessage(status, t)}</div>}
+            {error && <div className="companion-inline-error" role="alert">{error}</div>}
+      {resumeFailed && <div className="companion-inline-error" role="alert">{t("gateway.resumeFailed")} {gatewayErrorMessage(status, t)}{status.bindFailure && <small> · bind / {status.bindFailure.kind} · {status.bindFailure.osCode ?? "unknown"} · {status.bindFailure.attempts}</small>}</div>}
 
       <div className="companion-console-grid">
         <article className="companion-card companion-gateway-card">
@@ -286,12 +312,14 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
               <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy) || !selectedAddress || status?.state === "recovery-required" || status?.state === "stopping"} onClick={startGateway}>{resumeFailed ? t("gateway.retry") : t("gateway.start")}</button>
             ) : (
               <>
-                <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy)} onClick={() => issuePairing(false)}>{t("gateway.pair")}</button>
+                <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy)} onClick={() => { setAuthorizationMode(null); setPairViewOpen(true); }}>{t("gateway.pair")}</button>
                 <button className="settings-btn" type="button" disabled={Boolean(busy)} onClick={restartGateway}>{t("gateway.restart")}</button>
                 <button className="settings-btn settings-btn-danger" type="button" disabled={Boolean(busy)} onClick={stopGateway}>{t("gateway.stop")}</button>
               </>
             )}
             {(resumeFailed || status?.state === "recovery-required") && <button className="settings-btn settings-btn-danger" type="button" disabled={Boolean(busy)} onClick={stopGateway}>{t("gateway.stop")}</button>}
+            {resumeFailed && status.bindAddress && status.port && ["gateway-bind-conflict", "gateway-bind-access-denied", "firewall/manual-permission-required", "gateway-local-transport-port-reserved"].includes(status.code) && <button className="settings-btn" type="button" disabled={Boolean(busy) || !interfaces.some(item => item.address === status.bindAddress)} onClick={() => setRecoveryTarget({ address: status.bindAddress!, port: status.port! })}>{t("recovery.select")}</button>}
+            {isRunning && devices.some(device => !device.revokedAt) && <button className="settings-btn" type="button" disabled={Boolean(busy)} onClick={shareRecovery}>{t("recovery.share")}</button>}
           </div>
 
           <div className="companion-firewall-note">
@@ -347,7 +375,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
                   {!device.revokedAt && (state.grantErrors[device.deviceId] || state.grantErrors[device.deviceId + ":lsh"])
                     ? <small className="companion-inline-error" role="alert">{gatewayErrorMessage(state.grantErrors[device.deviceId] || state.grantErrors[device.deviceId + ":lsh"], t)}</small> : null}
                   {!device.revokedAt && services && (
-                    <div className="companion-service-permissions"><PhoneAccessManager key={device.deviceId} store={store} deviceId={device.deviceId} /><details>
+                    <details className="companion-service-permissions"><summary>{t("devices.services")}</summary><PhoneAccessManager key={device.deviceId} store={store} deviceId={device.deviceId} />{!services.savedLibraries && services.authorizationMode !== "trusted" && <details>
                       <summary>{t("devices.services")}</summary>
                       <small>{t("devices.servicesHint")}</small>
                       <div className="companion-service-permission-list">
@@ -362,7 +390,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
                           </button>;
                         })}
                       </div>
-                    </details></div>
+                    </details>}</details>
                   )}
                 </div>
               );
@@ -393,6 +421,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
             </button>
             <div className="companion-pairing-copy"><span className="companion-kicker">ONE-TIME PAIRING</span><h3 id="companion-pair-title">{t("pair.title")}</h3><p>{t("pair.description")}</p></div>
             {error && <div className="companion-inline-error" role="alert">{error}</div>}
+            {!pairing && busy !== "pair" && <PhoneAuthorizationChoice value={authorizationMode} onChange={setAuthorizationMode} disabled={Boolean(busy) || closingPairing} />}
             {pairing ? <><div className="companion-qr-frame" aria-label={t("pair.qr")}>
               <svg viewBox={`-4 -4 ${pairing.qrSize + 8} ${pairing.qrSize + 8}`} role="img" aria-label={t("pair.qr")} shapeRendering="crispEdges">
                 <rect x="-4" y="-4" width={pairing.qrSize + 8} height={pairing.qrSize + 8} rx="2" fill="white" />
@@ -400,7 +429,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
               </svg>
             </div>
             <div className="companion-pairing-meta"><b>{pairing.ip}:{pairing.port}</b><span>{t("pair.expires", { seconds: secondsRemaining })}</span></div></> : busy === "pair" || closingPairing ? <p role="status">{t("state.loading")}</p> : null}
-            <p className="companion-pairing-hint">{t("pair.copyHint")}</p>
+            {pairing && <p className="companion-pairing-hint">{t("pair.copyHint")}</p>}
             {pairing && copyState?.pairingId === pairing.pairingId && copyState.state === "copied" && (
               <p className="companion-pairing-copied" role="status">{t("pair.copied")}</p>
             )}
@@ -408,14 +437,29 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
               <p className="companion-inline-error" role="alert">{t("pair.copyFailed")}</p>
             )}
             <div className="companion-dialog-actions">
-              <button className="settings-btn" type="button" disabled={Boolean(busy) || closingPairing || !pairing} onClick={() => void copyPairingInfo()}>{t("pair.copy")}</button>
-              <button className="settings-btn" type="button" disabled={Boolean(busy) || closingPairing} onClick={() => issuePairing(true)}>{t("pair.regenerate")}</button>
-              <button className="settings-btn settings-btn-primary" type="button" disabled={closingPairing} onClick={() => void closePairing()}>{t("pair.done")}</button>
+              {pairing && <button className="settings-btn" type="button" disabled={Boolean(busy) || closingPairing || !pairing} onClick={() => void copyPairingInfo()}>{t("pair.copy")}</button>}
+              <button className={`settings-btn${pairing ? "" : " settings-btn-primary"}`} type="button" disabled={Boolean(busy) || closingPairing || !authorizationMode} onClick={() => issuePairing(Boolean(pairing))}>{pairing ? t("pair.regenerate") : auth(authorizationMode === "trusted" ? "pairTrusted" : authorizationMode === "manual" ? "pairManual" : "pairChoose")}</button>
+              <button className={`settings-btn${pairing ? " settings-btn-primary" : ""}`} type="button" disabled={closingPairing} onClick={() => void closePairing()}>{t(pairing ? "pair.done" : "revoke.cancel")}</button>
             </div>
           </div>
         </div>
       )}
 
+      {recoveryTarget && <div className="companion-pairing-overlay experience-dialog-backdrop" onPointerDown={recoveryModal.onBackdropPointerDown}>
+        <div ref={recoveryModal.surfaceRef} onKeyDown={recoveryModal.onSurfaceKeyDown} className="companion-revoke-dialog experience-dialog" role="dialog" aria-modal="true" aria-labelledby="companion-recover-title" tabIndex={-1}>
+          <h3 id="companion-recover-title">{t("recovery.confirmTitle")}</h3><p>{t("recovery.confirmBody")}</p><p>{recoveryTarget.address}:{recoveryTarget.port}</p>
+          {error && <p role="alert">{error}</p>}
+          <div className="companion-dialog-actions"><button autoFocus className="settings-btn" type="button" disabled={Boolean(busy)} onClick={() => setRecoveryTarget(null)}>{t("revoke.cancel")}</button><button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy)} onClick={confirmRecovery}>{t("recovery.confirm")}</button></div>
+        </div>
+      </div>}
+      {liveRecoveryInfo && <div className="companion-pairing-overlay experience-dialog-backdrop" onPointerDown={recoveryInfoModal.onBackdropPointerDown}>
+        <div ref={recoveryInfoModal.surfaceRef} onKeyDown={recoveryInfoModal.onSurfaceKeyDown} className="companion-revoke-dialog experience-dialog" role="dialog" aria-modal="true" aria-labelledby="companion-recovery-info-title" tabIndex={-1}>
+          <h3 id="companion-recovery-info-title">{t("recovery.share")}</h3><p>{t("recovery.shareBody")}</p>
+          <div className="companion-qr-frame"><svg viewBox={`-4 -4 ${liveRecoveryInfo.qrSize + 8} ${liveRecoveryInfo.qrSize + 8}`} role="img" aria-label={t("recovery.share")}><path d={liveRecoveryInfo.qrPath} fill="#0c0c10" /></svg></div><p>{liveRecoveryInfo.envelope.baseUrl}</p>
+          {recoveryCopy && <p role="status">{t(recoveryCopy === "copied" ? "recovery.copied" : "recovery.copyFailed")}</p>}
+          <div className="companion-dialog-actions"><button className="settings-btn" type="button" onClick={() => void navigator.clipboard.writeText(JSON.stringify(liveRecoveryInfo.envelope)).then(() => setRecoveryCopy("copied"), () => setRecoveryCopy("failed"))}>{t("recovery.copy")}</button><button autoFocus className="settings-btn settings-btn-primary" type="button" onClick={() => setRecoveryInfo(null)}>{t("pair.done")}</button></div>
+        </div>
+      </div>}
       {revokeTarget && (
         <div className="companion-pairing-overlay experience-dialog-backdrop" onPointerDown={revokeModal.onBackdropPointerDown}>
           <div ref={revokeModal.surfaceRef} onKeyDown={revokeModal.onSurfaceKeyDown} className="companion-revoke-dialog experience-dialog" role="dialog" aria-modal="true" aria-labelledby="companion-revoke-title" tabIndex={-1}>

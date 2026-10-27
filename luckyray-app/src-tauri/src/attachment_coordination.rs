@@ -629,3 +629,20 @@ pub(super) fn knowledge_discover_attachment_moves(
         .map_err(knowledge_error)?;
     Ok(candidates)
 }
+
+#[tauri::command]
+pub(super) async fn knowledge_export_note_archive(
+    caller: tauri::Webview,
+    document_ref: knowledge::KnowledgeDocumentRef, target_path: String, source_epoch: u64,
+) -> Result<knowledge::AttachmentExportResult, String> {
+    require_main_caller(&caller)?;
+    let service = knowledge_service()?;
+    let catalog = backend_services()?.material_catalog();
+    if service.current_vault_id().map_err(knowledge_error)? != document_ref.vault_id {
+        return Err("knowledge-target-not-current".into());
+    }
+    let approved = approved_documents(&service, &catalog)?;
+    tauri::async_runtime::spawn_blocking(move || service.export_note_archive(
+        source_epoch, std::path::Path::new(&target_path), &approved, &document_ref,
+    ).map_err(knowledge_error)).await.map_err(|e| e.to_string())?
+}

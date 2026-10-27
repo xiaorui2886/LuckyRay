@@ -34,7 +34,9 @@ test('throwing decode does not strand subsequent work',()=>{
 test('exact 12ai GPT models receive documented ratios and extra quality levels',()=>{
  const c=mediaCapabilities('image',profile(),'gpt-image-2.5-flare');assert.equal(c.aspects.length,13);assert.ok(c.aspects.includes('21:9'));assert.ok(c.qualities.includes('xhigh'));assert.ok(c.qualities.includes('max'));
  assert.ok(!mediaCapabilities('image',profile(),'gpt-image-2').qualities.includes('max'));
- assert.ok(!mediaCapabilities('image',profile('openai-image','12ai-task','https://new.12ai.org.attacker.test'),'gpt-image-2.5-flare').aspects.includes('21:9'));
+ // Native GPT capabilities now follow the documented model on any selected
+ // OpenAI Images endpoint; this does not grant 12API routing to a lookalike host.
+ assert.ok(mediaCapabilities('image',profile('openai-image','12ai-task','https://new.12ai.org.attacker.test'),'gpt-image-2.5-flare').aspects.includes('21:9'));
 });
 test('native Gemini and task Gemini expose only their documented combinations',()=>{
  const native=mediaCapabilities('image',profile('gemini-image'),'gemini-3.1-flash-image-preview');assert.ok(native.qualities.includes('512px'));assert.ok(!native.aspects.includes('4:5'));

@@ -77,6 +77,8 @@ export function CanvasDeliveryPanel({
     <CanvasCreativeDialog
       compact
       title={english ? "Export results" : "成品导出"}
+      subtitle={english ? `${items.length} selected · original files + manifest` : `已选 ${items.length} 项 · 原始文件与清单`}
+      className="canvas-delivery-dialog"
       english={english}
       onClose={() => {
         if (saving.current) return;
@@ -118,6 +120,7 @@ export function CanvasDeliveryPanel({
           ? "Up to 50 files, 128 MiB each and 256 MiB total. A failed item stops the archive, with no silent omissions."
           : "最多 50 个文件，单个 128 MiB、合计 256 MiB。任一文件失败即停止，不会悄悄漏掉。"}
       </p>
+      {busy && <div className="canvas-delivery-progress"><progress max={items.length || 1} value={done} aria-label={english ? "Preparing archive" : "正在准备文件"}/><span>{english ? `${done} of ${items.length} files ready` : `已准备 ${done} / ${items.length} 个文件`}</span></div>}
       <div className="canvas-delivery-actions">
         <button
           type="button"

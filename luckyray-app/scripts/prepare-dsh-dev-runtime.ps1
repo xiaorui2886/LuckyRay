@@ -19,7 +19,7 @@ $expectedNodeHash = [string]$authority.nodeRuntime.nodeExeSha256
 $expectedVersion = [string]$authority.runtimePackage.version
 
 if (-not $DestinationRoot) {
-  $DestinationRoot = Join-Path $repoRoot 'src-tauri\target\debug\deepseek-harness'
+  $DestinationRoot = Join-Path $repoRoot 'src-tauri\target\debug\lr-lsh\199-1\deepseek-harness'
 }
 if (-not $InputRoot) {
   $InputRoot = Join-Path $env:LOCALAPPDATA ("LuckyRay\verified-runtime-cache\inputs\{0}" -f $expectedVersion)

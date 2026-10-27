@@ -1,0 +1,11 @@
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {resolve,dirname} from 'node:path';
+import {build} from 'esbuild';
+const out=resolve(process.argv[2]),source=resolve('src/CanvasSpike.tsx');await mkdir(out,{recursive:true});
+await build({stdin:{contents:(await readFile(source,'utf8'))+`
+import {createRoot as mountPreview} from 'react-dom/client';
+const refs=[{id:'red',label:'本地导入示例',kind:'image',mediaUrl:window.location.origin+'/red.png'},{id:'blue',label:'素材库引用示例',kind:'image',mediaUrl:window.location.origin+'/blue.png'},{id:'result',label:'生成结果引用示例',kind:'image',thumbnailUrl:window.location.origin+'/missing.png',mediaUrl:window.location.origin+'/green.png'}];
+const profile={id:'synthetic',revision:1,apiKeyConfigured:true,imageProtocol:'openai-images',imageModel:'gpt-image-1',videoProtocol:'disabled',videoModel:''};
+function Preview(){const [data,set]=useState({kind:'image',generationPrompt:'保持每张图的颜色',generationReferences:refs});return <I18nProvider locale="zh-CN"><ReactFlowProvider><div className="canvas-editor-root"><h2>参考图与上游提示词 · 生产组件验证</h2><p>合成 PNG 像素测试，不调用模型、不模拟原生持久化。</p><MaterialCompactComposer node={{id:'qa',data} as any} embedded mediaProfile={profile as any} imageModels={['gpt-image-1']} defaultImageModel="gpt-image-1" connectedInputs={[{edgeId:'text-edge',sourceNodeId:'text',role:'promptContext',reference:{id:'node:text',label:'上游文本',kind:'text',text:'生成三色海报'}}]} onDataChange={patch=>set(old=>({...old,...patch}))} onAddReference={()=>{}} onSubmit={()=>{}} /></div></ReactFlowProvider></I18nProvider>};
+mountPreview(document.getElementById('root')!).render(<Preview/>);`,resolveDir:dirname(source),loader:'tsx'},bundle:true,platform:'browser',format:'esm',jsx:'automatic',outfile:resolve(out,'preview.js')});
+await writeFile(resolve(out,'index.html'),'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><link rel="stylesheet" href="preview.css"><style>body{padding:40px;background:#171719;color:#ddd;font:14px system-ui}.canvas-editor-root{position:relative;max-width:950px}.canvas-generation-composer{position:relative!important;transform:none!important;width:700px!important}.canvas-composer-reference-item{width:64px;height:64px;min-width:64px;flex-basis:64px}</style><div id="root"></div><script type="module" src="preview.js"></script></html>');

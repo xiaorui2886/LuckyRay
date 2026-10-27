@@ -1,3 +1,4 @@
+import { materialProvenanceFromHistory, normalizeMaterialGenerationProvenance } from "./materialProvenance";
 import type { CanvasNodeCapabilityData } from "./nodeCapabilities";
 import type { CanvasGenerationTask } from "./generationTasks";
 import type {
@@ -6,6 +7,7 @@ import type {
 } from "./generationHistory";
 
 export type CanvasSavableNodeData = CanvasNodeCapabilityData & {
+  gridSlice?: { version: number; batchId: string };
   label?: string;
   result?: string;
   resultMediaUrl?: string | null;
@@ -53,6 +55,9 @@ export function canvasNodeLibraryCandidates(
   display: (value: string) => string = (s) => s,
 ): CanvasGenerationLibraryCandidate[] {
   if (data._emptyMedia) return [];
+  if(data.kind === "image" && data.gridSlice?.version === 1 && data.refMediaUrl && !/^(data|blob|https?):/i.test(data.refMediaUrl)) {
+    return [{historyId:`grid:${data.gridSlice.batchId}`,taskId:`grid:${data.gridSlice.batchId}`,kind:'image',mediaUrl:data.refMediaUrl,prompt:'',model:'',createdAt:''}];
+  }
   const task = data.generationTask;
   if (task && task.status !== "succeeded") return [];
   const entry = history.find((row) =>
@@ -91,32 +96,48 @@ export function canvasNodeLibraryCandidates(
             },
           ]
         : [];
-    const raw = data.sourceGenerationMediaUrl;
-    const matched =
-      raw && (raw === data.refMediaUrl || display(raw) === data.refMediaUrl)
-        ? raw
-        : all.find(
-            (item) =>
-              item.url === data.refMediaUrl ||
-              display(item.url) === data.refMediaUrl,
-          )?.url;
-    if (matched) urls = [{ url: matched }];
+    if (data.kind === "generator") {
+      // Restored stacks have no live task. The switcher changes resultMediaUrl,
+      // while the resource/provenance URLs intentionally retain their initial value.
+      const shown = data.resultMediaUrl;
+      const selected = all.find(item => item.url === shown || display(item.url) === shown);
+      if (selected) urls = [{ ...selected }];
+    } else {
+      const raw = data.sourceGenerationMediaUrl;
+      const matched =
+        raw && (raw === data.refMediaUrl || display(raw) === data.refMediaUrl)
+          ? raw
+          : all.find(
+              (item) =>
+                item.url === data.refMediaUrl ||
+                display(item.url) === data.refMediaUrl,
+            )?.url;
+      if (matched) urls = [{ url: matched }];
+    }
   }
   return [
     ...new Map(
       urls.filter((item) => !!item.url.trim()).map((item) => [item.url, item]),
     ).values(),
-  ].map((item) => ({
-    historyId:
-      entry?.id || data.sourceGenerationHistoryId || `history:${task?.id}`,
-    taskId: task?.id || entry?.taskId || data.sourceGenerationTaskId!,
-    kind,
-    mediaUrl: item.url,
-    thumbnailUrl: item.thumbnailUrl || undefined,
-    prompt: task?.request.prompt || entry?.prompt || "",
-    model: task?.request.model || entry?.model || "",
-    createdAt: task?.createdAt || entry?.createdAt || "",
-  }));
+  ].map((item) => {
+    // A same-node image stack may contain multiple immutable generation batches.
+    const origin = task ? history.find(row => row.status === "succeeded" &&
+      (row.sourceNodeId === task.sourceNodeId || row.resultNodeId === task.resultNodeId) &&
+      (row.outputMediaUrl === item.url || row.outputMediaItems?.some(image => image.url === item.url))) : entry;
+    // A mixed stack must never assign the newest request to an older unknown output.
+    const evidence = origin || (entry && (entry.outputMediaUrl === item.url || entry.outputMediaItems?.some(image => image.url === item.url)) ? entry : undefined);
+    return {
+      provenance: evidence ? materialProvenanceFromHistory(evidence) : task && !entry && !history.some(row => row.taskId === task.id) ? normalizeMaterialGenerationProvenance({version:1,historyId:`history:${task.id}`,taskId:task.id,createdAt:task.createdAt,kind:task.request.kind,request:task.request}) : undefined,
+      historyId: origin?.id || entry?.id || data.sourceGenerationHistoryId || `history:${task?.id}`,
+      taskId: origin?.taskId || task?.id || entry?.taskId || data.sourceGenerationTaskId!,
+      kind,
+      mediaUrl: item.url,
+      thumbnailUrl: item.thumbnailUrl || undefined,
+      prompt: origin?.prompt ?? task?.request.prompt ?? entry?.prompt ?? "",
+      model: origin?.model ?? task?.request.model ?? entry?.model ?? "",
+      createdAt: origin?.createdAt || task?.createdAt || entry?.createdAt || "",
+    };
+  });
 }
 /** Per-session idempotence. A failed write remains retryable. */
 export function createCanvasSaveGate() {

@@ -1,0 +1,79 @@
+/* Library dialog presentation only. Keep actions, modal isolation and native
+   operations in their existing owners. Settings appearance supplies the palette. */
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog){
+  --library-dialog-divider:color-mix(in srgb,var(--text-primary) 10%,transparent);
+  width:min(680px,calc(100vw - 32px));padding:24px;border-radius:var(--radius-lg,14px);
+  background:var(--theme-surface-panel,var(--bg-surface));border-color:var(--theme-border-strong,var(--border));
+  box-shadow:var(--theme-shadow-lg,0 18px 70px #0004);
+}
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog)>header{flex:none;gap:16px;padding-bottom:18px}
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog) h2{font-size:17px;font-weight:600;letter-spacing:-.2px}
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog)>header>button{
+  display:grid;place-items:center;width:30px;height:30px;min-width:30px;padding:0;border-color:transparent;
+  background:transparent;color:var(--text-secondary);font-size:20px;line-height:1;
+}
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog) button{
+  min-height:32px;border-radius:8px;transition:background-color 160ms ease,border-color 160ms ease,color 160ms ease;
+}
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog) button:hover:not(:disabled){background:var(--theme-hover,var(--bg-hover));border-color:var(--theme-border-strong,var(--border))}
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog) :is(button,input,summary,[tabindex]):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog)>footer{
+  flex:none;margin-top:18px;padding-top:16px;border-top:1px solid var(--library-dialog-divider);gap:10px;
+}
+.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog)>footer>button:last-child{background:var(--theme-surface-raised,var(--bg-elevated));padding-inline:16px}
+.material-library-management-body{min-height:0;max-height:58vh;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;padding:2px;border-radius:12px}
+.material-library-management-body::-webkit-scrollbar{display:none}
+.material-library-management .material-library-list{gap:12px;margin-top:0;padding:0;max-height:none;overflow:visible}
+.material-library-management .material-library-list::-webkit-scrollbar{display:none}
+.material-library-management .material-library-row{
+  align-items:flex-start;gap:12px;padding:16px;border-radius:12px;
+  border:1px solid var(--library-dialog-divider);background:var(--theme-surface-base,var(--bg-base));
+}
+.material-library-management .material-library-row:hover{background:var(--theme-surface-base,var(--bg-base))}
+.material-library-management .material-library-row[data-current=true]{border-color:var(--theme-border-strong,var(--border))}
+.material-library-management .material-library-row-summary{gap:7px}
+.material-library-management .material-library-row-heading{display:flex;align-items:center;gap:8px;min-width:0}
+.material-library-management .material-library-row-heading strong{font-size:14px;line-height:1.5;font-weight:550}
+.material-library-current-badge{flex:none;border-radius:5px;padding:2px 6px;background:var(--accent-muted);color:var(--accent);font-size:10px;line-height:1.4}
+.material-library-management .material-library-row-state{font-size:11px;color:var(--text-secondary);line-height:1.5}
+.material-library-management .material-library-row-summary .material-library-location{font-size:11px;color:var(--text-secondary);line-height:1.6}
+.material-library-management .material-library-row>.material-library-menu-trigger{flex:none;min-height:28px;height:28px;width:28px;padding:4px;border-color:transparent;background:transparent;color:var(--text-secondary)}
+.material-library-management .material-library-auto-import{margin-top:5px;padding-top:12px;border-top-color:var(--library-dialog-divider)}
+.material-library-management .material-library-auto-import label{font-size:12px;gap:9px;cursor:pointer;line-height:1.6}
+.material-library-management .material-library-auto-import input[type=checkbox]{width:15px;height:15px;margin:0;cursor:pointer;flex:none}
+.material-library-management .material-library-auto-import input[type=checkbox]:disabled{cursor:default}
+.material-library-import-details{margin-top:8px;color:var(--text-secondary);font-size:11px;line-height:1.7}
+.material-library-import-details summary{width:fit-content;cursor:pointer;border-radius:4px;color:var(--text-secondary)}
+.material-library-import-details summary:hover{color:var(--text-primary)}
+.material-library-management .material-library-import-details :is(p,small){font-size:11px;line-height:1.7;color:var(--text-secondary)}
+.material-library-management .material-library-auto-import>small{font-size:11px;line-height:1.6;margin-top:8px}
+.material-library-management .material-library-auto-import .material-library-error{color:var(--danger,#c54c48)}
+.material-library-management .material-library-legacy-watch{padding:8px 2px 0;max-height:none;overflow:visible}
+.material-library-management .material-library-legacy-watch>summary{cursor:pointer;line-height:1.7;color:var(--text-secondary)}
+.material-library-tasks-dialog[open]{display:flex;flex-direction:column;overflow:hidden}
+.material-library-tasks-dialog .material-transfer-tasks{min-height:0;gap:12px;margin-top:0;padding:2px;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;scrollbar-gutter:auto}
+.material-library-tasks-dialog .material-transfer-tasks::-webkit-scrollbar{display:none}
+.material-library-tasks-dialog .material-transfer-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:156px;padding:20px;text-align:center;color:var(--text-secondary)}
+.material-library-tasks-dialog .material-transfer-empty svg{margin-bottom:2px;color:var(--text-muted)}
+.material-library-tasks-dialog .material-transfer-empty strong{font-size:13px;color:var(--text-primary);font-weight:500}
+.material-library-tasks-dialog .material-transfer-empty p{margin:0;font-size:12px;line-height:1.7}
+.material-library-tasks-dialog .material-transfer-task{padding:16px;background:var(--theme-surface-base,var(--bg-base));border-color:var(--library-dialog-divider);border-radius:12px}
+.material-library-tasks-dialog .material-transfer-task-heading{gap:8px;line-height:1.6}
+.material-library-tasks-dialog .material-transfer-task-heading strong{font-weight:550;font-size:13px}
+.material-library-tasks-dialog .material-transfer-task-heading>span{font-size:11px;color:var(--text-secondary)}
+.material-library-tasks-dialog .material-transfer-task p{font-size:12px;line-height:1.7;color:var(--text-secondary);margin-block:8px}
+.material-library-tasks-dialog .material-transfer-task .material-library-error{color:var(--danger,#c54c48)}
+.material-library-tasks-dialog .material-transfer-task progress{height:5px;border-radius:4px;overflow:hidden}
+.material-library-tasks-dialog .material-transfer-task details{padding-top:10px;border-top:1px solid var(--library-dialog-divider);margin-top:12px}
+.material-library-tasks-dialog .material-transfer-task summary{width:fit-content;border-radius:4px;line-height:1.6;font-size:11px}
+.material-library-tasks-dialog .material-transfer-task li{border-bottom-color:var(--library-dialog-divider);line-height:1.6}
+@media(max-width:620px){
+  .material-library-dialog:is(.material-library-management,.material-library-tasks-dialog){padding:16px;width:calc(100vw - 24px);max-height:calc(100dvh - 24px)}
+  .material-library-management .material-library-row,.material-library-tasks-dialog .material-transfer-task{padding:12px}
+  .material-library-management-footer>div{flex:1;gap:6px}
+  .material-library-management .material-library-management-footer button{white-space:normal;min-height:34px}
+}
+@media(prefers-reduced-motion:reduce){.material-library-dialog:is(.material-library-management,.material-library-tasks-dialog) button{transition:none}}
+:root[data-animations=off] .material-library-dialog:is(.material-library-management,.material-library-tasks-dialog) button{transition:none}
+
+.material-library-tasks-dialog .material-transfer-task ul{max-height:none;overflow:visible}

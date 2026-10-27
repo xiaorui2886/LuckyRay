@@ -1,0 +1,28 @@
+const assert=require('node:assert/strict');
+const {createRequire}=require('node:module');
+const requireTool=process.env.LR_TEST_TOOLS?createRequire(process.env.LR_TEST_TOOLS+'/package.json'):require;
+const {JSDOM}=requireTool('jsdom');const dom=new JSDOM('<div id="root"></div>',{url:'https://canvas-test.invalid'});
+for(const key of ['window','document','HTMLElement','Node','Event','MouseEvent','KeyboardEvent','navigator'])Object.defineProperty(global,key,{value:dom.window[key],configurable:true});
+require(process.argv[2]);const tick=()=>new Promise(resolve=>setTimeout(resolve,30));
+const button=text=>Array.from(document.querySelectorAll('button')).find(x=>x.textContent===text);
+(async()=>{
+ await tick();const open=document.querySelector('#open');open.focus();open.click();await tick();
+ assert.equal(document.querySelectorAll('input').length,0,'save never interrupts with name entry');
+ assert.match(document.querySelector('[role="dialog"]').textContent,/Silver watch/);
+ assert.equal(document.activeElement,button('Default library'));
+ button('Scenes›').click();await tick();button('Studio›').click();await tick();
+ assert.match(document.querySelector('.canvas-library-destination-path').textContent,/Default library \/ Scenes \/ Studio/);
+ button('Save here').click();await tick();
+ assert.deepEqual(JSON.parse(document.querySelector('#result').textContent),{names:['Silver watch','Blue fabric'],folderId:'b',libraryId:'legacy-material-catalog'});
+ assert.equal(document.activeElement,open);
+ open.click();await tick();button('Save here').click();await tick();assert.equal(JSON.parse(document.querySelector('#result').textContent).folderId,null,'root save is explicit');
+ open.click();await tick();document.querySelector('#loading').click();await tick();assert.equal(button('Save here').disabled,true);
+ document.querySelector('#loading').click();document.querySelector('#error').click();await tick();assert.equal(button('Save here').disabled,true);assert.ok(document.querySelector('[role="alert"]'));
+ button('Retry').click();await tick();assert.equal(button('Save here').disabled,false);
+ button('Default library').focus();button('Default library').dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true,cancelable:true}));assert.equal(document.activeElement,button('Save here'));
+ button('Save here').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));await tick();assert.equal(document.querySelector('[role="dialog"]'),null);
+ open.click();await tick();const backdrop=document.querySelector('.canvas-modal-backdrop');
+ button('Scenes›').dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,button:0}));backdrop.click();await tick();assert.ok(document.querySelector('[role="dialog"]'));
+ backdrop.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,button:0}));backdrop.click();await tick();assert.equal(document.querySelector('[role="dialog"]'),null);
+ console.log('Canvas library destination DOM: names, nested/root save, loading/error/retry, focus, Escape, backdrop PASS');
+})().catch(error=>{console.error(error);process.exitCode=1;});

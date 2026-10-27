@@ -1,8 +1,10 @@
 {
-  "bundleRevision": "2026-09-30.1",
+  "bundleRevision": "2026-10-23.scopes-1",
   "grantClasses": ["content.read", "content.write", "ingest.write", "desktop.open", "lsh.remote"],
   "states": ["implemented", "notGranted", "temporarilyUnavailable", "unsupported"],
+  "scopeSelectionVersion": 1,
   "operations": [
+    {"id":"libraries.list","domain":"services","method":"GET","path":"/v1/services/libraries","capability":"libraries.scopeSelection","grant":null,"scope":"pairedDevice","legacy":false,"atFreeze":"implemented"},
     {"id":"services.discover","domain":"services","method":"GET","path":"/v1/services","capability":"services.catalog","grant":null,"scope":"pairedDevice","legacy":false,"atFreeze":"contractOnly"},
     {"id":"materials.list","domain":"materials","method":"GET","path":"/v1/assets","capability":"materials.read","grant":"content.read","scope":"catalog","legacy":true,"atFreeze":"implemented"},
     {"id":"materials.navigation","domain":"materials","method":"GET","path":"/v1/assets/navigation","capability":"materials.read","grant":"content.read","scope":"catalog","legacy":true,"atFreeze":"implemented"},

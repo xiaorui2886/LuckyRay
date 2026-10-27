@@ -26,6 +26,7 @@
   const OPEN_INTENT_IMAGE_ATTACHMENT_SOURCES = new Set(["materials", "notes"]);
   const MAX_OPEN_INTENT_LOCAL_RESOURCES = 64;
   const MAX_OPEN_INTENT_LOCAL_PATH_BYTES = 4 * 1024;
+  const MAX_OPEN_INTENT_FILE_BYTES = 200 * 1024 * 1024;
   const OPEN_INTENT_POLL_MS = 250;
   const UPDATE_PATH = "/_luckyray/desktop-update";
 
@@ -246,8 +247,8 @@
       || resource.libraryId !== undefined && (typeof resource.libraryId !== "string" || !resource.libraryId || resource.libraryId.length > 256
         || resource.libraryId.trim() !== resource.libraryId || /[\u0000-\u001f\u007f]/u.test(resource.libraryId))
         || resource.kind !== "material"
-        || !["image-attachment", "path-reference"].includes(resource.delivery)
-        || resource.delivery === "image-attachment" && !OPEN_INTENT_IMAGE_ATTACHMENT_SOURCES.has(source)
+        || !["image-attachment", "file-attachment", "path-reference"].includes(resource.delivery)
+        || resource.delivery !== "path-reference" && !OPEN_INTENT_IMAGE_ATTACHMENT_SOURCES.has(source)
         || typeof resource.assetId !== "string" || resource.assetId.length === 0 || resource.assetId.length > 256
         || resource.assetId.trim() !== resource.assetId || /[\u0000-\u001f\u007f]/u.test(resource.assetId)
         || typeof resource.canonicalPath !== "string" || resource.canonicalPath.length === 0
@@ -296,7 +297,7 @@
   async function createOpenIntentImages(intent, sessionId, sessions, conversation, input, request, stillCurrent) {
     const resources = intent.localResources
       .map((resource, index) => ({ resource, index }))
-      .filter(({ resource }) => resource.delivery === "image-attachment");
+      .filter(({ resource }) => resource.delivery !== "path-reference");
     if (resources.length === 0) return [];
     if (typeof conversation?.createDrafts !== "function"
       || typeof conversation?.resolveDraftAttachments !== "function"
@@ -305,13 +306,15 @@
       || typeof input?.removeAttachment !== "function") {
       throw new Error("dsh-open-intent-client-invalid");
     }
-    const limits = imageLimitsForSession(sessions, sessionId);
+    const imageCount = resources.filter(({ resource }) => resource.delivery === "image-attachment").length;
+    const limits = imageCount ? imageLimitsForSession(sessions, sessionId) : null;
     const snapshot = input.state.getSnapshot();
     const currentAttachments = conversation.resolveDraftAttachments(Array.isArray(snapshot?.attachmentIds) ? snapshot.attachmentIds : []).filter((attachment) => attachment.kind === "image");
-    if (currentAttachments.length + resources.length > limits.maxImagesPerMessage) {
+    if (limits && currentAttachments.length + imageCount > limits.maxImagesPerMessage) {
       throw new Error("dsh-open-intent-images-too-many");
     }
     let totalBytes = currentAttachments.reduce((sum, attachment) => sum + (attachment?.file?.size || 0), 0);
+    let fileBytes = 0;
     const files = [];
     for (const { resource, index } of resources) {
       const path = `${OPEN_INTENT_PATH}-resource/${encodeURIComponent(intent.intentId)}/${index}`;
@@ -320,18 +323,22 @@
       if (!response.ok) throw new Error("dsh-open-intent-image-read-failed");
       const mediaType = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
       const declaredLength = Number(response.headers.get("content-length"));
-      if (!limits.mediaTypes.includes(mediaType)
-        || !Number.isSafeInteger(declaredLength) || declaredLength <= 0 || declaredLength > limits.maxImageBytes
-        || totalBytes + declaredLength > limits.maxMessageImageBytes) {
+      const isImage = resource.delivery === "image-attachment";
+      const maxBytes = isImage ? limits.maxImageBytes : MAX_OPEN_INTENT_FILE_BYTES;
+      if (response.headers.get("content-length") === null
+        || !Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > maxBytes
+        || (isImage ? !limits.mediaTypes.includes(mediaType) || declaredLength === 0
+          || totalBytes + declaredLength > limits.maxMessageImageBytes
+          : mediaType !== "application/octet-stream" || fileBytes + declaredLength > MAX_OPEN_INTENT_FILE_BYTES)) {
         throw new Error("dsh-open-intent-image-rejected");
       }
       const blob = await response.blob();
       if (!stillCurrent()) throw new Error("dsh-open-intent-session-changed");
-      if (blob.size !== declaredLength || blob.size > limits.maxImageBytes
-        || totalBytes + blob.size > limits.maxMessageImageBytes) {
+      if (blob.size !== declaredLength) {
         throw new Error("dsh-open-intent-image-rejected");
       }
-      totalBytes += blob.size;
+      if (isImage) totalBytes += blob.size;
+      else fileBytes += blob.size;
       files.push(new File([blob], localFileName(resource.canonicalPath), { type: mediaType }));
     }
     if (!stillCurrent()) throw new Error("dsh-open-intent-session-changed");

@@ -64,8 +64,9 @@ pub(super) fn search(
     let visible_vault = if domains.contains(&"knowledge") && vault_allowed {
         vault.as_ref().map(|(id, _)| id.as_str()).unwrap_or("")
     } else { "" };
-    let query_key = format!("{:x}", Sha256::digest(format!("{}|{}|{}|{}",
-        q, domain_value, catalog_allowed && domains.contains(&"materials"), visible_vault)));
+    let mut query_scope = format!("{}|{}|{}|{}",q,domain_value,catalog_allowed && domains.contains(&"materials"),visible_vault);
+    if let Some(library) = gateway.material_scope_id() { query_scope.push_str(&format!("|materials:{library}")); }
+    let query_key = format!("{:x}", Sha256::digest(query_scope));
     let now = chrono::Utc::now().timestamp();
     if !query.contains_key("cursor") {
         if let Some(page) = reuse_live_snapshot(gateway, device, generation, admission_permission,
@@ -96,7 +97,7 @@ pub(super) fn search(
         if domains.contains(&"materials") && catalog_allowed {
             let escaped = q.replace('"', "\"\"");
             let fts = format!("\"{escaped}\"");
-            let hits = gateway.backend.material_catalog().search_assets_scoped(
+            let hits = gateway.material_catalog().search_assets_scoped(
                 &fts, MAX_SNAPSHOT_HITS + 1, &crate::materials::MaterialQueryScope::default(),
             ).map_err(|_| (400, "INPUT_INVALID"))?;
             if hits.len() > MAX_SNAPSHOT_HITS { return Err((400, "INPUT_INVALID")); }

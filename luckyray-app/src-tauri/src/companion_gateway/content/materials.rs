@@ -160,7 +160,7 @@ pub(super) fn mutate_route(
         return Err(fail("CONTENT_BODY_MISSING"));
     }
     let body = std::str::from_utf8(&request.body).map_err(|_| fail("CONTENT_INPUT_INVALID"))?;
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
 
     // ---- collection-level operations (no asset id) ----
     if path == "/v1/assets/favorite-batch" {
@@ -253,7 +253,7 @@ pub(super) fn mutate_route(
 
 /// Idempotent desired-state favorite (delegates to the favorite_item authority).
 fn set_favorite(gateway: &CompanionGateway, id: &str, favorited: bool) -> ContentResult<Value> {
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     if catalog
         .get_assets(&[id.to_owned()])
         .map_err(|_| (404, "CONTENT_ASSET_NOT_FOUND"))?
@@ -261,9 +261,7 @@ fn set_favorite(gateway: &CompanionGateway, id: &str, favorited: bool) -> Conten
     {
         return Err((404, "CONTENT_ASSET_NOT_FOUND"));
     }
-    let mut connection = gateway
-        .backend
-        .open_write()
+    let mut connection = catalog.companion_open_write()
         .map_err(|_| (503, "CONTENT_UNAVAILABLE"))?;
     if favorited {
         crate::favorites::add(
@@ -293,7 +291,7 @@ fn set_favorite(gateway: &CompanionGateway, id: &str, favorited: bool) -> Conten
 
 /// Exact-set / add / remove tags, preserving tags the caller did not target.
 fn set_tags(gateway: &CompanionGateway, id: &str, input: TagsInput) -> ContentResult<Value> {
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     let current = catalog
         .get_asset_tags(id)
         .map_err(|_| (404, "CONTENT_ASSET_NOT_FOUND"))?;
@@ -333,7 +331,7 @@ fn set_folder(
             return Err(fail("CONTENT_INPUT_INVALID"));
         }
     }
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     let outcome = catalog
         .move_asset(id, folder_id.as_deref())
         .map_err(|_| (404, "CONTENT_FOLDER_REJECTED"))?;
@@ -364,7 +362,7 @@ fn batch(gateway: &CompanionGateway, body: &str) -> ContentResult<Value> {
         }
     }
 
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     let mut succeeded: Vec<String> = Vec::new();
     let mut failed: Vec<Value> = Vec::new();
 
@@ -493,9 +491,18 @@ mod tests {
             Arc::new(MemoryStore::default()),
             GatewayPolicy::default(),
         );
+        // Authenticated synthetic paired device: exercise the real credential
+        // verifier before invoking the post-auth content serving boundary.
+        let device = format!("device-{}", "a".repeat(32));
+        let secret = "b".repeat(64);
+        let verifier = crate::companion_gateway::credential_verifier(
+            gateway.identity().unwrap().verifier_key.as_slice(),&device,secret.as_bytes()).unwrap();
+        crate::companion_gateway::open_connection(gateway.backend.db_path()).unwrap().execute(
+            "INSERT INTO companion_device(device_id,label,credential_verifier,created_at) VALUES(?1,'Content fixture',?2,'2026-10-23T00:00:00Z')",
+            rusqlite::params![device,verifier.to_vec()]).unwrap();
         let source = root.path().join("sample.txt");
         std::fs::write(&source, b"wave-a").unwrap();
-        let catalog = gateway.backend.material_catalog();
+        let catalog = gateway.material_catalog();
         let imported = catalog
             .import_paths(
                 &[source.to_string_lossy().into_owned().into()],
@@ -520,6 +527,10 @@ mod tests {
         route_for_test(gateway, method, path, &body.to_string())
     }
 
+    fn auth_headers() -> std::collections::HashMap<String,String> {
+        std::collections::HashMap::from([("authorization".into(),format!("Bearer device-{}.{}","a".repeat(32),"b".repeat(64)))])
+    }
+
     fn http_response(
         gateway: &CompanionGateway,
         method: &str,
@@ -529,9 +540,10 @@ mod tests {
         let request = HttpRequest {
             method: method.to_owned(),
             path: path.to_owned(),
-            headers: Default::default(),
+            headers: auth_headers(),
             body: body.to_string().into_bytes(),
         };
+        gateway.authenticate_request(&request).unwrap();
         let mut response = Vec::new();
         super::super::serve(gateway, &request, &mut response, &AtomicBool::new(false)).unwrap();
         let boundary = response.windows(4).position(|bytes| bytes == b"\r\n\r\n").unwrap();
@@ -548,6 +560,81 @@ mod tests {
     ) -> (u16, Value) {
         let (status, body) = http_response(gateway, method, path, body);
         (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    #[test]
+    fn material_http_pagination_preserves_more_than_one_hundred_distinct_ids() {
+        let f = fixture();
+        let inputs = (0..120).map(|index| crate::materials::MaterialBytesInput {
+            name: format!("audit-page-{index:03}.txt"),
+            original_path: format!("https://example.test/audit-page-{index:03}"),
+            mime_type: "text/plain".into(),
+            bytes: format!("synthetic unique material {index:03}").into_bytes(),
+            description: None,
+        }).collect();
+        let imported = f.gateway.backend.material_catalog().import_bytes(
+            inputs, &crate::materials::MaterialImportOptions::default()
+        ).unwrap();
+        let mut expected: std::collections::HashSet<String> = imported.value.assets.iter()
+            .map(|asset| asset.id.clone()).collect();
+        assert_eq!(expected.len(), 120);
+        expected.insert(f.asset_id.clone());
+        let mut seen = std::collections::HashSet::new();
+        for (page, count, more) in [(1, 100, true), (2, 21, false), (3, 0, false)] {
+            let (status, result) = http_json(&f.gateway, "GET",
+                &format!("/v1/assets?page={page}&limit=100"), json!(null));
+            assert_eq!(status, 200);
+            assert_eq!(result["items"].as_array().unwrap().len(), count);
+            assert_eq!(result["hasMore"], more);
+            assert_eq!(result["nextPage"], if more { json!(page + 1) } else { Value::Null });
+            for item in result["items"].as_array().unwrap() {
+                let id = item["desktopAssetId"].as_str().unwrap().to_owned();
+                assert!(seen.insert(id), "pagination repeated an asset ID");
+            }
+        }
+        assert_eq!(seen, expected, "pagination lost or substituted an asset ID");
+    }
+
+    #[test]
+    fn saved_material_selection_is_independent_and_never_falls_back() {
+        let f=fixture(); let catalog=f.gateway.material_catalog();
+        let active=catalog.library_state().unwrap().1;
+        let root=f._root.path().join("selected"); std::fs::create_dir(&root).unwrap();
+        let library=catalog.create_library("Selected",&root,"managed").unwrap();
+        let foreign=catalog.for_library(&library.id).unwrap().import_bytes(vec![crate::materials::MaterialBytesInput {
+            name:"selected.txt".into(), original_path:"https://example.test/selected".into(), mime_type:"text/plain".into(), bytes:b"selected bytes".to_vec(), description:None,
+        }],&crate::materials::MaterialImportOptions::default()).unwrap().value.assets.remove(0);
+        let device=format!("device-{}","a".repeat(32));
+        f.gateway.set_authorization_mode(&device,crate::companion_gateway::trust_policy::AuthorizationMode::Trusted,0).unwrap();
+        let mut headers=auth_headers(); headers.insert("x-luckyray-material-library".into(),library.id.clone());
+        let request=HttpRequest{method:"GET".into(),path:format!("/v1/assets/{}",foreign.id),headers:headers.clone(),body:vec![]};
+        let scoped=f.gateway.scope_for_request(&request).unwrap();
+        assert!(Arc::ptr_eq(&scoped.transition,&f.gateway.transition));
+        assert!(Arc::ptr_eq(&scoped.content_state,&f.gateway.content_state));
+        assert_eq!(scoped.material_catalog().get_assets(&[foreign.id.clone()]).unwrap().len(),1);
+        assert_eq!(scoped.material_catalog().get_assets(&[f.asset_id.clone()]).unwrap_err().code, "material-library-scope");
+        let mut response=vec![];super::super::serve(&f.gateway,&request,&mut response,&AtomicBool::new(false)).unwrap();
+        assert!(String::from_utf8_lossy(&response).starts_with("HTTP/1.1 200"));
+        assert_eq!(catalog.library_state().unwrap().1,active);
+        headers.insert("x-luckyray-material-library".into(),"missing-library".into());
+        assert!(f.gateway.scope_for_request(&HttpRequest{method:"GET".into(),path:"/v1/assets".into(),headers,body:vec![]}).is_err());
+        catalog.set_library_visible(&library.id,false).unwrap();
+        assert!(scoped.validate_request_scope().is_err());
+    }
+
+    #[test]
+    fn explicit_manual_and_trusted_off_switch_gate_content() {
+        let f=fixture(); let device=format!("device-{}","a".repeat(32));
+        let request=HttpRequest{method:"GET".into(),path:"/v1/assets".into(),headers:auth_headers(),body:vec![]};
+        assert!(super::super::access(&f.gateway,&request).is_ok(),"legacy policy absent stays compatible");
+        f.gateway.set_authorization_mode(&device,crate::companion_gateway::trust_policy::AuthorizationMode::Manual,0).unwrap();
+        assert_eq!(super::super::access(&f.gateway,&request),Err((403,"GRANT_REQUIRED")));
+        f.gateway.set_authorization_mode(&device,crate::companion_gateway::trust_policy::AuthorizationMode::Trusted,1).unwrap();
+        assert!(super::super::access(&f.gateway,&request).is_ok());
+        f.gateway.set_service_grant(&device,"content.read","catalog","",false).unwrap();
+        assert_eq!(super::super::access(&f.gateway,&request),Err((403,"SCOPE_DENIED")));
+        let absent=HttpRequest{method:"GET".into(),path:"/v1/assets".into(),headers:Default::default(),body:vec![]};
+        assert_eq!(super::super::access(&f.gateway,&absent),Err((401,"PAIRING_REQUIRED")));
     }
 
     #[test]
@@ -576,7 +663,7 @@ mod tests {
     }
     #[test]
     fn material_library_r1_http_detail_bytes_and_mutations_stay_default_after_ui_switch() {
-        let f=fixture();let c=f.gateway.backend.material_catalog();
+        let f=fixture();let c=f.gateway.material_catalog();
         let root=f._root.path().join("B");std::fs::create_dir(&root).unwrap();let lib=c.create_library("B",&root,"managed").unwrap();let b=c.for_library(&lib.id).unwrap();
         let foreign=b.import_bytes(vec![crate::materials::MaterialBytesInput{name:"foreign.txt".into(),original_path:"https://example.test/foreign".into(),mime_type:"text/plain".into(),bytes:b"B private bytes".to_vec(),description:None}],&crate::materials::MaterialImportOptions::default()).unwrap().value.assets.remove(0);
         c.select_library(&lib.id).unwrap();
@@ -588,7 +675,7 @@ mod tests {
             (format!("/v1/assets/{}/tags",foreign.id),json!({"desktopAssetId":foreign.id,"set":[]})),
         ] {assert!(call(&f.gateway,if path.ends_with("/tags") {"PATCH"} else {"POST"},&path,body).is_err());}
         let(status,detail)=http_json(&f.gateway,"GET",&format!("/v1/assets/{}",f.asset_id),json!(null));assert_eq!(status,200);assert_eq!(detail["desktopAssetId"],f.asset_id);
-        let mut headers=std::collections::HashMap::new();headers.insert("range".into(),"bytes=1-3".into());
+        let mut headers=auth_headers();headers.insert("range".into(),"bytes=1-3".into());
         let request=HttpRequest{method:"GET".into(),path:format!("/v1/assets/{}/file",f.asset_id),headers,body:vec![]};let mut response=vec![];
         super::super::serve(&f.gateway,&request,&mut response,&AtomicBool::new(false)).unwrap();
         assert!(String::from_utf8_lossy(&response).starts_with("HTTP/1.1 206"));assert!(response.ends_with(b"ave"));
@@ -621,7 +708,7 @@ mod tests {
         );
         assert_eq!(status, 200);
         assert!(detail["tags"].as_array().unwrap().iter().any(|tag| tag == tag_id));
-        assert!(f.gateway.backend.material_catalog().get_asset_tags(&f.asset_id).unwrap().contains(&tag_id.to_owned()));
+        assert!(f.gateway.material_catalog().get_asset_tags(&f.asset_id).unwrap().contains(&tag_id.to_owned()));
 
         let (status, _) = http_json(
             &f.gateway,
@@ -706,7 +793,7 @@ mod tests {
         image::RgbImage::from_pixel(2, 2, image::Rgb([12, 34, 56]))
             .save(&source)
             .unwrap();
-        let imported = f.gateway.backend.material_catalog()
+        let imported = f.gateway.material_catalog()
             .import_paths(
                 &[source.to_string_lossy().into_owned().into()],
                 &crate::materials::MaterialImportOptions::default(),
@@ -752,9 +839,7 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(detail["folderId"], folder_id);
         assert_eq!(
-            f.gateway
-                .backend
-                .material_catalog()
+            f.gateway.material_catalog()
                 .get_assets(&[f.asset_id.clone()])
                 .unwrap()[0]
                 .folder_id
@@ -878,7 +963,7 @@ mod tests {
     #[test]
     fn tag_set_add_remove_preserves_untargeted_tags() {
         let f = fixture();
-        let catalog = f.gateway.backend.material_catalog();
+        let catalog = f.gateway.material_catalog();
         let a = catalog.create_tag("标签A", None).unwrap().value;
         let b = catalog.create_tag("标签B", None).unwrap().value;
         let c = catalog.create_tag("标签C", None).unwrap().value;
@@ -918,7 +1003,7 @@ mod tests {
     #[test]
     fn folder_move_and_root_semantics() {
         let f = fixture();
-        let catalog = f.gateway.backend.material_catalog();
+        let catalog = f.gateway.material_catalog();
         let folder = catalog
             .create_folder(crate::materials::MaterialFolderInput {
                 parent_id: None,
@@ -960,7 +1045,7 @@ mod tests {
     #[test]
     fn batch_folder_tri_state_omitted_null_and_string() {
         let f = fixture();
-        let catalog = f.gateway.backend.material_catalog();
+        let catalog = f.gateway.material_catalog();
         let folder = catalog
             .create_folder(crate::materials::MaterialFolderInput {
                 parent_id: None,
@@ -1022,7 +1107,7 @@ mod tests {
     #[test]
     fn wrong_http_methods_fail_closed_without_mutation() {
         let f = fixture();
-        let catalog = f.gateway.backend.material_catalog();
+        let catalog = f.gateway.material_catalog();
         let before_version = catalog.read_change().unwrap().version;
         let before_asset = catalog.get_assets(&[f.asset_id.clone()]).unwrap().remove(0);
 
@@ -1069,7 +1154,7 @@ mod tests {
     #[test]
     fn batch_tag_read_failure_does_not_clear_existing_tags() {
         let f = fixture();
-        let catalog = f.gateway.backend.material_catalog();
+        let catalog = f.gateway.material_catalog();
         let tag = catalog.create_tag("保护标签", None).unwrap().value;
         catalog
             .set_asset_tags(&f.asset_id, vec![tag.id.clone()])
@@ -1104,7 +1189,7 @@ mod tests {
     #[test]
     fn favorite_mutation_advances_the_durable_material_change() {
         let f = fixture();
-        let catalog = f.gateway.backend.material_catalog();
+        let catalog = f.gateway.material_catalog();
         let before = catalog.read_change().unwrap().version;
         call(
             &f.gateway,
@@ -1136,9 +1221,7 @@ mod tests {
         let f = fixture();
         let detail = |id: &str| {
             let asset = f
-                .gateway
-                .backend
-                .material_catalog()
+                .gateway.material_catalog()
                 .get_assets(&[id.to_owned()])
                 .unwrap()
                 .remove(0);
@@ -1237,7 +1320,7 @@ mod tests {
     #[test]
     fn mutations_advance_the_existing_material_change_authority() {
         let f = fixture();
-        let catalog = f.gateway.backend.material_catalog();
+        let catalog = f.gateway.material_catalog();
         let folder = catalog
             .create_folder(crate::materials::MaterialFolderInput {
                 parent_id: None,

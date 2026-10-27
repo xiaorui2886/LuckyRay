@@ -33,11 +33,11 @@ test('all stable IDs are unique and both generation kinds have choices',()=>{
  assert.equal(new Set(PROMPT_STARTERS.map(x=>x.id)).size,PROMPT_STARTERS.length);
  assert.ok(PROMPT_STARTERS.some(x=>x.kind==='image'));assert.ok(PROMPT_STARTERS.some(x=>x.kind==='video'));
 });
-test('production UI inserts only through draft callback and never starts generation',()=>{
+test('legacy starter stays inert and production composer no longer exposes it',()=>{
  const component=readFileSync(new URL('../src/features/canvas/PromptStarterSelect.tsx',import.meta.url),'utf8');
  assert.match(component,/onInsert\(next\)/);assert.doesNotMatch(component,/invoke\(|fetch\(|onSubmit|submitGeneration|apiKey|localStorage/);
  const app=readFileSync(new URL('../src/CanvasSpike.tsx',import.meta.url),'utf8');
- assert.match(app,/onInsert=\{value => commit\(\{ generationPrompt: value \}\)\}/);
+ assert.doesNotMatch(app,/<PromptStarterSelect/); // User removed this UI; generation and history remain independent.
  assert.match(app,/matchesGenerationHistory\(entry, generationHistoryQuery\)/);
 });
 

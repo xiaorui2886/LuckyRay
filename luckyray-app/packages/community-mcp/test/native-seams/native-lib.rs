@@ -13,7 +13,6 @@ fn knowledge_service()->Result<knowledge::KnowledgeService,String>{Ok(knowledge:
 struct Catalog;struct Library{id:String,name:String,visible:bool}
 fn material_catalog_for_app(_: &tauri::AppHandle)->Result<Catalog,String>{Ok(Catalog)}
 impl Catalog{fn list_libraries(&self,_:bool)->Result<Vec<Library>,String>{Ok(vec![])}fn for_library(&self,_:&str)->Result<(),String>{Ok(())}}
-mod materials_mcp_gui{pub fn run(_: &std::path::Path,_:&[String],_:Option<&[u8]>,_:u64)->Result<(bool,String,String),String>{Ok((true,String::new(),String::new()))}}
 mod assets_import_file{
  pub struct DownloadLimits{pub max_bytes:u64,pub total_timeout:std::time::Duration,pub max_redirects:usize}
  pub fn download_with_limits(_:&str,_:&DownloadLimits)->Result<Vec<u8>,String>{Err("stub".into())}
@@ -24,7 +23,7 @@ mod knowledge{
  pub struct KnowledgeService;pub struct WorkspaceScopeRecord;
  #[derive(PartialEq,Eq)]pub struct KnowledgeTargetIdentity{pub label:String}
  pub struct KnowledgeError{pub code:&'static str}
- #[derive(Serialize)]pub struct KnowledgeDocumentRef{pub vault_id:String}
+ #[derive(Serialize)]pub struct KnowledgeDocumentRef{pub vault_id:String,pub relative_path:String}
  pub struct Summary{pub document_ref:KnowledgeDocumentRef,pub title:String,pub relative_path:String}
  pub struct Document{pub summary:Summary,pub content:String,pub revision:String}
  pub struct KnowledgeCreateInput{pub title:String,pub parent_relative_path:Option<String>,pub content:String}
@@ -35,7 +34,8 @@ mod knowledge{
   pub fn restore_workspace_scope(&self,_:&WorkspaceScopeRecord)->Result<Self,KnowledgeError>{Ok(Self)}
   pub fn current_vault_id(&self)->Result<String,KnowledgeError>{Ok("fixture".into())}
   pub fn current_target_identity(&self)->Result<KnowledgeTargetIdentity,KnowledgeError>{Ok(KnowledgeTargetIdentity{label:"fixture".into()})}
-  pub fn parse_document_id(_:&str)->Result<KnowledgeDocumentRef,KnowledgeError>{Ok(KnowledgeDocumentRef{vault_id:"fixture".into()})}
+  pub fn parse_document_id(_:&str)->Result<KnowledgeDocumentRef,KnowledgeError>{Ok(KnowledgeDocumentRef{vault_id:"fixture".into(),relative_path:"fixture.md".into()})}
+  pub fn preview_agent_create_revision(&self,_:&KnowledgeDocumentRef,_:&str)->Result<String,KnowledgeError>{Ok(String::new())}
   pub fn document_id(_:&KnowledgeDocumentRef)->String{"note-1".into()}
   pub fn read_document_for_target(&self,_:&KnowledgeTargetIdentity,_:&KnowledgeDocumentRef)->Result<Document,KnowledgeError>{Err(KnowledgeError{code:"stub"})}
   pub fn create_document_for_target(&self,_:&KnowledgeTargetIdentity,_:&KnowledgeCreateInput)->Result<Mutation,KnowledgeError>{Err(KnowledgeError{code:"stub"})}

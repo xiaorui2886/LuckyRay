@@ -1,4 +1,4 @@
-LuckyRay optional Web MCP runtime 0.1.1
+LuckyRay optional Web MCP runtime 0.1.3
 
 LuckyRay's own connection source in this repository is MIT licensed; retain
 the root copyright and license notice. Third-party runtime bytes are not

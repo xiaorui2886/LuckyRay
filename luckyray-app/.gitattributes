@@ -6,5 +6,6 @@ dsh-host/runtime-authority.json text eol=lf
 dsh-host/records/dependency-audit.json text eol=lf
 dsh-host/records/launch-manifest.json text eol=lf
 dsh-host/records/runtime-manifest.json text eol=lf
+dsh-host/records/sbom.cdx.json text eol=lf
 dsh-host/records/THIRD-PARTY-NOTICES.txt text eol=lf
 third-party-notices/** -text

@@ -4,9 +4,9 @@ Vendor ZIPs must match the pinned official release bytes. Inputs never include
 user profiles, private gateway configuration, credentials, notes or databases.
 """
 import argparse, hashlib, json, pathlib, zipfile
-VERSION='0.1.1'
-ARTIFACT_URL='https://github.com/xiaorui2886/LuckyRay/releases/download/mcp-v0.1.1/luckyray-web-mcp-0.1.1-windows-x64.zip'
-BASE_SHA256='b64a6c549c288b0c97a851082b1445852c1bd016c1e85cb390283bab6ce22b41'
+VERSION='0.1.3'
+ARTIFACT_URL='https://github.com/xiaorui2886/LuckyRay/releases/download/mcp-v0.1.3/luckyray-web-mcp-0.1.3-windows-x64.zip'
+BASE_SHA256='ec8ecfb6c73af6d2d807d1ff00fdfcdafaed79e6ae86c332dfbd04279049cfa2'
 NODE='node-v24.14.1-win-x64.zip'
 TUNNEL='tunnel-client-runtime-cloudflared-v0.0.16-windows-amd64.zip'
 PINS={NODE:'6e50ce5498c0cebc20fd39ab3ff5df836ed2f8a31aa093cecad8497cff126d70',TUNNEL:'02346814ccd0a9a7a4e6d3d494e225c2befb095ede0c46cbe8d71a8d952acfcc'}
@@ -71,8 +71,8 @@ def build(vendor,source,out,base_package=None):
         path='packages/materials-mcp/src/'+name;data=(source/path).read_bytes()
         if base_package is not None:
             if name=='transport.mjs':
-                # 0.1.1 deliberately fixes UTF-8 process discovery in this one
-                # shared helper. The release audit checks its exact bounded diff.
+                # 0.1.3 narrows the changed shared helper to numeric OS listener
+                # discovery. The release audit checks the exact bounded region.
                 payload[path]=data.replace(b'\r\n',b'\n')
             elif payload[path].replace(b'\r\n',b'\n')!=data.replace(b'\r\n',b'\n'):
                 raise ValueError('base materials implementation changed: '+path)

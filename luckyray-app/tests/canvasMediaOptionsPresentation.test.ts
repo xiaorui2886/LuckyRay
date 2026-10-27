@@ -1,9 +1,14 @@
+import {captureGenerationEditorSnapshot} from "../src/core/canvas/generationEditorSnapshot";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {transformSync} from 'esbuild';
 import {aspectFrame,mediaParameterKind,mediaParameterLabel,mediaPixelSize} from '../src/core/canvas/mediaOptionPresentation';
 import {mediaCapabilities,mediaOption,mediaQualityOption} from '../src/core/canvas/mediaCapabilities';
+import {compileCinematographyPrompt} from '../src/core/canvas/cinematography';
+import {compileCreativeRecipePrompt,normalizeCreativeRecipe,validateCreativeRecipeInput} from '../src/core/canvas/imageCreativeActions';
+import {createCanvasReferencePlan,canvasReferenceSnapshots} from '../src/core/canvas/referencePlan';
+import {compileMentionedPrompt,parseReferenceMentions} from '../src/core/canvas/referenceMentions';
 import {compileCanvasGenerationInputs} from '../src/core/canvas/generationInputCompiler';
 import {comparisonParameters} from '../src/core/canvas/creativeReview';
 import specs from '../src/core/canvas/twelveMediaSpecs.json' with {type:'json'};
@@ -24,7 +29,7 @@ test('resolution and quality semantics are provider-specific without invented co
  assert.equal(mediaParameterLabel('1080P','resolution'),'1080P');
  assert.deepEqual(mediaCapabilities('image',profile(),'gpt-image-2').resolutions,['1K','2K','4K']);
  assert.equal(mediaCapabilities('image',profile(),'gemini-3.1-flash-image').resolutions,undefined);
- assert.equal(mediaCapabilities('image',profile('openai-image','https://other.test'),'gpt-image-2').resolutions,undefined);
+ assert.deepEqual(mediaCapabilities('image',profile('openai-image','https://other.test'),'gpt-image-2').resolutions,['1K','2K','4K']);
 });
 test('Agnes known tiers preserve old cards and add only documented 3K',()=>{
  const caps=mediaCapabilities('image',profile('agnes'),'agnes-image-2.1-flash');
@@ -50,7 +55,8 @@ test('GPT published size table complies with every provider bound',()=>{
 const root=readFileSync('src/CanvasSpike.tsx','utf8');
 const a=root.indexOf('function createGenerationRequestSnapshot('),b=root.indexOf('\nfunction MaterialCompactComposer',a);
 const code=transformSync(root.slice(a,b),{loader:'ts',target:'es2022'}).code;
-const compile=Function('mediaCapabilities','mediaOption','mediaQualityOption','compileCanvasGenerationInputs','getIncomingGenerationInputs','inferGenerationKind',code+';return createGenerationRequestSnapshot;')(mediaCapabilities,mediaOption,mediaQualityOption,compileCanvasGenerationInputs,()=>[],(n:any)=>n.data.generationKind);
+const compilerDependencies={captureGenerationEditorSnapshot,mediaCapabilities,mediaOption,mediaQualityOption,compileCanvasGenerationInputs,createCanvasReferencePlan,canvasReferenceSnapshots,compileMentionedPrompt,parseReferenceMentions,compileCinematographyPrompt,compileCreativeRecipePrompt,normalizeCreativeRecipe,validateCreativeRecipeInput,inferGenerationKind:(n:any)=>n.data.generationKind};
+const compile=Function(...Object.keys(compilerDependencies),code+';return createGenerationRequestSnapshot;')(...Object.values(compilerDependencies));
 test('actual request snapshot sends independent resolution and omits it after model switching',()=>{
  // Signature confirmed below; guarded source assertion prevents test fixture argument drift.
  assert.match(root.slice(a,a+1000),/mediaProfile/);
@@ -59,6 +65,17 @@ test('actual request snapshot sends independent resolution and omits it after mo
  const req=run('gpt-image-2','16:9');assert.equal(req.resolution,'4K');assert.equal(req.quality,'high');
  const auto=run('gpt-image-2','auto');assert.equal(auto.resolution,undefined);
  const gem=run('gemini-3.1-flash-image','16:9');assert.equal(gem.resolution,undefined);assert.equal(gem.quality,'1K');
+});
+test('actual local proxy request snapshot preserves new GPT and Gemini options',()=>{
+ const run=(model:string,aspect:string,quality:string,resolution:string,protocol:string)=>compile({id:'n',data:{kind:'generator',generationKind:'image',generationModel:model,generationPrompt:'test',generationAspect:aspect,generationQuality:quality,generationResolution:resolution}},[],[],'',[model],model,[],'',profile(protocol,'http://127.0.0.1:8317/v1'),false);
+ const gpt=run('gpt-image-2.5-flare','9:21','max','4K','openai-image');
+ assert.equal(gpt.aspect,'9:21');assert.equal(gpt.quality,'max');assert.equal(gpt.resolution,'4K');
+ const gem=run('gemini-3.1-flash-image-preview','8:1','512','4K','gemini-image');
+ assert.equal(gem.aspect,'8:1');assert.equal(gem.quality,'512');assert.equal(gem.resolution,undefined);
+ const old=run('gemini-2.5-flash-image','4:5','4K','4K','gemini-image');
+ assert.equal(old.quality,undefined);assert.equal(old.resolution,undefined);
+ const one=run('gpt-image-1.5','auto','auto','4K','openai-image');
+ assert.equal(one.aspect,'auto');assert.equal(one.quality,'auto');assert.equal(one.resolution,undefined);
 });
 test('comparison includes independent resolution without exposing credentials',()=>{
  const rows=comparisonParameters({prompt:'p',model:'m',request:{resolution:'4K',quality:'high',references:[]}} as any);

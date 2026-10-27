@@ -1,0 +1,13 @@
+{
+  "productName": "LuckyRay Restart Confirmation Check",
+  "version": "0.0.0",
+  "identifier": "com.luckyray.test.restart-confirm-20261019",
+  "build": { "frontendDist": "web" },
+  "app": {
+    "windows": [{ "label": "main", "title": "TEST ONLY — DSH restart confirmation", "width": 820, "height": 390 }],
+    "security": {
+      "capabilities": [{ "identifier": "dialog-check", "windows": ["main"], "permissions": ["core:default", "dialog:allow-message"] }]
+    }
+  },
+  "bundle": { "active": false }
+}

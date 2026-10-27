@@ -24,10 +24,10 @@ test('profile command bar stays sticky and confirmation uses explicit spacing an
  assert.match(css,/\.canvas-media-profile-delete-confirm p[^}]*font-size:12px[^}]*font-weight:400/);
  assert.match(css,/\.canvas-media-profiles \.canvas-media-profile-actions \.is-danger[^}]*color:#e57384/);
 });
-test('EasyCLI preset uses native Gemini and no embedded credential',()=>{
+test('EasyCLI preset uses per-model automatic routing and no embedded credential',()=>{
  const source=readFileSync('src/core/services/canvasMediaProfiles.ts','utf8');
  const start=source.indexOf('export const CANVAS_MEDIA_PRESETS'),end=source.indexOf('export function projectCanvas',start);
  const code=transformSync(source.slice(start,end).replace('export const','const'),{loader:'ts'}).code;
  const presets=Function(code+';return CANVAS_MEDIA_PRESETS;')();
- assert.equal(presets.easycli.baseUrl,'http://127.0.0.1:8317/v1');assert.equal(presets.easycli.imageProtocol,'gemini-image');assert.equal(presets.easycli.imageModel,'gemini-3.1-flash-image');assert.equal(presets.easycli.videoProtocol,'disabled');assert.equal(presets.easycli.apiKey,undefined);
+ assert.equal(presets.easycli.baseUrl,'http://127.0.0.1:8317/v1');assert.equal(presets.easycli.imageProtocol,'easycli-auto');assert.equal(presets.easycli.imageModel,'gemini-3.1-flash-image');assert.equal(presets.easycli.videoProtocol,'disabled');assert.equal(presets.easycli.apiKey,undefined);
 });

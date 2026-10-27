@@ -30,7 +30,7 @@ test('published-record verification remains strict, including the full notice by
     launchManifest:await json('dsh-host/records/launch-manifest.json'),
     runtimeManifest:await json('dsh-host/records/runtime-manifest.json'),
     notice:await readFile(resolve(root,'dsh-host/records/THIRD-PARTY-NOTICES.txt'),'utf8')};
-  assert.equal(validatePublishedDshRecords({authority,records}).packageCount,516);
+  assert.equal(validatePublishedDshRecords({authority,records}).packageCount,562);
   const crlf=records.notice.replaceAll('\r\n','\n').replaceAll('\n','\r\n');
   assert.throws(()=>validatePublishedDshRecords({authority,records:{...records,notice:crlf}}),/dsh-published-records-invalid/);
 });

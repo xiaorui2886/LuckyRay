@@ -24,8 +24,11 @@ test("the new official runtime resumes an old conversation twice and preserves i
     await runNativeDshProbe({ runtimeRoot: oldRoot, stateRoot: home });
     const load = name => import(pathToFileURL(join(newRoot, "host/node_modules", name, "lib/index.js")));
     const { Context } = await load("@deepseek-ai/cordis");
-    const { default: Persistence } = await load("@deepseek-ai/dsh-session-persistence-jsonl");
-    const storage = () => new Persistence(new Context(), { root: join(home, "sessions") });
+    const persistenceModule = await load("@deepseek-ai/dsh-session-persistence-jsonl");
+    const persistenceContext = new Context();
+    await persistenceContext.plugin(persistenceModule.default ?? persistenceModule, { root: join(home, "sessions") });
+    t.after(() => persistenceContext.fiber.dispose());
+    const storage = () => persistenceContext.sessionPersistence;
     const before = await storage().list();
     assert.equal(before.length, 1);
     const id = before[0].header.id;

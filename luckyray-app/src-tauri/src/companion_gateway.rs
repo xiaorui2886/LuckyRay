@@ -5,8 +5,16 @@
 //! verifier material in the existing Backend database, and an empty authenticated
 //! WSS event shell. Authenticated content lives in the narrow content adapter.
 
+mod scopes;
+mod diagnostics;
+pub(crate) mod endpoint_recovery;
+pub(crate) use endpoint_recovery::BindFailure;
+#[cfg(test)]
+mod scope_tests;
 pub(crate) mod content;
 pub(crate) mod services;
+pub(crate) mod trust_policy;
+use trust_policy::AuthorizationMode;
 
 use crate::backend::BackendServices;
 #[cfg(feature = "browser-host-runtime")]
@@ -57,6 +65,8 @@ type HmacSha256 = Hmac<Sha256>;
 pub(crate) struct GatewayError {
     pub code: &'static str,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind_failure: Option<BindFailure>,
 }
 
 impl GatewayError {
@@ -64,6 +74,7 @@ impl GatewayError {
         Self {
             code,
             message: message.into(),
+            bind_failure: None,
         }
     }
 }
@@ -107,6 +118,8 @@ pub(crate) enum GatewayStatus {
         bind_address: Option<String>,
         port: Option<u16>,
         code: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        bind_failure: Option<BindFailure>,
     },
 }
 
@@ -768,6 +781,7 @@ impl TestOneShotGate {
 }
 
 struct PairingTicket {
+    authorization_mode: AuthorizationMode,
     id: String,
     digest: [u8; 32],
     expires_at: Instant,
@@ -818,6 +832,7 @@ impl PairingBook {
             + chrono::Duration::from_std(policy.pairing_ttl).unwrap_or_default())
         .to_rfc3339();
         self.active = Some(PairingTicket {
+            authorization_mode: AuthorizationMode::Manual,
             id: random_hex(16),
             digest,
             expires_at: now + policy.pairing_ttl,
@@ -828,7 +843,7 @@ impl PairingBook {
         Ok((secret, expires_at_text))
     }
 
-    fn consume(&mut self, presented: &str, generation: u64) -> Result<(), GatewayError> {
+    fn consume(&mut self, presented: &str, generation: u64) -> Result<AuthorizationMode, GatewayError> {
         let digest: [u8; 32] = Sha256::digest(presented.as_bytes()).into();
         if self
             .consumed
@@ -872,12 +887,12 @@ impl PairingBook {
                 "The pairing secret is invalid",
             ));
         }
-        let consumed = self.active.take().expect("active pairing ticket").digest;
-        self.consumed.push_back(consumed);
+        let ticket = self.active.take().expect("active pairing ticket");
+        self.consumed.push_back(ticket.digest);
         while self.consumed.len() > 32 {
             self.consumed.pop_front();
         }
-        Ok(())
+        Ok(ticket.authorization_mode)
     }
 
     fn cancel_active(&mut self) {
@@ -969,6 +984,7 @@ impl AuthenticatedRequestBudget {
             window.accepted = 0;
         }
         if window.accepted >= limit {
+            diagnostics::rate_limited(policy.authenticated_request_window.saturating_sub(now.duration_since(window.started_at)));
             return Err(GatewayError::new(
                 "AUTH_RATE_LIMITED",
                 "Authenticated Companion requests are temporarily rate limited",
@@ -1217,33 +1233,50 @@ impl Drop for RelayBodyCharge<'_> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct CompanionGateway {
     backend: Arc<BackendServices>,
+    request_material_catalog: Option<crate::materials::MaterialCatalog>,
+    request_knowledge: Option<crate::knowledge::KnowledgeService>,
+    request_material_scope: Option<String>,
+    request_vault_scope: Option<String>,
     identity: Result<Arc<IdentityMaterial>, GatewayError>,
-    transition: Mutex<()>,
-    pending_controls: AtomicUsize,
-    pairing: Mutex<PairingBook>,
-    lifecycle: Mutex<LifecycleState>,
-    connections: Mutex<ConnectionRegistry>,
-    failure_audit: Mutex<FailureAuditBudget>,
-    authenticated_requests: Mutex<AuthenticatedRequestBudget>,
+    transition: Arc<Mutex<()>>,
+    pending_controls: Arc<AtomicUsize>,
+    pairing: Arc<Mutex<PairingBook>>,
+    lifecycle: Arc<Mutex<LifecycleState>>,
+    connections: Arc<Mutex<ConnectionRegistry>>,
+    failure_audit: Arc<Mutex<FailureAuditBudget>>,
+    authenticated_requests: Arc<Mutex<AuthenticatedRequestBudget>>,
     policy: GatewayPolicy,
-    generation: AtomicU64,
-    content_state: Mutex<content::notes::ContentState>,
+    generation: Arc<AtomicU64>,
+    content_state: Arc<Mutex<content::notes::ContentState>>,
     /// Optional DSH host handle: the LSH remote surface target. Set once both
     /// services exist; absence simply means the remote surface is unavailable.
     /// Shared cap over relayed (pre-auth) request bodies currently buffered
     /// across ALL connections: bounds the eager per-request allocation the
     /// HTTP parser performs before any credential exists.
-    relay_body_budget: AtomicUsize,
-    lsh_remote_host: Mutex<Option<Arc<DshHostService>>>,
-    presentation_sink: Mutex<Option<Arc<dyn Fn(Value) -> bool + Send + Sync>>>,
-    presentation_pending: Mutex<HashMap<String, PendingPresentation>>,
+    relay_body_budget: Arc<AtomicUsize>,
+    lsh_remote_host: Arc<Mutex<Option<Arc<DshHostService>>>>,
+    presentation_sink: Arc<Mutex<Option<Arc<dyn Fn(Value) -> bool + Send + Sync>>>>,
+    presentation_pending: Arc<Mutex<HashMap<String, PendingPresentation>>>,
     #[cfg(test)]
-    lsh_remote_target_override: Mutex<Option<u16>>,
+    lsh_remote_target_override: Arc<Mutex<Option<u16>>>,
 }
 
 impl CompanionGateway {
+    fn material_catalog(&self) -> crate::materials::MaterialCatalog {
+        self.request_material_catalog.clone().unwrap_or_else(|| self.backend.material_catalog())
+    }
+
+    fn knowledge(&self) -> crate::knowledge::KnowledgeService {
+        self.request_knowledge.clone().unwrap_or_else(|| self.backend.knowledge())
+    }
+
+    pub(crate) fn material_scope_id(&self) -> Option<&str> {
+        self.request_material_scope.as_deref()
+    }
+
     pub(crate) fn initialize(backend: Arc<BackendServices>) -> Arc<Self> {
         let store = DpapiIdentityStore::new(backend.app_data_dir());
         Self::initialize_with_store(backend, Arc::new(store), GatewayPolicy::default())
@@ -1257,23 +1290,27 @@ impl CompanionGateway {
         let identity = load_or_create_identity(backend.db_path(), store.as_ref()).map(Arc::new);
         let gateway = Arc::new(Self {
             backend,
+            request_material_catalog: None,
+            request_knowledge: None,
+            request_material_scope: None,
+            request_vault_scope: None,
             identity,
-            transition: Mutex::new(()),
-            pending_controls: AtomicUsize::new(0),
-            pairing: Mutex::new(PairingBook::default()),
-            lifecycle: Mutex::new(LifecycleState::default()),
-            connections: Mutex::new(ConnectionRegistry::default()),
-            failure_audit: Mutex::new(FailureAuditBudget::default()),
-            authenticated_requests: Mutex::new(AuthenticatedRequestBudget::default()),
+            transition: Arc::new(Mutex::new(())),
+            pending_controls: Arc::new(AtomicUsize::new(0)),
+            pairing: Arc::new(Mutex::new(PairingBook::default())),
+            lifecycle: Arc::new(Mutex::new(LifecycleState::default())),
+            connections: Arc::new(Mutex::new(ConnectionRegistry::default())),
+            failure_audit: Arc::new(Mutex::new(FailureAuditBudget::default())),
+            authenticated_requests: Arc::new(Mutex::new(AuthenticatedRequestBudget::default())),
             policy,
-            generation: AtomicU64::new(0),
-            content_state: Mutex::new(content::notes::ContentState::default()),
-            relay_body_budget: AtomicUsize::new(0),
-            lsh_remote_host: Mutex::new(None),
-            presentation_sink: Mutex::new(None),
-            presentation_pending: Mutex::new(HashMap::new()),
+            generation: Arc::new(AtomicU64::new(0)),
+            content_state: Arc::new(Mutex::new(content::notes::ContentState::default())),
+            relay_body_budget: Arc::new(AtomicUsize::new(0)),
+            lsh_remote_host: Arc::new(Mutex::new(None)),
+            presentation_sink: Arc::new(Mutex::new(None)),
+            presentation_pending: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
-            lsh_remote_target_override: Mutex::new(None),
+            lsh_remote_target_override: Arc::new(Mutex::new(None)),
         });
         gateway.restore_enabled_listener();
         gateway
@@ -1324,6 +1361,7 @@ impl CompanionGateway {
                 return GatewayStatus::ResumeFailed {
                     bind_address: Some(running.address.ip().to_string()), port: Some(running.address.port()),
                     code: "gateway-listener-unavailable",
+                    bind_failure: None,
                 };
             }
             GatewayStatus::Running {
@@ -1342,6 +1380,7 @@ impl CompanionGateway {
                     .map(|config| config.bind_address.clone()),
                 port: lifecycle.resume_config.as_ref().map(|config| config.port),
                 code: error.code,
+                bind_failure: error.bind_failure.clone(),
             }
         } else {
             GatewayStatus::Disabled {
@@ -1444,8 +1483,7 @@ impl CompanionGateway {
                 "Retired Companion connections must stop before a listener can start",
             ));
         }
-        let listener = TcpListener::bind(SocketAddrV4::new(selection.address, selection.port))
-            .map_err(classify_bind_error)?;
+        let listener = endpoint_recovery::bind_selected_endpoint(selection)?;
         listener.set_nonblocking(true).map_err(|_| {
             GatewayError::new(
                 "gateway-listener-unavailable",
@@ -1469,23 +1507,33 @@ impl CompanionGateway {
             bind_address: address.ip().to_string(),
             port: address.port(),
         };
-        // Commit opt-in only after binding/TLS validation. A persistence error
-        // drops this listener and is returned instead of claiming it started.
-        store_listener_config(self.backend.db_path(), Some(&config))?;
-        lifecycle.resume_config = Some(config);
         let stop = Arc::new(AtomicBool::new(false));
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let gateway = Arc::clone(self);
         let stop_for_thread = Arc::clone(&stop);
+        // Spawn before persisting a replacement endpoint, but do not accept
+        // connections until its durable opt-in has committed. A spawn/store
+        // failure retains the previous endpoint and cannot advertise success.
+        let (commit, committed) = std::sync::mpsc::sync_channel::<()>(0);
         let join = thread::Builder::new()
             .name("luckyray-companion-gateway".to_owned())
-            .spawn(move || gateway.accept_loop(listener, tls, stop_for_thread, generation))
+            .spawn(move || {
+                if committed.recv().is_ok() {
+                    gateway.accept_loop(listener, tls, stop_for_thread, generation);
+                }
+            })
             .map_err(|_| {
                 GatewayError::new(
                     "gateway-listener-unavailable",
                     "Companion listener task could not start",
                 )
             })?;
+        if let Err(error) = store_listener_config(self.backend.db_path(), Some(&config)) {
+            drop(commit);
+            let _ = join.join();
+            return Err(error);
+        }
+        lifecycle.resume_config = Some(config);
         lifecycle.running = Some(RunningListener {
             address,
             generation,
@@ -1493,6 +1541,9 @@ impl CompanionGateway {
             join: Some(join),
         });
         lifecycle.resume_error = None;
+        // The receiver is the owned worker above; it cannot exit before this
+        // channel is settled. Sending starts its existing accept-loop authority.
+        let _ = commit.send(());
         Ok(self.status_from_running(
             &identity,
             lifecycle.running.as_ref().expect("running listener"),
@@ -1627,6 +1678,7 @@ impl CompanionGateway {
 
     fn try_transition(&self) -> Result<std::sync::MutexGuard<'_, ()>, GatewayError> {
         if self.pending_controls.load(Ordering::SeqCst) != 0 {
+            diagnostics::reason(diagnostics::Reason::ControlPending);
             return Err(GatewayError::new(
                 "gateway-transition-in-progress",
                 "A Companion Gateway control operation is pending",
@@ -1634,22 +1686,26 @@ impl CompanionGateway {
         }
         match self.transition.try_lock() {
             Ok(guard) if self.pending_controls.load(Ordering::SeqCst) == 0 => Ok(guard),
-            Ok(_guard) => Err(GatewayError::new(
+            Ok(_guard) => { diagnostics::reason(diagnostics::Reason::ControlPending); Err(GatewayError::new(
                 "gateway-transition-in-progress",
                 "A Companion Gateway control operation is pending",
-            )),
-            Err(TryLockError::WouldBlock) => Err(GatewayError::new(
+            )) },
+            Err(TryLockError::WouldBlock) => { diagnostics::reason(diagnostics::Reason::TransitionBusy); Err(GatewayError::new(
                 "gateway-transition-in-progress",
                 "A Companion Gateway lifecycle transition is already in progress",
-            )),
-            Err(TryLockError::Poisoned(_)) => Err(GatewayError::new(
+            )) },
+            Err(TryLockError::Poisoned(_)) => { diagnostics::reason(diagnostics::Reason::TransitionUnavailable); Err(GatewayError::new(
                 "gateway-transition-unavailable",
                 "Companion Gateway lifecycle authority is unavailable",
-            )),
+            )) },
         }
     }
 
     pub(crate) fn issue_pairing(&self) -> Result<PairingEnvelope, GatewayError> {
+        self.issue_pairing_authorized(AuthorizationMode::Manual)
+    }
+
+    fn issue_pairing_authorized(&self, authorization_mode: AuthorizationMode) -> Result<PairingEnvelope, GatewayError> {
         let identity = self.identity()?;
         let lifecycle = self.lifecycle.lock().expect("companion lifecycle mutex");
         if lifecycle.stopping_generation.is_some() {
@@ -1669,6 +1725,7 @@ impl CompanionGateway {
         }
         let mut pairing = self.pairing.lock().expect("companion pairing mutex");
         let (secret, expires_at) = pairing.issue(&self.policy, running.generation)?;
+        pairing.active.as_mut().expect("issued pairing ticket").authorization_mode = authorization_mode;
         if let Err(error) = append_audit(self.backend.db_path(), "pairing-issued", None, "issued") {
             pairing.cancel_active();
             return Err(error);
@@ -1697,6 +1754,10 @@ impl CompanionGateway {
         &self,
         replace_existing: bool,
     ) -> Result<PairingPresentation, GatewayError> {
+        self.issue_pairing_presentation_authorized(replace_existing, AuthorizationMode::Manual)
+    }
+
+    fn issue_pairing_presentation_authorized(&self, replace_existing: bool, authorization_mode: AuthorizationMode) -> Result<PairingPresentation, GatewayError> {
         let _transition = self.try_transition()?;
         if replace_existing {
             self.pairing
@@ -1704,7 +1765,7 @@ impl CompanionGateway {
                 .expect("companion pairing mutex")
                 .cancel_active();
         }
-        let envelope = self.issue_pairing()?;
+        let envelope = self.issue_pairing_authorized(authorization_mode)?;
         let pairing_id = envelope.pairing_id.clone();
         let result = build_pairing_presentation(envelope);
         if result.is_err() {
@@ -1966,11 +2027,16 @@ impl CompanionGateway {
         // charge is released only when the connection finishes with the
         // request (guard drop at end of handle_connection) — never right
         // after the parse, while the buffer is still held by a live relay.
+        let _request_diagnostics = diagnostics::begin();
         let mut relay_body_added: Option<usize> = None;
         let request = read_http_request_with_body_policy(
             &mut tls,
             Instant::now() + self.policy.request_deadline,
             |head| {
+                if services::is_service_route(&head.path) || content::is_content_route(&head.path) {
+                    diagnostics::enable(head.headers.get("x-luckyray-request-id").map(String::as_str));
+                    diagnostics::stage(diagnostics::Stage::Authenticate);
+                }
                 if services::is_service_route(&head.path) && matches!(head.method.as_str(), "POST" | "PATCH" | "DELETE" | "PUT") {
                     self.authenticate_event_request(head, connection_id)?;
                     Ok(4 * 1024 * 1024 + 4096)
@@ -2037,12 +2103,17 @@ impl CompanionGateway {
             match self.authenticate_event_request(&request, connection_id) {
                 Ok(device) => {
                     if request.path == "/v1/services/events/stream" && request.method == "GET" {
+                        diagnostics::stage(diagnostics::Stage::Scope);
+                        let scoped = match self.scope_for_request(&request) {
+                            Ok(scoped) => scoped,
+                            Err((status, code)) => { let _ = write_json(&mut tls, status, &json!({"code":code})); return; }
+                        };
                         if !is_websocket_upgrade(&request) {
                             let _ = write_json(&mut tls, 400, &json!({"code":"INPUT_INVALID"}));
-                        } else if let Err((status, code)) = services::event_authorized(self, &device) {
+                        } else if let Err((status, code)) = services::event_authorized(&scoped, &device) {
                             let _ = write_json(&mut tls, status, &json!({"code":code}));
                         } else if websocket_accept(&mut tls, &request).is_ok() {
-                            services::event_stream(self, &mut tls, &stop, &device, generation);
+                            services::event_stream(&scoped, &mut tls, &stop, &device, generation);
                         }
                     } else {
                         let _ = services::serve(self, &request, &mut tls, &device, generation);
@@ -2372,16 +2443,8 @@ impl CompanionGateway {
         let connection = open_connection(self.backend.db_path()).map_err(|_| {
             GatewayError::new("companion-database-unavailable", "Device state is unavailable")
         })?;
-        let granted: Option<String> = connection
-            .query_row(
-                "SELECT lsh_remote_surface_granted_at FROM companion_device WHERE device_id = ?1",
-                params![device_id],
-                |row| row.get(0),
-            )
-            .map_err(|_| {
-                GatewayError::new("companion-database-unavailable", "Device state is unavailable")
-            })?;
-        Ok(granted.is_some())
+        trust_policy::lsh_granted(&connection, device_id)
+            .map_err(|_| GatewayError::new("companion-database-unavailable", "Device policy is unavailable"))
     }
 
     /// Explicit, device-scoped LSH remote permission. Granting NEVER touches
@@ -2397,7 +2460,9 @@ impl CompanionGateway {
         let mut connection = open_connection(self.backend.db_path()).map_err(|_| {
             GatewayError::new("companion-database-unavailable", "Device state is unavailable")
         })?;
-        let changed = connection
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| GatewayError::new("companion-database-unavailable", "Permission transaction unavailable"))?;
+        let changed = transaction
             .execute(
                 "UPDATE companion_device SET lsh_remote_surface_granted_at = ?1 WHERE device_id = ?2 AND revoked_at IS NULL",
                 params![if granted { Some(now) } else { None }, device_id],
@@ -2411,6 +2476,12 @@ impl CompanionGateway {
                 "The paired device does not exist",
             ));
         }
+        trust_policy::set_override(&transaction, device_id, "lsh.remote", "lsh", granted)
+            .map_err(|_| GatewayError::new("companion-database-unavailable", "Permission override failed"))?;
+        transaction.execute("UPDATE companion_device SET services_permission_revision=services_permission_revision+1 WHERE device_id=?1", [device_id])
+            .map_err(|_| GatewayError::new("companion-database-unavailable", "Permission revision failed"))?;
+        transaction.commit().map_err(|_| GatewayError::new("companion-database-unavailable", "Permission commit failed"))?;
+        self.retire_presentation_offers(Some(device_id));
         let _ = append_audit(
             self.backend.db_path(),
             if granted { "lsh-remote-granted" } else { "lsh-remote-revoked" },
@@ -2775,7 +2846,7 @@ impl CompanionGateway {
                     "The paired device limit has been reached",
                 ));
             }
-            pairing.consume(&request.secret, generation)?;
+            let authorization_mode = pairing.consume(&request.secret, generation)?;
             let device_id = format!("device-{}", random_hex(16));
             let device_secret = Zeroizing::new(random_hex(32));
             let verifier = credential_verifier(
@@ -2804,6 +2875,8 @@ impl CompanionGateway {
                         "Paired device could not be stored",
                     )
                 })?;
+            trust_policy::set_mode(&transaction, &device_id, authorization_mode)
+                .map_err(|_| GatewayError::new("companion-database-unavailable", "Pairing policy could not be stored"))?;
             transaction
                 .execute(
                     "INSERT INTO companion_security_audit(action,device_id,occurred_at,result)\r\n                     VALUES ('pairing-completed',?1,?2,'paired')",
@@ -3191,9 +3264,10 @@ fn write_json(stream: &mut impl Write, status: u16, value: &Value) -> io::Result
         503 => "Service Unavailable",
         _ => "Error",
     };
+    let diagnostic_headers = diagnostics::response_headers(status);
     write!(
         stream,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n{diagnostic_headers}\r\n",
         body.len()
     )?;
     stream.write_all(&body)?;
@@ -3648,20 +3722,28 @@ fn is_private_lan(address: Ipv4Addr) -> bool {
 }
 
 fn classify_bind_error(error: io::Error) -> GatewayError {
-    match error.kind() {
+    let os_code = error.raw_os_error();
+    let kind = error.kind();
+    let mut result = match kind {
         ErrorKind::AddrInUse => GatewayError::new(
             "gateway-bind-conflict",
             "The selected Companion address and port are already in use",
         ),
         ErrorKind::PermissionDenied => GatewayError::new(
-            "firewall/manual-permission-required",
-            "Windows network permission is required; LuckyRay will not change firewall rules",
+            "gateway-bind-access-denied",
+            "Windows denied binding this address/port; excluded ports or system policy may apply. This does not establish a firewall cause",
+        ),
+        ErrorKind::AddrNotAvailable => GatewayError::new(
+            "gateway-bind-address-unavailable",
+            "The selected interface address is no longer available",
         ),
         _ => GatewayError::new(
             "gateway-listener-unavailable",
             "The Companion listener could not bind to the selected address",
         ),
-    }
+    };
+    result.bind_failure = Some(BindFailure::new(kind, os_code, 1));
+    result
 }
 
 fn validate_device_label(label: &str) -> Result<String, GatewayError> {
@@ -3815,10 +3897,23 @@ pub(crate) fn companion_gateway_restart(
 pub(crate) fn companion_gateway_issue_pairing(
     caller: tauri::Webview,
     replace_existing: Option<bool>,
+    authorization_mode: Option<AuthorizationMode>,
     gateway: tauri::State<'_, Arc<CompanionGateway>>,
 ) -> Result<PairingPresentation, GatewayError> {
     require_main_caller(&caller)?;
-    gateway.issue_pairing_presentation(replace_existing.unwrap_or(false))
+    gateway.issue_pairing_presentation_authorized(replace_existing.unwrap_or(false), authorization_mode.unwrap_or_default())
+}
+
+#[tauri::command]
+pub(crate) fn companion_gateway_set_authorization_mode(
+    caller: tauri::Webview,
+    device_id: String,
+    authorization_mode: AuthorizationMode,
+    expected_permission_revision: u64,
+    gateway: tauri::State<'_, Arc<CompanionGateway>>,
+) -> Result<(), GatewayError> {
+    require_main_caller(&caller)?;
+    gateway.set_authorization_mode(&device_id, authorization_mode, expected_permission_revision)
 }
 
 #[tauri::command]
@@ -3995,6 +4090,49 @@ mod tests {
     use rustls::pki_types::ServerName;
     use rustls::{ClientConfig, ClientConnection, RootCertStore};
     use std::io::{BufRead, Cursor};
+
+    impl CompanionGateway {
+        /// Existing regression suites cover previously paired phones. Construct
+        /// that pre-policy database state explicitly; production pairing always
+        /// records the desktop's Manual or Trusted consent.
+        fn exchange_legacy_pairing_fixture(&self, body: &[u8], generation: u64) -> Result<Value, GatewayError> {
+            let paired = self.exchange_pairing(body, generation)?;
+            open_connection(self.backend.db_path())?.execute("DELETE FROM companion_phone_policy WHERE device_id=?1", [paired["deviceId"].as_str().unwrap()])
+                .map_err(|_| GatewayError::new("companion-database-unavailable", "Legacy fixture setup failed"))?;
+            Ok(paired)
+        }
+    }
+
+    #[test]
+    fn desktop_pairing_choice_is_ticket_bound_and_old_phone_conversion_is_explicit() {
+        let (_root, backend, _store, gateway) = gateway_fixture("explicit-trust-policy", GatewayPolicy::default());
+        gateway.start("127.0.0.1", Some(0)).unwrap();
+        let exchange = |mode| {
+            let ticket = gateway.issue_pairing_authorized(mode).unwrap();
+            let body = serde_json::to_vec(&json!({"secret":ticket.secret,"fingerprint":ticket.certificate_fingerprint,"deviceLabel":"Consent test"})).unwrap();
+            gateway.exchange_pairing(&body, running_generation(&gateway)).unwrap()["deviceId"].as_str().unwrap().to_owned()
+        };
+        let manual = exchange(AuthorizationMode::Manual);
+        let db = open_connection(backend.db_path()).unwrap();
+        assert!(trust_policy::has_policy(&db,&manual).unwrap());
+        assert!(!trust_policy::granted(&db,&manual,"content.read","catalog","").unwrap());
+        assert!(!gateway.lsh_remote_granted(&manual).unwrap());
+        let trusted = exchange(AuthorizationMode::Trusted);
+        assert!(trust_policy::granted(&db,&trusted,"content.read","vault","future-saved-vault").unwrap());
+        assert!(gateway.lsh_remote_granted(&trusted).unwrap());
+        assert!(gateway.set_authorization_mode(&manual, AuthorizationMode::Trusted, 999).is_err());
+        assert!(!gateway.lsh_remote_granted(&manual).unwrap());
+        gateway.set_authorization_mode(&manual,AuthorizationMode::Trusted,0).unwrap();
+        assert!(gateway.lsh_remote_granted(&manual).unwrap());
+        gateway.set_lsh_remote_grant(&manual,false).unwrap();
+        let revision = gateway.service_grant_state(&manual).unwrap()["permissionRevision"].as_u64().unwrap();
+        gateway.set_authorization_mode(&manual,AuthorizationMode::Manual,revision).unwrap();
+        gateway.set_authorization_mode(&manual,AuthorizationMode::Trusted,revision+1).unwrap();
+        assert!(!gateway.lsh_remote_granted(&manual).unwrap());
+        let injected = json!({"secret":"x","fingerprint":"x","authorizationMode":"trusted"});
+        assert!(serde_json::from_value::<PairRequest>(injected).is_err());
+        assert!(gateway.shutdown());
+    }
 
     #[derive(Default)]
     struct MemoryIdentityStore {
@@ -4530,7 +4668,7 @@ mod tests {
         gateway.attach_lsh_remote_host(host.clone());
         host.open_native_surface().expect("open real carrier");
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({
                 "secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
@@ -4727,7 +4865,7 @@ mod tests {
         };
         let envelope = gateway.issue_pairing().unwrap();
         let paired = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": envelope.secret.clone(),
                     "fingerprint": envelope.certificate_fingerprint,
@@ -5038,7 +5176,7 @@ mod tests {
         // Pair through the REAL control path and grant the device.
         let envelope = gateway.issue_pairing().unwrap();
         let paired = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": envelope.secret.clone(),
                     "fingerprint": envelope.certificate_fingerprint,
@@ -5192,7 +5330,7 @@ mod tests {
         let pairing_secret = envelope.secret.clone();
         assert_eq!(
             gateway
-                .exchange_pairing(
+                .exchange_legacy_pairing_fixture(
                     &serde_json::to_vec(&json!({
                         "secret": pairing_secret.clone(),
                         "fingerprint": "0".repeat(64),
@@ -5206,7 +5344,7 @@ mod tests {
             "pairing-fingerprint-mismatch"
         );
         let paired = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": pairing_secret.clone(),
                     "fingerprint": envelope.certificate_fingerprint,
@@ -5320,7 +5458,7 @@ mod tests {
             gateway_fixture("pair-cancel", GatewayPolicy::default());
         gateway.start("127.0.0.1", None).unwrap();
         let exchange = |presentation: &PairingPresentation| {
-            gateway.exchange_pairing(
+            gateway.exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": presentation.secret,
                     "fingerprint": presentation.fp,
@@ -5355,7 +5493,7 @@ mod tests {
         };
         let envelope = gateway.issue_pairing().unwrap();
         let paired = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": envelope.secret,
                     "fingerprint": envelope.certificate_fingerprint,
@@ -5443,7 +5581,7 @@ mod tests {
         };
         let generation = running_generation(&gateway);
         let exchange = |envelope: &PairingEnvelope| {
-            gateway.exchange_pairing(
+            gateway.exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": envelope.secret,
                     "fingerprint": envelope.certificate_fingerprint,
@@ -5531,14 +5669,18 @@ mod tests {
             store.clone(),
             GatewayPolicy::default(),
         );
-        assert_eq!(
-            reopened.status(),
-            GatewayStatus::ResumeFailed {
-                bind_address: Some("127.0.0.1".to_owned()),
-                port: Some(port),
-                code: "gateway-bind-conflict",
+        match reopened.status() {
+            GatewayStatus::ResumeFailed { bind_address, port: actual, code, bind_failure: Some(details) } => {
+                assert_eq!(bind_address.as_deref(), Some("127.0.0.1"));
+                assert_eq!(actual, Some(port));
+                assert_eq!(code, "gateway-bind-conflict");
+                let value = serde_json::to_value(details).unwrap();
+                assert_eq!(value["stage"], "bind");
+                assert_eq!(value["kind"], "address-in-use");
+                assert_eq!(value["attempts"], 1);
             }
-        );
+            status => panic!("unexpected conflict status: {status:?}"),
+        }
         assert_eq!(
             reopened.start("127.0.0.1", None).unwrap_err().code,
             "gateway-bind-conflict"
@@ -5559,6 +5701,69 @@ mod tests {
             CompanionGateway::initialize_with_store(backend, store, GatewayPolicy::default());
         assert!(matches!(disabled.status(), GatewayStatus::Disabled { .. }));
         assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err());
+    }
+
+    #[test]
+    fn explicit_endpoint_recovery_preserves_pairing_authority_and_stable_reopen() {
+        let (_root, backend, store, gateway) = gateway_fixture("endpoint-recovery", GatewayPolicy::default());
+        let port = match gateway.start("127.0.0.1", Some(0)).unwrap() { GatewayStatus::Running { port, .. } => port, _ => unreachable!() };
+        let envelope = gateway.issue_pairing().unwrap();
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
+            "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint, "deviceLabel": "Synthetic recovery"
+        })).unwrap(), running_generation(&gateway)).unwrap();
+        let credential = paired["credential"].as_str().unwrap();
+        let identity = (gateway.identity().unwrap().instance_id.clone(), gateway.identity().unwrap().fingerprint.clone());
+        let original_devices = serde_json::to_value(gateway.list_devices().unwrap()).unwrap();
+        gateway.shutdown();
+        let occupied = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).unwrap();
+        let reopened = CompanionGateway::initialize_with_store(Arc::clone(&backend), store.clone(), GatewayPolicy::default());
+        assert_eq!(reopened.recover_endpoint("127.0.0.1", port, false).unwrap_err().code, "gateway-recovery-confirmation-required");
+        assert_eq!(reopened.recover_endpoint("127.0.0.1", port.wrapping_add(1), true).unwrap_err().code, "gateway-recovery-state-changed");
+        assert_eq!(load_listener_config(backend.db_path()).unwrap().unwrap().port, port);
+        let new_port = match reopened.recover_endpoint("127.0.0.1", port, true).unwrap() { GatewayStatus::Running { port, bind_address, .. } => { assert_eq!(bind_address, "127.0.0.1"); port }, _ => unreachable!() };
+        assert_ne!(new_port, port);
+        assert!(occupied.local_addr().is_ok());
+        assert_eq!(serde_json::to_value(reopened.list_devices().unwrap()).unwrap(), original_devices);
+        assert!(reopened.verify_credential(credential).is_ok());
+        let presentation = serde_json::to_value(reopened.endpoint_recovery_presentation().unwrap()).unwrap();
+        let payload = presentation["envelope"].as_object().unwrap();
+        assert_eq!(payload.len(), 5);
+        assert_eq!(payload["schema"], 1); assert_eq!(payload["kind"], "luckyray.endpoint-recovery");
+        assert_eq!(payload["baseUrl"], format!("https://127.0.0.1:{new_port}"));
+        assert_eq!(payload["desktopInstanceId"], identity.0); assert_eq!(payload["certificateFingerprint"], identity.1);
+        assert!(presentation["qrPath"].as_str().unwrap().starts_with('M'));
+        let hello = pinned_http_response(&reopened, new_port, "GET /v1/hello HTTP/1.1\r\nHost: luckyray-companion.local\r\n\r\n");
+        assert!(hello.starts_with("HTTP/1.1 200"));
+        let session = pinned_http_response(&reopened, new_port, &format!("GET /v1/session HTTP/1.1\r\nHost: luckyray-companion.local\r\nAuthorization: Bearer {credential}\r\n\r\n"));
+        assert!(session.starts_with("HTTP/1.1 200"));
+        assert_eq!(reopened.recover_endpoint("127.0.0.1", port, true).unwrap_err().code, "gateway-recovery-state-changed");
+        reopened.shutdown();
+        let final_open = CompanionGateway::initialize_with_store(backend, store, GatewayPolicy::default());
+        assert!(matches!(final_open.status(), GatewayStatus::Running { port: actual, .. } if actual == new_port));
+        assert_eq!(final_open.identity().unwrap().instance_id, identity.0);
+        assert_eq!(final_open.identity().unwrap().fingerprint, identity.1);
+        assert!(final_open.verify_credential(credential).is_ok());
+        final_open.stop().unwrap();
+        assert!(final_open.endpoint_recovery_presentation().is_err());
+    }
+
+    #[test]
+    fn failed_endpoint_persistence_keeps_original_opt_in_and_no_listener() {
+        let (_root, backend, store, gateway) = gateway_fixture("endpoint-store-failure", GatewayPolicy::default());
+        let port = match gateway.start("127.0.0.1", Some(0)).unwrap() { GatewayStatus::Running { port, .. } => port, _ => unreachable!() };
+        gateway.shutdown();
+        let occupied = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).unwrap();
+        let reopened = CompanionGateway::initialize_with_store(Arc::clone(&backend), store, GatewayPolicy::default());
+        let connection = open_connection(backend.db_path()).unwrap();
+        connection.execute_batch(&format!("CREATE TRIGGER reject_endpoint_change BEFORE INSERT ON settings WHEN NEW.key='{LISTENER_SETTING_KEY}' BEGIN SELECT RAISE(ABORT,'synthetic'); END;")).unwrap();
+        assert_eq!(reopened.recover_endpoint("127.0.0.1", port, true).unwrap_err().code, "gateway-listener-config-unavailable");
+        assert_eq!(load_listener_config(backend.db_path()).unwrap().unwrap().port, port);
+        assert!(reopened.lifecycle.lock().unwrap().running.is_none());
+        assert!(occupied.local_addr().is_ok());
+        connection.execute_batch("DROP TRIGGER reject_endpoint_change").unwrap();
+        drop(occupied);
+        assert!(matches!(reopened.start("127.0.0.1", None).unwrap(), GatewayStatus::Running { port: actual, .. } if actual == port));
+        reopened.stop().unwrap();
     }
 
     #[test]
@@ -5603,7 +5808,7 @@ mod tests {
         let generation = running_generation(&gateway);
         let envelope = gateway.issue_pairing().unwrap();
         let paired = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": envelope.secret,
                     "fingerprint": envelope.certificate_fingerprint,
@@ -5717,7 +5922,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({
                 "secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
@@ -5824,7 +6029,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             gateway
-                .exchange_pairing(&stale_request, old_generation)
+                .exchange_legacy_pairing_fixture(&stale_request, old_generation)
                 .unwrap_err()
                 .code,
             "pairing-generation-retired"
@@ -5916,7 +6121,7 @@ mod tests {
 
         let first = gateway.issue_pairing().unwrap();
         let first_pair = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": first.secret,
                     "fingerprint": first.certificate_fingerprint,
@@ -5935,7 +6140,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             gateway
-                .exchange_pairing(&second_request, generation)
+                .exchange_legacy_pairing_fixture(&second_request, generation)
                 .unwrap_err()
                 .code,
             "pairing-device-limit"
@@ -5944,7 +6149,7 @@ mod tests {
             .revoke_device(first_pair["deviceId"].as_str().unwrap())
             .unwrap();
         assert!(gateway
-            .exchange_pairing(&second_request, generation)
+            .exchange_legacy_pairing_fixture(&second_request, generation)
             .is_ok());
         gateway.stop().unwrap();
     }
@@ -5959,7 +6164,7 @@ mod tests {
         let generation = running_generation(&gateway);
         let envelope = gateway.issue_pairing().unwrap();
         let paired = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": envelope.secret.as_str(),
                     "fingerprint": envelope.certificate_fingerprint,
@@ -6099,7 +6304,7 @@ mod tests {
         let generation = running_generation(&gateway);
         let envelope = gateway.issue_pairing().unwrap();
         let paired = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": envelope.secret.as_str(),
                     "fingerprint": envelope.certificate_fingerprint,
@@ -6180,7 +6385,7 @@ mod tests {
         }
         assert_eq!(
             classify_bind_error(io::Error::new(ErrorKind::PermissionDenied, "fixture")).code,
-            "firewall/manual-permission-required"
+            "gateway-bind-access-denied"
         );
 
         let (_root, _backend, _store, gateway) =
@@ -6207,7 +6412,7 @@ mod tests {
         };
         let envelope = gateway.issue_pairing().unwrap();
         let paired = gateway
-            .exchange_pairing(
+            .exchange_legacy_pairing_fixture(
                 &serde_json::to_vec(&json!({
                     "secret": envelope.secret,
                     "fingerprint": envelope.certificate_fingerprint,
@@ -6588,7 +6793,7 @@ mod tests {
         gateway.start("127.0.0.1", Some(0)).unwrap();
         let pair = |service: &Arc<CompanionGateway>| {
             let envelope = service.issue_pairing().unwrap();
-            service.exchange_pairing(&serde_json::to_vec(&json!({
+            service.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
                 "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint, "deviceLabel": "Scope test phone",
             })).unwrap(), running_generation(service)).unwrap()["deviceId"].as_str().unwrap().to_owned()
         };
@@ -6651,6 +6856,53 @@ mod tests {
     }
 
     #[test]
+    fn scoped_diagnostics_cross_the_real_pinned_tls_boundary() {
+        let (_root, backend, _store, gateway) = gateway_fixture("scope-diagnostics-tls", GatewayPolicy::default());
+        let port = match gateway.start("127.0.0.1", Some(0)).unwrap() {
+            GatewayStatus::Running { port, .. } => port,
+            _ => panic!("fixture listener unavailable"),
+        };
+        let envelope = gateway.issue_pairing().unwrap();
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
+            "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
+            "deviceLabel": "Synthetic protocol fixture"
+        })).unwrap(), running_generation(&gateway)).unwrap();
+        let credential = paired["credential"].as_str().unwrap();
+        let device_id = paired["deviceId"].as_str().unwrap();
+        let scope = backend.material_catalog().library_state().unwrap().1;
+        let send = |path: &str, scope: Option<&str>, authenticated: bool| {
+            let authorization = if authenticated { format!("Authorization: Bearer {credential}\r\n") } else { String::new() };
+            let scope_header = scope.map(|id| format!("X-LuckyRay-Material-Library: {id}\r\n")).unwrap_or_default();
+            pinned_http_response(&gateway, port, &format!("GET {path} HTTP/1.1\r\nHost: luckyray-companion.local\r\n{authorization}{scope_header}X-LuckyRay-Request-Id: synthetic-scope-1\r\nConnection: close\r\n\r\n"))
+        };
+        let catalog = send("/v1/services", Some(&scope), true);
+        assert!(catalog.starts_with("HTTP/1.1 200"));
+        assert!(catalog.contains("X-LuckyRay-Scope-Protocol: 1\r\n"));
+        assert!(catalog.contains("X-LuckyRay-Request-Id: synthetic-scope-1\r\n"));
+        assert!(catalog.contains("X-LuckyRay-Stage: response-commit\r\n"));
+        assert!(catalog.contains("Server-Timing: companion;dur="));
+        let body: Value = serde_json::from_str(catalog.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body["reusableProofVersion"], 1);
+        assert!(!send("/v1/services", None, true).contains("X-LuckyRay-Scope-Protocol:"));
+        let invalid = send("/v1/services", Some("bad/path"), true);
+        assert!(invalid.starts_with("HTTP/1.1 400"));
+        assert!(invalid.contains("X-LuckyRay-Stage: scope-resolve\r\n"));
+        assert!(!invalid.contains("X-LuckyRay-Scope-Protocol:"));
+        let unauthenticated = send("/v1/services", Some(&scope), false);
+        assert!(unauthenticated.starts_with("HTTP/1.1 401"));
+        assert!(!unauthenticated.contains("X-LuckyRay-Scope-Protocol:"));
+        gateway.set_service_grant(device_id, "content.read", "catalog", "", true).unwrap();
+        let allowed = send("/v1/services/materials/changes", Some(&scope), true);
+        assert!(allowed.starts_with("HTTP/1.1 200"));
+        assert!(allowed.contains("X-LuckyRay-Scope-Protocol: 1\r\n"));
+        gateway.set_service_grant(device_id, "content.read", "catalog", "", false).unwrap();
+        let denied = send("/v1/services/materials/changes", Some(&scope), true);
+        assert!(denied.starts_with("HTTP/1.1 403"));
+        assert!(!denied.contains("X-LuckyRay-Scope-Protocol:"));
+        gateway.stop().unwrap();
+    }
+
+    #[test]
     fn services_grants_and_material_cursor_are_device_scoped() {
         let (_root, backend, _store, gateway) =
             gateway_fixture("services-grant-cursor", GatewayPolicy::default());
@@ -6659,7 +6911,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({
                 "secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
@@ -6722,7 +6974,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({"secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
                 "deviceLabel": "Source precision fixture"})).unwrap(),
@@ -6817,7 +7069,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
             "deviceLabel": "Services revoked fixture"})).unwrap(), running_generation(&gateway)).unwrap();
         let credential = paired["credential"].as_str().unwrap().to_owned();
@@ -6881,7 +7133,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
             "deviceLabel": "Services stop fixture"})).unwrap(), running_generation(&gateway)).unwrap();
         let credential = paired["credential"].as_str().unwrap().to_owned();
@@ -6926,7 +7178,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
             "deviceLabel": "Services grant epoch fixture"})).unwrap(), running_generation(&gateway)).unwrap();
         let credential = paired["credential"].as_str().unwrap().to_owned();
@@ -6968,7 +7220,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
             "deviceLabel": "Services commit fixture"})).unwrap(), running_generation(&gateway)).unwrap();
         let credential = paired["credential"].as_str().unwrap().to_owned();
@@ -7028,7 +7280,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
             "deviceLabel": "Services restart fixture"})).unwrap(), old_generation).unwrap();
         let credential = paired["credential"].as_str().unwrap().to_owned();
@@ -7080,7 +7332,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
             "deviceLabel": "Presentation fence fixture",
         })).unwrap(), running_generation(&gateway)).unwrap();
@@ -7238,7 +7490,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
             "deviceLabel": "Presentation receipt failure fixture"})).unwrap(),
             running_generation(&gateway)).unwrap();
@@ -7304,7 +7556,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({"secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
                 "deviceLabel": "Material write fixture"})).unwrap(),
@@ -7379,7 +7631,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({"secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
                 "deviceLabel": "Search fixture"})).unwrap(),
@@ -7405,7 +7657,7 @@ mod tests {
         let first_body: Value = serde_json::from_str(first.split("\r\n\r\n").nth(1).unwrap()).unwrap();
         let cursor = first_body["nextCursor"].as_str().expect("second search page");
         let other_envelope = gateway.issue_pairing().unwrap();
-        let other_paired = gateway.exchange_pairing(
+        let other_paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({"secret": other_envelope.secret,
                 "fingerprint": other_envelope.certificate_fingerprint,
                 "deviceLabel": "Second search fixture"})).unwrap(),
@@ -7476,7 +7728,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({"secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
                 "deviceLabel": "Search completion fixture"})).unwrap(),
@@ -7530,7 +7782,7 @@ mod tests {
         };
         let pair = |label: &str| {
             let envelope = gateway.issue_pairing().unwrap();
-            gateway.exchange_pairing(&serde_json::to_vec(&json!({
+            gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
                 "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
                 "deviceLabel": label})).unwrap(), running_generation(&gateway)).unwrap()
         };
@@ -7619,7 +7871,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({"secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
                 "deviceLabel": "Ingest fixture"})).unwrap(),
@@ -7708,7 +7960,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret": envelope.secret, "fingerprint": envelope.certificate_fingerprint,
             "deviceLabel": "Knowledge revoke fixture",
         })).unwrap(), running_generation(&gateway)).unwrap();
@@ -7764,7 +8016,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({"secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
                 "deviceLabel": "Knowledge ingest fixture"})).unwrap(),
@@ -7904,7 +8156,7 @@ mod tests {
             GatewayStatus::Running { port, .. } => port, status => panic!("{status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(&serde_json::to_vec(&json!({
+        let paired = gateway.exchange_legacy_pairing_fixture(&serde_json::to_vec(&json!({
             "secret":envelope.secret,"fingerprint":envelope.certificate_fingerprint,"deviceLabel":"Shared synthetic fixture"
         })).unwrap(), running_generation(&gateway)).unwrap();
         let credential = paired["credential"].as_str().unwrap();
@@ -7919,7 +8171,7 @@ mod tests {
         };
         let discovered = send("GET", "/v1/services", "");
         assert_eq!(discovered.0, 200);
-        assert_eq!(discovered.1["bundleRevision"], "2026-09-30.1");
+        assert_eq!(discovered.1["bundleRevision"], "2026-10-23.scopes-1");
         assert_eq!(discovered.1["operations"]["knowledge.editingOpen"]["state"], "notGranted");
         for grant in ["content.read", "content.write"] {
             gateway.set_service_grant(device, grant, "vault", &vault, true).unwrap();
@@ -7983,7 +8235,7 @@ mod tests {
             status => panic!("unexpected status: {status:?}"),
         };
         let envelope = gateway.issue_pairing().unwrap();
-        let paired = gateway.exchange_pairing(
+        let paired = gateway.exchange_legacy_pairing_fixture(
             &serde_json::to_vec(&json!({"secret": envelope.secret,
                 "fingerprint": envelope.certificate_fingerprint,
                 "deviceLabel": "Events fixture"})).unwrap(),
@@ -7994,9 +8246,11 @@ mod tests {
         let request = format!("GET /v1/services/events/stream HTTP/1.1\r\nHost: luckyray-companion.local\r\nAuthorization: Bearer {credential}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n");
         assert!(pinned_http_response(&gateway, port, &request).starts_with("HTTP/1.1 403"));
         gateway.set_service_grant(device_id, "content.read", "catalog", "", true).unwrap();
-        let connection = Connection::open(backend.db_path()).unwrap();
-        connection.execute("INSERT INTO companion_service_change(domain,scope_id,object_id,revision,kind,tombstone,occurred_at)
-            VALUES('materials','','asset-event','r1','created',0,'now')", []).unwrap();
+        // Import through the real catalog so the scoped history owns this hint.
+        backend.material_catalog().import_bytes(vec![crate::materials::MaterialBytesInput {
+            name: "event-fixture.txt".into(), original_path: "https://example.test/event".into(),
+            mime_type: "text/plain".into(), bytes: b"synthetic event".to_vec(), description: None,
+        }], &crate::materials::MaterialImportOptions::default()).unwrap();
         let mut tls = pinned_client(&gateway, port);
         tls.write_all(request.as_bytes()).unwrap();
         tls.flush().unwrap();

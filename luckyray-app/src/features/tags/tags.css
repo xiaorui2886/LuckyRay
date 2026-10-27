@@ -586,12 +586,12 @@
   font-size: 12px;
 }
 
-.tag-detail-card-check {
-  position: absolute;
-  z-index: 1;
-  top: 8px;
-  left: 8px;
-}
+.tag-detail-card-check { top: 8px; right: 8px; opacity: 0; }
+.tag-detail-card:hover .tag-detail-card-check,
+.tag-detail-card:focus-within .tag-detail-card-check,
+.tag-detail-card-check.checked { opacity: 1; }
+.tag-detail-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+@media (hover: none) { .tag-detail-card-check { opacity: 1; } }
 
 .tag-detail-card .card-label,
 .tag-detail-card .card-summary,

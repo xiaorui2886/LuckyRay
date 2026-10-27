@@ -1,0 +1,8 @@
+{
+  "reason": "React 19 boolean inert compatibility. No rendering branches or event behavior changed.",
+  "file": "lib/index.js",
+  "original_sha256": "333ea89e7518ec1f1d33111bb9c65d382454bcc3638ebac7116253c92fe5d566",
+  "patched_sha256": "fa5143b16b5228a0574d870e0d3f166ce4b608cec0741e44b4a548aef29c01cc",
+  "reverse_from": "inert: true,",
+  "reverse_to": "inert: \"\","
+}

@@ -15,6 +15,7 @@ const descriptorPath = process.env.DSH_QUALIFIED_NEW_DESCRIPTION;
 assert.ok(descriptorPath, "Set the previously qualified genuine descriptor; no placeholder qualification is permitted");
 const descriptor = await readFile(descriptorPath), qualification = JSON.parse(descriptor).qualification;
 const contract = await hostContract();
+const legacy198 = JSON.parse(await readFile(join(root, "tests/fixtures/dshHost198LegacyInterfaces.json")));
 function fixture(schema = 2) {
   const { interfaces, ...audit } = contract;
   const candidate = { schema, channel: "preview", runtimePackage: "@deepseek-ai/dsh", issuedAt: 100, expiresAt: 1000,
@@ -53,7 +54,7 @@ test("range and genuine interface/capability mismatches refuse a correctly signe
   for (const change of [c => c.compatibility.adapterProtocol++, c => c.compatibility.resourceProtocol++,
     c => c.compatibility.requiredCapabilities.push("unsupported-v1"), c => c.compatibility.requiredCapabilities.push("resource-intents-v1"),
     c => c.compatibility.requiredCapabilities = [], c => c.compatibility.extra = true,
-    c => c.compatibility.minimumHostVersion = "1.9.5", c => c.compatibility.maximumHostVersionExclusive = "1.9.4",
+    c => c.compatibility.minimumHostVersion = "1.9.9", c => c.compatibility.maximumHostVersionExclusive = "1.9.4",
     c => c.compatibility.minimumHostVersion = "1.9.4-beta.1", c => c.compatibility = null, c => c.schema = 1]) {
     const candidate = structuredClone(f.candidate); change(candidate);
     assert.throws(() => verifyEnvelope(f.envelopeFor(candidate), f.key, descriptor, contract, 500));
@@ -61,6 +62,32 @@ test("range and genuine interface/capability mismatches refuse a correctly signe
   for (const hostVersion of ["1.9.3", "2.0.0", "1.9.5-beta.1"]) {
     assert.throws(() => verifyEnvelope(f.envelopeFor(f.candidate), f.key, descriptor, { ...contract, hostVersion }, 500));
   }
+  const supported = structuredClone(f.candidate);
+  supported.compatibility.minimumHostVersion = "1.9.5";
+  assert.equal(verifyEnvelope(f.envelopeFor(supported), f.key, descriptor, contract, 500).schema, 2,
+    "the current 1.9.8 host is not below a 1.9.5 minimum; 1.9.9 above is the actual negative boundary");
+});
+
+test("same-version old host rejects the new engine while both implemented capabilities admit it", async () => {
+  const f = fixture(), envelope = f.envelopeFor(f.candidate);
+  assert.equal(contract.hostVersion, "1.9.8");
+  for (const capability of ["closure-budget-40000-v1", "loader-login-relay-ready-v1"]) {
+    assert.ok(f.candidate.compatibility.requiredCapabilities.includes(capability));
+    const missing = { ...contract, interfaces: structuredClone(contract.interfaces) };
+    missing.interfaces.capabilities = missing.interfaces.capabilities.filter(value => value !== capability);
+    assert.throws(() => verifyEnvelope(envelope, f.key, descriptor, missing, 500), /compatibility-contract-invalid/u);
+  }
+  assert.throws(() => verifyEnvelope(envelope, f.key, descriptor,
+    { ...contract, hostVersion: "1.9.8", interfaces: legacy198 }, 500), /compatibility-contract-invalid/u);
+  assert.equal(verifyEnvelope(envelope, f.key, descriptor, contract, 500).version, "0.2.1-rc.2");
+  const carrier = await readFile(join(root, "src-tauri/dsh-host/luckyray-dsh-authenticated-webserver/index.mjs"), "utf8");
+  const native = await readFile(join(root, "src-tauri/src/dsh_host.rs"), "utf8");
+  const gate = await readFile(join(root, "src-tauri/src/dsh_engine_update/compatibility.rs"), "utf8");
+  assert.match(carrier, /Promise\.all\(\[settled, officialLaunchReady\]\)\.then\(announceReady/u);
+  assert.match(carrier, /response\.end\("dsh-native-launch-not-ready"\)/u);
+  assert.match(native, /UPDATE_LOGIN_RELAY_READY_PROTOCOL: u64 = 1/u);
+  assert.match(gate, /super::MAX_CLOSURE_FILE_COUNT == 40_000/u);
+  assert.match(gate, /crate::dsh_host::UPDATE_LOGIN_RELAY_READY_PROTOCOL == 1/u);
 });
 
 test("new contract preserves signature, descriptor, platform, migration and expiry checks", () => {

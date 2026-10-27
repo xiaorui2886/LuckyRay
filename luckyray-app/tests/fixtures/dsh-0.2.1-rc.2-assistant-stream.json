@@ -1,0 +1,107 @@
+{
+  "source": {
+    "package": "@deepseek-ai/dsh-agent-loop",
+    "version": "0.2.1-rc.2",
+    "indexSha256": "cf57e3ecd487ac5c2553455aaa5cef2c6fb41e6bd61be5aa455675d1d7193033",
+    "method": "Published AssistantStreamAttempt executed with published dsh-llm accumulator/assembler; no provider or native host"
+  },
+  "events": [
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "start",
+        "attemptId": "official-fixture:1",
+        "revision": 1,
+        "turn": 1,
+        "step": 1
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "chunk",
+        "attemptId": "official-fixture:1",
+        "revision": 2,
+        "index": 0,
+        "time": 1000,
+        "chunk": {
+          "type": "reasoning-delta",
+          "index": 0,
+          "text": "Public fixture reasoning."
+        }
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "chunk",
+        "attemptId": "official-fixture:1",
+        "revision": 3,
+        "index": 1,
+        "time": 1000,
+        "chunk": {
+          "type": "text-delta",
+          "index": 1,
+          "text": "Fixture answer."
+        }
+      }
+    },
+    {
+      "kind": "session",
+      "event": {
+        "seq": 42,
+        "type": "assistant/message",
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "message": {
+            "content": [
+              {
+                "type": "reasoning",
+                "text": "Public fixture reasoning."
+              },
+              {
+                "type": "text",
+                "text": "Fixture answer."
+              }
+            ]
+          },
+          "stream": [
+            {
+              "type": "reasoning-chunks",
+              "time0": 1000,
+              "index": 0,
+              "dt": [],
+              "texts": [
+                "Public fixture reasoning."
+              ]
+            },
+            {
+              "type": "text-chunks",
+              "time0": 1000,
+              "index": 1,
+              "dt": [],
+              "texts": [
+                "Fixture answer."
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "end",
+        "attemptId": "official-fixture:1",
+        "revision": 4,
+        "index": 2,
+        "outcome": {
+          "kind": "committed",
+          "eventType": "assistant/message",
+          "seq": 42
+        }
+      }
+    }
+  ]
+}

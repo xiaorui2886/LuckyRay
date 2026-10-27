@@ -25,7 +25,7 @@ LuckyRay 自有源码以 **[MIT](LICENSE)** 开放，欢迎阅读、修改和贡
 - **想参与开发？** [构建与测试](docs/development/README.md) · [贡献指南](CONTRIBUTING.md) · [浏览源码](luckyray-app/)
 - **想写插件？** [插件 SDK](sdk/README.zh-CN.md) · [提交插件](catalog/SUBMISSION.md)
 
-当前源码包含 **1.9.15 自动更新验收候选**；当前正式桌面版为 **1.9.7**。源码 CI 通过不代表安装升级验收完成，请以[候选验证状态](docs/development/updater-validation.md)和正式 Release 为准。
+当前正式桌面版为 **1.9.9**。公开源码快照与正式安装包的发布进度可能不同；安装功能与版本请以[正式 Release](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.9)为准。
 
 
 ## 好的参考，不该止步于收藏夹
@@ -64,13 +64,15 @@ LuckyRay 自有源码以 **[MIT](LICENSE)** 开放，欢迎阅读、修改和贡
 
 ## 从这里开始
 
-**当前正式版：LuckyRay 1.9.7 + Collector 1.9.6** · 2026-10-16
+**当前正式版：LuckyRay 1.9.9 + Collector 1.9.6** · 2026-10-27
+
+本版加入画布 Agent、脚本分镜与 3D 导演台，内置 LSH 0.2.1-rc.3，修复覆盖安装启动及流式回复上闪，并完善设置页的手机连接诊断与地址恢复。[完整更新明细](docs/releases/v1.9.9.md)。
 
 | 你要做什么 | 入口 |
 | :--- | :--- |
-| **开始使用桌面端** | [官网下载页](https://luckyray.me/atelier/edition/download) · [直接下载 Windows x64 安装包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.7/LuckyRay_1.9.7_x64-setup.exe) |
-| **安装或更新浏览器插件** | [Collector 安装说明](https://luckyray.me/atelier/edition/collector) · [直接下载扩展 ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.7/LuckyRay-Collector-1.9.6.zip) |
-| **查看这次改进了什么** | [新版更新说明](https://luckyray.me/atelier/edition/changelog) · [发行包与校验值](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.7) |
+| **开始使用桌面端** | [官网下载页](https://luckyray.me/atelier/edition/download) · [直接下载 Windows x64 安装包](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.9/LuckyRay_1.9.9_x64-setup.exe) |
+| **安装或更新浏览器插件** | [Collector 安装说明](https://luckyray.me/atelier/edition/collector) · [直接下载扩展 ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.8/LuckyRay-Collector-1.9.6.zip) |
+| **查看这次改进了什么** | [新版更新说明](https://luckyray.me/atelier/edition/changelog) · [发行包与校验值](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.9) |
 
 1. **打开桌面端**：适用于 Windows 10/11 x64。安装前阅读[安装与校验说明](docs/downloads.md)，重要资料保持独立备份。
 2. **留下第一份参考**：导入一张图片，写一篇笔记，或在画布中整理一个小想法。
@@ -81,7 +83,7 @@ LuckyRay 自有源码以 **[MIT](LICENSE)** 开放，欢迎阅读、修改和贡
 
 - 当前桌面安装器未进行 Authenticode 签名。请核对官方 SHA-256，并保留发行说明中链接的第三方材料包与桌面组件补充包。
 - Collector 是独立扩展包，需手动加载或更新；更新桌面端不会自动更新浏览器扩展。
-- 当前正式版请通过官网下载并手动安装更新；完整自动更新正在候选版本中验收，尚未对正式渠道启用。
+- 1.9.8 起支持带签名校验的应用内更新；原公开版 1.9.7 及更早版本需先手动安装新版。更新前请保存笔记并正常退出软件。
 - Android 仍在测试；macOS、Linux、iOS 尚未发布。不要把开发中的功能当作当前安装包能力。
 - 网页采集受站点结构、访问权限和 DRM 等限制，并非所有网站和媒体都支持。
 
@@ -113,6 +115,6 @@ LuckyRay 自有源码以 **[MIT](LICENSE)** 开放，欢迎阅读、修改和贡
 
 LuckyRay 自有源码现已采用 [MIT 许可证](LICENSE) 开放，桌面端、Collector 与可选 MCP 的候选源码见 `luckyray-app/`。[构建与测试](docs/development/README.md) · [贡献指南](CONTRIBUTING.md) · [第三方许可](docs/development/third-party.md) · [品牌说明](BRANDING.md)。第三方组件保留原有许可，不被重标为 MIT。
 
-当前开放的是 **1.9.15 自动更新验收候选源码**，不是正式新版发布。安装升级仍需分别完成连续验收；官网稳定版、Latest Release 和正式更新清单均不因源码开放而改变。详见[候选验证状态](docs/development/updater-validation.md)。
+源码目录保留各次开发和验证记录，不应据此推断与最新安装包完全一致。正式安装包、组件版本及已知限制以[发行说明](docs/releases/v1.9.9.md)为准。
 
 Eagle 与 Obsidian 是各自权利人的产品；此处仅描述工作习惯上的参考，不代表官方关联、完整兼容或功能对等。

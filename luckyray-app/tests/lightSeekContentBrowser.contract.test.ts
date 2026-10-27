@@ -15,6 +15,9 @@ test("LightSeek titlebar content browser reuses the existing material, knowledge
   assert.match(titlebar, /onToggleAiContentBrowser/u);
   assert.match(titlebar, /titlebar\.ai\.openContentBrowser/u);
   assert.match(shell, /setAiContentBrowserOpen/u);
+  assert.doesNotMatch(shell, /luckyray:lsh-content-outside/u, "native composer focus must not dismiss the content drawer");
+  assert.doesNotMatch(shell, /closest\("\.lightseek-content-browser, \[data-lightseek-content-toggle\]"\)/u, "outside pointer dismissal stays removed");
+  assert.match(shell, /event\.key === "Escape" && !event\.isComposing/u);
   assert.match(shell, /if \(!current\) setAiPersonalBrowserOpen\(false\)/u);
   assert.match(shell, /if \(!current\) setAiContentBrowserOpen\(false\)/u);
   assert.match(page, /contentBrowserOpen \? <LightSeekContentBrowser \/>/u);

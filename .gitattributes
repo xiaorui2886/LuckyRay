@@ -16,3 +16,8 @@
 *.webp binary
 *.ico binary
 *.icns binary
+luckyray-app/protocol/companion-v1/content-v1/** text eol=lf
+luckyray-app/src-tauri/dsh-host/luckyray-dsh-host.mjs text eol=lf
+luckyray-app/src-tauri/dsh-host/luckyray-dsh-lightseek-ui/client.js text eol=lf
+luckyray-app/src/features/canvas/dsh-reference/** -text
+luckyray-app/tests/fixtures/dsh-ui-slots-0.2.1-rc.2/** -text

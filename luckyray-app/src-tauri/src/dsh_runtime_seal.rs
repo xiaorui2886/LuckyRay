@@ -26,13 +26,18 @@ const LAUNCH_BYTES: &[u8] = include_bytes!(concat!(env!("LUCKYRAY_ISSUE189_OLD_D
 const RUNTIME_BYTES: &[u8] = include_bytes!(concat!(env!("LUCKYRAY_ISSUE189_OLD_DSH_HOST"), "/records/runtime-manifest.json"));
 
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const AUTHORITY_SHA256: &str = "75cbb9b7c935980bc46ae00a62b7b30880c4408be32a5698b82e3261d1042632";
+const AUTHORITY_SHA256: &str = "14cb818cdbf56eb2d27e9ee16c50096bc57a9e58a1911d9d9f03b56fdca27793";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const AUDIT_SHA256: &str = "db28fa51bbea382dc8b8caf29964e31b4848600682d95be47d6e9db4e8e670c1";
+const AUDIT_SHA256: &str = "955c7b4ab2d6b34b0a04236e6f2ac128129d51593f84744c48d3d195493c4746";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const LAUNCH_SHA256: &str = "7282c882d5bd5de8e5a714b9629a16f307fe7df96671f471203773cc51c94886";
+const LAUNCH_SHA256: &str = "4f6f3330a056b58f8ffa67d4598cac8be621ad1cbb2d46ec2ba09714226c158a";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const RUNTIME_SHA256: &str = "5fcc250740c1195c61e110088892169ae11223207658e773a8d02f57ad05d556";
+const RUNTIME_SHA256: &str = "9158395f1af30cd19fa45ac95854767fc1cb3f875ddadf3728f6fa8b3db61f2d";
+// Full native admission uses lexical path + NUL + size + NUL + file SHA + LF.
+// The sealed releaseLayout.contentSha256 uses the preparation tool's portable
+// tree format (locale-sorted path + NUL + file SHA + LF). They authenticate the
+// same exact rc.3 files, but are deliberately not interchangeable digests.
+const BUNDLED_NATIVE_CLOSURE_SHA256: &str = "ba89c613435a4c5d5d72ef836db644dc331d37005f3ca43f34867f8495cc43c3";
 #[cfg(feature = "issue189-frozen-old-fixture")]
 const AUTHORITY_SHA256: &str = "c0c4b4bec0ce5b86f759b970c722f7fc82073cdbd678593ec03eaf61a4d49c04";
 #[cfg(feature = "issue189-frozen-old-fixture")]
@@ -377,6 +382,40 @@ pub(crate) fn bundled_runtime_version() -> Option<String> {
 #[cfg(not(windows))]
 pub(crate) fn bundled_runtime_version() -> Option<String> { None }
 
+/// The desktop installer, not a locally editable update pointer, supplies this
+/// authority. Used once when a new desktop bundle adopts the existing profile.
+#[derive(Debug, Clone)]
+pub(crate) struct BundledRuntimeIdentity {
+    pub(crate) launch: RuntimeIdentity,
+    pub(crate) launch_manifest_sha256: String,
+    pub(crate) runtime_manifest_sha256: String,
+    pub(crate) native_closure_sha256: String,
+    pub(crate) closure_file_count: u64,
+}
+
+#[cfg(windows)]
+pub(crate) fn bundled_runtime_identity() -> Result<BundledRuntimeIdentity, ()> {
+    let cancelled = AtomicBool::new(false);
+    verify_record_seal(&RuntimeSealControl::new(&cancelled))?;
+    let authority: serde_json::Value = serde_json::from_slice(AUTHORITY_BYTES).map_err(|_| ())?;
+    let layout = &authority["dependencyClosure"]["releaseLayout"];
+    let launch = runtime_identity_from_records()?;
+    // Renew this exact compiled full-tree pin when qualifying a later bundle.
+    // In particular, the frozen old-runtime test feature must not inherit it.
+    if launch.package_version != "0.2.1-rc.3" { return Err(()); }
+    let closure_file_count = layout["fileCount"].as_u64().filter(|v| *v > 0 && *v <= 40000).ok_or(())?;
+    Ok(BundledRuntimeIdentity {
+        launch,
+        launch_manifest_sha256: LAUNCH_SHA256.to_owned(),
+        runtime_manifest_sha256: RUNTIME_SHA256.to_owned(),
+        native_closure_sha256: BUNDLED_NATIVE_CLOSURE_SHA256.to_owned(),
+        closure_file_count,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn bundled_runtime_identity() -> Result<BundledRuntimeIdentity, ()> { Err(()) }
+
 fn identity_path(root: &Path, relative: &str) -> Result<PathBuf, ()> {
     let mut path = root.to_path_buf();
     for component in relative.split('/') {
@@ -608,7 +647,7 @@ mod tests {
         );
         assert_eq!(identity.package_version, if cfg!(feature = "issue189-frozen-old-fixture") {
             "0.1.5-rc.2"
-        } else { "0.1.7-rc.2" });
+        } else { "0.2.1-rc.3" });
         assert_eq!(
             identity.node_exe_sha256,
             "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362"
@@ -618,7 +657,7 @@ mod tests {
             if cfg!(feature = "issue189-frozen-old-fixture") {
                 "0ff7f1d72c4e0cbe14001709c81e20a04b70464118a7f78568952988e28f2ac5"
             } else {
-                "935e95d05f4dc70a8a013eea59da80028946b5c139e45c6351dcaf2810ca00a1"
+                "80112efe368efb1a39720c7ada0af00442e5131fb2744edaaff8a3e8bb499e6f"
             }
         );
     }
@@ -677,7 +716,7 @@ mod tests {
         let elapsed = started.elapsed();
         assert_eq!(identity.package_version, if cfg!(feature = "issue189-frozen-old-fixture") {
             "0.1.5-rc.2"
-        } else { "0.1.7-rc.2" });
+        } else { "0.2.1-rc.2" });
         eprintln!(
             "runtime identity check took {:?} (two critical entries; full closure stays on prepare/install)",
             elapsed

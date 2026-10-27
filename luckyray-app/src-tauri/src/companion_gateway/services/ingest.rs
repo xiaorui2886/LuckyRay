@@ -40,7 +40,8 @@ fn validate_begin(value: &Value) -> ServiceResult<()> {
     let target = value["target"].as_object().ok_or((400, "INPUT_INVALID"))?;
     match value["target"]["domain"].as_str() {
         Some("materials") => {
-            if target.keys().any(|key| !matches!(key.as_str(), "domain" | "folderId"))
+            if target.keys().any(|key| !matches!(key.as_str(), "domain" | "folderId" | "libraryId"))
+                || target.get("libraryId").is_some_and(|v| !v.is_null() && !v.as_str().is_some_and(valid_id))
                 || target.get("folderId").is_some_and(|v| !v.is_null() && !v.as_str().is_some_and(valid_id)) {
                 return Err((400, "INPUT_INVALID"));
             }
@@ -92,9 +93,33 @@ fn safe_relative_path(path: &str) -> bool {
         && !path.contains(':')
 }
 
+#[cfg(test)]
+mod selected_library_validation_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_library_id_is_not_treated_as_legacy_default() {
+        let mut request = json!({"opId":"library-validation", "kind":"text",
+            "target":{"domain":"materials"}, "name":"fixture.txt", "mimeType":"text/plain",
+            "sizeBytes":1, "sha256":hex_digest(b"x"), "text":"x"});
+        assert!(validate_begin(&request).is_ok());
+        for id in [json!(7), json!(true), json!({}), json!([]), json!(""), json!("../other")] {
+            request["target"]["libraryId"] = id;
+            assert_eq!(validate_begin(&request), Err((400, "INPUT_INVALID")));
+        }
+        for id in [Value::Null, json!("library-synthetic")] {
+            request["target"]["libraryId"] = id;
+            assert!(validate_begin(&request).is_ok());
+        }
+    }
+}
+
 fn authorized_target(gateway: &CompanionGateway, device: &PairedDevice, manifest: &Value) -> ServiceResult<()> {
     match manifest["target"]["domain"].as_str() {
         Some("materials") => {
+            if manifest["target"].get("libraryId").and_then(Value::as_str) != gateway.material_scope_id() {
+                return Err((409,"SCOPE_MISMATCH"));
+            }
             if granted(gateway, &device.device_id, "ingest.write", "catalog", "")? { Ok(()) }
             else { Err((403, "GRANT_REQUIRED")) }
         }
@@ -150,8 +175,15 @@ fn job_value(job_id: &str, op_id: &str, stage: &str, committed: u64, receipt: Op
 pub(super) fn begin(gateway: &CompanionGateway, device: &PairedDevice, generation: u64,
     admission_permission: u64, body: &[u8]) -> ServiceResult<(u16, Value)> {
     if body.len() > 4 * 1024 * 1024 + 4096 { return Err((413, "PAYLOAD_TOO_LARGE")); }
-    let (manifest, hash) = canonical_body(body)?;
+    let (mut manifest, _) = canonical_body(body)?;
     validate_begin(&manifest)?;
+    if manifest["target"]["domain"] == "materials" {
+        if let Some(supplied) = manifest["target"].get("libraryId") {
+            if supplied.as_str() != gateway.material_scope_id() { return Err((409,"SCOPE_MISMATCH")); }
+        }
+        if let Some(scope) = gateway.material_scope_id() { manifest["target"]["libraryId"] = json!(scope); }
+    }
+    let hash = hex_digest(&serde_json::to_vec(&manifest).map_err(|_| (400,"INPUT_INVALID"))?);
     let _transition = service_transition(gateway, device, generation, admission_permission)?;
     authorized_target(gateway, device, &manifest)?;
     let op_id = manifest["opId"].as_str().ok_or((400, "INPUT_INVALID"))?;
@@ -265,7 +297,7 @@ pub(super) fn chunk(
 fn finish_material(gateway: &CompanionGateway, device: &PairedDevice, generation: u64,
     admission_permission: u64,
     manifest: &Value, path: &std::path::Path) -> ServiceResult<Value> {
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     let page = manifest["source"].get("pageUrl").and_then(Value::as_str)
         .or_else(|| manifest["source"].get("siteOrigin").and_then(Value::as_str));
     let page_kind = if manifest["source"]["pageUrl"].is_string() {
@@ -308,7 +340,7 @@ fn finish_material(gateway: &CompanionGateway, device: &PairedDevice, generation
 }
 
 fn recover_material(gateway: &CompanionGateway, manifest: &Value) -> ServiceResult<Value> {
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     let digest = manifest["sha256"].as_str().ok_or((503, "SERVICE_UNAVAILABLE"))?;
     let asset = catalog.find_managed_asset_by_hash(digest)
         .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.ok_or((410, "RECEIPT_EXPIRED"))?;

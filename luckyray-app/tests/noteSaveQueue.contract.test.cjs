@@ -20,6 +20,8 @@ const code = esbuild.transformSync(
   { loader: "ts" },
 ).code;
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+const acknowledgmentModule = { exports: {} };
+new Function('module', 'exports', esbuild.transformSync(fs.readFileSync(root + '/src/features/notes/noteSaveAcknowledgment.ts', 'utf8'), {loader:'ts',format:'cjs'}).code)(acknowledgmentModule, acknowledgmentModule.exports);
 const draftStart = source.indexOf("class NotesNativeDraftSet extends");
 const draftEnd = source.indexOf("class NotesNativeSaveSet extends", draftStart);
 const draftCode = esbuild.transformSync(source.slice(draftStart, draftEnd), { loader: "ts" }).code;
@@ -35,6 +37,8 @@ function fixture() {
   const dirty = new DraftSet(["A", "B"]);
   dirtyChanges = 0;
   const context = {
+    shouldPauseConflictAutosave: acknowledgmentModule.exports.shouldPauseConflictAutosave,
+    realVaultExternalConflict: null,
     notesNativeViews: views,
     selectedNoteIdRef: { current: "A" },
     selectedNote: { contentText: "A1" },
@@ -43,6 +47,7 @@ function fixture() {
     realVaultDocumentReadsRef: { current: { isHydrating: () => false } },
     realVaultSaveInFlightRef: { current: new Set() },
     realVaultSaveCompletionRef: { current: new Map() },
+    realVaultSaveEpochRef: { current: new Map() },
     realVaultSavedContentRef: {
       current: new Map([
         ["A", "A0"],

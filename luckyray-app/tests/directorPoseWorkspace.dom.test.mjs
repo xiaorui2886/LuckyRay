@@ -1,0 +1,45 @@
+// Real workspace JSX + mocked WebGL viewport. Not native-window/pixel verification.
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+const require = createRequire(import.meta.url);
+const tools = process.env.LR_TEST_TOOLS ? createRequire(path.join(process.env.LR_TEST_TOOLS, 'package.json')) : require;
+const runtime = process.env.LR_TEST_RUNTIME ? createRequire(path.join(process.env.LR_TEST_RUNTIME, 'package.json')) : require;
+const {JSDOM} = tools('jsdom'); const esbuild = createRequire(runtime.resolve('vite/package.json'))('esbuild');
+const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const dom = new JSDOM('<button id="prior">Before</button><div id="root"></div>', {url:'https://director-test.invalid'});
+for (const key of ['window','document','HTMLElement','Node','Event','MouseEvent','KeyboardEvent','navigator']) Object.defineProperty(globalThis,key,{value:dom.window[key],configurable:true});
+Object.defineProperty(dom.window.HTMLElement.prototype,'getClientRects',{value(){return this.hidden ? [] : [{width:100,height:20}];}});
+globalThis.requestAnimationFrame = fn=>setTimeout(fn,0); globalThis.cancelAnimationFrame=clearTimeout;
+globalThis.__directorTest = { exports:[], close:0, captures:0 };
+const out=path.join(os.tmpdir(),`lr-director-dom-${process.pid}.cjs`);
+const stub=`import {forwardRef,useImperativeHandle} from 'react';export const DirectorViewport=forwardRef((props,ref)=>{globalThis.__directorTest.viewport=props;useImperativeHandle(ref,()=>({capture:async()=>{globalThis.__directorTest.captures++;if(globalThis.__directorTest.deferCapture)await new Promise(resolve=>globalThis.__directorTest.releaseCapture=resolve);return 'data:image/png;base64,TEST'},frameSelection:()=>{},resetOrbit:()=>{},alignCameraToOrbit:()=>{}}));return <div data-testid="mock-viewport"/>});`;
+const entry=`import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import {DirectorWorkspace} from './src/features/canvas/director/DirectorWorkspace';import {createDirectorDocument} from './src/core/canvas/director/model';function App(){const [doc,setDoc]=useState(createDirectorDocument());globalThis.__directorTest.document=doc;return <DirectorWorkspace document={doc} onChange={setDoc} onClose={()=>globalThis.__directorTest.close++} onExportShot={async(shot,png)=>globalThis.__directorTest.exports.push({shot,png})}/>};const root=createRoot(document.querySelector('#root'));globalThis.__directorTest.root=root;root.render(<App/>);`;
+await esbuild.build({stdin:{contents:entry,resolveDir:repo,loader:'tsx'},outfile:out,bundle:true,platform:'node',format:'cjs',jsx:'automatic',loader:{'.css':'empty'},plugins:[{name:'viewport-mock',setup(build){build.onResolve({filter:/\/DirectorViewport$/},()=>({path:'viewport',namespace:'mock'}));build.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:stub,loader:'tsx',resolveDir:repo}));build.onResolve({filter:/^react(?:\/.*)?$|^react-dom(?:\/.*)?$/},args=>({path:runtime.resolve(args.path),external:true}));}}]});
+const state=globalThis.__directorTest;const tick=()=>new Promise(resolve=>setTimeout(resolve,20));
+const button=text=>[...document.querySelectorAll('button')].find(el=>el.textContent===text || el.getAttribute('aria-label')===text);
+const click=async text=>{const el=button(text);assert.ok(el,`button ${text}`);el.click();await tick();};
+const change=async(input,value)=>{Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}));await tick();};
+const editNumber=async(input,value)=>{input.focus();await change(input,value);input.blur();await tick();};
+try {
+ document.querySelector('#prior').focus();require(out);await tick();await tick();
+ const actor=()=>state.document.scene.objects[0];const colors=state.document.scene.objects.map(o=>o.color);
+ await click('白膜');assert.equal(state.document.scene.presentation.mode,'clay');assert.deepEqual(state.document.scene.objects.map(o=>o.color),colors);await click('撤销');assert.equal(state.document.scene.presentation,undefined);
+ await click('角色 A');await click('摆姿');assert.equal(state.viewport.poseEditing,true);assert.equal(document.querySelectorAll('.director-joint-dot').length,19);assert.equal(document.querySelectorAll('.director-pose-presets button').length,7);
+ const angle=()=>document.querySelector('.director-angle-fields input');await editNumber(angle(),'25');assert.equal(actor().rig.joints.chest[0],25);await click('撤销');assert.equal(actor().rig,undefined);await click('重做');assert.equal(actor().rig.joints.chest[0],25);
+ angle().focus();await change(angle(),'43');angle().dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();assert.equal(actor().rig.joints.chest[0],25);assert.equal(state.close,0);
+ await click('复位');assert.deepEqual(actor().rig.joints.chest,[0,0,0]);await click('拖动手脚');assert.equal(state.viewport.poseTool,'ik');assert.equal(state.viewport.selectedJoint,'leftHand');assert.equal([...document.querySelectorAll('.director-joint-dot')].filter(el=>!el.disabled).length,4);
+ state.viewport.onJointSelect('head');await tick();assert.equal(state.viewport.poseTool,'rotate');assert.equal(state.viewport.selectedJoint,'head');
+ await click('选择 骨盆');await editNumber(document.querySelector('.director-root-height input'),'0.5');assert.ok(Math.abs(actor().rig.rootOffset[1]+.44)<1e-8);await click('恢复站姿');assert.equal(actor().rig.rootOffset[1],0);
+ await click('挥手');const saved=structuredClone(actor().rig);await click('保存当前');await change(document.querySelector('.director-save-pose input'),'我的镜头');document.querySelector('.director-save-pose').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await tick();assert.equal(state.document.poseLibrary.length,1);
+ await click('恢复站姿');await click('我的镜头');assert.deepEqual(actor().rig,saved);await click('镜像姿态');assert.notDeepEqual(actor().rig,saved);assert.deepEqual(state.document.poseLibrary[0].rig,saved);await click('移除姿态 我的镜头');assert.equal(state.document.poseLibrary?.length||0,0);await click('撤销');assert.equal(state.document.poseLibrary.length,1);
+ await click('保存当前镜头');const shot=structuredClone(state.document.shots[0]);await click('恢复站姿');document.querySelector('.director-shot-select').click();await tick();assert.deepEqual(state.document.scene,shot.scene);
+ await click('角色 A');await click('摆姿');await click('移动');assert.equal(state.viewport.poseEditing,false);await click('摆姿');document.querySelector('.director-object-row.is-selected button[aria-label="锁定"]').click();await tick();assert.equal(state.viewport.poseEditing,false);assert.ok(document.querySelector('.director-angle-fields').disabled);assert.equal(state.viewport.onTransform(actor().id,{position:[0,0,0]}),false);document.querySelector('.director-object-row.is-selected button[aria-label="解锁"]').click();await tick();
+ const beforeStage=structuredClone(state.document.scene);document.querySelector('.director-stage-presets button').click();await tick();assert.ok(state.document.scene.objects.length>beforeStage.objects.length);assert.deepEqual(state.document.scene.objects.slice(0,beforeStage.objects.length),beforeStage.objects);assert.deepEqual(state.document.scene.camera,beforeStage.camera);await click('撤销');assert.deepEqual(state.document.scene,beforeStage);
+ await click('角色 A');await click('摆姿');state.deferCapture=true;await click('送入脚本分镜');assert.equal(state.viewport.poseEditing,false);assert.equal(state.viewport.onTransform(actor().id,{position:[0,0,0]}),false);state.releaseCapture();await tick();state.deferCapture=false;assert.equal(state.exports.length,1);assert.deepEqual(state.exports[0].shot.scene,beforeStage);
+ const prior=structuredClone(state.document);const position=[actor().position[0]+.25,...actor().position.slice(1)];assert.equal(state.viewport.onTransform(actor().id,{position}),true);await tick();const accepted=structuredClone(state.document);assert.equal(state.viewport.onTransform(actor().id,{position}),true);assert.equal(state.viewport.onTransform(actor().id,{name:'x'.repeat(2_000_001)}),false);await tick();assert.deepEqual(state.document,accepted);assert.ok(document.body.textContent.includes('这个数值组合无效'));assert.equal(state.viewport.onTransform('missing',{position}),false);await click('撤销');assert.deepEqual(state.document,prior);
+ state.root.unmount();assert.equal(document.activeElement.id,'prior');console.log('PASS: production pose DOM 19 joints, FK/IK, presets, root height, saved pose isolation, mirror/reset, shot persistence, clay/undo, stage preservation, capture/lock guards, rejection acknowledgement and undo history. WebGL mocked; no pixel/native verification.');
+} finally {state.root?.unmount();fs.rmSync(out,{force:true});dom.window.close();}

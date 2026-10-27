@@ -1,0 +1,37 @@
+.canvas-image-creative-menu{box-sizing:border-box;width:100%;padding:12px;background:var(--theme-glass-bg);backdrop-filter:var(--theme-glass-filter);border:1px solid var(--theme-border-strong);border-radius:13px;box-shadow:var(--theme-shadow-md);color:var(--text-primary);font-size:12px}
+.canvas-image-creative-menu-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:600;margin-bottom:8px}
+.canvas-image-creative-menu-title span{font-size:10px;font-weight:400;color:var(--text-secondary)}
+.canvas-image-creative-menu section+section{margin-top:9px}
+.canvas-image-creative-menu h4{margin:0 0 4px;font-size:10px;font-weight:500;color:var(--text-secondary)}
+.canvas-image-creative-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px}
+.canvas-image-creative-grid button{display:flex;align-items:center;gap:8px;min-width:0;padding:8px 7px;background:transparent;color:inherit;border:1px solid transparent;border-radius:7px;font:inherit;text-align:left;cursor:pointer}
+.canvas-image-creative-action-copy{display:flex;flex:1;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+.canvas-image-creative-action-copy>span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.canvas-image-creative-action-copy small{font-size:9px;line-height:1.2;color:var(--text-secondary);white-space:nowrap}
+.canvas-image-creative-grid button[aria-pressed=true]{background:var(--theme-selected);border-color:var(--theme-border-strong)}
+.canvas-image-creative-grid .canvas-image-creative-selected{width:12px;height:12px;flex:0 0 12px;color:var(--accent)}
+.canvas-image-creative-grid button:hover{background:var(--theme-hover);border-color:var(--theme-border-strong)}
+.canvas-image-creative-grid button:focus-visible,.canvas-creative-recipe button:focus-visible,.canvas-creative-recipe select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.canvas-image-creative-grid svg,.canvas-creative-recipe svg{width:18px;height:18px;flex:0 0 18px}
+.canvas-image-creative-menu>p{margin:10px 0 0;padding-top:8px;border-top:1px solid var(--theme-border-strong);color:var(--text-secondary);font-size:10px;line-height:1.4}
+.canvas-creative-recipe{margin:7px 0;font-size:11px;color:var(--text-primary)}
+.canvas-creative-recipe-chip{display:inline-flex;max-width:100%;align-items:center;border:1px solid var(--theme-border-strong);border-radius:8px;background:var(--theme-hover);overflow:hidden}
+.canvas-creative-recipe-chip button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.canvas-creative-recipe-expand,.canvas-creative-recipe-switch{display:flex;align-items:center;gap:7px;min-width:0;padding:6px 8px}
+.canvas-creative-recipe-expand>span:first-of-type,.canvas-creative-recipe-switch>span:first-of-type{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.canvas-creative-recipe-expand small,.canvas-creative-recipe-switch small{font-size:10px;color:var(--text-secondary);white-space:nowrap}
+.canvas-creative-recipe-chip .canvas-creative-recipe-settings{align-self:stretch;display:flex;align-items:center;justify-content:center;flex:0 0 27px;padding:0 6px;border-left:1px solid var(--theme-border-strong)}
+.canvas-creative-recipe-settings svg{width:14px;height:14px;flex:0 0 14px}
+.canvas-creative-recipe-chip .canvas-creative-recipe-remove{align-self:stretch;padding:0 9px;border-left:1px solid var(--theme-border-strong);font-size:16px}
+.canvas-creative-recipe-chip button:hover{background:var(--theme-selected)}
+.canvas-creative-recipe-options{display:flex;flex-wrap:wrap;gap:7px 12px;padding:9px 2px 0}
+.canvas-creative-recipe-options label{display:flex;align-items:center;gap:7px;color:var(--text-secondary)}
+.canvas-creative-recipe-options select{max-width:150px;background:var(--theme-glass-bg);border:1px solid var(--theme-border-strong);border-radius:6px;padding:4px 6px;color:var(--text-primary);font:inherit}
+.canvas-creative-recipe-options p{flex-basis:100%;margin:0;color:var(--text-secondary);font-size:10px;line-height:1.5}
+
+.canvas-composer-floating-layer > .canvas-image-creative-menu{max-height:inherit;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+
+.canvas-composer-options{flex-wrap:wrap;row-gap:5px}
+.canvas-composer-anchor>button>strong{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.canvas-creative-input-hint{display:block;margin:5px 0 0;color:var(--text-secondary);font-size:11px;line-height:1.4}

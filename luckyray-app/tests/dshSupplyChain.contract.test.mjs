@@ -365,7 +365,7 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.prepareDetachedPublication, "productio
     recordsDirectory,
     stageRoot: outputRoot,
   });
-  assert.equal(finalVerified.packageCount, 516);
+  assert.equal(finalVerified.packageCount, 562);
   const finalNative = await runExecutable(join(outputRoot, "node", "node.exe"), [
     new URL("../scripts/dsh-supply-chain.mjs", import.meta.url).pathname.slice(1),
     "native-probe",
@@ -384,7 +384,7 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.prepareDetachedPublication, "productio
     "--version",
   ]);
   assert.equal(finalVersion.code, 0, finalVersion.stderr);
-  assert.equal(finalVersion.stdout.trim(), "0.1.7-rc.2");
+  assert.equal(finalVersion.stdout.trim(), "0.2.1-rc.3");
 
   const publishedPackage = join(
     outputRoot,
@@ -654,21 +654,21 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.gateInventoryAuthority, "canonical DSH
   }
 });
 
-dshProductionTest(DSH_PRODUCTION_TEST_IDS.authorityRc2, "DSH runtime authority pins rc.2 npm bytes and keeps the official tag audit-only", async () => {
+dshProductionTest(DSH_PRODUCTION_TEST_IDS.authorityRc2, "DSH runtime authority pins rc.3 npm bytes and keeps the official tag audit-only", async () => {
   const authority = JSON.parse(await readFile(authorityUrl, "utf8"));
   const validated = validateDshRuntimeAuthority(authority);
 
   assert.equal(validated.runtimePackage.name, "@deepseek-ai/dsh");
-  assert.equal(validated.runtimePackage.version, "0.1.7-rc.2");
+  assert.equal(validated.runtimePackage.version, "0.2.1-rc.3");
   assert.equal(
     validated.runtimePackage.sha256,
-    "5f2da7272d9485abc223e681075809a8d929697c5232ee445718e1b7e066bff8",
+    "9a8f9493bfab8218215a8ca38ab8821e76dff63dc4fcb65841ef87c0aa277141",
   );
   assert.equal(
     validated.sourceReference.commit,
-    "477b4f420553e8a52c2fbccc464d7561b239c443",
+    "1f81c047fc48fa190a683e469daa699857e9afe8",
   );
-  assert.equal(validated.sourceReference.declaredVersion, "0.1.7-rc.2");
+  assert.equal(validated.sourceReference.declaredVersion, "0.2.1-rc.3");
   assert.equal(validated.sourceReference.role, "audit-only");
   assert.equal(validated.sourceReference.provenanceBoundToRuntime, false);
   assert.deepEqual(validated.packageManager.installPolicy, {
@@ -704,7 +704,7 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.authorityRc2, "DSH runtime authority p
       "minimumReleaseAgeIgnoreMissingTime: false",
       "minimumReleaseAgeIgnoreMissingTime: true",
     ),
-    `${workspacePolicy.toString("utf8")}minimumReleaseAgeExclude:\n  - '@deepseek-ai/dsh@0.1.7-rc.2'\n`,
+    `${workspacePolicy.toString("utf8")}minimumReleaseAgeExclude:\n  - '@deepseek-ai/dsh@0.2.1-rc.3'\n`,
   ]) {
     assert.throws(
       () => validateAuthenticatedWorkspacePolicy(hostilePolicy, validated.packageManager.installPolicy),
@@ -932,14 +932,14 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.closureFrozenZeroPatch, "DSH host clos
   ]);
 
   const closure = validateDshFrozenClosure({ authority, hostPackage, lockfile, npmrc, workspacePolicy });
-  assert.equal(closure.packageCount, 591);
+  assert.equal(closure.packageCount, 634);
   assert.equal(closure.lockfileVersion, "9.0");
   assert.equal(closure.upstreamPatchCount, 0);
 
   assert.throws(
     () => validateDshFrozenClosure({
       authority,
-      hostPackage: { ...hostPackage, dependencies: { "@deepseek-ai/dsh": "^0.1.7-rc.2" } },
+      hostPackage: { ...hostPackage, dependencies: { "@deepseek-ai/dsh": "^0.2.1-rc.3" } },
       lockfile,
       npmrc,
       workspacePolicy,
@@ -982,17 +982,17 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.lockReconcileReal, "locked closure rec
     lockfile,
     stagedPackages: dependencyAudit.packages,
   });
-  assert.equal(reconciliation.lockedCount, 591);
-  assert.equal(reconciliation.stagedCount, 516);
-  assert.equal(reconciliation.prunedCount, 75);
+  assert.equal(reconciliation.lockedCount, 634);
+  assert.equal(reconciliation.stagedCount, 562);
+  assert.equal(reconciliation.prunedCount, 72);
   assert.equal(reconciliation.schemaVersion, 2);
-  assert.equal(reconciliation.mandatoryReachableCount, 510);
-  assert.equal(reconciliation.optionalOnlyReachableCount, 81);
-  assert.equal(reconciliation.staged.length + reconciliation.pruned.length, 591);
+  assert.equal(reconciliation.mandatoryReachableCount, 556);
+  assert.equal(reconciliation.optionalOnlyReachableCount, 78);
+  assert.equal(reconciliation.staged.length + reconciliation.pruned.length, 634);
   assert.equal(new Set([
     ...reconciliation.staged.map((entry) => entry.lockKey),
     ...reconciliation.pruned.map((entry) => entry.lockKey),
-  ]).size, 591);
+  ]).size, 634);
   assert.ok(reconciliation.pruned.every((entry) => [
     "platform-not-win32",
     "architecture-not-x64",
@@ -1306,7 +1306,7 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.stageDriftMatrix, "production stage ve
 
   const records = JSON.parse(await readFile(new URL("dependency-audit.json", recordsUrl), "utf8"));
   const koffiEdge = records.resolverGraph.edges.find(
-    (edge) => edge.targetPackage === "@koromix/koffi-win32-x64@3.3.1",
+    (edge) => edge.targetPackage === "@koromix/koffi-win32-x64@3.1.1",
   );
   assert.ok(koffiEdge);
   const koffiNative = join(
@@ -1324,7 +1324,7 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.stageDriftMatrix, "production stage ve
 
   const rootLink = join(existingStageFixture, "host", "node_modules", "@deepseek-ai", "dsh");
   const replacementEdge = records.resolverGraph.edges.find(
-    (edge) => edge.targetPackage !== "@deepseek-ai/dsh@0.1.7-rc.2",
+    (edge) => edge.targetPackage !== "@deepseek-ai/dsh@0.2.1-rc.3",
   );
   const replacementTarget = join(
     existingStageFixture,
@@ -1432,17 +1432,17 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.recordsDeterministicInert, "published 
   };
 
   const validated = validatePublishedDshRecords({ authority, records });
-  assert.equal(validated.packageCount, 516);
+  assert.equal(validated.packageCount, 562);
   assert.equal(validated.nativeArtifactCount, 28);
   assert.equal(validated.installScriptsExecuted, false);
   assert.equal(records.runtimeManifest.closure.lifecycleScriptReviews.length, 5);
-  assert.equal(records.dependencyAudit.resolverGraph.edgeCount, 2706);
-  assert.equal(records.dependencyAudit.lockReconciliation.lockedCount, 591);
-  assert.equal(records.dependencyAudit.lockReconciliation.stagedCount, 516);
-  assert.equal(records.dependencyAudit.lockReconciliation.prunedCount, 75);
+  assert.equal(records.dependencyAudit.resolverGraph.edgeCount, 2868);
+  assert.equal(records.dependencyAudit.lockReconciliation.lockedCount, 634);
+  assert.equal(records.dependencyAudit.lockReconciliation.stagedCount, 562);
+  assert.equal(records.dependencyAudit.lockReconciliation.prunedCount, 72);
   assert.equal(records.dependencyAudit.lockReconciliation.schemaVersion, 2);
-  assert.equal(records.dependencyAudit.lockReconciliation.mandatoryReachableCount, 510);
-  assert.equal(records.dependencyAudit.lockReconciliation.optionalOnlyReachableCount, 81);
+  assert.equal(records.dependencyAudit.lockReconciliation.mandatoryReachableCount, 556);
+  assert.equal(records.dependencyAudit.lockReconciliation.optionalOnlyReachableCount, 78);
   const stagedIdentities = records.dependencyAudit.lockReconciliation.staged
     .map((entry) => entry.packageIdentity)
     .sort();
@@ -1456,9 +1456,9 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.recordsDeterministicInert, "published 
   assert.deepEqual(stagedIdentities, auditedIdentities);
   assert.deepEqual(sbomIdentities, auditedIdentities);
   assert.ok(auditedIdentities.every((identity) => records.notice.includes(`${identity} | `)));
-  assert.equal(records.runtimeManifest.closure.resolverGraphEdgeCount, 2706);
-  assert.equal(records.runtimeManifest.closure.lockReconciliation.mandatoryReachableCount, 510);
-  assert.equal(records.runtimeManifest.closure.lockReconciliation.optionalOnlyReachableCount, 81);
+  assert.equal(records.runtimeManifest.closure.resolverGraphEdgeCount, 2868);
+  assert.equal(records.runtimeManifest.closure.lockReconciliation.mandatoryReachableCount, 556);
+  assert.equal(records.runtimeManifest.closure.lockReconciliation.optionalOnlyReachableCount, 78);
   assert.equal(records.runtimeManifest.closure.nativeCompatibility.staticEvidenceCount, 11);
   assert.equal(
     records.runtimeManifest.packageManager.extractedTree.sha256,
@@ -1470,7 +1470,7 @@ dshProductionTest(DSH_PRODUCTION_TEST_IDS.recordsDeterministicInert, "published 
     "sharp",
     "node-addon-require-builtin",
   ]);
-  assert.equal(records.launchManifest.entryPointAuthority.targetPackage, "@deepseek-ai/dsh@0.1.7-rc.2");
+  assert.equal(records.launchManifest.entryPointAuthority.targetPackage, "@deepseek-ai/dsh@0.2.1-rc.3");
   assert.ok(records.runtimeManifest.closure.lifecycleScriptReviews.every(
     (review) => review.decision === "disabled-for-app-owned-stage" && review.executed === false,
   ));

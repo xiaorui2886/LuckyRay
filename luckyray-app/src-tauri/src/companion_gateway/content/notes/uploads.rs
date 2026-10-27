@@ -185,9 +185,7 @@ pub(super) fn route(gateway: &CompanionGateway, request: &HttpRequest) -> Conten
         if revision(&doc.summary.relative_path, &doc.revision) != manifest.expected_revision {
             return Err((409, "REVISION_CONFLICT"));
         }
-        let publication = gateway
-            .backend
-            .knowledge()
+        let publication = gateway.knowledge()
             .publish_companion_attachment(
                 &target,
                 &doc.summary.document_ref,
@@ -205,7 +203,7 @@ pub(super) fn route(gateway: &CompanionGateway, request: &HttpRequest) -> Conten
         )
         .map_err(db_error)?;
         let _ = fs::remove_file(&staged);
-        gateway.backend.knowledge().notify_companion_committed(&doc.summary.document_ref.vault_id, vec![doc.summary.relative_path.clone()]);
+        gateway.knowledge().notify_companion_committed(&doc.summary.document_ref.vault_id, vec![doc.summary.relative_path.clone()]);
         return Ok(receipt);
     }
     if complete || !matches!(request.method.as_str(), "GET" | "POST") {

@@ -7,6 +7,25 @@ type Deferred<T> = {
   resolve: (value: T) => void;
 };
 
+test("auto import reconciles metadata quietly, retains row identities and does not miss concurrent changes", async () => {
+  let listCalls=0;let folderCalls=0;
+  const old={id:"old",name:"old",kind:"other",importedAt:"2026-10-17T00:00:00Z"};const added={id:"new",name:"new",kind:"other",importedAt:"2026-10-18T00:00:00Z"};
+  const store=await freshMaterialStore("root-event-import",{
+    listAssets:async()=>{listCalls++;return listCalls === 1 ? [old] : [{...old},added];},
+    getAssetsByIds:async()=>[added],
+    listFolders:async()=>{folderCalls++;return [];},
+    getMaterialChangeState:async()=>({version:1,reason:"initial",affectedIds:[],foldersChanged:false,occurredAt:"2026-10-18T00:00:00Z"}),
+  });
+  await store.ensureSnapshot({reason:"initial"});
+  const states:string[]=[];const stop=store.subscribe(()=>states.push(store.getSnapshot().status));
+  await store.invalidate({reason:"library-auto-import",background:true});
+  stop();assert.equal(listCalls,2);assert.equal(folderCalls,2);
+  assert.deepEqual(store.getSnapshot().assets.map(asset=>asset.id),["old","new"]);
+  assert.equal(store.getSnapshot().assets[0],old,"unaffected row identity is preserved");
+  assert.deepEqual(store.getSnapshot().recentOrder,["new","old"],"background imports keep the chosen recent-first ordering");
+  assert.ok(states.every(state=>state==="ready"),`no visible loading/refresh state: ${states}`);
+});
+
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((settle) => {

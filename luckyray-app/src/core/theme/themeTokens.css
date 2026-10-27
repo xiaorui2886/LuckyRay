@@ -1,4 +1,6 @@
-/* LuckyRay's single visual theme authority. Keep theme identity here; consumers use semantic tokens. */
+/* LuckyRay's single visual theme authority. Keep theme identity here; consumers use semantic tokens.
+   Muted copy remains readable (>= 4.5:1) on base, panel, card and raised surfaces;
+   reserve reduced opacity for decoration and disabled states, not small labels. */
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -15,7 +17,7 @@
   --theme-hover: #222228;
   --theme-selected: #2a2a32;
   --theme-overlay: rgba(3, 3, 5, .64);
-  --theme-text-muted: #5a5a62;
+  --theme-text-muted: #82828c;
   --theme-shadow-sm: 0 1px 2px rgba(0, 0, 0, .28);
   --theme-shadow-md: 0 10px 30px rgba(0, 0, 0, .36);
   --theme-shadow-lg: 0 22px 64px rgba(0, 0, 0, .5);
@@ -53,7 +55,7 @@
   --theme-hover: #e8eaf0;
   --theme-selected: #dfe2eb;
   --theme-overlay: rgba(29, 31, 40, .3);
-  --theme-text-muted: #747987;
+  --theme-text-muted: #696d7a;
   --theme-shadow-sm: 0 1px 2px rgba(29, 32, 44, .06);
   --theme-shadow-md: 0 10px 30px rgba(29, 32, 44, .11);
   --theme-shadow-lg: 0 24px 64px rgba(29, 32, 44, .16);
@@ -91,7 +93,7 @@
   --theme-hover: #e9decf;
   --theme-selected: #dfd1bd;
   --theme-overlay: rgba(66, 51, 34, .26);
-  --theme-text-muted: #8d8071;
+  --theme-text-muted: #71665a;
   --theme-shadow-sm: 0 1px 2px rgba(84, 64, 38, .07);
   --theme-shadow-md: 0 10px 30px rgba(84, 64, 38, .12);
   --theme-shadow-lg: 0 24px 64px rgba(84, 64, 38, .18);
@@ -129,7 +131,7 @@
   --theme-hover: #e7d1d9;
   --theme-selected: #ddc0cb;
   --theme-overlay: rgba(71, 43, 54, .27);
-  --theme-text-muted: #927682;
+  --theme-text-muted: #785f6a;
   --theme-shadow-sm: 0 1px 2px rgba(91, 46, 63, .07);
   --theme-shadow-md: 0 10px 30px rgba(91, 46, 63, .12);
   --theme-shadow-lg: 0 24px 64px rgba(91, 46, 63, .18);
@@ -167,7 +169,7 @@
   --theme-hover: #292f37;
   --theme-selected: #343c46;
   --theme-overlay: rgba(1, 4, 9, .66);
-  --theme-text-muted: #6e7681;
+  --theme-text-muted: #868d98;
   --theme-shadow-sm: 0 1px 2px rgba(0, 0, 0, .25);
   --theme-shadow-md: 0 10px 30px rgba(1, 4, 9, .4);
   --theme-shadow-lg: 0 24px 64px rgba(1, 4, 9, .58);
@@ -205,7 +207,7 @@
   --theme-hover: #f2f2f2;
   --theme-selected: #e9e9e9;
   --theme-overlay: rgba(17, 17, 19, .25);
-  --theme-text-muted: #85858e;
+  --theme-text-muted: #71717b;
   --theme-shadow-sm: 0 1px 2px rgba(0, 0, 0, .035);
   --theme-shadow-md: 0 10px 30px rgba(0, 0, 0, .075);
   --theme-shadow-lg: 0 24px 64px rgba(0, 0, 0, .12);
@@ -243,7 +245,7 @@
   --theme-hover: #0d3c32;
   --theme-selected: #104b3c;
   --theme-overlay: rgba(0, 12, 9, .66);
-  --theme-text-muted: #6b9b8e;
+  --theme-text-muted: #6f9e91;
   --theme-shadow-sm: 0 1px 2px rgba(0, 0, 0, .22);
   --theme-shadow-md: 0 10px 30px rgba(0, 0, 0, .35);
   --theme-shadow-lg: 0 24px 64px rgba(0, 0, 0, .49);
@@ -281,7 +283,7 @@
   --theme-hover: #dccbc4;
   --theme-selected: #cfbab4;
   --theme-overlay: rgba(59, 54, 70, .27);
-  --theme-text-muted: #65708a;
+  --theme-text-muted: #565f76;
   --theme-shadow-sm: 0 1px 2px rgba(74, 80, 104, .06);
   --theme-shadow-md: 0 10px 30px rgba(74, 80, 104, .11);
   --theme-shadow-lg: 0 24px 64px rgba(74, 80, 104, .17);
@@ -319,7 +321,7 @@
   --theme-hover: #b8c7d1;
   --theme-selected: #a8bdc8;
   --theme-overlay: rgba(31, 54, 70, .28);
-  --theme-text-muted: #496c80;
+  --theme-text-muted: #3f5c6e;
   --theme-shadow-sm: 0 1px 2px rgba(41, 71, 91, .06);
   --theme-shadow-md: 0 10px 30px rgba(41, 71, 91, .12);
   --theme-shadow-lg: 0 24px 64px rgba(41, 71, 91, .18);

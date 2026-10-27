@@ -1204,6 +1204,7 @@ export function AppTitlebar({
           <button
             type="button"
             className={`titlebar-ai-browser${aiContentBrowserOpen ? " active" : ""}`}
+            data-lightseek-content-toggle
             aria-pressed={aiContentBrowserOpen}
             aria-label={aiContentBrowserOpen ? t("titlebar.ai.closeContentBrowser") : t("titlebar.ai.openContentBrowser")}
             title={aiContentBrowserOpen ? t("titlebar.ai.closeContentBrowser") : t("titlebar.ai.openContentBrowser")}

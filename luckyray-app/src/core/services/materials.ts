@@ -530,7 +530,7 @@ export async function resolveMaterialLightSeekAttachmentsWithTransport(
     if (imageAttachment) imageCount += 1;
     return Object.freeze({
       ...resource,
-      delivery: imageAttachment ? "image-attachment" as const : "path-reference" as const,
+      delivery: imageAttachment ? "image-attachment" as const : "file-attachment" as const,
     });
   }));
 }
@@ -542,21 +542,22 @@ export function resolveMaterialLightSeekAttachments(assets: readonly MaterialLig
 export async function beginMaterialExternalDragWithTransport(
   assetIds: string[],
   transport: MaterialExternalDragTransport,
+  previewPng?: string,
 ): Promise<void> {
   const uniqueIds = Array.from(new Set(assetIds));
   if (uniqueIds.length === 0) throw new Error("请选择要拖出的素材");
   if (uniqueIds.length > 64 || uniqueIds.some((id) => !id || id.length > 256 || id.trim() !== id)) {
     throw new Error("素材选择无效");
   }
-  await transport("material_catalog_begin_external_drag", { assetIds: uniqueIds });
+  await transport("material_catalog_begin_external_drag", { assetIds: uniqueIds, ...(previewPng ? { previewPng } : {}) });
 }
 
-export async function beginMaterialExternalDrag(assetIds: string[], libraryId = materialLibrarySession.getSnapshot().libraryId, vaultId?: string): Promise<void> {
+export async function beginMaterialExternalDrag(assetIds: string[], libraryId = materialLibrarySession.getSnapshot().libraryId, vaultId?: string, previewPng?: string): Promise<void> {
   const transport = nativeMaterialTransport(libraryId, vaultId);
   await ensureMaterialExternalDragCompletionListener();
   setActiveMaterialExternalDrag(assetIds, Date.now(), libraryId);
   try {
-    await beginMaterialExternalDragWithTransport(assetIds, transport);
+    await beginMaterialExternalDragWithTransport(assetIds, transport, previewPng);
   } catch (error) {
     clearActiveMaterialExternalDrag();
     throw error;

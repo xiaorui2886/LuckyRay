@@ -1,0 +1,63 @@
+/* Canvas-owned typography: preview and the knowledge editor share these values. */
+.canvas-text-document,.canvas-text-focus-placeholder { --canvas-writing-size:14px; --canvas-writing-line:1.8; position:relative; min-width:0; color:var(--text-primary,#e4e4e7); font-family:inherit; font-size:var(--canvas-writing-size); font-weight:400; line-height:var(--canvas-writing-line); text-align:start; }
+.canvas-text-writing { min-width:0; width:100%; font:inherit; }
+.canvas-text-preview,.canvas-text-editor .cm-editor { padding:0; font:inherit; color:inherit; background:transparent; }
+.canvas-text-preview { overflow-wrap:anywhere; white-space:pre-wrap; }
+.canvas-text-preview.is-empty { color:var(--text-tertiary,#81818c); }
+.canvas-text-line { min-height:1.8em; margin:0; }
+.canvas-text-document .cm-editor { outline:none; height:auto; }
+.canvas-text-document .cm-scroller { font:inherit; line-height:1.8; overflow:auto; }
+.canvas-text-document .cm-content { padding:0; min-height:1.8em; caret-color:var(--accent,#a39aef); }
+.canvas-text-document .cm-line { padding:0; }
+.canvas-text-document .cm-placeholder { font:inherit; color:var(--text-tertiary,#81818c); }
+.canvas-text-document .cm-focused { outline:none; }
+.canvas-text-document .cm-selectionBackground,.canvas-text-document .cm-focused .cm-selectionBackground { background:color-mix(in srgb,var(--accent,#a39aef) 24%,transparent); }
+.canvas-text-line.h1,.canvas-text-document .cm-line.lr-live-line-heading.h1 { font-size:1.7em; font-weight:700; line-height:1.8; }
+.canvas-text-line.h2,.canvas-text-document .cm-line.lr-live-line-heading.h2 { font-size:1.42em; font-weight:700; line-height:1.8; }
+.canvas-text-line.h3,.canvas-text-document .cm-line.lr-live-line-heading.h3 { font-size:1.21em; font-weight:700; line-height:1.8; }
+.canvas-text-line.h4,.canvas-text-document .cm-line.lr-live-line-heading.h4 { font-size:1.07em; font-weight:700; }
+.canvas-text-line.h5,.canvas-text-line.h6,.canvas-text-document .cm-line.lr-live-line-heading.h5,.canvas-text-document .cm-line.lr-live-line-heading.h6 { font-size:1em; font-weight:600; }
+.canvas-text-preview strong,.canvas-text-document .lr-live-strong { font-weight:700; }
+.canvas-text-preview em,.canvas-text-document .lr-live-emphasis { font-style:italic; }
+.canvas-text-preview code,.canvas-text-line.is-code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.94em; }
+.canvas-text-toolbar { display:flex; align-items:center; gap:2px; padding:5px; border:1px solid var(--border-subtle,#34343d); border-radius:10px; background:var(--bg-elevated,#24242c); box-shadow:0 6px 24px #0003; position:absolute; z-index:6; bottom:calc(100% + 10px); left:0; width:max-content; max-width:min(640px,85vw); flex-wrap:wrap; }
+.canvas-text-toolbar button,.canvas-text-idle-actions button { display:grid; place-items:center; width:29px; height:28px; min-width:29px; padding:0; border:0; border-radius:5px; background:transparent; color:var(--text-secondary,#b3b3bf); font-family:inherit; font-weight:500; font-size:12px; line-height:1; cursor:pointer; }
+.canvas-text-toolbar button:hover,.canvas-text-idle-actions button:hover { background:var(--bg-hover,#ffffff10); color:var(--text-primary,#f1f1f4); }
+.canvas-text-document button:focus-visible { outline:2px solid var(--accent,#a39aef); outline-offset:2px; }
+.canvas-text-toolbar .format-bold { font-weight:800; }.canvas-text-toolbar .format-italic { font-style:italic; }.canvas-text-toolbar .format-strike { text-decoration:line-through; }
+.canvas-text-tool-divider { width:1px; height:17px; background:var(--border-subtle,#ffffff13); margin:0 4px; }
+.canvas-text-tool-spacer { flex:1; }.canvas-text-zoom { color:var(--text-tertiary,#9999a6); font-family:inherit; font-size:11px; line-height:1; min-width:34px; text-align:center; }
+.canvas-text-idle-actions { position:absolute; right:0; bottom:calc(100% + 8px); display:flex; gap:3px; padding:3px; background:var(--bg-elevated,#24242c); border:1px solid var(--border-subtle,#34343d); border-radius:8px; }
+.canvas-text-workspace { min-height:0; }
+.canvas-text-focus-backdrop { position:fixed; inset:0; z-index:10020; display:flex; align-items:center; justify-content:center; padding:24px; background:#08080dbc; backdrop-filter:blur(8px); }
+.canvas-text-document.is-expanded { display:flex; flex-direction:column; width:min(1120px,100%); height:min(880px,100%); overflow:hidden; border:1px solid var(--border-subtle,#393941); border-radius:16px; background:var(--bg-primary,#19191f); box-shadow:0 28px 90px #0006; }
+.canvas-text-document.is-expanded .canvas-text-toolbar { position:static; flex:none; width:auto; max-width:none; border:0; border-bottom:1px solid var(--border-subtle,#303039); border-radius:0; padding:12px 18px; background:transparent; box-shadow:none; }
+.canvas-text-document.is-expanded .canvas-text-workspace { flex:1; display:flex; overflow:hidden; }
+.canvas-text-document.is-expanded .canvas-text-writing { flex:1; min-height:0; overflow:auto; padding:32px clamp(18px,4vw,64px) 60px; }
+.canvas-text-document.is-expanded .canvas-text-editor { max-width:720px; margin:0 auto; }
+.canvas-text-outline { width:210px; flex-shrink:0; padding:26px 12px; overflow:auto; border-right:1px solid var(--border-subtle,#303039); }
+.canvas-text-outline-title { padding:0 12px 16px; color:var(--text-tertiary,#858593); font-size:11px; letter-spacing:.06em; }
+.canvas-text-outline>button { display:block; width:100%; text-align:start; border:0; border-radius:6px; padding:7px 12px; background:none; color:var(--text-secondary,#a9a9b6); font:inherit; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+.canvas-text-outline>button:hover { color:var(--text-primary,#f1f1f4); background:var(--bg-hover,#ffffff08); }
+.canvas-text-outline p { color:var(--text-tertiary,#858593); padding:0 12px; font-size:12px; }
+.canvas-text-template { margin-top:24px; border-top:1px solid var(--border-subtle,#303039); padding:16px 0; }
+.canvas-text-template button { border:0; padding:7px 12px; border-radius:6px; background:var(--bg-hover,#ffffff08); color:var(--text-secondary,#b1b1c2); cursor:pointer; font:inherit; font-size:12px; }
+.canvas-text-template-confirm p { padding:0; line-height:1.8; }
+.canvas-text-template-confirm { padding:0 8px; }
+.canvas-text-footer { display:flex; justify-content:space-between; gap:12px; padding:10px 20px; border-top:1px solid var(--border-subtle,#303039); color:var(--text-tertiary,#858593); font-size:11px; }
+@media(max-width:700px) { .canvas-text-focus-backdrop { padding:8px; }.canvas-text-outline { width:150px; padding-inline:5px; }.canvas-text-document.is-expanded .canvas-text-toolbar { padding:8px; gap:0; }.canvas-text-document.is-expanded .canvas-text-writing { padding:20px 16px; }.canvas-text-footer span:first-child { display:none; } }
+@media(prefers-reduced-motion:reduce) { .canvas-text-focus-backdrop { backdrop-filter:none; } }
+/* Keep full documents inside the resized card; only the toolbar may overflow. */
+.canvas-text-document:not(.is-expanded),.canvas-text-focus-placeholder { flex:1; min-height:0; max-height:100%; display:flex; flex-direction:column; }
+.canvas-text-document:not(.is-expanded)>.canvas-text-workspace { flex:1; min-height:0; display:flex; overflow:hidden; }
+.canvas-text-document:not(.is-expanded) .canvas-text-writing { min-height:0; overflow:hidden; }
+.canvas-text-document:not(.is-expanded) .canvas-text-editor { height:100%; min-height:0; }
+.canvas-text-document:not(.is-expanded) .cm-editor { height:100%; }
+.canvas-text-document:not(.is-expanded) .cm-scroller { overflow:auto; }
+.canvas-text-focus-placeholder>.canvas-text-preview { overflow:hidden; }
+.canvas-text-outline>button[aria-current="location"] { background:color-mix(in srgb,var(--accent,#a39aef) 10%,transparent); color:var(--text-primary,#f1f1f4); }
+
+/* React Flow portals these outside the scaled/clipped card, above its name. */
+.canvas-text-floating-content { width:max-content; min-width:0; }
+.canvas-text-floating-content>.canvas-text-toolbar,.canvas-text-floating-content>.canvas-text-idle-actions { position:relative; inset:auto; width:max-content; max-width:100%; box-sizing:border-box; flex-wrap:wrap; justify-content:center; }
+.canvas-text-floating-tools button:focus-visible { outline:2px solid var(--accent,#a39aef); outline-offset:2px; }

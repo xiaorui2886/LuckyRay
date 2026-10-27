@@ -1,0 +1,60 @@
+from playwright.sync_api import sync_playwright
+import json
+
+with sync_playwright() as p:
+    browser=p.chromium.launch(headless=True,channel='msedge')
+    page=browser.new_page(viewport={'width':1280,'height':800})
+    errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    page.goto('http://127.0.0.1:1427/tests/fixtures/workspace-tools.html')
+    page.locator('[data-workspace-tab="A"]').click()
+    page.locator('[data-workspace-view="A"] .cm-content').wait_for(state='visible')
+    page.evaluate('window.editorBefore=document.querySelector("[data-workspace-view=A] .cm-content")')
+    page.get_by_role('button',name='打开大纲',exact=True).click()
+    panel=page.get_by_role('region',name='笔记大纲',exact=True)
+    panel.get_by_role('button',name='A 章节',exact=True).wait_for(state='visible')
+    panel.get_by_role('button',name='固定对象',exact=True).click()
+    page.locator('[data-workspace-tab="B"]').click()
+    assert panel.get_by_role('button',name='A 章节',exact=True).is_visible()
+    assert not panel.get_by_role('button',name='B 章节',exact=True).count()
+    panel.get_by_role('combobox',name='笔记大纲位置').select_option('float')
+    panel.get_by_role('combobox',name='笔记大纲位置').select_option('left')
+    tab=page.get_by_role('tab',name='笔记大纲',exact=True)
+    bounds=tab.bounding_box()
+    page.mouse.move(bounds['x']+20,bounds['y']+15);page.mouse.down();page.mouse.move(780,300,steps=10);page.mouse.up()
+    page.wait_for_timeout(100)
+    assert page.evaluate('window.workspaceStore.getSnapshot().tools.panels[0].dock')=='float'
+    bounds=tab.bounding_box()
+    before=page.evaluate('JSON.stringify(window.workspaceStore.getSnapshot())')
+    page.mouse.move(bounds['x']+20,bounds['y']+15);page.mouse.down();page.mouse.move(20,300,steps=10);page.keyboard.press('Escape');page.mouse.up()
+    assert page.evaluate('JSON.stringify(window.workspaceStore.getSnapshot())')==before
+    panel.get_by_role('combobox',name='笔记大纲位置').select_option('left')
+    assert page.evaluate('window.editorBefore===document.querySelector("[data-workspace-view=A] .cm-content")')
+    page.get_by_role('button',name='命名布局',exact=True).click()
+    dialog=page.get_by_role('dialog',name='命名布局')
+    dialog.get_by_role('textbox',name='布局名称').fill('写作')
+    dialog.get_by_role('button',name='保存为新布局').click()
+    dialog.get_by_role('button',name='关闭',exact=True).click()
+    panel.get_by_role('combobox',name='笔记大纲位置').select_option('bottom')
+    page.get_by_role('button',name='命名布局',exact=True).click()
+    page.evaluate('window.refuseSave=true')
+    dialog.get_by_role('button',name='应用到此窗口').click()
+    dialog.get_by_role('alert').wait_for(state='visible')
+    assert page.evaluate('window.workspaceStore.getSnapshot().tools.panels[0].dock')=='bottom'
+    page.evaluate('window.refuseSave=false')
+    dialog.get_by_role('button',name='应用到此窗口').click()
+    dialog.wait_for(state='hidden')
+    assert page.evaluate('window.workspaceStore.getSnapshot().tools.panels[0].dock')=='left'
+    assert page.evaluate('window.editorBefore===document.querySelector("[data-workspace-view=A] .cm-content")')
+    page.evaluate('window.workspaceStore.dispatch({type:"close",viewId:"A"})')
+    panel.get_by_text('固定的视图已关闭或不再可用。取消固定可跟随当前视图。',exact=True).wait_for(state='visible')
+    page.evaluate('window.workspaceStore.undo()')
+    panel.get_by_role('button',name='A 章节',exact=True).wait_for(state='visible')
+    for width in [620,980,1920]:
+        page.set_viewport_size({'width':width,'height':800})
+        page.wait_for_timeout(80)
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    page.screenshot(path='output/playwright/workspace-p0/tools-named-layout.png')
+    assert not errors,errors
+    print(json.dumps({'errors':errors,'fixedContext':True,'dockMoveRetainsEditor':True,'namedLayoutRestoresTools':True,'failedSavePreventsRestore':True,'closedPinnedViewPlaceholder':True}))
+    browser.close()

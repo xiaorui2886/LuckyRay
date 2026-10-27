@@ -658,7 +658,7 @@ test("DSH diagnostic Provider answers only the one exact probe request", async (
   }
 });
 
-test("DSH production host boundary has zero Agent and product authority imports", async () => {
+test("DSH production host boundary carries bounded canvas control without Agent or product authority imports", async () => {
   const rust = await readFile(new URL("../src-tauri/src/dsh_host.rs", import.meta.url), "utf8");
   const host = await readFile(new URL("../src-tauri/dsh-host/luckyray-dsh-host.mjs", import.meta.url), "utf8");
   const client = await readFile(new URL("../src/core/services/dshHost.ts", import.meta.url), "utf8");
@@ -672,7 +672,7 @@ test("DSH production host boundary has zero Agent and product authority imports"
     "WorkspaceGrant",
     "KnowledgeRunScope",
     "Agent Browser",
-    "Canvas",
+    "createCanvasAgentService",
     "setInterval(",
   ]) {
     assert.equal(combined.includes(forbidden), false, forbidden);

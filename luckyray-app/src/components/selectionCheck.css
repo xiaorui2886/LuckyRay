@@ -1,0 +1,12 @@
+.selection-check-react {
+  position: absolute; z-index: 3; width: 20px; height: 20px; padding: 0;
+  border-radius: 50%; border: 2px solid rgba(255,255,255,.4);
+  background: rgba(0,0,0,.4); backdrop-filter: blur(8px); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+.selection-check-react.checked { background: var(--accent); border-color: var(--accent); }
+.selection-check-react svg { width: 12px; height: 12px; stroke: white; fill: none; stroke-width: 2; opacity: 0; }
+.selection-check-react.checked svg { opacity: 1; }
+.selection-check-react:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .selection-check-react { transition: none; } }

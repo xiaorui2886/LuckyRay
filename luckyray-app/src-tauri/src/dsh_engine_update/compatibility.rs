@@ -28,9 +28,16 @@ struct HostInterfaces {
 fn implements_capability(name: &str) -> bool {
     // These interfaces require the actual Windows host implementation. A
     // declaration file alone cannot enable them in a differently built host.
-    cfg!(all(windows, target_arch = "x86_64", feature = "browser-host-runtime"))
-        && matches!(name, "authenticated-host-frames-v1" | "native-surface-loopback-v1"
-            | "resource-intents-v1" | "plugin-quarantine-v1" | "signed-closure-switch-v1")
+    if !cfg!(all(windows, target_arch = "x86_64", feature = "browser-host-runtime")) {
+        return false;
+    }
+    match name {
+        "authenticated-host-frames-v1" | "native-surface-loopback-v1"
+        | "resource-intents-v1" | "plugin-quarantine-v1" | "signed-closure-switch-v1" => true,
+        "closure-budget-40000-v1" => super::MAX_CLOSURE_FILE_COUNT == 40_000,
+        "loader-login-relay-ready-v1" => crate::dsh_host::UPDATE_LOGIN_RELAY_READY_PROTOCOL == 1,
+        _ => false,
+    }
 }
 
 impl Compatibility {
@@ -54,9 +61,13 @@ impl Compatibility {
     }
 
     pub(crate) fn admit(&self, host_version: &str) -> Result<(), AdmissionError> {
-        self.validate()?;
         let host: HostInterfaces = serde_json::from_str(include_str!("../../../config/dsh-host-compatibility.json"))
             .map_err(|_| AdmissionError::InvalidManifest)?;
+        self.admit_with_interfaces(host_version, &host)
+    }
+
+    fn admit_with_interfaces(&self, host_version: &str, host: &HostInterfaces) -> Result<(), AdmissionError> {
+        self.validate()?;
         // Bind the declaration to the versions actually used by native frame
         // authentication and resource dispatch, not an independent constant.
         if host.schema != 1 || host.adapter_protocol != crate::dsh_host::UPDATE_ADAPTER_PROTOCOL
@@ -74,6 +85,31 @@ impl Compatibility {
             return Err(AdmissionError::RequiresHost);
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, windows, target_arch = "x86_64", feature = "browser-host-runtime"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_engine_requires_real_capabilities_not_the_same_198_version_label() {
+        let mut candidate = fixture();
+        candidate.required_capabilities.extend([
+            "closure-budget-40000-v1".into(), "loader-login-relay-ready-v1".into(),
+        ]);
+        // Exact declaration exported by Main e604209f, not an invented older
+        // version number. The production gate is shared by both comparisons.
+        let old: HostInterfaces = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/dshHost198LegacyInterfaces.json")).unwrap();
+        assert_eq!(candidate.admit_with_interfaces("1.9.8", &old), Err(AdmissionError::RequiresHost));
+        assert_eq!(candidate.admit("1.9.8"), Ok(()));
+        for missing in ["closure-budget-40000-v1", "loader-login-relay-ready-v1"] {
+            let mut host: HostInterfaces = serde_json::from_str(include_str!(
+                "../../../config/dsh-host-compatibility.json")).unwrap();
+            host.capabilities.retain(|value| value != missing);
+            assert_eq!(candidate.admit_with_interfaces("1.9.8", &host), Err(AdmissionError::RequiresHost));
+        }
     }
 }
 

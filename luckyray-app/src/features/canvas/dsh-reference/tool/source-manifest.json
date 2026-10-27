@@ -1,0 +1,14 @@
+{
+  "package": "@deepseek-ai/dsh-client-ui-tool",
+  "version": "0.2.1-rc.2",
+  "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh-client-ui-tool/-/dsh-client-ui-tool-0.2.1-rc.2.tgz",
+  "source_sha256": "a0012c1f4bdc34d68ba6b267294884ffeec6b6c467540ceabe0ff5d6135f9e05",
+  "adaptations": [
+    "ModuleLoader wrapper removed",
+    "3 require bindings replaced by ES imports",
+    "internal components exported under Official-prefixed aliases; index restores names",
+    "ts-nocheck for compiled JS body"
+  ],
+  "render_logic": "unchanged, all branches and helpers retained",
+  "locale_namespace": "conversation"
+}

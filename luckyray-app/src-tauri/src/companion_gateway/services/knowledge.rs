@@ -53,11 +53,11 @@ pub(super) fn route(gateway: &CompanionGateway, device: &PairedDevice,
             if !granted(gateway, &device.device_id, "content.read", scope, key)? { return Err((403, "GRANT_REQUIRED")); }
         }
         let (target, ids) = content::notes::service_vault_note_paths(gateway, vault).map_err(domain_error)?;
-        let knowledge = gateway.backend.knowledge();
+        let knowledge = gateway.knowledge();
         let registration = knowledge.current_vault_id().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
         let snapshot = knowledge.refresh_index_for_target(&target).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
         if snapshot.stale { return Err((503, "SERVICE_UNAVAILABLE")); }
-        let details = gateway.backend.material_catalog().attachment_details(asset).map_err(|error|
+        let details = gateway.material_catalog().attachment_details(asset).map_err(|error|
             if error.code == "not-found" { (404, "ENTITY_NOT_FOUND") } else { (503, "SERVICE_UNAVAILABLE") })?;
         let items = details.references.into_iter().filter_map(|binding| {
             if binding.vault_id != registration || !safe_relation_target(&binding.target) { return None; }
@@ -66,7 +66,7 @@ pub(super) fn route(gateway: &CompanionGateway, device: &PairedDevice,
             let note = ids.get(&binding.note_path)?;
             Some(json!({"noteId":note,"target":binding.target}))
         }).collect();
-        let cursor_scope = cursor_tag(gateway, &device.device_id, "knowledge-material-references", vault, admission_permission)?;
+        let cursor_scope = cursor_tag(gateway, &device.device_id, "knowledge-material-references", &format!("{}|materials:{}",vault,gateway.material_scope_id().unwrap_or("legacy")), admission_permission)?;
         let (items, next, has_more) = relation_page(items, &query, &format!("{cursor_scope}:material:{asset}"), &snapshot.version.to_string())?;
         return knowledge.with_current_target_response_lease(&target,
             || json!({"vaultId":vault,"assetId":asset,"items":items,"nextAfter":next,"hasMore":has_more}))
@@ -94,7 +94,7 @@ pub(super) fn route(gateway: &CompanionGateway, device: &PairedDevice,
         if !granted(gateway, &device.device_id, "content.read", "vault", vault)? { return Err((403, "GRANT_REQUIRED")); }
         let (target, current) = content::notes::target(gateway).map_err(domain_error)?;
         if current != vault { return Err((503, "SERVICE_UNAVAILABLE")); }
-        let paths = gateway.backend.knowledge().companion_directories_for_target(&target).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
+        let paths = gateway.knowledge().companion_directories_for_target(&target).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
         let paths = paths.into_iter().filter(|path| query.get("afterPath").is_none_or(|after| path > after)).take(limit + 1).collect::<Vec<_>>();
         let has_more = paths.len() > limit;
         let items = paths.into_iter().take(limit).map(|path| json!({"parentRelativePath":path})).collect::<Vec<_>>();
@@ -123,7 +123,7 @@ pub(super) fn route(gateway: &CompanionGateway, device: &PairedDevice,
     if !granted(gateway, &device.device_id, grant, "vault", &vault)? { return Err((403, "GRANT_REQUIRED")); }
     if current_vault(gateway)?.as_ref().map(|(id, _)| id.as_str()) != Some(&vault) { return Err((503, "SERVICE_UNAVAILABLE")); }
     let (target, reference) = content::notes::service_note_reference(gateway, &vault, note).map_err(domain_error)?;
-    let knowledge = gateway.backend.knowledge();
+    let knowledge = gateway.knowledge();
     let result = if action == "editing" {
         let mut result = if request.method == "GET" {
             serde_json::to_value(knowledge.companion_editing_status(&target, &reference, Some(&device.device_id))
@@ -162,14 +162,14 @@ pub(super) fn route(gateway: &CompanionGateway, device: &PairedDevice,
             }
         }
         if granted(gateway, &device.device_id, "content.read", "catalog", "")? {
-            for binding in gateway.backend.material_catalog().note_attachment_refs(&document.summary.document_ref.vault_id, &document.summary.relative_path)
+            for binding in gateway.material_catalog().note_attachment_refs(&document.summary.document_ref.vault_id, &document.summary.relative_path)
                 .map_err(|_| (503, "SERVICE_UNAVAILABLE"))? {
                 if safe_relation_target(&binding.target) && current.embeds.iter().any(|embed| embed.target == binding.target) {
                     items.push(json!({"kind":"material","assetId":binding.asset_id,"target":binding.target}));
                 }
             }
         }
-        let cursor_scope = cursor_tag(gateway, &device.device_id, "knowledge-relations", &vault, admission_permission)?;
+        let cursor_scope = cursor_tag(gateway, &device.device_id, "knowledge-relations", &format!("{}|materials:{}",vault,gateway.material_scope_id().unwrap_or("legacy")), admission_permission)?;
         let (items, next, has_more) = relation_page(items, &query, &format!("{cursor_scope}:note:{note}"), &snapshot.version.to_string())?;
         json!({"vaultId":vault,"noteId":note,"revision":revision,"items":items,"nextAfter":next,"hasMore":has_more})
     };
@@ -372,7 +372,7 @@ pub(super) fn move_note(
         let before_path = intent["beforePath"].as_str().ok_or((503, "SERVICE_UNAVAILABLE"))?;
         let after_file = intent["expectedAfterFileRevision"].as_str().ok_or((503, "SERVICE_UNAVAILABLE"))?;
         let registration_id = intent["registrationId"].as_str().ok_or((503, "SERVICE_UNAVAILABLE"))?;
-        let knowledge = gateway.backend.knowledge();
+        let knowledge = gateway.knowledge();
         let target = knowledge.current_target_identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
         let original_ref = crate::knowledge::KnowledgeDocumentRef {
             vault_id: registration_id.to_owned(), relative_path: before_path.to_owned(),
@@ -406,7 +406,7 @@ pub(super) fn move_note(
     if detail["revision"] != expected { return Err((409, "REVISION_CONFLICT")); }
     let relative_path = detail["relativePath"].as_str().ok_or((503, "SERVICE_UNAVAILABLE"))?;
     let title = detail["title"].as_str().ok_or((503, "SERVICE_UNAVAILABLE"))?;
-    let knowledge = gateway.backend.knowledge();
+    let knowledge = gateway.knowledge();
     let target = knowledge.current_target_identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
     let document_ref = crate::knowledge::KnowledgeDocumentRef {
         vault_id: knowledge.current_vault_id().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?,

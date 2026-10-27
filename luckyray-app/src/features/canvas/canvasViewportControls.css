@@ -1,0 +1,25 @@
+.canvas-zoom-controls{position:relative;display:flex;align-items:center;gap:2px;border-left:1px solid var(--theme-border-subtle);padding-left:5px;margin-left:3px;font-variant-numeric:tabular-nums}
+.canvas-controls .canvas-zoom-controls .canvas-zoom-percentage{width:62px;gap:2px;font-size:12px;font-weight:550;letter-spacing:0;background:transparent;color:var(--text-primary)}
+.canvas-zoom-percentage span{color:var(--text-secondary);font-size:10px}
+.canvas-zoom-controls button:disabled{opacity:.35;cursor:default}
+.canvas-zoom-menu{position:absolute;bottom:calc(100% + 12px);left:0;width:246px;max-width:calc(100vw - 48px);box-sizing:border-box;padding:10px;border:1px solid var(--theme-border-strong);border-radius:12px;background:var(--theme-glass-bg);color:var(--text-primary);box-shadow:var(--theme-shadow-lg);backdrop-filter:var(--theme-glass-filter);z-index:80;text-align:left}
+.canvas-zoom-menu form{display:flex;align-items:end;gap:8px;margin:0 0 10px}.canvas-zoom-menu label{flex:1;min-width:0;display:grid;gap:5px;font-size:10px;color:var(--text-secondary)}
+.canvas-zoom-menu label>div{display:flex;align-items:center;gap:6px;border:1px solid var(--theme-border-subtle);border-radius:7px;padding:0 8px;background:var(--theme-hover)}
+.canvas-zoom-menu input{box-sizing:border-box;min-width:0;width:100%;height:31px;border:0;outline:0;background:transparent;color:var(--text-primary);font:inherit;font-size:12px}
+.canvas-zoom-menu label>div:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.canvas-controls .canvas-zoom-menu button{height:32px;width:auto;padding:0 9px;font:inherit;font-size:11px;border-radius:7px;background:transparent;color:var(--text-primary);transform:none}
+.canvas-controls .canvas-zoom-menu form button{background:var(--theme-hover);border:1px solid var(--theme-border-subtle)}
+.canvas-zoom-presets{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:9px;padding-bottom:9px;border-bottom:1px solid var(--theme-border-subtle)}
+.canvas-controls .canvas-zoom-presets button{background:var(--theme-hover)}
+.canvas-controls .canvas-zoom-presets button[aria-pressed=true]{background:var(--theme-selected);box-shadow:inset 0 0 0 1px var(--theme-border-strong)}
+.canvas-controls .canvas-zoom-menu .canvas-zoom-command{width:100%;display:flex;justify-content:space-between;gap:8px}
+.canvas-controls .canvas-zoom-menu button:hover:not(:disabled){background:var(--theme-hover)}
+.canvas-zoom-menu kbd{font:inherit;font-size:10px;color:var(--text-secondary)}
+.canvas-zoom-menu small{display:block;margin:8px 2px 0;padding-top:9px;border-top:1px solid var(--theme-border-subtle);font-size:10px;line-height:1.5;color:var(--text-secondary)}
+.canvas-zoom-menu p{font-size:11px;color:var(--rose,#e57384);margin:0 0 8px}
+.canvas-zoom-controls button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:560px){.canvas-zoom-menu{left:auto;right:0}}
+/* Existing compact toolbar clips its children; the anchored menu must escape it. */
+.canvas-controls:has(.canvas-zoom-controls){overflow:visible}
+.canvas-controls:has(.canvas-zoom-controls)>button:first-child{border-radius:8px 0 0 8px}
+@media(prefers-reduced-motion:reduce){.canvas-zoom-controls button{transition:none}}

@@ -6,7 +6,12 @@ import { useApplicationModalSurface } from "../../app/applicationModalIsolation"
 import { MATERIAL_LIBRARY_NAVIGATION_EVENT, publishMaterialLibraryNavigationBusy, requestMaterialLibraryNavigation, type MaterialLibraryNavigationIntent } from "./materialLibraryNavigationProtocol";
 import { isMaterialLibraryTransferAction, materialLibraryActions, materialLibraryLocation, materialLibraryStateLabel } from "./materialLibraryActions";
 import { MaterialLibraryOperations } from "./MaterialLibraryOperations";
+import { MaterialLibraryAutoImport } from "./MaterialLibraryAutoImport";
+import { readMaterialWatchSources } from "./materialWatch";
+import AutoImportManager from "../smartFolders/AutoImportManager";
+import "../smartFolders/smartFolders.css";
 import "./materialLibraries.css";
+import "./materialLibraryDialogPolish.css";
 
 type LibraryDialog = { kind: "manage" } | { kind: "create"; returnToManagement?: boolean }
   | { kind: "rename" | "relocate" | "hide"; library: MaterialLibrary; returnToManagement: boolean };
@@ -119,13 +124,17 @@ export function MaterialLibrarySwitcher({ showControls = true }: { showControls?
       onKeyDown={modalSurface.onSurfaceKeyDown} onCancel={event => { event.preventDefault(); if (!busy) cancelEdit(); }} onClose={() => { if (!busy) setDialog(null); }}>
       <header><h2>{heading}</h2><button type="button" aria-label="关闭" disabled={busy} onClick={() => setDialog(null)}>×</button></header>
       {dialog?.kind === "manage" && <>
+        <div className="material-library-management-body" tabIndex={0} aria-label="素材库列表与导入设置">
         <div className="material-library-list" aria-label="本机素材库">
-          {snapshot.registry?.libraries.map(library => <section key={library.id} className="material-library-row" aria-label={library.name}>
-            <div className="material-library-row-summary"><strong title={library.name}>{library.name}</strong>
+          {snapshot.registry?.libraries.map(library => <section key={library.id} className="material-library-row" data-current={library.id === snapshot.libraryId || undefined} aria-label={library.name}>
+            <div className="material-library-row-summary"><div className="material-library-row-heading"><strong title={library.name}>{library.name}</strong>{library.id === snapshot.libraryId && <span className="material-library-current-badge">当前</span>}</div>
               <p className="material-library-location" title={materialLibraryLocation(library)}>{materialLibraryLocation(library)}</p>
-              <span className="material-library-row-state">{materialLibraryStateLabel[library.state]}{library.id === snapshot.libraryId ? " · 当前" : ""}{library.id === snapshot.registry!.legacyId ? " · 默认兼容库" : ""}{!library.visible ? " · 已从列表移除" : ""}</span>
+              <span className="material-library-row-state">{materialLibraryStateLabel[library.state]}{library.id === snapshot.registry!.legacyId ? " · 默认兼容库" : ""}{!library.visible ? " · 已从列表移除" : ""}</span>
+              <MaterialLibraryAutoImport library={library} disabled={busy}/>
             </div><MaterialLibraryOperations library={library} legacyId={snapshot.registry!.legacyId} currentId={snapshot.libraryId} busy={busy} fromManagement/>
           </section>)}
+        </div>
+        {readMaterialWatchSources().length > 0 && <details className="material-library-legacy-watch"><summary>当前库的旧自动导入来源（保留原设置）</summary><AutoImportManager key={snapshot.libraryId} mode="inline"/></details>}
         </div>
         <footer className="material-library-management-footer"><div><button type="button" disabled={busy} onClick={() => create(true)}>新建素材库…</button><button type="button" disabled={busy} onClick={() => { void reopen(); }}>打开已有素材库…</button></div><button type="button" disabled={busy} onClick={() => setDialog(null)}>完成</button></footer>
       </>}

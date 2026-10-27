@@ -1,0 +1,5 @@
+import React, {useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import {CanvasLibraryDestinationDialog} from '../src/features/canvas/CanvasLibraryDestinationDialog';
+function Fixture(){const [open,setOpen]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState<string|null>(null);return <><button id="open" onClick={()=>setOpen(true)}>Save</button><button id="loading" onClick={()=>setLoading(x=>!x)}>Loading</button><button id="error" onClick={()=>setError('Folder load failed')}>Error</button><output id="result" />{open?<CanvasLibraryDestinationDialog initialNames={['Silver watch','Blue fabric']} snapshot={{libraryId:'legacy-material-catalog',libraryName:'Default library',folders:[{id:'a',name:'Scenes',parentId:null},{id:'b',name:'Studio',parentId:'a'}]}} loading={loading} error={error} onRetry={()=>setError(null)} english onCancel={()=>{document.querySelector('#result')!.textContent='cancelled';setOpen(false);}} onConfirm={selection=>{document.querySelector('#result')!.textContent=JSON.stringify(selection);setOpen(false);}}/>:null}</>;}
+createRoot(document.querySelector('#root')!).render(<Fixture/>);

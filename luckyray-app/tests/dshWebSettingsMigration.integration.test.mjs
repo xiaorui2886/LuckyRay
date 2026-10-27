@@ -72,17 +72,39 @@ test("official Web profile imports effective old settings and keeps edits after 
   let owner;
   let stderr = "";
   let verified = false;
+  let launchLines = 0;
+  const launchTokens = new Set();
   async function open(runtimeRoot) {
     owner = createNativeSurfaceOwner({ runtimeRoot, stateRoot, surfaceHome:home, surfacePatch:overlay,
       clientReadyTimeoutMs: 120_000,
-      onChildStarted(child) { child.stderr.on("data", bytes => { stderr = (stderr + bytes).slice(-8000); }); } });
+      onChildStarted(child) {
+        child.stderr.on("data", bytes => { stderr = (stderr + bytes).slice(-8000); });
+        let stdout = "";
+        child.stdout.on("data", bytes => {
+          stdout = (stdout + bytes).slice(-8000);
+          for (;;) {
+            const at = stdout.indexOf("\n");
+            if (at < 0) break;
+            const line = stdout.slice(0, at); stdout = stdout.slice(at + 1);
+            const match = /^dsh web: http:\/\/127\.0\.0\.1:\d+\/\?token=([A-Za-z0-9_-]+)/u.exec(line);
+            if (match) { launchLines++; launchTokens.add(match[1]); }
+          }
+        });
+      } });
     const ready = await owner.open();
     assert.equal(ready.stage, "surface-ready", JSON.stringify(ready) + stderr);
     const base = `http://127.0.0.1:${ready.port}`;
     const bootstrap = await fetchLocal(`${base}${ready.bootstrapPath}?ref=${ready.bootstrapRef}`);
     assert.equal(bootstrap.status, 302);
     const cookie = bootstrap.headers["set-cookie"][0].split(";",1)[0];
+    assert.equal(new URL(bootstrap.headers.location,base).searchParams.getAll("token").length,1,
+      "carrier-ready must wait for the official authenticated launch URL, never redirect to bare root");
     const exchange = await fetchLocal(new URL(bootstrap.headers.location, base), cookie);
+    if (exchange.status !== 303) t.diagnostic(JSON.stringify({kind:"bootstrap-exchange-failure",
+      runtimeVersion:JSON.parse(await readFile(join(runtimeRoot,"host/node_modules/@deepseek-ai/dsh/package.json"))).version,
+      status:exchange.status, launchLines, distinctLaunchTokens:launchTokens.size,
+      bootstrapCookieCount:bootstrap.headers["set-cookie"].length,
+      tokenCount:new URL(bootstrap.headers.location,base).searchParams.getAll("token").length}));
     assert.equal(exchange.status, 303, exchange.text + stderr);
     const cookies = `${cookie}; ${exchange.headers["set-cookie"][0].split(";",1)[0]}`;
     const index = await fetchLocal(base, cookies);
@@ -121,8 +143,11 @@ test("official Web profile imports effective old settings and keeps edits after 
     await runNativeDshProbe({runtimeRoot:fromRoot,stateRoot:home});
     const load = name => import(pathToFileURL(join(toRoot,"host/node_modules",name,"lib/index.js")));
     const { Context } = await load("@deepseek-ai/cordis");
-    const { default: Persistence } = await load("@deepseek-ai/dsh-session-persistence-jsonl");
-    const storage = () => new Persistence(new Context(), {root:join(home,"sessions")});
+    const persistenceModule = await load("@deepseek-ai/dsh-session-persistence-jsonl");
+    const persistenceContext = new Context();
+    await persistenceContext.plugin(persistenceModule.default ?? persistenceModule, {root:join(home,"sessions")});
+    t.after(() => persistenceContext.fiber.dispose());
+    const storage = () => persistenceContext.sessionPersistence;
     const beforeSessions = await storage().list();
     assert.equal(beforeSessions.length,1);
     const oldId = beforeSessions[0].header.id;

@@ -21,7 +21,8 @@ test("ordinary Tauri dev prepares the existing bundled DSH source before the deb
 
   assert.ok(packagePreparation >= 0, "ordinary dev must prepare the existing src-tauri/dsh resource source");
   assert.ok(debugPreparation > packagePreparation, "the resource source must exist before the debug runtime projection");
-  assert.equal(tauriConfig.bundle.resources["dsh/"], "deepseek-harness/");
+  assert.equal(tauriConfig.bundle.resources["dsh/"], "lr-lsh/199-1/deepseek-harness/");
+  assert.ok(preparation.includes('src-tauri/target/debug/lr-lsh/199-1/deepseek-harness'));
 });
 
 function runPowerShell(script, args = []) {

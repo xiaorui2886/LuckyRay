@@ -1288,3 +1288,21 @@
   box-shadow: var(--theme-shadow-lg);
   color: var(--text-primary);
 }
+
+/* A shared, viewport-clamped surface for the existing ellipsis and card context menu. */
+.canvas-home-floating-menu { position:fixed; right:auto; z-index:1500; width:160px; overflow-y:auto; }
+.canvas-home-floating-menu button { display:flex; align-items:center; gap:7px; width:100%; min-height:32px; padding:6px 10px; border:0; border-radius:6px; background:transparent; color:var(--text-secondary); text-align:left; font:inherit; font-size:12px; cursor:pointer; }
+.canvas-home-floating-menu button:hover, .canvas-home-floating-menu button:focus-visible { background:var(--bg-elevated); color:var(--text-primary); outline:none; }
+.canvas-home-floating-menu button.danger { color:var(--danger, #ee858c); }
+.canvas-home-floating-menu button:disabled { opacity:.45; cursor:default; }
+.canvas-home-floating-menu button svg { width:14px; height:14px; }
+.canvas-home-list-card.is-selected { border-color:var(--accent); box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent); }
+.react-nav-shell .canvas-home-select-check { position:absolute; top:12px; right:12px; z-index:2; display:grid; place-items:center; width:24px; height:24px; padding:0; border:1.5px solid rgba(255,255,255,.65); border-radius:50%; background:rgba(0,0,0,.4); color:white; cursor:pointer; }
+.canvas-home-select-check svg { width:14px; height:14px; stroke:currentColor; stroke-width:2; fill:none; opacity:0; }
+.canvas-home-select-check[aria-checked="true"] { background:var(--accent); border-color:var(--accent); }
+.canvas-home-select-check[aria-checked="true"] svg { opacity:1; }
+.canvas-home-selection-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 14px; padding:8px 0; color:var(--text-secondary); font-size:12px; }
+.canvas-home-selection-bar span { margin-right:auto; }
+.canvas-home-selection-bar button { padding:5px 9px; border:1px solid var(--border-subtle); border-radius:7px; background:transparent; color:var(--text-secondary); cursor:pointer; }
+.canvas-home-selection-bar button:disabled { opacity:.4; cursor:default; }
+.canvas-home-selection-bar .danger { color:var(--danger, #ee858c); }

@@ -186,14 +186,14 @@ export const TOOLS = [
   {
     name: "import_markdown",
     description:
-      "Import a user-selected ChatGPT Markdown attachment OR a public HTTPS .md URL as a new note in the fixed authorized vault. Supply exactly one of file or url. Preserve the original .md filename; provide fileName if file_name is absent. Keep one requestId for retries, including after a timeout. Never overwrite existing notes. Preserves UTF-8, frontmatter and code blocks. Linked attachments are not downloaded; check warnings. If outcome is unknown, search/read back rather than using a new requestId.",
+      "Import a user-selected ChatGPT Markdown attachment OR a public HTTPS .md URL as a new note in the fixed authorized vault. Supply exactly one of file or url. Preserve the original .md filename; provide fileName if file_name is absent. Omit folder to use the vault root; a supplied folder must already exist in that knowledge vault. A material-library folder is not a knowledge directory; this tool does not create directories. Keep one requestId for retries, including after a timeout. Never overwrite existing notes. Preserves UTF-8, frontmatter and code blocks. Linked attachments are not downloaded; check warnings. If outcome is unknown, search/read back rather than using a new requestId.",
     inputSchema: schema(
       {
         url: { type: "string", format: "uri" },
         file: fileSchema,
         fileName: { type: "string", maxLength: 120 },
         requestId: { type: "string", pattern: "^[A-Za-z0-9_-]{8,128}$" },
-        folder: { type: "string", maxLength: 1024 },
+        folder: { type: "string", maxLength: 1024, description: "Existing relative directory in the authorized knowledge vault, not a material-library folder. Omit to use the vault root; directories are not created." },
       },
       ["requestId"],
     ),

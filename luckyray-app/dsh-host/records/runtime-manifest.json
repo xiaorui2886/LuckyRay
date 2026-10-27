@@ -3,14 +3,14 @@
   "integrationState": "supply-chain-only",
   "runtimePackage": {
     "name": "@deepseek-ai/dsh",
-    "version": "0.1.7-rc.2",
-    "tarballSha256": "5f2da7272d9485abc223e681075809a8d929697c5232ee445718e1b7e066bff8"
+    "version": "0.2.1-rc.3",
+    "tarballSha256": "9a8f9493bfab8218215a8ca38ab8821e76dff63dc4fcb65841ef87c0aa277141"
   },
   "sourceReference": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
-    "commit": "477b4f420553e8a52c2fbccc464d7561b239c443",
-    "tree": "e3e63253d1d35ad07f785273235c40813cb6c8bd",
-    "declaredVersion": "0.1.7-rc.2",
+    "commit": "1f81c047fc48fa190a683e469daa699857e9afe8",
+    "tree": "fe242286aaa4a399c91814de21e55f874ea34295",
+    "declaredVersion": "0.2.1-rc.3",
     "role": "audit-only",
     "provenanceBoundToRuntime": false
   },
@@ -77,16 +77,16 @@
     }
   },
   "closure": {
-    "lockfileSha256": "27879348455b15729c05aa9491710a7a4cbd252130a5137a6be809a4df2cb25b",
-    "lockedPackageCount": 591,
-    "stagedPackageCount": 516,
-    "installedAuditSha256": "1101b53e0a4713f031247e6110e9e11c76375e17d6b2751aafcc411847c940e3",
+    "lockfileSha256": "0faaa6a7163bf2248735883e69e6051825b45fafb253a42432b4b6ee5a3bbbea",
+    "lockedPackageCount": 634,
+    "stagedPackageCount": 562,
+    "installedAuditSha256": "b361fd576b25e6cd37d4c1c4fe01203cf544da5b4cfd0506cdf83a8e17d46619",
     "installScriptsExecuted": false,
     "lifecycleScriptPackageCount": 5,
     "lifecycleScriptReviews": [
       {
         "name": "@deepseek-ai/dsh-subprocess-local",
-        "version": "0.1.7-rc.2",
+        "version": "0.2.1-rc.3",
         "scripts": [
           {
             "stage": "postinstall",
@@ -100,7 +100,7 @@
       },
       {
         "name": "@google/genai",
-        "version": "1.52.0",
+        "version": "2.21.0",
         "scripts": [
           {
             "stage": "preinstall",
@@ -114,7 +114,7 @@
       },
       {
         "name": "koffi",
-        "version": "3.3.1",
+        "version": "3.1.1",
         "scripts": [
           {
             "stage": "install",
@@ -123,7 +123,7 @@
         ],
         "windowsRuntimeEvidence": [
           {
-            "package": "@koromix/koffi-win32-x64@3.3.1",
+            "package": "@koromix/koffi-win32-x64@3.1.1",
             "path": "win32_x64/koffi.node"
           }
         ],
@@ -182,14 +182,14 @@
       }
     ],
     "nativeArtifactCount": 28,
-    "resolverGraphEdgeCount": 2706,
-    "resolverGraphSha256": "26b7346fa62a3ffde6364b957e2044d6d8cad5d0b8c5092e238f88cc430629fa",
+    "resolverGraphEdgeCount": 2868,
+    "resolverGraphSha256": "65eb2c38f0fe86830a22ef6fb41e821b8965b7b8b3f7680dd4f77b567784be40",
     "lockReconciliation": {
-      "lockedCount": 591,
-      "stagedCount": 516,
-      "prunedCount": 75,
-      "mandatoryReachableCount": 510,
-      "optionalOnlyReachableCount": 81
+      "lockedCount": 634,
+      "stagedCount": 562,
+      "prunedCount": 72,
+      "mandatoryReachableCount": 556,
+      "optionalOnlyReachableCount": 78
     },
     "nativeCompatibility": {
       "nodeVersion": "22.19.0",

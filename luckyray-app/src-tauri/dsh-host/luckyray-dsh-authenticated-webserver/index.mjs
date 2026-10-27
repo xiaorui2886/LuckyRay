@@ -1,7 +1,8 @@
+import { createCanvasAgentService } from "./luckyray-dsh-canvas-agent.mjs";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Agent, createServer, request as httpRequest } from "node:http";
-import { createReadStream, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { extname } from "node:path";
+import { closeSync, createReadStream, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { extname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import {
   createBuiltInProviderExportRegistry,
@@ -10,6 +11,253 @@ import {
 
 const MAX_AUTHORITY_BYTES = 16 * 1024;
 export const NATIVE_BROWSER_AUTH_COOKIE = "dsh-auth-luckyray-native";
+export const TEXT_DRAFT_PATH = "/_luckyray/text-drafts";
+const TEXT_DRAFT_FILE = "luckyray-text-drafts-v1.json";
+const MAX_TEXT_DRAFT_BYTES = 2 * 1024 * 1024;
+const realSessionId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,160}$/u.test(value)
+  && !["__proto__", "constructor", "prototype"].includes(value);
+
+// This is an origin adapter for the official synchronous client store, not a
+// composer or session store. Only text and the official selected session ID
+// cross the random-port boundary. In particular, no view, reference, attachment,
+// credential or arbitrary localStorage field is serialized here.
+export function textDraftChange(key, raw) {
+  if (key === "dsh.sessions.current") {
+    if (raw === null) return { key, value: null };
+    const value = JSON.parse(raw);
+    return { key, value: realSessionId(value?.sessionId) ? { sessionId: value.sessionId } : null };
+  }
+  const id = typeof key === "string" && key.startsWith("dsh.conversation.") ? key.slice(17) : null;
+  if (!realSessionId(id)) return null;
+  if (raw === null) return { key, value: null };
+  const value = JSON.parse(raw);
+  const text = typeof value?.draft === "string" ? value.draft : value?.draft?.text;
+  if (typeof text !== "string") return null;
+  if (Buffer.byteLength(text) > 256 * 1024) throw new Error("dsh-text-draft-too-large");
+  return { key, value: text === "" ? null : text };
+}
+
+export function createTextDraftStore(profileRoot) {
+  if (!isAbsolute(profileRoot)) throw new Error("dsh-text-draft-profile-invalid");
+  const file = join(realpathSync(profileRoot), TEXT_DRAFT_FILE);
+  let state = { schema: 1, selection: null, drafts: {} };
+  let initialized = false;
+  const checkFile = () => {
+    try {
+      const stat = lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_TEXT_DRAFT_BYTES) throw new Error("dsh-text-draft-file-invalid");
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+  };
+  checkFile();
+  try {
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    if (saved.schema !== 1 || !saved.drafts || Array.isArray(saved.drafts)) throw new Error("dsh-text-draft-file-invalid");
+    const drafts = {};
+    for (const [id, text] of Object.entries(saved.drafts)) {
+      if (!realSessionId(id) || typeof text !== "string" || Buffer.byteLength(text) > 256 * 1024) throw new Error("dsh-text-draft-file-invalid");
+      if (text !== "") drafts[id] = text;
+    }
+    state = { schema: 1, selection: realSessionId(saved.selection?.sessionId) ? { sessionId: saved.selection.sessionId } : null, drafts };
+    initialized = true;
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  let lease;
+  let sequence = 0;
+  let lastWriteDigest;
+  return Object.freeze({
+    begin() {
+      // A replacement document invalidates older pages. A delayed old writer
+      // can never put text back after a newer page cleared it.
+      lease = randomBytes(24).toString("base64url");
+      sequence = 0;
+      lastWriteDigest = undefined;
+      return { lease, initialized, state: structuredClone(state) };
+    },
+    write(frame) {
+      if (!lease || frame?.lease !== lease) throw new Error("dsh-text-draft-stale-write");
+      const digest = createHash("sha256").update(JSON.stringify(frame)).digest("hex");
+      // Only an exact replay of the last committed write may recover a lost
+      // acknowledgement. Same sequence with different text is never accepted.
+      if (frame.sequence === sequence && lastWriteDigest === digest) return { saved: true, sequence };
+      if (frame.sequence !== sequence + 1) throw new Error("dsh-text-draft-stale-write");
+      const next = structuredClone(state);
+      if (frame.initialize !== undefined) {
+        if (initialized || !frame.initialize || typeof frame.initialize !== "object"
+          || !frame.initialize.drafts || typeof frame.initialize.drafts !== "object"
+          || Array.isArray(frame.initialize.drafts)) throw new Error("dsh-text-draft-initialize-invalid");
+        next.selection = realSessionId(frame.initialize.selection?.sessionId)
+          ? { sessionId: frame.initialize.selection.sessionId } : null;
+        next.drafts = {};
+        for (const [id, text] of Object.entries(frame.initialize.drafts)) {
+          if (!realSessionId(id) || typeof text !== "string") throw new Error("dsh-text-draft-initialize-invalid");
+          const checked = textDraftChange(`dsh.conversation.${id}`, JSON.stringify({ draft: text }));
+          if (checked.value !== null) next.drafts[id] = checked.value;
+        }
+      } else if (frame.clear === true) { next.selection = null; next.drafts = {}; }
+      else {
+        const change = frame.change;
+        if (!change || typeof change.key !== "string") throw new Error("dsh-text-draft-change-invalid");
+        const checked = textDraftChange(change.key, change.value === null ? null : JSON.stringify(
+          change.key === "dsh.sessions.current" ? change.value : { draft: change.value }));
+        if (!checked) throw new Error("dsh-text-draft-change-invalid");
+        if (checked.key === "dsh.sessions.current") next.selection = checked.value;
+        else {
+          const id = checked.key.slice(17);
+          if (checked.value === null) delete next.drafts[id];
+          else next.drafts[id] = checked.value;
+        }
+      }
+      const bytes = JSON.stringify(next);
+      if (Buffer.byteLength(bytes) > MAX_TEXT_DRAFT_BYTES) throw new Error("dsh-text-draft-too-large");
+      checkFile();
+      const temporary = `${file}.${randomBytes(12).toString("hex")}.tmp`;
+      let fd;
+      try {
+        fd = openSync(temporary, "wx", 0o600);
+        writeFileSync(fd, bytes, "utf8");
+        fsyncSync(fd);
+        closeSync(fd); fd = undefined;
+        renameSync(temporary, file);
+      } finally {
+        if (fd !== undefined) closeSync(fd);
+        try { unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+      }
+      state = next;
+      initialized = true;
+      sequence = frame.sequence;
+      lastWriteDigest = digest;
+      return { saved: true, sequence };
+    },
+  });
+}
+
+// Runs synchronously at the beginning of <head>, before any official module
+// reads its store. No timers/unload scraping and no late async rehydration.
+// Official setItem is synchronous too: each permitted write receives a durable
+// acknowledgement before returning, including the last edit and clear/remove.
+export function installTextDraftBridge() {
+  if (location.hostname !== "127.0.0.1") return;
+  const path = "/_luckyray/text-drafts";
+  const request = (method, body) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, path, false);
+    xhr.setRequestHeader("x-luckyray-text-drafts", "1");
+    if (body !== undefined) xhr.setRequestHeader("content-type", "application/json");
+    xhr.send(body === undefined ? null : JSON.stringify(body));
+    if (xhr.status !== 200) throw new Error("dsh-text-draft-persistence-unavailable");
+    return JSON.parse(xhr.responseText);
+  };
+  let snapshot;
+  try { snapshot = request("GET"); } catch { console.error("dsh-text-draft-restore-unavailable"); return; }
+  const storage = localStorage;
+  const proto = Storage.prototype;
+  const get = proto.getItem;
+  const set = proto.setItem;
+  const remove = proto.removeItem;
+  const clear = proto.clear;
+  const sessionId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(value)
+    && !["__proto__", "constructor", "prototype"].includes(value);
+  const conversationId = key => key.startsWith("dsh.conversation.") && sessionId(key.slice(17)) ? key.slice(17) : null;
+  let sequence = 0;
+  let pending;
+  const confirmPending = () => {
+    let error;
+    // One bounded retry of the SAME frame. Do not advance the sequence or
+    // obtain a new lease when the outcome is unknown.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = request("POST", pending);
+        if (result.saved !== true || result.sequence !== pending.sequence) throw new Error("dsh-text-draft-save-unconfirmed");
+        sequence = pending.sequence;
+        pending = undefined;
+        return;
+      } catch (cause) { error = cause; }
+    }
+    throw error;
+  };
+  const persist = frame => {
+    // If both acknowledgements were lost, settle the earlier exact write
+    // before accepting a later edit or clear. Never replay it after the clear.
+    if (pending) confirmPending();
+    pending = { lease: snapshot.lease, sequence: sequence + 1, ...frame };
+    confirmPending();
+  };
+  if (snapshot.initialized === false) {
+    // First use is different from a deliberately cleared, existing store.
+    // Seed only the current origin's official text/selection, before touching
+    // any local value. Never scan other origins or import arbitrary storage.
+    const seed = { selection: null, drafts: {} };
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      const id = conversationId(key);
+      if (!id && key !== "dsh.sessions.current") continue;
+      try {
+        const value = JSON.parse(get.call(storage, key));
+        if (key === "dsh.sessions.current") {
+          if (sessionId(value?.sessionId)) seed.selection = { sessionId: value.sessionId };
+        } else {
+          const text = typeof value?.draft === "string" ? value.draft : value?.draft?.text;
+          if (typeof text === "string" && text !== "") seed.drafts[id] = text;
+        }
+      } catch { /* Invalid old entries remain local; they are not imported. */ }
+    }
+    try { persist({ initialize: seed }); }
+    catch { console.error("dsh-text-draft-initialize-unconfirmed"); }
+    // Preserve all existing local fields, including the original semantic
+    // draft. If initialization is pending, the next official write retries it.
+  } else {
+    // A recycled port may contain text cleared at another port. An existing
+    // durable store (even empty) remains authoritative; never import it again.
+    const ids = new Set(Object.keys(snapshot.state.drafts));
+    for (let i = 0; i < storage.length; i++) {
+      const id = conversationId(storage.key(i));
+      if (id) ids.add(id);
+    }
+    for (const id of ids) {
+      const key = `dsh.conversation.${id}`;
+      let value;
+      try { value = JSON.parse(get.call(storage, key)); } catch {}
+      if (!value || typeof value !== "object" || Array.isArray(value)) value = {};
+      value.draft = snapshot.state.drafts[id] ?? "";
+      set.call(storage, key, JSON.stringify(value));
+    }
+    if (snapshot.state.selection) set.call(storage, "dsh.sessions.current", JSON.stringify(snapshot.state.selection));
+    else remove.call(storage, "dsh.sessions.current");
+  }
+  proto.setItem = function(key, raw) {
+    key = String(key); raw = String(raw);
+    if (this === storage) {
+      let change;
+      if (key === "dsh.sessions.current") {
+        const value = JSON.parse(raw);
+        change = { key, value: sessionId(value?.sessionId) ? { sessionId: value.sessionId } : null };
+      } else if (conversationId(key)) {
+        const value = JSON.parse(raw);
+        const text = typeof value?.draft === "string" ? value.draft : value?.draft?.text;
+        if (typeof text === "string") change = { key, value: text === "" ? null : text };
+      }
+      if (change) persist({ change });
+    }
+    return set.call(this, key, raw);
+  };
+  proto.removeItem = function(key) {
+    key = String(key);
+    if (this === storage && (key === "dsh.sessions.current" || conversationId(key))) persist({ change: { key, value: null } });
+    return remove.call(this, key);
+  };
+  proto.clear = function() {
+    if (this === storage) persist({ clear: true });
+    return clear.call(this);
+  };
+}
+
+// Match the official 0.2.1 webServer contract without accepting caller-supplied
+// hosts or forwarded headers. This carrier binds HTTP exclusively to loopback.
+export function carrierOrigin(port) {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+    throw new Error("dsh-native-carrier-origin-before-listen");
+  }
+  return `http://127.0.0.1:${port}`;
+}
 
 function officialBrowserCookieName(host) {
   return `dsh-auth-${createHash("sha256").update(host).digest("base64url")}`;
@@ -74,10 +322,11 @@ const MAX_OPEN_INTENT_LOCAL_RESOURCES = 64;
 const MAX_OPEN_INTENT_LOCAL_PATH_BYTES = 4 * 1024;
 const MAX_OPEN_INTENT_IMAGE_ATTACHMENTS = 20;
 const MAX_OPEN_INTENT_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_OPEN_INTENT_FILE_BYTES = 200 * 1024 * 1024;
 const OPEN_INTENT_TTL_MS = 30_000;
 const OPEN_INTENT_RECEIPT_MS = 10 * 60_000;
 const MAX_OPEN_INTENT_RECEIPTS = 256;
-const MAX_CONTROL_FRAME_BYTES = 384 * 1024;
+const MAX_CONTROL_FRAME_BYTES = 3 * 1024 * 1024;
 
 // LSH remote surface (Desktop-owned): the companion gateway tunnels raw bytes
 // for granted devices to THIS loopback server; the remote branch below re-checks
@@ -124,8 +373,8 @@ function decodeOpenIntentLocalResources(source, resources) {
       || resource.libraryId !== undefined && (typeof resource.libraryId !== "string" || !resource.libraryId || resource.libraryId.length > 256
         || resource.libraryId.trim() !== resource.libraryId || /[\u0000-\u001f\u007f]/u.test(resource.libraryId))
       || resource.kind !== "material"
-      || !["image-attachment", "path-reference"].includes(resource.delivery)
-      || resource.delivery === "image-attachment" && !OPEN_INTENT_IMAGE_ATTACHMENT_SOURCES.has(source)
+      || !["image-attachment", "file-attachment", "path-reference"].includes(resource.delivery)
+      || resource.delivery !== "path-reference" && !OPEN_INTENT_IMAGE_ATTACHMENT_SOURCES.has(source)
       || typeof resource.assetId !== "string" || resource.assetId.length === 0 || resource.assetId.length > 256
       || resource.assetId.trim() !== resource.assetId || /[\u0000-\u001f\u007f]/u.test(resource.assetId)
       || typeof resource.canonicalPath !== "string" || resource.canonicalPath.length === 0
@@ -271,7 +520,7 @@ export function createOpenIntentSlot() {
   });
 }
 
-export function resolveOpenIntentImageResource(slot, generation, intentId, index) {
+export function resolveOpenIntentFileResource(slot, generation, intentId, index) {
   const intent = slot?.read?.(generation);
   if (!intent || intent.intentId !== intentId || !Number.isSafeInteger(index) || index < 0) {
     throw new Error("dsh-open-intent-image-unavailable");
@@ -279,7 +528,7 @@ export function resolveOpenIntentImageResource(slot, generation, intentId, index
   const resource = intent.localResources[index];
   const mediaType = resource?.delivery === "image-attachment"
     ? OPEN_INTENT_IMAGE_MEDIA_TYPES.get(extname(resource.canonicalPath).toLowerCase())
-    : undefined;
+    : resource?.delivery === "file-attachment" ? "application/octet-stream" : undefined;
   if (!mediaType) throw new Error("dsh-open-intent-image-unavailable");
   let canonicalPath;
   let stat;
@@ -295,12 +544,17 @@ export function resolveOpenIntentImageResource(slot, generation, intentId, index
     if (/^\/\/\?\/UNC\//iu.test(normalized)) return `//${normalized.slice(8)}`;
     return /^\/\/\?\//u.test(normalized) ? normalized.slice(4) : normalized;
   };
+  const maxBytes = resource.delivery === "file-attachment" ? MAX_OPEN_INTENT_FILE_BYTES : MAX_OPEN_INTENT_IMAGE_BYTES;
   if (comparablePath(canonicalPath) !== comparablePath(resource.canonicalPath) || !stat.isFile()
-    || !Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.size > MAX_OPEN_INTENT_IMAGE_BYTES) {
+    || !Number.isSafeInteger(stat.size) || stat.size < 0 || stat.size > maxBytes
+    || resource.delivery === "image-attachment" && stat.size === 0) {
     throw new Error("dsh-open-intent-image-unavailable");
   }
   return Object.freeze({ canonicalPath, mediaType, bytes: stat.size });
 }
+
+// Retain the exported legacy helper for existing image callers/tests.
+export const resolveOpenIntentImageResource = resolveOpenIntentFileResource;
 
 function reject(reason = "dsh-native-carrier-denied") {
   return Object.freeze({ accepted: false, reason });
@@ -484,6 +738,31 @@ export function createCarrierAuthorization(input) {
 
 export function consumeCarrierBootstrap(authority, request) {
   return authority?.active === true ? authority.consumeBootstrap(request) : reject();
+}
+
+// The official account platform registers this exact route only while a PKCE
+// attempt is live. Its handler, not this carrier, owns constant-time state
+// verification, expiry, single use and code exchange. The external system
+// browser cannot carry the embedded WebView's private carrier cookie.
+export function acceptsOfficialOAuthCallback(authority, request, route) {
+  if (authority?.active !== true || request?.method !== "GET"
+    || header(request, "host") !== authority.host
+    || route?.kind !== "exact" || route.path !== "/oauth/callback"
+    || typeof route.handler !== "function"
+    || typeof request.url !== "string" || request.url.length > 8192
+    || !request.url.startsWith("/oauth/callback?")) return false;
+  const origin = header(request, "origin");
+  if (origin !== undefined && origin !== authority.origin) return false;
+  const mode = header(request, "sec-fetch-mode");
+  const dest = header(request, "sec-fetch-dest");
+  if (mode !== undefined && mode !== "navigate"
+    || dest !== undefined && dest !== "document") return false;
+  const url = new URL(request.url, authority.origin);
+  return url.pathname === "/oauth/callback"
+    && url.searchParams.getAll("state").length === 1
+    && url.searchParams.getAll("code").length === 1
+    && Boolean(url.searchParams.get("state"))
+    && Boolean(url.searchParams.get("code"));
 }
 
 export function evaluateHttpAuthorization(authority, request) {
@@ -725,6 +1004,8 @@ export async function apply(ctx, config = {}) {
   // official Host stdout) over a launch-url control frame; the bootstrap
   // redirect uses it so the WebView mints the official session cookie.
   let officialLaunchUrl = null;
+  let resolveOfficialLaunch;
+  const officialLaunchReady = new Promise(resolve => { resolveOfficialLaunch = resolve; });
   let launchUrlSeq = 0;
   const validLaunchUrl = (value) => typeof value === "string"
     && /^http:\/\/127\.0\.0\.1:\d{1,5}\/\?token=[A-Za-z0-9_-]{16,240}$/u.test(value);
@@ -734,6 +1015,16 @@ export async function apply(ctx, config = {}) {
   const controlFd = Number.isSafeInteger(config.controlFd) ? config.controlFd : 5;
   const controlLineFd = Number.isSafeInteger(config.controlLineFd) ? config.controlLineFd : 6;
   const privateConfig = readAuthority(authorityFd);
+  // The existing owner passes the verified surface home as DSH_HOME through
+  // its minimal child environment (outer-host variables are not inherited).
+  const textDraftStore = createTextDraftStore(process.env.DSH_HOME ?? "");
+  // Native-only control channel. No HTTP route and no credential exposed to a renderer.
+  let canvasAgentService;
+  const canvasAgent = () => {
+    const home = process.env.DSH_HOME;
+    if (!home || !isAbsolute(home)) throw new Error("canvas-agent-storage-unavailable");
+    return canvasAgentService ??= createCanvasAgentService(ctx, {stateDirectory: join(home, "luckyray-canvas-agent-v1")});
+  };
   const exact = new Map();
   const prefixes = new Map();
   const upgrades = new Map();
@@ -1035,6 +1326,8 @@ export async function apply(ctx, config = {}) {
   const service = {
     get port() { return listenedPort; },
     get host() { return "127.0.0.1"; },
+    get protocol() { return "http:"; },
+    getOrigin() { return carrierOrigin(listenedPort); },
     register(route) {
       const table = route?.kind === "exact" ? exact : route?.kind === "prefix" ? prefixes : null;
       if (!table || !validPath(route.path) || table.has(route.path) || typeof route.handler !== "function") {
@@ -1067,9 +1360,29 @@ export async function apply(ctx, config = {}) {
       return table;
     },
     renderIndex(html) {
-      return service.applyIndexTaps(renderIndexInjections(html, service.collectIndexInjections()));
+      const early = textDraftStore ? [{ kind: "script", placement: "head", text: `(${installTextDraftBridge.toString()})();` }] : [];
+      return service.applyIndexTaps(renderIndexInjections(html, [...early, ...service.collectIndexInjections()]));
     },
   };
+
+  service.register({ kind: "exact", path: TEXT_DRAFT_PATH, async handler(request, response) {
+    if (!textDraftStore || request.headers["x-luckyray-text-drafts"] !== "1") return sendDenied(response);
+    let result;
+    if (request.method === "GET") result = textDraftStore.begin();
+    else if (request.method === "POST") {
+      const chunks = [];
+      let bytes = 0;
+      request.setTimeout(4_000, () => request.destroy());
+      for await (const chunk of request) {
+        bytes += chunk.length;
+        if (bytes > MAX_TEXT_DRAFT_BYTES + 16 * 1024) throw new Error("dsh-text-draft-too-large");
+        chunks.push(chunk);
+      }
+      result = textDraftStore.write(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    } else return sendDenied(response);
+    response.writeHead(200, { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify(result));
+  } });
 
   const writePrivateFrame = (frame) => writeFileSync(
     controlLineFd,
@@ -1200,7 +1513,7 @@ export async function apply(ctx, config = {}) {
       const match = /^\/_luckyray\/open-intent-resource\/(intent-[0-9a-f-]{36,57})\/(\d{1,2})$/u.exec(pathname);
       if (!match) return sendDenied(response);
       try {
-        const resource = resolveOpenIntentImageResource(
+        const resource = resolveOpenIntentFileResource(
           openIntentSlot,
           authority?.active === true ? authority.generation : 0,
           match[1],
@@ -1258,6 +1571,8 @@ export async function apply(ctx, config = {}) {
     // re-fenced against the dedicated remote authority below. The Desktop
     // authority (127.0.0.1) is untouched and never accepts remote cookies.
     if (remoteAuthority !== null && request.headers.host === remoteAuthority.host) {
+      // Desktop draft text is never forwarded through the companion proxy.
+      if (canonical.path === TEXT_DRAFT_PATH) return sendDenied(response);
       if (authority?.active !== true || request.headers["sec-fetch-site"] === "cross-site") {
         return sendDenied(response);
       }
@@ -1290,6 +1605,13 @@ export async function apply(ctx, config = {}) {
       return void proxyRemoteRequest(request, response, session);
     }
     if (canonical.path === privateConfig.bootstrapPath) {
+      // Do not consume the one-shot capability or redirect to an unauthenticated
+      // root while the official launch relay is still in flight.
+      if (officialLaunchUrl === null) {
+        response.writeHead(503, { "cache-control": "no-store" });
+        response.end("dsh-native-launch-not-ready");
+        return;
+      }
       const result = consumeCarrierBootstrap(authority, {
         host: request.headers.host,
         origin: request.headers.origin,
@@ -1316,7 +1638,8 @@ export async function apply(ctx, config = {}) {
       method: request.method,
       headers: request.headers,
     });
-    if (!accepted.accepted
+    const officialCallback = acceptsOfficialOAuthCallback(authority, request, route);
+    if ((!accepted.accepted && !officialCallback)
       || route === undefined && (fallback === undefined || canonical.protected)) {
       return sendDenied(response);
     }
@@ -1400,6 +1723,7 @@ export async function apply(ctx, config = {}) {
   openIntentSlot.bind(authority.generation);
   ctx.provide("webServer", service);
   ctx.effect(() => async () => {
+    await canvasAgentService?.dispose();
     retireConnections();
     await new Promise((resolve) => server.close(() => resolve()));
   }, "luckyrayDshCarrier.listen");
@@ -1415,7 +1739,7 @@ export async function apply(ctx, config = {}) {
       if (!frame || !Number.isSafeInteger(frame.seq)
         || !["binding-open", "binding-close", "model-sync", "open-intent", "open-intent-status", "launch-url",
           "remote-authority", "remote-session-mint", "remote-session-drop",
-          "update-prepare", "update-cancel", "update-stop"].includes(frame.type)) {
+          "update-prepare", "update-cancel", "update-stop", "canvas-agent"].includes(frame.type)) {
         throw new Error("dsh-native-carrier-control-invalid");
       }
       if (frame.type === "launch-url") {
@@ -1427,6 +1751,7 @@ export async function apply(ctx, config = {}) {
         }
         launchUrlSeq = frame.seq;
         officialLaunchUrl = frame.launchUrl;
+        resolveOfficialLaunch();
         // One-way notification: the fd6 control channel's pending table only
         // tracks command acks, so a launch-url ack here would be judged
         // invalid by the outer host and kill the official Host.
@@ -1436,6 +1761,24 @@ export async function apply(ctx, config = {}) {
         throw new Error("dsh-native-carrier-control-invalid");
       }
       controlSeq = frame.seq;
+      if (frame.type === "canvas-agent") {
+        if (Object.keys(frame).sort().join(",") !== "payload,seq,type") throw new Error("dsh-native-carrier-control-invalid");
+        let result;
+        try {
+          if (typeof frame.payload !== "string" || frame.payload.length > Math.ceil(2 * 1024 * 1024 / 3) * 4
+            || !/^[A-Za-z0-9_-]+$/.test(frame.payload)) throw new Error("canvas-agent-invalid-request");
+          const bytes = Buffer.from(frame.payload,"base64url");
+          if (bytes.length > 2 * 1024 * 1024 || bytes.toString("base64url") !== frame.payload) throw new Error("canvas-agent-invalid-request");
+          const request = JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(bytes));
+          if (["start", "newConversation", "resumeConversation"].includes(request?.op) && (updatePaused || authority?.active !== true)) throw new Error("canvas-agent-host-paused");
+          result = await canvasAgent().dispatch(request);
+          if (Buffer.byteLength(JSON.stringify(result),"utf8") > 2 * 1024 * 1024) throw new Error("canvas-agent-response-too-large");
+        } catch (error) {
+          result = {error: /^canvas-agent-[a-z-]+$/.test(error?.message ?? "") ? error.message : "canvas-agent-request-failed"};
+        }
+        writePrivateFrame({type:"canvas-agent-result",seq:frame.seq,outcome:"accepted",payload:Buffer.from(JSON.stringify(result)).toString("base64url")});
+        continue;
+      }
       if (frame.type.startsWith("update-")) {
         if (Object.keys(frame).sort().join(",") !== "id,seq,type"
           || typeof frame.id !== "string" || frame.id.length === 0 || frame.id.length > 160) {
@@ -1443,7 +1786,7 @@ export async function apply(ctx, config = {}) {
         }
         let result;
         try {
-          result = frame.type === "update-prepare" ? await updateLifecycle.prepare(frame.id)
+          result = frame.type === "update-prepare" ? (canvasAgentService?.hasActiveRuns() ? {ready:false,reason:"update-lsh-busy"} : await updateLifecycle.prepare(frame.id))
             : frame.type === "update-cancel" ? await updateLifecycle.cancel(frame.id)
               : await updateLifecycle.commit(frame.id);
         } catch (error) {
@@ -1636,8 +1979,10 @@ export async function apply(ctx, config = {}) {
     })}\n`, { encoding: "utf8" });
   queueMicrotask(() => {
     const settled = ctx.get("loader")?.await();
-    if (settled === undefined) announceReady();
-    else settled.then(announceReady, () => {});
+    // The loader can settle before the CLI prints its official token URL.
+    // Ready must bind both facts; the outer host's existing deadline remains
+    // authoritative when either the loader or launch relay never arrives.
+    Promise.all([settled, officialLaunchReady]).then(announceReady, () => {});
   });
 }
 

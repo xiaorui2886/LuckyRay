@@ -39,3 +39,19 @@ export function openCanvasById(canvasId: string) {
   setPendingCanvasOpen(canvasId);
   window.location.hash = canvasEditorHash(canvasId);
 }
+
+// Tab-local navigation memory only. Explicit canvas-home clears this value.
+export const LAST_CANVAS_EDITOR_KEY = "luckyray:canvas-last-editor";
+export function rememberCanvasEditor(path: string): void {
+  if (!/^canvas\/main(?:\/|$)/.test(path)) return;
+  try { sessionStorage.setItem(LAST_CANVAS_EDITOR_KEY, path); } catch {}
+}
+export function clearRememberedCanvasEditor(): void {
+  try { sessionStorage.removeItem(LAST_CANVAS_EDITOR_KEY); } catch {}
+}
+export function rememberedCanvasRoute(): string {
+  try {
+    const path = sessionStorage.getItem(LAST_CANVAS_EDITOR_KEY) || "";
+    return /^canvas\/main(?:\/|$)/.test(path) ? path : "canvas";
+  } catch { return "canvas"; }
+}

@@ -1,0 +1,34 @@
+const assert=require('node:assert/strict'),path=require('node:path');
+const {JSDOM}=require(process.env.LR_JSDOM_MODULE||'jsdom');
+const dom=new JSDOM('<div id="root"></div><button id="outside">Outside</button>',{url:'https://fixture.invalid'});
+for(const key of ['window','document','HTMLElement','Element','Node','Event','MouseEvent','KeyboardEvent'])global[key]=dom.window[key];
+global.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};
+const {mountResults}=require(path.resolve(process.argv[2]));
+const delay=()=>new Promise(r=>setTimeout(r,30));
+const click=element=>element.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+(async()=>{
+ const f=mountResults(document.getElementById('root'));await delay();await delay();
+ const badge=()=>document.querySelector('.canvas-image-results-count');
+ assert.equal(document.querySelectorAll('img').length,1);assert.equal(badge().textContent.includes('3'),true);assert.equal(badge().getAttribute('aria-expanded'),'false');
+ assert.equal(document.querySelector('img').closest('[data-result-image-index]').dataset.resultImageIndex,'0');
+ const resultRoot=document.querySelector('.canvas-image-results');
+ Object.defineProperty(resultRoot,'offsetWidth',{value:300});
+ resultRoot.getBoundingClientRect=()=>({left:800,right:1400,width:600,top:0,bottom:400,height:400});
+ click(badge());await delay();assert.equal(document.querySelectorAll('img').length,3);
+ const strip=document.querySelector('.canvas-image-results-strip');
+ const screenLeft=800+parseFloat(strip.style.left)*2, screenRight=screenLeft+parseFloat(strip.style.width)*2;
+ assert.ok(screenLeft>=12);assert.ok(screenRight<=window.innerWidth-12);assert.equal(strip.style.getPropertyValue('--results-item-width'),'300px');
+ resultRoot.getBoundingClientRect=()=>({left:40,right:190,width:150,top:0,bottom:100,height:100});
+ window.dispatchEvent(new Event('resize'));await delay();assert.ok(40+parseFloat(strip.style.left)*.5>=12);
+
+ assert.deepEqual([...document.querySelectorAll('[data-result-image-index]')].map(el=>el.dataset.resultImageIndex),['0','1','2']);
+ assert.equal(document.querySelectorAll('.canvas-image-result-primary').length,3);
+ click(document.querySelectorAll('.canvas-image-result-primary')[2]);await delay();
+ assert.deepEqual(f.calls,[2]);assert.equal(document.querySelectorAll('img').length,1);assert.match(document.querySelector('img').src,/c.png$/);
+ const primary=document.querySelector('img');Object.defineProperty(primary,'naturalWidth',{value:150});Object.defineProperty(primary,'naturalHeight',{value:300});primary.dispatchEvent(new Event('load'));await delay();assert.deepEqual(f.dimensions.at(-1),[150,300]);
+ click(badge());await delay();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await delay();assert.equal(badge().getAttribute('aria-expanded'),'false');assert.equal(document.activeElement,badge());
+ click(badge());await delay();document.getElementById('outside').dispatchEvent(new Event('pointerdown',{bubbles:true}));await delay();assert.equal(document.querySelectorAll('img').length,1);
+ click(badge());await delay();click(document.querySelector('.canvas-image-result-primary'));await delay();assert.deepEqual(f.calls,[2]);assert.equal(document.querySelectorAll('img').length,1);
+ click(badge());await delay();click(badge());await delay();assert.equal(badge().getAttribute('aria-expanded'),'false');
+ f.root.unmount();dom.window.close();console.log('Passed multi-image DOM: collapse, source indices, promote, Escape, outside click, repeated toggle, primary no-op.');
+})().catch(error=>{console.error(error);dom.window.close();process.exitCode=1;});

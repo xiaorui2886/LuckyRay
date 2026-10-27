@@ -1,0 +1,12 @@
+.canvas-script-import { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--theme-border-subtle); border-radius: 10px; min-width: 0; max-height: 60%; overflow: auto; flex-shrink: 0; }
+.canvas-script-import__heading, .canvas-script-import__actions, .canvas-script-import__timing { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.canvas-script-import__heading { justify-content: space-between; }
+.canvas-script-import p { margin: 0; font-size: 12px; line-height: 1.5; opacity: .85; }
+.canvas-script-import label { display: grid; gap: 5px; font-size: 12px; min-width: 0; }
+.canvas-script-import input, .canvas-script-import textarea, .canvas-script-import select { box-sizing: border-box; width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--theme-border-subtle); border-radius: 6px; background: var(--theme-hover); color: var(--text-primary); font: inherit; }
+.canvas-script-import textarea { resize: vertical; }
+.canvas-script-import__preview { max-height: 45vh; overflow: auto; display: grid; gap: 10px; }
+.canvas-script-import fieldset { margin: 0; min-width: 0; padding: 10px; display: grid; gap: 8px; border: 1px solid var(--theme-border-subtle); border-radius: 8px; }
+.canvas-script-import__timing > label { flex: 1; min-width: 130px; }
+.canvas-script-import small { opacity: .65; }
+.canvas-script-import .canvas-script-import__error { color: #ef9696; opacity: 1; }

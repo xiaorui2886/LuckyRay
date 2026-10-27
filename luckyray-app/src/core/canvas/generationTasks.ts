@@ -1,3 +1,4 @@
+import {normalizeGenerationEditorSnapshot, type CanvasGenerationEditorSnapshot} from "./generationEditorSnapshot";
 /**
  * Stable, JSON-friendly canvas generation task contract.
  *
@@ -20,7 +21,7 @@ export const CANVAS_GENERATION_TASK_STATUSES = [
 
 export type CanvasGenerationTaskStatus = (typeof CANVAS_GENERATION_TASK_STATUSES)[number];
 export type CanvasGenerationKind = "text" | "image" | "video";
-export type CanvasGenerationProviderStage = "queued" | "generating" | "downloading";
+export type CanvasGenerationProviderStage = "submitting" | "queued" | "generating" | "downloading";
 
 export type CanvasGenerationReferenceSnapshot = {
   id: string;
@@ -37,6 +38,9 @@ export type CanvasGenerationReferenceSnapshot = {
 export type CanvasGenerationRequestSnapshot = {
   kind: CanvasGenerationKind;
   prompt: string;
+  /** Original editable prompt before connected context is compiled. */
+  sourcePrompt?: string;
+  editor?: CanvasGenerationEditorSnapshot;
   model: string;
   /** Backend-only credential reference, pinned when the task starts. */
   textProfileId?: string;
@@ -133,6 +137,7 @@ export function createCanvasGenerationTask(input: {
     status: "queued",
     request: {
       ...input.request,
+      editor: normalizeGenerationEditorSnapshot(input.request.editor, input.request.references.length),
       references: input.request.references.map((reference) => ({ ...reference })),
     },
     attempt: Math.max(1, Math.floor(input.attempt ?? 1)),
@@ -146,8 +151,41 @@ export function canCancelCanvasGenerationTask(task: CanvasGenerationTask): boole
   return task.status === "queued" || task.status === "running";
 }
 
+/** Submission is not provider acceptance; terminal state always wins over saved telemetry. */
+export function canvasGenerationSubmissionLabel(task: CanvasGenerationTask | undefined, english: boolean): string {
+  if (!task) return '';
+  if (task.status === 'failed') return english ? 'Request failed' : '提交失败';
+  if (task.status === 'cancelled') return english ? 'Cancelled' : '已取消';
+  if (task.status === 'succeeded') return english ? 'Completed' : '已完成';
+  if (task.request.kind === 'video' && task.providerTaskId?.trim()) return english ? 'Accepted by provider' : '供应商已受理';
+  if (task.status === 'queued') return english ? 'Queued locally' : '本地排队';
+  return task.request.kind === 'video' ? (english ? 'Submitting' : '提交中') : (english ? 'Processing' : '处理中');
+}
+
 export function canRetryCanvasGenerationTask(task: CanvasGenerationTask): boolean {
+  // An uncertain POST is not permission to submit a second paid generation.
+  if (task.error?.code === "VIDEO_SUBMISSION_UNKNOWN" || task.error?.code === "VIDEO_SUBMISSION_BINDING_CHANGED" || task.error?.code === "VIDEO_STABLE_TASK_ID_REQUIRED") return false;
   return task.status === "failed" || task.status === "cancelled";
+}
+
+/** Retry video polling using the same native submission identity and binding.
+ * Creating a genuinely new generation remains a separate explicit operation. */
+export function resumeCanvasVideoGenerationTask(
+  task: CanvasGenerationTask, updatedAt: string,
+): CanvasGenerationTask | null {
+  if (task.request.kind !== "video" || !canRetryCanvasGenerationTask(task)) return null;
+  return {
+    ...task,
+    status: "queued",
+    error: null,
+    resumedAt: updatedAt,
+    updatedAt,
+    providerStage: "queued",
+    request: {
+      ...task.request,
+      references: task.request.references.map(reference => ({ ...reference })),
+    },
+  };
 }
 
 export function transitionCanvasGenerationTask(

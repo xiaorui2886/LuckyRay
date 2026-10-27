@@ -6,7 +6,7 @@ const http = require("node:http");
 const assert = require("node:assert/strict");
 const root = path.resolve(__dirname, "..");
 const esbuild = require(require.resolve("esbuild", { paths: [fs.realpathSync(root + "/node_modules/vite")] }));
-const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || "C:/Users/Administrator/AppData/Local/npm-cache/_npx/31e32ef8478fbf80/node_modules/playwright");
+const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || "playwright");
 const out = process.env.COMMUNITY_UI_EVIDENCE || path.join(root, ".tmp-community-ui");
 const packs = JSON.parse(fs.readFileSync(root + "/plugin-sdk/examples/page-desk/example.page-desk.lrpack.json", "utf8"));
 const manifestPack = JSON.parse(fs.readFileSync(root + "/plugin-sdk/examples/material-manifest/example.material-manifest.lrpack.json", "utf8"));
@@ -32,8 +32,19 @@ const report = { kind: "production-community-controlled-transports", checks: [],
       {id:"test.workflow.a",name:"工作流说明",description:"仅显示登记信息。",type:"workflow",enabled:true,parameters:[]},
       {id:"test.tool.a",name:"浏览器收集",description:"浏览器中的收集能力。",type:"extension",enabled:true,parameters:[]}
     ];
-    window.fetches = [];
+    window.fetches = []; window.mcpActions = []; window.collectionReads = 0;
+    window.setCollectorScenario = mode => {
+      window.__LUCKYRAY__ = { getCollectionServerBaseUrl: async () => {
+        window.collectionReads += 1;
+        if (mode === "reject") throw Error("controlled-service-unavailable");
+        if (mode === "invalid") return "https://example.invalid:12345";
+        if (mode === "pending") return new Promise(resolve => { window.releaseCollector = () => resolve("http://127.0.0.1:12345"); });
+        return "http://127.0.0.1:12345";
+      }};
+    };
     window.__TAURI_INTERNALS__ = { invoke: async (command,args) => {
+      if (command === "community_mcp_status") return { revision:"fixture-1",phase:"ready",version:"0.1.3",packageAvailable:true,downloadBytes:null,authorized:true,grant:{libraryId:"fixture-library",vaultId:"component-vault",expiresAt:Math.floor(Date.now()/1000)+3600},configured:true,tunnelId:null,hasKey:true,connectOnLaunch:false,desktopReady:true,tunnelReady:true,lastWebCallAt:1,errorCode:null,libraries:[{id:"fixture-library",name:"Synthetic library"}],vaults:[{id:"component-vault",name:"Synthetic vault"}] };
+      if (command === "community_mcp_action") { window.mcpActions.push(args?.input?.action); throw Error("fixture-mcp-mutation-not-allowed"); }
       if (command === "manage_extension_packages") { if (window.failRegistry) throw Error("component-list-failed"); return structuredClone(registry); }
       if (command === "get_local_transport_client_config") return {baseUrl:"http://127.0.0.1:1",credential:"",protocolVersion:1};
       if (command === "get_collection_server_base_url") return "http://127.0.0.1:1";
@@ -51,8 +62,11 @@ const report = { kind: "production-community-controlled-transports", checks: [],
     window.activateVault = () => setActiveKnowledgeSource({mode:"real-vault",vaultId:"component-vault"},true);
     window.clearVault = clearActiveKnowledgeSource;
     window.base("light"); location.hash = "#community?tab=extensions";
-    createRoot(document.getElementById("fixture-content")).render(<I18nProvider locale="zh-CN"><ApplicationModalIsolationProvider store={createApplicationModalIsolationStore()}><CommunityPage /></ApplicationModalIsolationProvider></I18nProvider>);
-  ` }, bundle: true, format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' }, outfile: path.join(out, "component", "app.js"), logLevel: "silent" });
+    const appRoot = createRoot(document.getElementById("fixture-content"));
+    const modalStore = createApplicationModalIsolationStore();
+    window.setUiLocale = locale => appRoot.render(<I18nProvider locale={locale}><ApplicationModalIsolationProvider store={modalStore}><CommunityPage /></ApplicationModalIsolationProvider></I18nProvider>);
+    window.setUiLocale("zh-CN");
+  ` }, bundle: true, format: "iife", jsx: "automatic", loader: { ".svg": "dataurl" }, define: { "process.env.NODE_ENV": '"production"' }, outfile: path.join(out, "component", "app.js"), logLevel: "silent" });
   // Use the production shell's sizing ancestry. No block/overflow override of the
   // page: that used to mask the deployed header/results alignment and scroll bugs.
   const html = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><link rel="stylesheet" href="/app.css"><style>body{margin:0;background:var(--theme-app-bg);color:var(--text-primary);font:13px/1.5 system-ui}.fixture-sidebar{flex:0 0 var(--fixture-sidebar,220px);background:var(--theme-sidebar-bg);border-right:1px solid var(--border)}.fixture-label{font-size:11px;color:var(--text-secondary)}#fixture-content{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1;overflow:hidden}</style><div id="root" class="react-nav-shell" data-route="community"><aside class="fixture-sidebar" aria-label="隔离侧栏占位"></aside><div class="main"><div class="titlebar fixture-label">生产社区组件 · 应用布局约束 · 受控测试数据 · 非 Main 验收</div><div class="content-wrap"><div class="content"><div id="fixture-content"></div></div></div></div></div><script src="/app.js"></script></html>';
@@ -119,18 +133,92 @@ const report = { kind: "production-community-controlled-transports", checks: [],
         const geometry=await page.evaluate(()=>{
           const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return {x:r.x,right:r.right,width:r.width,y:r.y};};
           const page=document.querySelector(".community-page");
-          return {boxes:[".page-header",".community-library-head",".community-browse-toolbar",".plugin-section",".community-guide"].map(rect),pageWidth:page.clientWidth,overflow:page.scrollWidth-page.clientWidth,cards:getComputedStyle(document.querySelector(".community-plugin-grid")).gridTemplateColumns.split(" ").length,titleSize:getComputedStyle(document.querySelector(".page-title")).fontSize};
+          const heading=document.querySelector(".page-header h1");
+          return {boxes:[".page-header",".community-library-head",".community-browse-toolbar",".plugin-section",".community-guide"].map(rect),pageWidth:page.clientWidth,overflow:page.scrollWidth-page.clientWidth,cards:getComputedStyle(document.querySelector(".community-plugin-grid")).gridTemplateColumns.split(" ").length,titleSize:getComputedStyle(heading).fontSize,titleWeight:getComputedStyle(heading).fontWeight,headingIcons:document.querySelectorAll(".page-header > div svg").length,tabHeight:document.querySelector(".community-tab").getBoundingClientRect().height};
         });
         for(const box of geometry.boxes) {assert.ok(Math.abs(box.x-geometry.boxes[0].x)<1,JSON.stringify({width,geometry}));assert.ok(Math.abs(box.right-geometry.boxes[0].right)<1,JSON.stringify({width,geometry}));}
         assert.ok(geometry.overflow<=1,JSON.stringify({width,geometry}));
-        assert.equal(geometry.cards,geometry.pageWidth<=650?1:2);
-        assert.equal(geometry.titleSize,geometry.pageWidth<=650?"28px":"32px");
+        assert.equal(geometry.cards,geometry.pageWidth<=650?1:Math.max(1,Math.floor((geometry.boxes[0].width+12)/312)));
+        assert.ok(Math.abs(parseFloat(geometry.titleSize)-Math.min(34,Math.max(25,width*.026)))<.1,JSON.stringify({width,geometry}));
+        assert.equal(geometry.titleWeight,"700");
+        assert.equal(geometry.headingIcons,0);
+        assert.ok(geometry.tabHeight >= 36 && geometry.tabHeight <= 40, JSON.stringify({width,geometry}));
         await shot("aligned-plugins-"+width);
       }
       await page.setViewportSize({width:1120,height:900});
       await page.evaluate(()=>document.documentElement.style.setProperty("--fixture-sidebar","0px"));
       for (const key of ["packages","templates","skills","status"]) {await tab(key);await shot("aligned-"+key);}
       await page.evaluate(()=>window.base("light"));
+    });
+    await step("official MCP keeps its status, setup and existing authorization without any mutation", async () => {
+      await tab("extensions");
+      await page.locator(".official-mcp-card").getByText("已连接", {exact:true}).waitFor();
+      await page.getByRole("button",{name:"管理连接",exact:true}).click();
+      const dialog=page.getByRole("dialog");
+      await dialog.getByText("两项授权已开启",{exact:true}).waitFor();
+      assert.match(await dialog.innerText(),/Synthetic library · Synthetic vault/);
+      assert.equal(await dialog.getByRole("button",{name:"停止连接",exact:true}).isEnabled(),true);
+      await page.keyboard.press("Escape");
+      assert.deepEqual(await page.evaluate(()=>window.mcpActions),[]);
+      assert.equal(await page.getByRole("button",{name:"管理连接",exact:true}).evaluate(e=>e===document.activeElement),true);
+    });
+    await step("drawer information is grouped, full scope stays available and hidden scrollbars still scroll by keyboard and wheel", async () => {
+      await page.getByRole("button",{name:"管理连接",exact:true}).click();
+      const dialog=page.getByRole("dialog"), scroller=page.locator(".community-drawer-scroll");
+      await shot("drawer-grouped-overview");
+      await dialog.getByText("查看授权范围",{exact:true}).click();
+      await dialog.getByText(/不允许修改或删除已有笔记/).waitFor();
+      assert.equal(await dialog.locator(".official-mcp-section").first().evaluate(e=>getComputedStyle(e).borderTopStyle),"solid");
+      const scrollStyle=await scroller.evaluate(e=>({overflow:getComputedStyle(e).overflowY,width:getComputedStyle(e).scrollbarWidth,webkit:getComputedStyle(e,"::-webkit-scrollbar").display}));
+      assert.equal(scrollStyle.overflow,"auto"); assert.equal(scrollStyle.width,"none"); assert.equal(scrollStyle.webkit,"none");
+      await dialog.getByText("插件说明",{exact:true}).focus();
+      await page.keyboard.press("PageDown");
+      await page.waitForFunction(()=>document.querySelector(".community-drawer-scroll").scrollTop>0);
+      await scroller.evaluate(e=>{e.scrollTop=0;}); await scroller.hover(); await page.mouse.wheel(0,600);
+      await page.waitForFunction(()=>document.querySelector(".community-drawer-scroll").scrollTop>0);
+      await shot("drawer-grouped-hidden-scrollbar");
+      await page.keyboard.press("Escape");
+      assert.deepEqual(await page.evaluate(()=>window.mcpActions),[]);
+    });
+    await step("Chinese and English keep compact category labels, visible local install and drawer controls", async () => {
+      await page.evaluate(()=>window.setUiLocale("en-US"));
+      await page.getByRole("heading",{name:"Community",exact:true}).waitFor();
+      assert.equal(await page.getByRole("tab").count(),5);
+      assert.equal(await page.getByLabel("Install local extension",{exact:true}).isEnabled(),true);
+      await page.getByRole("button",{name:"Manage connection",exact:true}).click();
+      await page.getByRole("dialog").getByRole("heading",{name:"LuckyRay MCP",exact:true}).waitFor();
+      await page.keyboard.press("Escape");
+      await shot("desktop-community-english");
+      await page.evaluate(()=>window.setUiLocale("zh-CN"));
+      await page.getByRole("heading",{name:"社区",exact:true}).waitFor();
+    });
+    await step("Collector status lives beside the browser extension, refreshes only on request and keeps the extension-binding caveat", async () => {
+      await page.evaluate(()=>window.setCollectorScenario("ready"));
+      const reads=await page.evaluate(()=>window.collectionReads);
+      await tab("status");
+      const service=page.locator(".community-collector-service");
+      await service.getByText("本机服务已启动",{exact:true}).waitFor();
+      assert.equal(await page.evaluate(()=>window.collectionReads),reads+1);
+      assert.match(await service.innerText(),/扩展连接状态仍以浏览器扩展自身为准/);
+      const pageTop=await page.locator(".community-page").evaluate(e=>e.scrollTop);
+      await service.getByRole("button",{name:"刷新",exact:true}).click();
+      await service.getByText("本机服务已启动",{exact:true}).waitFor();
+      assert.equal(await page.evaluate(()=>window.collectionReads),reads+2);
+      assert.equal(await page.locator(".community-page").evaluate(e=>e.scrollTop),pageTop);
+      await shot("collector-service-relocated");
+      for (const mode of ["reject","invalid"]) {
+        await page.evaluate(mode=>window.setCollectorScenario(mode),mode);
+        await service.getByRole("button",{name:"刷新",exact:true}).click();
+        await service.getByText("本机服务不可用",{exact:true}).waitFor();
+        assert.equal(await service.getByRole("button",{name:"刷新",exact:true}).isEnabled(),true);
+      }
+      await page.evaluate(()=>window.setCollectorScenario("pending"));
+      await service.getByRole("button",{name:"刷新",exact:true}).click();
+      await service.getByText("检测中",{exact:true}).waitFor();
+      assert.equal(await service.getByRole("button",{name:"刷新",exact:true}).isDisabled(),true);
+      await tab("extensions");
+      await page.evaluate(()=>{window.releaseCollector(); delete window.__LUCKYRAY__;});
+      assert.equal(await page.locator(".community-collector-service").count(),0);
     });
     await step("five tabs keep canonical order, deep link and keyboard navigation", async () => {
       assert.deepEqual(await page.getByRole("tab").evaluateAll(tabs=>tabs.map(t=>t.id)),["extensions","packages","templates","skills","status"].map(k=>"community-tab-"+k));
@@ -180,9 +268,14 @@ const report = { kind: "production-community-controlled-transports", checks: [],
       await page.evaluate(()=>{window.delayCatalog=false;window.releaseCatalog();}); await page.getByText("暂无能力。",{exact:true}).waitFor();
     });
     for(const theme of ["dark","rose-tea","white-zero"]) {await page.evaluate(theme=>window.base(theme),theme); await tab("extensions"); await shot("plugins-"+theme);}
-    await step("filled actions follow custom accents and keep readable foregrounds", async()=>{
+    await step("neutral local-install action stays readable with custom accents", async()=>{
       for(const accent of ["#000000","#ffffff","#579472","#8186ff"]) {
         await page.evaluate(accent=>window.base("dark",accent),accent);
+        // Measure the settled theme, not an intermediate color in a CSS transition.
+        await page.locator(".community-install").evaluate(async element => {
+          await new Promise(requestAnimationFrame);
+          await Promise.all(element.getAnimations({subtree:true}).map(animation=>animation.finished.catch(()=>{})));
+        });
         const colors=await page.locator(".community-install").evaluate(e=>{const s=getComputedStyle(e);return [s.backgroundColor,s.color];});
         const luminance=color=>{const values=color.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});return values[0]*.2126+values[1]*.7152+values[2]*.0722;};
         const levels=colors.map(luminance).sort((a,b)=>a-b);
@@ -194,6 +287,7 @@ const report = { kind: "production-community-controlled-transports", checks: [],
       for(const key of ["extensions","packages","templates","skills","status"]) {await tab(key); await step(key+" "+width+"px has no document or page overflow",async()=>assert.ok(await page.evaluate(()=>{const p=document.querySelector(".community-page");return document.documentElement.scrollWidth<=innerWidth+1 && p.scrollWidth<=p.clientWidth+1;})));}
       await shot("tools-"+width);
     }
+    assert.deepEqual(await page.evaluate(()=>window.mcpActions),[]);
     assert.deepEqual(report.errors,[]); report.ok=true;
   } catch(error) { report.ok=false; report.failure=String(error.stack||error); report.body=await page.locator("body").innerText(); await page.screenshot({path:path.join(out,"component/FAILED-current.png"),fullPage:true}); throw error; }
   finally {fs.writeFileSync(path.join(out,"component-ui-verification.json"),JSON.stringify(report,null,2)); await browser.close(); await new Promise(resolve=>server.close(resolve));}

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { defineMessages, useMessages } from "../../core/i18n/index";
 import { dshEngineUpdate, type DshEngineUpdatePhase, type DshEngineUpdateStatus } from "../../core/services/dshEngineUpdate";
 import "./dshEngineUpdate.css";
@@ -28,6 +29,7 @@ const COPY = defineMessages({
   verify: { "zh-CN": "完成本机健康检查", "en-US": "Verify local engine health" },
   restartFinish: { "zh-CN": "重启软件并完成更新", "en-US": "Restart LuckyRay and finish update" },
   restarting: { "zh-CN": "正在准备重启并完成切换…", "en-US": "Preparing restart and switch…" },
+  restartCancel: { "zh-CN": "取消", "en-US": "Cancel" },
   restartPreparing: { "zh-CN": "正在准备重启并完成切换：引擎与后台任务正在安全收尾，窗口会保持响应，随后正常退出并自动重新打开。此步骤不能取消，请勿重复点击。", "en-US": "Preparing restart and switch: the engine and background tasks are draining safely. The window stays responsive, then quits normally and reopens automatically. This step cannot be cancelled; do not click repeatedly." },
   restartConfirmCold: { "zh-CN": "将正常退出 LuckyRay 并自动重新打开以完成引擎切换。请先保存其他页面的更改。现在重启？", "en-US": "LuckyRay will quit normally and reopen automatically to finish the engine switch. Save changes on other pages first. Restart now?" },
   restartConfirmWarm: { "zh-CN": "将先完成切换准备，再正常退出并自动重新打开。请先结束 LightSeek 会话和远程任务、保存其他页面更改；未发送的草稿请先自行保存，退出过程不会自动发送。现在重启？", "en-US": "The switch is prepared first, then LuckyRay quits normally and reopens automatically. Finish LightSeek sessions and remote tasks, save changes elsewhere, and save any unsent draft yourself (quitting never sends it). Restart now?" },
@@ -76,11 +78,13 @@ const PHASE_KEYS: Record<DshEngineUpdatePhase, keyof typeof COPY> = {
   upstream_identity: "phase.upstream_identity",
 };
 
-export default function DshEngineUpdateCard() {
+export default function DshEngineUpdateCard({ renderLayout }: { renderLayout?: (parts: { information: ReactNode; actions: ReactNode }) => ReactNode } = {}) {
   const { t } = useMessages(COPY);
   const [status, setStatus] = useState<DshEngineUpdateStatus | null>(dshEngineUpdate.latest());
   const [busy, setBusy] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [confirmingRestart, setConfirmingRestart] = useState(false);
+  const restartPending = useRef(false);
   const [error, setError] = useState(false);
   useEffect(() => {
     let active = true;
@@ -94,18 +98,37 @@ export default function DshEngineUpdateCard() {
     return () => window.clearInterval(timer);
   }, [busy, status?.phase]);
   const run = async (action: "check" | "install" | "verify" | "prepareExit" | "recover") => {
-    if (busy || restarting) return;
+    if (busy || restarting || confirmingRestart) return;
     setBusy(true); setError(false);
     try { await dshEngineUpdate[action](); }
     catch { setError(true); }
     finally { setBusy(false); }
+  };
+  const restart = async () => {
+    if (restartPending.current || busy || restarting) return;
+    restartPending.current = true;
+    setConfirmingRestart(true); setError(false);
+    let succeeded = false;
+    try {
+      const approved = await confirm(t(status?.canRestart ? "restartConfirmCold" : "restartConfirmWarm"), {
+        title: "LuckyRay", kind: "warning", okLabel: t("restartFinish"), cancelLabel: t("restartCancel"),
+      });
+      if (approved !== true) return;
+      setRestarting(true);
+      await dshEngineUpdate.restart();
+      succeeded = true;
+    } catch { setRestarting(false); setError(true); }
+    finally {
+      if (!succeeded) restartPending.current = false;
+      setConfirmingRestart(false);
+    }
   };
   const workStage = status?.workStage as "catalog" | "download" | "bootstrap" | "inputs" | "assemble" | "extract" | "verify" | "schedule" | undefined;
   const workKey = workStage ? `stage.${workStage}` as keyof typeof COPY : "phase.working";
   const percent = status?.progressTotal && status.progressDone !== null
     ? Math.min(100, Math.floor(100 * status.progressDone / status.progressTotal)) : null;
   const working = status?.phase === "working";
-  return <div className="dsh-engine-update-card" aria-live="polite">
+  const information = <>
     <div className="dsh-engine-update-versions">
       <span>{t("current")}: <strong>{status?.currentVersion ?? t("unknown")}</strong></span>
       {status?.channel === "preview" ? <span>{t("preview")}</span> : null}
@@ -117,13 +140,14 @@ export default function DshEngineUpdateCard() {
     {working && percent !== null ? <progress value={status?.progressDone ?? 0} max={status?.progressTotal ?? 1} aria-label={t(workKey)} /> : null}
     {!working && status?.catalogStatus === "unconfigured" && status.phase !== "unconfigured" ? <p>{t("catalogMissing")}</p> : null}
     {!working && status?.upstreamUnvalidated && status.phase !== "upstream_unvalidated" ? <p>{t("phase.upstream_unvalidated")}</p> : null}
-    <div className="settings-action-row">
-      <button className="settings-btn" type="button" disabled={busy || restarting || !status?.canCheck} onClick={() => void run("check")}>{busy ? t("busy") : t("check")}</button>
-      {status?.canInstall ? <button className="settings-btn settings-btn-primary" type="button" disabled={busy} onClick={() => void run("install")}>{t("install")}</button> : null}
-      {status?.canCancel ? <button className="settings-btn" type="button" onClick={() => void dshEngineUpdate.cancel().catch(() => setError(true))}>{t("cancel")}</button> : null}
-      {status?.canRecover ? <button className="settings-btn" type="button" disabled={busy} onClick={() => void run("recover")}>{t("recover")}</button> : null}
-      {status?.canVerify ? <button className="settings-btn settings-btn-primary" type="button" disabled={busy} onClick={() => void run("verify")}>{t("verify")}</button> : null}
-      {status?.canRestart || status?.canPrepareExit ? <button className="settings-btn settings-btn-primary" type="button" disabled={busy || restarting} onClick={() => { if (restarting || busy) return; if (window.confirm(t(status.canRestart ? "restartConfirmCold" : "restartConfirmWarm"))) { setRestarting(true); void dshEngineUpdate.restart().catch(() => { setRestarting(false); setError(true); }); } }}>{restarting ? t("restarting") : t("restartFinish")}</button> : null}
-    </div>
-  </div>;
+  </>;
+  const actions = <div className="settings-action-row">
+      <button className="settings-btn" type="button" disabled={busy || restarting || confirmingRestart || !status?.canCheck} onClick={() => void run("check")}>{busy ? t("busy") : t("check")}</button>
+      {status?.canInstall ? <button className="settings-btn settings-btn-primary" type="button" disabled={busy || restarting || confirmingRestart} onClick={() => void run("install")}>{t("install")}</button> : null}
+      {status?.canCancel ? <button className="settings-btn" type="button" disabled={restarting || confirmingRestart} onClick={() => void dshEngineUpdate.cancel().catch(() => setError(true))}>{t("cancel")}</button> : null}
+      {status?.canRecover ? <button className="settings-btn" type="button" disabled={busy || restarting || confirmingRestart} onClick={() => void run("recover")}>{t("recover")}</button> : null}
+      {status?.canVerify ? <button className="settings-btn settings-btn-primary" type="button" disabled={busy || restarting || confirmingRestart} onClick={() => void run("verify")}>{t("verify")}</button> : null}
+      {status?.canRestart || status?.canPrepareExit ? <button className="settings-btn settings-btn-primary" type="button" disabled={busy || restarting || confirmingRestart} onClick={() => void restart()}>{restarting ? t("restarting") : confirmingRestart ? t("busy") : t("restartFinish")}</button> : null}
+    </div>;
+  return renderLayout ? renderLayout({ information: <div className="dsh-engine-update-card" aria-live="polite">{information}</div>, actions }) : <div className="dsh-engine-update-card" aria-live="polite">{information}{actions}</div>;
 }

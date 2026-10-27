@@ -1,6 +1,9 @@
 import { canConnectCanvasNodes, getCanvasNodeContentKind, normalizeCanvasNodeCapabilityData, type CanvasNodeCapabilityData } from './nodeCapabilities';
 import { isCanvasEdgeRole, inferCanvasEdgeRole, type CanvasEdgeRole } from './edgeSemantics';
 import type { ReferencePackTag } from './creativeReview';
+import { parseReferenceMentions, remapReferenceMentions } from './referenceMentions';
+import { normalizeCinematographySettings, type CinematographySettings } from './cinematography';
+import { normalizeCreativeRecipe, type ImageCreativeRecipe } from './imageCreativeActions';
 
 /** Portable, declarative drafts. Never serialize a live node or task by spreading it. */
 export const WORKFLOW_FORMAT = 'luckyray-canvas-workflow' as const;
@@ -12,6 +15,7 @@ export type WorkflowNode = {
   parentId?: string; width?: number; height?: number; referencePack?: ReferencePackTag;
   generationKind?: 'image' | 'video'; prompt?: string; aspect?: string;
   quality?: string; resolution?: string; count?: number; duration?: number; sound?: boolean;
+  cinematography?: CinematographySettings; creativeRecipe?: ImageCreativeRecipe;
 };
 export type WorkflowEdge = { source: string; target: string; role: CanvasEdgeRole; order: number };
 export type WorkflowTemplate = {
@@ -55,7 +59,7 @@ export function validateWorkflow(value: unknown): WorkflowTemplate {
   if (!Array.isArray(v.nodes) || !v.nodes.length || v.nodes.length > WORKFLOW_LIMITS.nodes || !Array.isArray(v.edges) || v.edges.length > WORKFLOW_LIMITS.edges) fail('too-large');
   const nodes: WorkflowNode[] = (v.nodes as unknown[]).map(raw => {
     const n = object(raw);
-    keys(n, ['id', 'kind', 'label', 'position', 'parentId', 'width', 'height', 'referencePack', 'generationKind', 'prompt', 'aspect', 'quality', 'resolution', 'count', 'duration', 'sound']);
+    keys(n, ['id', 'kind', 'label', 'position', 'parentId', 'width', 'height', 'referencePack', 'generationKind', 'prompt', 'aspect', 'quality', 'resolution', 'count', 'duration', 'sound', 'cinematography', 'creativeRecipe']);
     if (!['text', 'image', 'video', 'generator', 'group'].includes(String(n.kind))) fail('invalid-kind');
     const p = object(n.position); keys(p, ['x', 'y']);
     const node: WorkflowNode = { id: id(n.id), kind: n.kind as WorkflowKind, label: text(n.label, WORKFLOW_LIMITS.text), position: { x: numeric(p.x, -100_000, 100_000), y: numeric(p.y, -100_000, 100_000) } };
@@ -67,7 +71,7 @@ export function validateWorkflow(value: unknown): WorkflowTemplate {
       if (node.kind !== 'group' || pack.version !== 1 || !['character', 'product', 'style'].includes(String(pack.kind))) fail('invalid-pack');
       node.referencePack = { version: 1, kind: pack.kind as ReferencePackTag['kind'] };
     }
-    const generationFields = ['generationKind', 'prompt', 'aspect', 'quality', 'resolution', 'count', 'duration', 'sound'];
+    const generationFields = ['generationKind', 'prompt', 'aspect', 'quality', 'resolution', 'count', 'duration', 'sound', 'cinematography', 'creativeRecipe'];
     if (node.kind !== 'generator' && generationFields.some(k => n[k] !== undefined)) fail('invalid-kind');
     if (node.kind === 'generator') {
       if (n.generationKind !== 'image' && n.generationKind !== 'video') fail('invalid-kind');
@@ -79,6 +83,20 @@ export function validateWorkflow(value: unknown): WorkflowTemplate {
       if (n.count !== undefined) node.count = numeric(n.count, 1, 16, true);
       if (n.duration !== undefined) node.duration = numeric(n.duration, 1, 120);
       if (n.sound !== undefined) { if (typeof n.sound !== 'boolean') fail('invalid-field'); node.sound = n.sound as boolean; }
+      if (n.cinematography !== undefined) {
+        const raw = object(n.cinematography), normalized = normalizeCinematographySettings(raw);
+        keys(raw, Object.keys(normalized));
+        if (Object.entries(normalized).some(([key, value]) => raw[key] !== value)) fail('invalid-cinematography');
+        node.cinematography = normalized;
+      }
+      if (n.creativeRecipe !== undefined) {
+        if (node.generationKind !== 'image') fail('invalid-kind');
+        const raw = object(n.creativeRecipe), normalized = normalizeCreativeRecipe(raw);
+        if (!normalized) fail('invalid-creative-recipe');
+        const options = object(raw.options);
+        if (raw.version !== normalized.version || raw.id !== normalized.id || Object.entries(normalized.options).some(([key, value]) => options[key] !== value)) fail('invalid-creative-recipe');
+        node.creativeRecipe = normalized;
+      }
     }
     return node;
   });
@@ -128,7 +146,7 @@ export function parseWorkflow(json: string): WorkflowTemplate {
 }
 
 export type CaptureNode = { id: string; parentId?: string; position: Point; style?: { width?: unknown; height?: unknown }; data: CanvasNodeCapabilityData & Record<string, unknown> };
-export type CaptureEdge = { source: string; target: string; data?: { role?: unknown; order?: unknown } | null };
+export type CaptureEdge = { id?: string; source: string; target: string; data?: { role?: unknown; order?: unknown; relation?: unknown; referenceMediaUrl?: unknown } | null };
 export function captureWorkflow(nodes: readonly CaptureNode[], edges: readonly CaptureEdge[], selectedIds: readonly string[], name: string): { template: WorkflowTemplate; omittedEdges: number; placeholders: number } {
   const selected = new Set(selectedIds), byId = new Map(nodes.map(n => [n.id, n]));
   if (!selected.size || [...selected].some(i => !byId.has(i))) fail('empty-selection');
@@ -136,6 +154,11 @@ export function captureWorkflow(nodes: readonly CaptureNode[], edges: readonly C
   let added = true;
   while (added) { added = false; for (const n of nodes) if (n.parentId && selected.has(n.parentId) && !selected.has(n.id)) { selected.add(n.id); added = true; } }
   const source = nodes.filter(n => selected.has(n.id));
+  // Portable workflows contain media placeholders, not the exact image bytes a focus pin requires.
+  // Refuse export rather than leaking URLs or silently retargeting focused objects.
+  if (edges.some(edge => selected.has(edge.target) && edge.data?.relation !== "derivation" && edge.data?.referenceMediaUrl !== undefined)) fail('stored-references');
+  // Native canvas files preserve shot notes. Portable templates do not yet.
+  if (source.some(n => n.data.storyboard || n.data.storyboardShot)) fail('storyboard-unsupported');
   if (source.length > WORKFLOW_LIMITS.nodes) fail('too-large');
   const absolute = (node: CaptureNode): Point => {
     let p = node.parentId, x = node.position.x, y = node.position.y; const seen = new Set([node.id]);
@@ -145,12 +168,13 @@ export function captureWorkflow(nodes: readonly CaptureNode[], edges: readonly C
   const roots = source.filter(n => !n.parentId || !selected.has(n.parentId));
   const minX = Math.min(...roots.map(n => absolute(n).x)), minY = Math.min(...roots.map(n => absolute(n).y));
   const ids = new Map(source.map((n, index) => [n.id, `n${index + 1}`]));
+  const portableEdgeKey = (edge: CaptureEdge) => `workflow-edge:${ids.get(edge.source)}:${ids.get(edge.target)}`;
   const portable = source.map(n => {
     const d = n.data;
     if (Array.isArray(d.generationReferences)) {
       // Generation stores a snapshot of edge inputs too. Those are already represented
       // by the selected graph; only unmatched direct attachments need user action.
-      const internal=edges.filter(e=>e.target===n.id && selected.has(e.source));
+      const internal=edges.filter(e=>e.data?.relation!=="derivation" && e.target===n.id && selected.has(e.source));
       for(const raw of d.generationReferences){
         const ref=object(raw);
         if(typeof ref.id!=='string' || !internal.some(edge=>{
@@ -170,25 +194,60 @@ export function captureWorkflow(nodes: readonly CaptureNode[], edges: readonly C
     if (typeof n.style?.height === 'number') result.height = n.style.height;
     if (kind === 'group' && d.referencePack) result.referencePack = d.referencePack as ReferencePackTag;
     if (kind === 'generator') {
-      result.generationKind = d.generationKind || 'image'; result.prompt = String(d.generationPrompt || d.payload || '');
+      result.generationKind = d.generationKind || 'image';
+      const prompt = String(d.generationPrompt || d.payload || '');
+      const internal = edges.filter(edge => edge.data?.relation !== 'derivation' && edge.target === n.id && selected.has(edge.source));
+      const mentionKeys = new Map(internal.filter(edge => !!edge.id).map(edge => [edge.id!, portableEdgeKey(edge)]));
+      // Stored snapshots can retain a stable mention key even after their source is connected.
+      const occurrences = new Map<string, number>();
+      if (Array.isArray(d.generationReferences)) for (const raw of d.generationReferences) {
+        const ref = object(raw);
+        const refId = String(ref.id);
+        const occurrence = occurrences.get(refId) || 0; occurrences.set(refId, occurrence + 1);
+        const matching = internal.filter(edge => {
+          const from = byId.get(edge.source)!;
+          const identity = ref.sourceNodeId === edge.source || refId === `node:${from.id}` || refId.startsWith(`node:${from.id}:`) || typeof from.data.payload === 'string' && !!from.data.payload && (refId === from.data.payload || refId.startsWith(`asset:${from.data.payload}:`));
+          return identity && (!isCanvasEdgeRole(ref.role) || !isCanvasEdgeRole(edge.data?.role) || ref.role === edge.data?.role);
+        });
+        if (matching.length === 1) mentionKeys.set(typeof ref.mentionKey === 'string' ? ref.mentionKey : `stored:${refId}:${occurrence}`, portableEdgeKey(matching[0]));
+      }
+      if (parseReferenceMentions(prompt).some(part => part.type === 'reference' && !mentionKeys.has(part.key))) fail('stored-references');
+      result.prompt = remapReferenceMentions(prompt, mentionKeys);
       if (typeof d.generationAspect === 'string') result.aspect = d.generationAspect;
       if (typeof d.generationResolution === 'string') result.resolution = d.generationResolution;
       if (typeof d.generationQuality === 'string') result.quality = d.generationQuality;
       if (typeof d.generationCount === 'number') result.count = d.generationCount;
       if (typeof d.generationDuration === 'number') result.duration = d.generationDuration;
       if (typeof d.generationSound === 'boolean') result.sound = d.generationSound;
+      if (d.generationCinematography !== undefined) result.cinematography = normalizeCinematographySettings(d.generationCinematography);
+      if (result.generationKind === 'image' && d.generationCreativeRecipe !== undefined) {
+        const recipe = normalizeCreativeRecipe(d.generationCreativeRecipe);
+        if (!recipe) fail('invalid-creative-recipe');
+        result.creativeRecipe = recipe;
+      }
     }
     return result;
   });
-  const kept = edges.filter(e => selected.has(e.source) && selected.has(e.target));
+  const kept = edges.filter(e => e.data?.relation !== "derivation" && selected.has(e.source) && selected.has(e.target));
   const serializedEdges:WorkflowEdge[]=[];
   for(const e of kept){
     const target=ids.get(e.target)!;
     const incoming=serializedEdges.filter(edge=>edge.target===target).map(edge=>({...edge,data:{role:edge.role}}));
-    serializedEdges.push({source:ids.get(e.source)!,target,role:isCanvasEdgeRole(e.data?.role)?e.data.role:inferCanvasEdgeRole(byId.get(e.source)!.data,byId.get(e.target)!.data,incoming),order:typeof e.data?.order==='number'?e.data.order:incoming.length});
+    const inputOrder = byId.get(e.target)!.data.generationInputOrder;
+    const ranks = Array.isArray(inputOrder) ? inputOrder.filter((key): key is string => typeof key === 'string') : [];
+    const fallback = typeof e.data?.order === 'number' ? e.data.order : incoming.length;
+    // Drag order lives on the target, while older canvases keep edge-local order.
+    // Compact ranks also keep exported order within the portable format's bounds.
+    const targetEdges = kept.filter(candidate => candidate.target === e.target);
+    const ordered = targetEdges.map((candidate, index) => {
+      const candidateRank = candidate.id ? ranks.indexOf(candidate.id) : -1;
+      return { candidate, index, order: candidateRank >= 0 ? candidateRank : ranks.length + (typeof candidate.data?.order === 'number' ? candidate.data.order : index) };
+    }).sort((a, b) => a.order - b.order || a.index - b.index);
+    const order = ranks.length ? ordered.findIndex(item => item.candidate === e) : fallback;
+    serializedEdges.push({source:ids.get(e.source)!,target,role:isCanvasEdgeRole(e.data?.role)?e.data.role:inferCanvasEdgeRole(byId.get(e.source)!.data,byId.get(e.target)!.data,incoming),order});
   }
   const template = validateWorkflow({ format: WORKFLOW_FORMAT, version: 1, name, description: '', nodes: portable, edges: serializedEdges });
-  return { template, omittedEdges: edges.filter(e => selected.has(e.source) !== selected.has(e.target)).length, placeholders: portable.filter(n => n.kind === 'image' || n.kind === 'video').length };
+  return { template, omittedEdges: edges.filter(e => selected.has(e.source) !== selected.has(e.target) || (e.data?.relation === "derivation" && selected.has(e.source) && selected.has(e.target))).length, placeholders: portable.filter(n => n.kind === 'image' || n.kind === 'video').length };
 }
 
 /** One atomic graph mutation. Caller uses the existing canvas undo/save path. */
@@ -197,7 +256,11 @@ export function instantiateWorkflow(value: unknown, origin: Point, nextId: () =>
   numeric(origin.x, -1_000_000, 1_000_000); numeric(origin.y, -1_000_000, 1_000_000);
   const allocate = () => { const id = nextId(); if (!id || used.has(id)) return fail('id-collision'); used.add(id); return id; };
   const ids = new Map(template.nodes.map(n => [n.id, allocate()]));
+  const edges = template.edges.map(e => ({ id: allocate(), source: ids.get(e.source)!, target: ids.get(e.target)!, animated: false, data: { semanticsVersion: 1, role: e.role, order: e.order } }));
+  const mentionKeys = new Map(template.edges.map((edge, index) => [`workflow-edge:${edge.source}:${edge.target}`, edges[index].id]));
   const nodes = template.nodes.map(n => {
+    const incomingKeys = new Set(template.edges.filter(edge => edge.target === n.id).map(edge => `workflow-edge:${edge.source}:${edge.target}`));
+    if (parseReferenceMentions(n.prompt || '').some(part => part.type === 'reference' && !incomingKeys.has(part.key))) fail('stored-references');
     // Match the canvas's current New Image / New Video action immediately,
     // rather than creating legacy placeholders that change kind after reopen.
     const mediaDraft=n.kind==='image'||n.kind==='video';
@@ -212,14 +275,13 @@ export function instantiateWorkflow(value: unknown, origin: Point, nextId: () =>
       data:normalizeCanvasNodeCapabilityData({kind,label:n.label,
         ...(n.referencePack?{referencePack:{...n.referencePack}}:{}),
         ...(kind==='group'?{groupMemberCount:template.nodes.filter(child=>child.parentId===n.id).length}:{}),
-        ...(kind==='generator'?{generationKind:mediaDraft?n.kind as 'image'|'video':n.generationKind,generationPrompt:n.prompt||'',generationAspect:n.aspect||((mediaDraft?n.kind:n.generationKind)==='video'?'16:9':'1:1'),generationQuality:n.quality,generationResolution:n.resolution,generationCount:n.count,generationDuration:n.duration,generationSound:n.sound}:{}),
+        ...(kind==='generator'?{generationKind:mediaDraft?n.kind as 'image'|'video':n.generationKind,generationPrompt:remapReferenceMentions(n.prompt || '', mentionKeys),generationAspect:n.aspect||((mediaDraft?n.kind:n.generationKind)==='video'?'16:9':'1:1'),generationQuality:n.quality,generationResolution:n.resolution,generationCount:n.count,generationDuration:n.duration,generationSound:n.sound,...(n.cinematography?{generationCinematography:{...n.cinematography}}:{}),...(n.creativeRecipe?{generationCreativeRecipe:{...n.creativeRecipe,options:{...n.creativeRecipe.options}}}:{})}:{}),
       }),
     };
   });
   // React Flow requires parents before children; input JSON ordering is irrelevant.
   const depth = (id: string): number => { const n = nodes.find(n => n.id === id)!; return n.parentId ? depth(n.parentId) + 1 : 0; };
   nodes.sort((a, b) => depth(a.id) - depth(b.id));
-  const edges = template.edges.map(e => ({ id: allocate(), source: ids.get(e.source)!, target: ids.get(e.target)!, animated: false, data: { semanticsVersion: 1, role: e.role, order: e.order } }));
   return { nodes, edges };
 }
 

@@ -10,9 +10,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 test("the formal Windows package is no-Hermes and media owns its Python runtime", async () => {
   const tauri = JSON.parse(await readFile(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
   assert.deepEqual(tauri.bundle.resources, {
-    "dsh/": "deepseek-harness/",
-    "dsh-host/": "dsh-host/",
+    "dsh/": "lr-lsh/199-1/deepseek-harness/",
+    "dsh-host/": "lr-lsh/199-1/dsh-host/",
     "media-engine/": "media-engine/",
+    "../third-party-notices/": "third-party-notices/",
   });
 
   const manifest = JSON.parse(

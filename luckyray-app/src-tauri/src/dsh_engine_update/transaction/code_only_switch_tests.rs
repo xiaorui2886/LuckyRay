@@ -1,14 +1,19 @@
 //! Synthetic filesystem behavior, not a substitute for the real Windows DSH
-//! continuity gate. No signing key, production profile or network is used.
+//! continuity gate. No production signing key, profile or network is used.
 use super::*;
 use std::sync::atomic::AtomicBool;
 
 fn fixture(store: &UpdateStore) -> PreparedRuntime {
+    fixture_version(store, "0.1.7-rc.2")
+}
+
+fn fixture_version(store: &UpdateStore, version: &str) -> PreparedRuntime {
     let root = store.version_path(&"a".repeat(64)).unwrap();
+    let package = serde_json::to_vec(&serde_json::json!({"name":"@deepseek-ai/dsh","version":version})).unwrap();
     let entries = std::collections::BTreeMap::from([
         ("host/node_modules/@deepseek-ai/dsh/lib/bin.js", b"synthetic entry".as_slice()),
         ("host/node_modules/@deepseek-ai/dsh/package.json",
-            br#"{"name":"@deepseek-ai/dsh","version":"0.1.7-rc.2"}"#.as_slice()),
+            package.as_slice()),
         ("host/node_modules/example/index.js", b"synthetic dependency".as_slice()),
         ("node/node.exe", b"synthetic node".as_slice()),
     ]);
@@ -25,7 +30,7 @@ fn fixture(store: &UpdateStore) -> PreparedRuntime {
         "schema": 1, "channel": "preview", "runtimePackage": "@deepseek-ai/dsh",
         "issuedAt": 1, "expiresAt": 2, "hostVersion": "1.9.5",
         "adapterFingerprint": "b".repeat(64), "platform": "windows-x86_64",
-        "fromVersions": ["0.1.5-rc.2"], "version": "0.1.7-rc.2",
+        "fromVersions": ["0.1.5-rc.2"], "version": version,
         "nodeSha256": format!("{:x}", sha2::Sha256::digest(b"synthetic node")),
         "entrySha256": format!("{:x}", sha2::Sha256::digest(b"synthetic entry")),
         "artifactUrl": "https://updates.example.test/fixture.zip", "artifactSha256": "a".repeat(64),
@@ -36,7 +41,119 @@ fn fixture(store: &UpdateStore) -> PreparedRuntime {
     PreparedRuntime { root, admitted: AdmittedCandidate { candidate, signed_envelope: b"synthetic-verifier-input".to_vec() } }
 }
 
-fn user_files(app_data: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+// Fixed, public test seed used only for in-memory synthetic metadata. The
+// production key, trust configuration and public update source are untouched.
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+fn sign_reopen_candidate(candidate: &Candidate) -> (Vec<u8>, Vec<u8>) {
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    let pair = Ed25519KeyPair::from_seed_unchecked(&[43; 32]).unwrap();
+    let payload = serde_json::to_vec(candidate).unwrap();
+    (serde_json::to_vec(&serde_json::json!({
+        "payload":URL_SAFE_NO_PAD.encode(&payload),
+        "signature":URL_SAFE_NO_PAD.encode(pair.sign(&payload).as_ref())
+    })).unwrap(), pair.public_key().as_ref().to_vec())
+}
+
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+pub(super) fn semantic_reopen_fixture(store: &UpdateStore, version: &str) -> (PreparedRuntime, Vec<u8>) {
+    let mut prepared = fixture_version(store, version);
+    prepared.admitted.candidate.schema = 2;
+    prepared.admitted.candidate.compatibility = Some(super::super::compatibility::fixture());
+    let (bytes, key) = sign_reopen_candidate(&prepared.admitted.candidate);
+    prepared.admitted.signed_envelope = bytes;
+    (prepared, key)
+}
+
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+fn reopen_with_contract(store: &UpdateStore, key: &[u8], bundled: &str) -> Result<Option<InstalledRuntime>, StoreError> {
+    store.load_active_with_verifier(|bytes| super::super::verify_installed_with_contract(
+        bytes, key, "https://updates.example.test/feed.json", "1.9.9", bundled,
+        &"0".repeat(64), &"9".repeat(64)))
+}
+
+#[test]
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+fn healthy_semantic_active_reopens_after_host_upgrade_without_rewriting_profile() {
+    for version in ["0.2.0-rc.2", "0.2.1-rc.2", "0.2.2-rc.2"] {
+        let app_data = tempfile::tempdir().unwrap();
+        let original = user_files(app_data.path());
+        let store = UpdateStore::open(app_data.path()).unwrap();
+        let (prepared, key) = semantic_reopen_fixture(&store, version);
+        store.activate_after_quiescence_with_bundled(&prepared, "0.1.5-rc.2", "0.1.5-rc.2").unwrap();
+        let installed = reopen_with_contract(&store, &key, "0.1.5-rc.2").unwrap().unwrap();
+        store.mark_healthy(&installed).unwrap();
+        let active = fs::read(store.root.join(ACTIVE_FILE)).unwrap();
+        let journal = fs::read(store.root.join(JOURNAL_FILE)).unwrap();
+        drop(store);
+        let store = UpdateStore::open(app_data.path()).unwrap();
+        let installed = reopen_with_contract(&store, &key, "0.2.1-rc.2").unwrap().unwrap();
+        assert_eq!(installed.candidate.version, version);
+        assert_eq!(installed.root, prepared.root);
+        assert!(!installed.pending_health);
+        assert_eq!(fs::read(store.root.join(ACTIVE_FILE)).unwrap(), active);
+        assert_eq!(fs::read(store.root.join(JOURNAL_FILE)).unwrap(), journal);
+        for (path, bytes) in &original { assert_eq!(fs::read(path).unwrap(), *bytes); }
+    }
+}
+
+#[test]
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+fn semantic_reopen_does_not_fallback_on_bad_signature_layout_or_transaction() {
+    let app_data = tempfile::tempdir().unwrap();
+    let original = user_files(app_data.path());
+    let store = UpdateStore::open(app_data.path()).unwrap();
+    let (prepared, key) = semantic_reopen_fixture(&store, "0.2.0-rc.2");
+    store.activate_after_quiescence_with_bundled(&prepared, "0.1.5-rc.2", "0.1.5-rc.2").unwrap();
+    let installed = reopen_with_contract(&store, &key, "0.1.5-rc.2").unwrap().unwrap();
+    store.mark_healthy(&installed).unwrap();
+    let active_bytes = fs::read(store.root.join(ACTIVE_FILE)).unwrap();
+    let journal_bytes = fs::read(store.root.join(JOURNAL_FILE)).unwrap();
+    assert!(matches!(reopen_with_contract(&store, &[0;32], "0.2.1-rc.2"), Err(StoreError::RecoveryRequired)));
+    for mutation in ["torn", "recovery", "newer-committed", "missing-active", "untrusted-active"] {
+        let mut journal: Journal = serde_json::from_slice(&journal_bytes).unwrap();
+        match mutation {
+            "torn" => fs::write(store.root.join(JOURNAL_FILE), b"torn").unwrap(),
+            "recovery" => { journal.phase=Phase::RecoveryRequired; store.write_journal(&journal).unwrap(); },
+            "newer-committed" => { journal.to_version="0.2.2-rc.2".into(); journal.artifact_sha256="c".repeat(64); store.write_journal(&journal).unwrap(); },
+            "missing-active" => fs::remove_file(store.root.join(ACTIVE_FILE)).unwrap(),
+            _ => { let mut active: ActiveRecord=serde_json::from_slice(&active_bytes).unwrap(); active.signed_envelope=URL_SAFE_NO_PAD.encode(b"{}"); atomic_write_json(&store.root.join(ACTIVE_FILE), &active).unwrap(); }
+        }
+        assert!(matches!(reopen_with_contract(&store, &key, "0.2.1-rc.2"), Err(StoreError::RecoveryRequired)), "{mutation}");
+        fs::write(store.root.join(ACTIVE_FILE), &active_bytes).unwrap();
+        fs::write(store.root.join(JOURNAL_FILE), &journal_bytes).unwrap();
+    }
+    let package=prepared.root.join("host/node_modules/@deepseek-ai/dsh/package.json");
+    fs::write(package, br#"{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.2"}"#).unwrap();
+    assert!(matches!(reopen_with_contract(&store, &key, "0.2.1-rc.2"), Err(StoreError::RecoveryRequired)));
+    for (path, bytes) in &original { assert_eq!(fs::read(path).unwrap(), *bytes); }
+}
+
+#[test]
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+fn semantic_reopen_keeps_critical_resource_and_followup_upgrade_checks() {
+    use crate::dsh_runtime_seal::{RuntimeIdentityLease, RuntimeSealControl};
+    let app_data=tempfile::tempdir().unwrap();
+    let store=UpdateStore::open(app_data.path()).unwrap();
+    let (prepared,key)=semantic_reopen_fixture(&store,"0.2.0-rc.2");
+    store.activate_after_quiescence_with_bundled(&prepared,"0.1.5-rc.2","0.1.5-rc.2").unwrap();
+    let installed=reopen_with_contract(&store,&key,"0.1.5-rc.2").unwrap().unwrap();
+    store.mark_healthy(&installed).unwrap();
+    let installed=reopen_with_contract(&store,&key,"0.2.1-rc.2").unwrap().unwrap();
+    let cancelled=AtomicBool::new(false);let control=RuntimeSealControl::new(&cancelled);
+    let identity=super::super::runtime_launch_identity(&installed.candidate);
+    drop(RuntimeIdentityLease::acquire_identity(&installed.root,&identity,&control).unwrap());
+    fs::write(installed.root.join("node/node.exe"),b"tampered").unwrap();
+    assert!(RuntimeIdentityLease::acquire_identity(&installed.root,&identity,&control).is_err());
+    for (target, expected) in [("0.2.1-rc.2",true),("0.2.0-rc.2",false),("0.2.0-rc.1",false)] {
+        let mut next=prepared.admitted.candidate.clone();next.version=target.into();next.from_versions=vec!["0.2.0-rc.2".into()];
+        let (bytes,_)=sign_reopen_candidate(&next);
+        let result=super::super::admit_with_contract(&bytes,Some(&key),Some("https://updates.example.test/feed.json"),
+            "0.2.0-rc.2",&"0".repeat(64),&"9".repeat(64),1);
+        if expected { assert_eq!(result.unwrap().version,target); } else { assert_eq!(result,Err(super::super::AdmissionError::NotAnUpgrade)); }
+    }
+}
+
+pub(super) fn user_files(app_data: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     [
         "deepseek-harness/native-state/rc8-v1/sessions/session-1/session.v3.jsonl.zstd",
         "deepseek-harness/native-state/rc8-native-surface-v1/sessions/session-2/session.v4.jsonl.zstd",

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SHORTCUT_REFERENCE_GROUPS, matchingShortcutReferences } from "../../app/shortcutReference";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import packageMetadata from "../../../package.json";
@@ -18,15 +19,16 @@ import { createAgentSearchSettingsLifecycle, createDefaultAgentSearchSettingsCli
 import { createDefaultDshHostClient, readDshHostStatusAfterOperations, runDshHostDiagnostic, type DshHostStatus } from "../../core/services/dshHost";
 import DshPluginCompatSettingsCard from "./DshPluginCompatSettingsCard";
 import DesktopUpdateCard from "./DesktopUpdateCard";
-import MaterialsMcpPanel from "./MaterialsMcpPanel";
 import { DESKTOP_LINKS, isOfficialDesktopLink } from "../../core/services/desktopUpdates";
 import DshEngineUpdateCard from "./DshEngineUpdateCard";
 import { clearCache as svcClearCache, createBackup as svcCreateBackup, restoreBackup as svcRestoreBackup, openDataDir as svcOpenDataDir } from "../../core/services/system";
 import { applyAccentTheme, applyGlobalSettings, readSavedSettings, useSettings } from "./useSettings";
 import type { SettingsMap, SettingsValue } from "./useSettings";
-import { THEME_PRESETS, type ThemePreset } from "../../core/theme/themePresets";
+import type { ThemePreset } from "../../core/theme/themePresets";
 import { extensionPackages } from "../../core/extensions/packages";
 import "./settings.css";
+import "./settingsGlobalPolish.css";
+import { ThemePresetSelector } from "./ThemePresetSelector";
 import AiModelProfilesPanel from "./AiModelProfilesPanel";
 import CompanionGatewayPanel from "./CompanionGatewayPanel";
 import LayoutSettingsPanel from "./LayoutSettingsPanel";
@@ -124,7 +126,6 @@ export default function SettingsPage() {
   const [connectionState, setConnectionState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [agentSearchStatus, setAgentSearchStatus] = useState<AgentSearchSettingsStatus | null>(null);
   const [agentSearchLoadFailed, setAgentSearchLoadFailed] = useState(false);
-  const [collectionTransportReady, setCollectionTransportReady] = useState<boolean | null>(null);
   const [agentSearchEnabled, setAgentSearchEnabled] = useState(false);
   const [agentSearchProvider, setAgentSearchProvider] = useState<"tavily" | "searxng">("tavily");
   const [agentSearchKeyDraft, setAgentSearchKeyDraft] = useState("");
@@ -167,21 +168,6 @@ export default function SettingsPage() {
     () => createAgentSearchSettingsLifecycle(applyAgentSearchStatus),
     [applyAgentSearchStatus],
   );
-
-  const refreshRuntimeStatus = useCallback(async () => {
-    const bridge = getBridge();
-    const [collectionResult] = await Promise.allSettled([
-      bridge?.getCollectionServerBaseUrl?.() ?? Promise.reject(new Error("bridge unavailable")),
-    ]);
-    setCollectionTransportReady(
-      collectionResult.status === "fulfilled" && /^http:\/\/127\.0\.0\.1:\d+$/.test(collectionResult.value),
-    );
-  }, []);
-
-  useEffect(() => {
-    if (activeTab !== "general") return;
-    void refreshRuntimeStatus();
-  }, [activeTab, refreshRuntimeStatus]);
 
   useEffect(() => {
     if (activeTab !== "ai") return;
@@ -845,23 +831,13 @@ export default function SettingsPage() {
                 <Toggle value={get("general.autoLaunch", false)} onChange={(value) => void handleAutoLaunchChange(value)} />
               </SettingRow>
             </Group>
-            <Group title={t("settings.general.collection.group")} searchText="收集 收集箱 导航栏 筛选 collection" shouldShow={shouldShow}>
-              <SettingRow label={t("settings.general.collection.service.label")} desc={t("settings.general.collection.service.description")} searchText="浏览器 收集 插件 扩展 本机服务 browser collection" shouldShow={shouldShow}>
-                <div className="settings-action-row">
-                  <span className={`settings-conn-state ${collectionTransportReady === true ? "success" : collectionTransportReady === false ? "error" : "loading"}`}>
-                    {collectionTransportReady === true ? t("settings.general.collection.service.ready") : collectionTransportReady === false ? t("settings.general.collection.service.unavailable") : t("settings.general.collection.service.checking")}
-                  </span>
-                  <button className="settings-btn" type="button" onClick={() => void refreshRuntimeStatus()}>{t("common.action.refresh")}</button>
-                </div>
-              </SettingRow>
-            </Group>
           </Panel>
 
           <Panel tab="layout" active={activeTab}>
             <LayoutSettingsPanel settings={settings} setSetting={setSetting} shouldShow={shouldShow}/>
           </Panel>
 
-          <Panel tab="appearance" active={activeTab}>
+          <Panel tab="appearance" active={activeTab} className="settings-appearance-panel">
             <PanelHead title={t("settings.tab.appearance")} desc={t("settings.appearance.description")} />
             <Group title={t("settings.appearance.theme.group")} searchText="主题 预设 主题预设 强调色 主色 theme accent" shouldShow={shouldShow}>
               <SettingRow label={t("settings.appearance.theme.label")} desc={t("settings.appearance.theme.description")} stack searchText="主题 预设 theme preset" shouldShow={shouldShow}>
@@ -878,7 +854,7 @@ export default function SettingsPage() {
                     ["#fbbf24", t("settings.appearance.accent.amber")],
                     ["#fb7185", t("settings.appearance.accent.rose")],
                   ].map(([value, label]) => (
-                    <button key={value} className={`settings-color-swatch${accentColor === value ? " active" : ""}`} style={{ background: value }} onClick={() => setSetting("appearance.accentColor", value)} title={label}>
+                    <button key={value} type="button" aria-label={label} aria-pressed={accentColor === value} className={`settings-color-swatch${accentColor === value ? " active" : ""}`} style={{ background: value }} onClick={() => setSetting("appearance.accentColor", value)} title={label}>
                       <span className="settings-color-name">{label}</span>
                     </button>
                   ))}
@@ -1025,6 +1001,16 @@ export default function SettingsPage() {
                 {FILM_SHORTCUT_REFERENCE.filter(([name, key]) => shouldShow(`${name} ${key} 影视 视频`)).map(([name, key]) => <tr key={name}><td>{name}</td><td><kbd>{key}</kbd></td></tr>)}
               </tbody></table>
             </section>}
+            {matchingShortcutReferences(activeShortcutScope, normalizedQuery).map(group => {
+              const rows = group.rows;
+              return <details className="setting-group settings-shortcut-reference" key={group.title} open={normalizedQuery.length > 0 || undefined}>
+                <summary>{locale === "en-US" ? group.titleEn : group.title}<span>{rows.length}</span></summary>
+                <p className="settings-group-note">{locale === "en-US" ? "Fixed contextual keys. They apply only inside the named view or editor and are not changed by the bindings above." : "当前视图或编辑器内的固定操作键，不是全局热键，也不受上方改键影响。"}</p>
+                <table className="settings-table"><thead><tr><th>{t("settings.shortcuts.column.function")}</th><th className="settings-col-key">{t("settings.shortcuts.column.shortcut")}</th></tr></thead><tbody>
+                  {rows.map(([name, nameEn, key]) => <tr key={name}><td>{locale === "en-US" ? nameEn : name}</td><td><kbd>{key}</kbd></td></tr>)}
+                </tbody></table>
+              </details>;
+            })}
             <div className="settings-action-row">
               <button className="settings-btn settings-btn-danger" onClick={() => setConfirmAction({ title: t("settings.shortcuts.resetConfirm.title"), kind: "warn", body: t("settings.shortcuts.resetConfirm.body"), action: () => { resetShortcuts(); showStatus(t("settings.shortcuts.resetDone")); } })}>{t("settings.shortcuts.resetAll")}</button>
               <span>{t("settings.shortcuts.globalNote")}</span>
@@ -1032,42 +1018,59 @@ export default function SettingsPage() {
             {recordingId && <div className="settings-recording-toast"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" /><path d="M8 5v3l2 2" /></svg><span>{t("settings.shortcuts.recording")}</span></div>}
           </Panel>
 
-          <Panel tab="ai" active={activeTab}>
+          <Panel tab="ai" active={activeTab} className="settings-ai-panel">
             <PanelHead title={t("settings.tab.ai")} desc={t("settings.ai.description")} />
+            <Group title={t("settings.ai.models.group")} searchText="模型配置 provider model configuration" shouldShow={shouldShow}>
+              <AiModelProfilesPanel onActiveProfileChanged={handleActiveProfileChanged} onStatus={showStatus} />
+              <SettingsDisclosure label={t("settings.ai.test.label")} forceOpen={Boolean(normalizedQuery)} actions={
+                <button className="settings-btn settings-btn-primary" disabled={connectionState === "loading"} onClick={() => void testAi()}>{connectionState === "loading" ? t("settings.ai.test.testing") : t("settings.ai.test.send")}</button>
+              }>
+                <SettingRow label={t("settings.ai.test.label")} desc={t("settings.ai.test.description")} searchText="连接测试 模型消息测试 model test" shouldShow={shouldShow} stack>
+                  <div className="settings-control-stack">
+                    <ConnectionState state={connectionState} bridgeAvailable={bridgeAvailable} />
+                  </div>
+                </SettingRow>
+              </SettingsDisclosure>
+            </Group>
             <Group title={t("settings.ai.dsh.group")} searchText="DSH DeepSeek Harness 运行 诊断 diagnostics" shouldShow={shouldShow}>
-              <SettingRow label={t("settings.ai.dsh.update.label")} desc={t("settings.ai.dsh.update.description")} searchText="LightSeek DSH 引擎 更新 upgrade" shouldShow={shouldShow} stack>
-                <DshEngineUpdateCard />
-              </SettingRow>
-              <SettingRow label={t("settings.ai.dsh.label")} desc={t("settings.ai.dsh.description")} searchText="DeepSeek Harness 诊断 diagnostics" shouldShow={shouldShow}>
-                <div className="settings-control-stack">
-                  <span className={`settings-conn-state ${dshHostStatus?.latestProbePassed ? "success" : !dshHostStatus || dshHostStatus.stage === "initializing" ? "loading" : "error"}`}>
-                    {dshHostStatus ? localizedDshHostStatus(dshHostStatus, t) : t("settings.ai.dsh.loading")}
-                  </span>
+              <DshEngineUpdateCard renderLayout={({ information, actions }) => (
+                <SettingsDisclosure label={t("settings.ai.dsh.update.label")} desc={t("settings.ai.dsh.update.summary")} forceOpen={Boolean(normalizedQuery)} actions={actions}>
+                  <p className="settings-ai-detail-note">{t("settings.ai.dsh.update.description")}</p>
+                  {information}
+                </SettingsDisclosure>
+              )} />
+              <SettingsDisclosure label={t("settings.ai.dsh.label")} forceOpen={Boolean(normalizedQuery)} actions={
                   <div className="settings-action-row">
                     <button className="settings-btn settings-btn-primary" type="button" disabled={dshHostBusy || dshHostStatus === null || !dshHostStatus.canProbe} onClick={() => void runDshDiagnostic(false)}>
                       {dshHostBusy ? t("settings.ai.dsh.diagnosing") : t("settings.ai.dsh.run")}
                     </button>
                     <button className="settings-btn" type="button" disabled={dshHostBusy || dshHostStatus === null || !dshHostStatus.canRetry} onClick={() => void runDshDiagnostic(true)}>{t("settings.ai.dsh.retry")}</button>
-                    {dshHostStatus?.durationMs !== null && dshHostStatus?.durationMs !== undefined
-                      ? <span className="settings-muted-text">{t("settings.ai.dsh.duration", { duration: dshHostStatus.durationMs })}</span>
-                      : null}
                   </div>
+              }>
+                <p className="settings-ai-detail-note">{t("settings.ai.dsh.description")}</p>
+                <div className="settings-action-row">
+                  <span className={`settings-conn-state ${dshHostStatus?.latestProbePassed ? "success" : !dshHostStatus || dshHostStatus.stage === "initializing" ? "loading" : "error"}`}>
+                    {dshHostStatus ? localizedDshHostStatus(dshHostStatus, t) : t("settings.ai.dsh.loading")}
+                  </span>
+                  {dshHostStatus?.durationMs !== null && dshHostStatus?.durationMs !== undefined
+                    ? <span className="settings-muted-text">{t("settings.ai.dsh.duration", { duration: dshHostStatus.durationMs })}</span>
+                    : null}
                 </div>
-              </SettingRow>
-              <SettingRow label={t("settings.ai.pluginCompat.label")} desc={t("settings.ai.pluginCompat.description")} searchText="LightSeek 扩展 兼容 compatibility extensions" shouldShow={shouldShow}>
-                <DshPluginCompatSettingsCard />
-              </SettingRow>
-            </Group>
-            <Group title={t("settings.ai.models.group")} searchText="模型配置 provider model configuration" shouldShow={shouldShow}>
-              <AiModelProfilesPanel onActiveProfileChanged={handleActiveProfileChanged} onStatus={showStatus} />
-              <SettingRow label={t("settings.ai.test.label")} desc={t("settings.ai.test.description")} searchText="连接测试 模型消息测试 model test" shouldShow={shouldShow}>
-                <div className="settings-control-stack">
-                  <button className="settings-btn settings-btn-primary" disabled={connectionState === "loading"} onClick={() => void testAi()}>{connectionState === "loading" ? t("settings.ai.test.testing") : t("settings.ai.test.send")}</button>
-                  <ConnectionState state={connectionState} bridgeAvailable={bridgeAvailable} />
-                </div>
-              </SettingRow>
+              </SettingsDisclosure>
+              <DshPluginCompatSettingsCard renderLayout={({ information, actions }) => (
+                <SettingsDisclosure label={t("settings.ai.pluginCompat.label")} desc={t("settings.ai.pluginCompat.summary")} forceOpen={Boolean(normalizedQuery)} actions={actions}>
+                  {information}
+                </SettingsDisclosure>
+              )} />
             </Group>
             <Group title={t("settings.ai.search.group")} searchText="联网搜索 Tavily SearXNG web search" shouldShow={shouldShow}>
+              <SettingsDisclosure label={t("settings.ai.search.configure")} desc={t("settings.ai.search.summary")} forceOpen={Boolean(normalizedQuery)} actions={
+                <div className="settings-action-row">
+                  <button className="settings-btn settings-btn-primary" disabled={Boolean(agentSearchBusy)} onClick={() => void saveAgentSearchSettings(false)}>{t(agentSearchBusy === "save" ? "settings.ai.search.saving" : "settings.ai.search.save")}</button>
+                  <button className="settings-btn" disabled={Boolean(agentSearchBusy) || !agentSearchStatus?.ready} onClick={() => void testAgentSearchConnection()}>{t(agentSearchBusy === "test" ? "settings.ai.search.testing" : "settings.ai.search.test")}</button>
+                </div>
+              }>
+                <span className="settings-muted-text">{t(agentSearchToggleState.state === "ready" ? agentSearchStatus?.ready ? "settings.ai.search.status.ready" : agentSearchEnabled ? "settings.ai.search.status.incomplete" : "settings.ai.search.status.disabled" : agentSearchToggleState.state === "error" ? "settings.ai.search.status.loadFailed" : "settings.ai.search.status.loading")}</span>
               <SettingRow label={t("settings.ai.search.enabled.label")} desc={t("settings.ai.search.enabled.description")} searchText="启用联网搜索模块 web search" shouldShow={shouldShow}>
                 {agentSearchToggleState.state === "ready"
                   ? <Toggle value={Boolean(agentSearchToggleState.enabled)} onChange={(v) => void toggleAgentSearchEnabled(v)} />
@@ -1097,12 +1100,9 @@ export default function SettingsPage() {
               <SettingRow label={t("settings.ai.search.status.label")} desc={t("settings.ai.search.privacy")} searchText="联网搜索状态 隐私 测试连接 web search status" shouldShow={shouldShow}>
                 <div className="settings-control-stack">
                   <span className="settings-muted-text">{t(agentSearchStatus?.ready ? "settings.ai.search.status.ready" : agentSearchEnabled ? "settings.ai.search.status.incomplete" : "settings.ai.search.status.disabled")}</span>
-                  <div className="settings-action-row">
-                    <button className="settings-btn settings-btn-primary" disabled={Boolean(agentSearchBusy)} onClick={() => void saveAgentSearchSettings(false)}>{t(agentSearchBusy === "save" ? "settings.ai.search.saving" : "settings.ai.search.save")}</button>
-                    <button className="settings-btn" disabled={Boolean(agentSearchBusy) || !agentSearchStatus?.ready} onClick={() => void testAgentSearchConnection()}>{t(agentSearchBusy === "test" ? "settings.ai.search.testing" : "settings.ai.search.test")}</button>
-                  </div>
                 </div>
               </SettingRow>
+              </SettingsDisclosure>
             </Group>
           </Panel>
 
@@ -1110,7 +1110,6 @@ export default function SettingsPage() {
 
           <Panel tab="storage" active={activeTab}>
             <PanelHead title={t("settings.tab.storage")} desc={t("settings.storage.description")} />
-            {activeTab === "storage" && <MaterialsMcpPanel />}
             <Group title={t("settings.storage.data.group")} searchText="数据目录 当前路径 素材库 缩略图 数据库 data" shouldShow={shouldShow}>
               <SettingRow label={t("settings.storage.data.path.label")} desc={t("settings.storage.data.path.description")} searchText="应用数据路径 当前路径 appdata" shouldShow={shouldShow}>
                 <div className="setting-control">
@@ -1285,16 +1284,33 @@ const panelSearchText: Record<TabKey, string> = {
   general: "语言 中文 English 启动 密度 关闭 自启动 收集箱 搜索 模式 切换 快捷键 search mode",
   layout: "布局 导航 素材库 知识库 图谱 工作区 画布 社区 AI 标签 收藏 智能文件夹 收集箱 插件 显示 隐藏 保存 应用 layout navigation visibility plugins",
   appearance: "外观 颜色 字体 排版 等宽 行距 动画 模糊 实时预览",
-  shortcut: "快捷键 全局搜索 快速预览 新建笔记 侧边栏 详情 命令面板 AI 助手 影视 视频 播放 暂停 入点 出点 截帧 标记 片段 全屏",
+  shortcut: "快捷键 全局搜索 快速预览 新建笔记 侧边栏 详情 命令面板 AI 助手 影视 视频 播放 暂停 入点 出点 截帧 标记 片段 全屏 " + SHORTCUT_REFERENCE_GROUPS.map(group => `${group.title} ${group.titleEn} ${group.rows.flat().join(" ")}`).join(" "),
   ai: "AI DSH provider model base url api key temperature tokens 连接测试 联网搜索 Tavily SearXNG",
   companion: "连接手机 局域网 配对 二维码 设备 撤销 安全记录 防火墙",
   storage: "存储 数据目录 路径 素材库 缩略图 数据库 总览 缓存 备份 导出 危险操作",
   about: "关于 产品 致谢 链接 版本 更新",
 };
 
-function Panel({ tab, active, children }: { tab: TabKey; active: TabKey; children: ReactNode }) {
+function Panel({ tab, active, children, className = "" }: { tab: TabKey; active: TabKey; children: ReactNode; className?: string }) {
   if (active !== tab) return null;
-  return <section className="settings-panel active">{children}</section>;
+  return <section className={`settings-panel active ${className}`.trim()}>{children}</section>;
+}
+
+function SettingsDisclosure({ label, desc, actions, forceOpen, children }: { label: string; desc?: string; actions?: ReactNode; forceOpen: boolean; children: ReactNode }) {
+  const { t } = useI18n();
+  const contentId = useId();
+  const [expanded, setExpanded] = useState(false);
+  const open = forceOpen || expanded;
+  return <section className="settings-ai-disclosure">
+    <div className="settings-ai-disclosure-head">
+      <div className="settings-ai-disclosure-copy"><b>{label}</b>{desc && <small>{desc}</small>}</div>
+      <div className="settings-ai-disclosure-actions">{actions}</div>
+      <button type="button" className="settings-ai-disclosure-toggle" aria-label={t(open ? "settings.ai.details.hide" : "settings.ai.details.show", { section: label })} aria-expanded={open} aria-controls={contentId} onClick={() => setExpanded((value) => !value)}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+      </button>
+    </div>
+    <div id={contentId} className="settings-ai-disclosure-body" hidden={!open}>{children}</div>
+  </section>;
 }
 
 function PanelHead({ title, desc }: { title: string; desc: string }) {
@@ -1490,43 +1506,4 @@ function getShortcutConflictMap(shortcuts: Array<{ id: ShortcutCommandId; value:
 
 function shortcutName(shortcuts: Array<{ id: string; name: string }>, id: string) {
   return shortcuts.find((item) => item.id === id)?.name || id;
-}
-
-function ThemePresetSelector({
-  value,
-  onSelect,
-}: {
-  value: string;
-  onSelect: (preset: ThemePreset) => void;
-}) {
-  const { t } = useI18n();
-  return (
-    <div className="settings-theme-preset-grid" role="radiogroup" aria-label={t("settings.theme.selector")}>
-      {THEME_PRESETS.map((preset) => {
-        const isSelected = value === preset.id;
-        return (
-          <button
-            key={preset.id}
-            type="button"
-            role="radio"
-            aria-checked={isSelected}
-            className={`settings-theme-preset-card${isSelected ? " active" : ""}`}
-            onClick={() => onSelect(preset)}
-          >
-            <div className="settings-theme-preview-swatches" aria-hidden="true">
-              {preset.previewTokens.map((color, idx) => (
-                <span
-                  key={idx}
-                  className="settings-theme-swatch-dot"
-                  style={{ background: color }}
-                />
-              ))}
-            </div>
-            <span className="settings-theme-preset-name">{t(`settings.theme.preset.${preset.id}` as MessageKey)}</span>
-            {isSelected && <span className="settings-theme-preset-check" aria-hidden="true">✓</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
 }

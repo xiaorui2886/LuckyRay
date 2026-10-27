@@ -121,8 +121,8 @@ fn validate_profile(profile: &Profile) -> Result<(), &'static str> {
         || !text(&profile.text_model,128,true)
         || !matches!(profile.text_protocol.as_str(),"legacy"|"openai-chat"|"disabled")
         || profile.revision == 0 || profile.revision > 9_007_199_254_740_991
-        || !matches!(profile.image_protocol.as_str(),"agnes"|"openai-image"|"gemini-image"|"12ai-task"|"disabled")
-        || !matches!(profile.video_protocol.as_str(),"agnes"|"openai-video"|"12ai-task"|"disabled") { return Err(INVALID); }
+        || !matches!(profile.image_protocol.as_str(),"easycli-auto"|"agnes"|"openai-image"|"gemini-image"|"12ai-task"|"disabled")
+        || !matches!(profile.video_protocol.as_str(),"agnes"|"openai-video"|"12ai-task"|"bigmodel-video"|"disabled") { return Err(INVALID); }
     for list in [&profile.image_models, &profile.video_models, &profile.text_models] {
         let Some(ids) = list else { continue };
         if ids.len() > 500 { return Err(INVALID); }
@@ -283,6 +283,19 @@ mod tests {
         file
     }
     fn input(id: &str) -> ProfileInput { ProfileInput { id:id.into(),name:id.into(),base_url:"https://example.test/v1".into(),image_model:"image".into(),video_model:"video".into(),image_protocol:"openai-image".into(),video_protocol:"disabled".into(),expected_revision:None,api_key:Some("synthetic-key".into()),clear_api_key:false,image_models:None,video_models:None,text_model:String::new(),text_protocol:legacy_text_protocol(),text_models:None } }
+    #[test]
+    fn bigmodel_profile_roundtrips_without_migrating_existing_routes_or_exposing_key() {
+        let file=db();let before=list(file.path()).unwrap();
+        let original=before.active_profile_id.clone();
+        let mut value=input("bigmodel");value.base_url="https://open.bigmodel.cn/api/paas/v4".into();
+        value.image_protocol="disabled".into();value.image_model=String::new();
+        value.video_protocol="bigmodel-video".into();value.video_model="cogvideox-flash".into();
+        let saved=upsert(file.path(),value).unwrap();
+        assert_eq!(saved.active_profile_id,original);
+        let encoded=serde_json::to_string(&saved).unwrap();
+        assert!(encoded.contains("bigmodel-video"));assert!(!encoded.contains("synthetic-key"));
+        assert_eq!(list(file.path()).unwrap().profiles.len(),2);
+    }
     #[test]
     fn local_http_requires_explicit_loopback_and_never_uses_dns() {
         assert_eq!(validated_base("http://localhost:8317/v1").unwrap(),"http://127.0.0.1:8317/v1");

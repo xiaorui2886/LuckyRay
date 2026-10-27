@@ -26,11 +26,12 @@ test("auto-launch registry probes never create a visible console window in packa
 
 test("the packaged service-probe path stays a truthful in-process read", async () => {
   const lib = await source("src-tauri/src/lib.rs");
-  const page = await source("src/features/settings/SettingsPage.tsx");
+  const page = await source("src/features/community/CollectorServiceStatus.tsx");
 
   // The collection service check remains a base-URL read of the running
   // transport; it must not spawn a shell or fake a cached status.
   assert.match(lib, /fn get_collection_server_base_url\(\s*transport: tauri::State<'_, local_transport::LocalTransportHandle>,\s*\) -> String \{\s*transport\.base_url\(\)\s*\}/);
   assert.match(page, /getCollectionServerBaseUrl/);
-  assert.match(page, /collectionTransportReady === true \? t\("settings\.general\.collection\.service\.ready"\)/);
+  assert.match(page, /ready \? t\("settings\.general\.collection\.service\.ready"\)/);
+  assert.doesNotMatch(page, /\b(?:fetch|invoke|setInterval)\(/);
 });

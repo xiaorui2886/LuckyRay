@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { CanvasCreativeDialog } from "./CanvasCreativeDialog";
+import { CanvasImageCropOverlay } from "./CanvasImageCropOverlay";
+import { moveCropRect, resizeCropRect, type CropRect } from "../../core/canvas/imageCropGeometry";
 import {
+  NEUTRAL_IMAGE_ADJUSTMENTS,
   centeredCrop,
+  validateImageEdit,
   rotateImageEdit,
-  imageEditWithCrop,
+  IMAGE_EDIT_LIMITS,
   renderImageEdit,
   canvasPngBlob,
   type ImageEdit,
@@ -13,6 +17,14 @@ import {
   type DeliveryItem,
 } from "../../core/canvas/mediaDelivery";
 const fullCrop = { x: 0, y: 0, width: 1, height: 1 };
+const cropAspectOptions = [["1:1", 1], ["4:3", 4 / 3], ["3:4", 3 / 4], ["16:9", 16 / 9], ["9:16", 9 / 16]] as const;
+function cropPercent(value: number) {
+  const percent = value * 100;
+  // Keep ordinary percentages quiet, but never display a nonzero source pixel as 0%.
+  const edgeDistance = Math.min(percent, 100 - percent);
+  const precision = edgeDistance > 0 && edgeDistance < 0.01 ? Math.min(8, Math.ceil(-Math.log10(edgeDistance)) + 2) : 2;
+  return Number(percent.toFixed(precision));
+}
 function DimensionInput({
   label,
   value,
@@ -52,19 +64,23 @@ function DimensionInput({
 
 export function CanvasImageTools({
   item,
+  initialEdit,
   onClose,
   onSave,
   english = false,
 }: {
   item?: DeliveryItem;
+  /** Prepared by the Agent, preview only; saving still requires the user. */
+  initialEdit?: ImageEdit;
   onClose: () => void;
   onSave: (item: DeliveryItem, blob: Blob, edit: ImageEdit) => Promise<string>;
   english?: boolean;
 }) {
   const image = useRef<HTMLImageElement | null>(null),
-    preview = useRef<HTMLDivElement>(null),
+    outputScale = useRef(1),
     mounted = useRef(true),
-    saving = useRef(false);
+    saving = useRef(false),
+    sourceEpoch = useRef(0);
   const [edit, setEdit] = useState<ImageEdit>({
       turns: 0,
       flipX: false,
@@ -73,10 +89,14 @@ export function CanvasImageTools({
       width: 1,
       height: 1,
     }),
+    [compareOriginal, setCompareOriginal] = useState(false),
     [loaded, setLoaded] = useState(false),
+    [loading, setLoading] = useState(false),
+    [retry, setRetry] = useState(0),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
-    [lock, setLock] = useState(true);
+    [lock, setLock] = useState(true),
+    [cropAspect, setCropAspect] = useState<number | undefined>(undefined);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -84,11 +104,19 @@ export function CanvasImageTools({
     };
   }, []);
   useEffect(() => {
+    const epoch = ++sourceEpoch.current;
+    image.current = null;
+    setCompareOriginal(false);
+    setCropAspect(undefined);
+    saving.current = false;
+    setBusy(false);
+    setLoaded(false);
+    setNotice("");
+    setLoading(!!item);
     if (!item) return;
     let cancelled = false,
       url = "";
     const controller = new AbortController();
-    setLoaded(false);
     void (async () => {
       try {
         const bytes = await readMediaBytes(
@@ -96,11 +124,12 @@ export function CanvasImageTools({
           controller.signal,
           64 * 1024 * 1024,
         );
+        if (cancelled || epoch !== sourceEpoch.current) return;
         url = URL.createObjectURL(new Blob([bytes as BlobPart]));
         const next = new Image();
         next.src = url;
         await next.decode();
-        if (cancelled) return;
+        if (cancelled || epoch !== sourceEpoch.current) return;
         if (next.naturalWidth * next.naturalHeight > 64_000_000)
           throw Error("image-too-large");
         image.current = next;
@@ -108,77 +137,93 @@ export function CanvasImageTools({
           1,
           4096 / Math.max(next.naturalWidth, next.naturalHeight),
         );
-        setEdit({
-          turns: 0,
-          flipX: false,
-          flipY: false,
-          crop: fullCrop,
-          width: Math.round(next.naturalWidth * factor),
-          height: Math.round(next.naturalHeight * factor),
-        });
+        outputScale.current = factor;
+        if(initialEdit){
+          validateImageEdit(initialEdit,next.naturalWidth,next.naturalHeight);
+          const prepared=structuredClone(initialEdit);
+          const orientedWidth=prepared.turns%2?next.naturalHeight:next.naturalWidth;
+          const orientedHeight=prepared.turns%2?next.naturalWidth:next.naturalHeight;
+          outputScale.current=prepared.width/(orientedWidth*prepared.crop.width);
+          setLock(Math.abs(outputScale.current-prepared.height/(orientedHeight*prepared.crop.height))<1e-6);
+          setEdit(prepared);
+          setNotice(english?'Agent parameters are ready for preview. Nothing has been saved.':'已预填 Agent 的编辑参数，仅供预览，尚未保存。');
+        }else{
+          setLock(true);
+          setEdit({turns:0,flipX:false,flipY:false,crop:fullCrop,width:Math.max(1,Math.round(next.naturalWidth*factor)),height:Math.max(1,Math.round(next.naturalHeight*factor))});
+        }
         setLoaded(true);
       } catch {
-        if (!cancelled)
+        if (!cancelled && epoch === sourceEpoch.current)
           setNotice(
             english
               ? "Unable to read this original image."
               : "暂时无法读取这张原图，请检查素材是否可用。",
           );
+      } finally {
+        if (!cancelled && epoch === sourceEpoch.current) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      sourceEpoch.current++;
       controller.abort();
       if (url) URL.revokeObjectURL(url);
       image.current = null;
     };
-  }, [item?.source, english]);
-  useEffect(() => {
-    if (!loaded || !image.current || !preview.current) return;
-    try {
-      const ratio = edit.width / edit.height,
-        factor = Math.min(1, 1000 / Math.max(edit.width, edit.height));
-      const canvas = renderImageEdit(
-        image.current,
-        image.current.naturalWidth,
-        image.current.naturalHeight,
-        {
-          ...edit,
-          width: Math.max(1, Math.round(edit.width * factor)),
-          height: Math.max(1, Math.round(edit.height * factor)),
-        },
-      );
-      canvas.style.aspectRatio = String(ratio);
-      canvas.setAttribute(
-        "aria-label",
-        english ? "Edited image preview" : "图片处理预览",
-      );
-      preview.current.replaceChildren(canvas);
-      setNotice("");
-    } catch {
-      setNotice(
-        english
-          ? "Check crop and output dimensions."
-          : "请检查裁剪范围和输出尺寸。",
-      );
-    }
-  }, [edit, loaded, english]);
-  const crop = (ratio?: number) => {
-    const img = image.current;
-    if (!img) return;
-    const w = edit.turns % 2 ? img.naturalHeight : img.naturalWidth,
-      h = edit.turns % 2 ? img.naturalWidth : img.naturalHeight,
-      c = centeredCrop(w, h, ratio);
-    const factor = Math.min(1, 4096 / Math.max(w * c.width, h * c.height));
-    setEdit({
-      ...edit,
-      crop: c,
-      width: Math.max(1, Math.round(w * c.width * factor)),
-      height: Math.max(1, Math.round(h * c.height * factor)),
+  }, [item?.source, item?.id, item?.nodeId, english, retry, initialEdit]);
+  const sourceSize = image.current ? {
+    width: edit.turns % 2 ? image.current.naturalHeight : image.current.naturalWidth,
+    height: edit.turns % 2 ? image.current.naturalWidth : image.current.naturalHeight,
+  } : null;
+  const updateCrop = (crop: CropRect) => {
+    if (saving.current || !sourceSize) return;
+    setEdit(current => {
+      if (!lock || (current.crop.width === crop.width && current.crop.height === crop.height)) return { ...current, crop };
+      const sourceWidth = sourceSize.width * crop.width, sourceHeight = sourceSize.height * crop.height;
+      // A user-selected output scale survives crop changes. Never derive this from
+      // the downsampled preview, or feed rounded output sizes back into the scale.
+      const factor = Math.min(outputScale.current, IMAGE_EDIT_LIMITS.side / sourceWidth, IMAGE_EDIT_LIMITS.side / sourceHeight,
+        Math.sqrt(IMAGE_EDIT_LIMITS.outputPixels / (sourceWidth * sourceHeight)));
+      let width = Math.max(1, Math.min(IMAGE_EDIT_LIMITS.side, Math.round(sourceWidth * factor)));
+      let height = Math.max(1, Math.min(IMAGE_EDIT_LIMITS.side, Math.round(sourceHeight * factor)));
+      if (width * height > IMAGE_EDIT_LIMITS.outputPixels) {
+        if (width >= height) width = Math.floor(IMAGE_EDIT_LIMITS.outputPixels / height);
+        else height = Math.floor(IMAGE_EDIT_LIMITS.outputPixels / width);
+      }
+      return { ...current, crop, width, height };
     });
   };
+  const chooseCropAspect = (ratio?: number) => {
+    if (!sourceSize || saving.current) return;
+    if (ratio !== undefined && (!Number.isFinite(ratio) || ratio < 1 / sourceSize.height || ratio > sourceSize.width)) {
+      setNotice(english ? "This ratio cannot fit at least one source pixel on each side." : "这个比例无法在原图内保留至少 1 × 1 像素，请选择其他比例。");
+      return;
+    }
+    setCropAspect(ratio);
+    if (ratio) updateCrop(centeredCrop(sourceSize.width, sourceSize.height, ratio));
+    setNotice("");
+  };
+  const resetCrop = () => {
+    if (saving.current) return;
+    setCropAspect(undefined);
+    updateCrop(fullCrop);
+  };
+  const changeCropField = (key: keyof CropRect, value: number) => {
+    if (!sourceSize || !Number.isFinite(value)) return;
+    try {
+      const next = key === "x" || key === "y"
+        ? moveCropRect(edit.crop, { x: key === "x" ? value - edit.crop.x : 0, y: key === "y" ? value - edit.crop.y : 0 }, sourceSize)
+        : resizeCropRect(edit.crop, key === "width" ? "e" : "s", { x: key === "width" ? value - edit.crop.width : 0, y: key === "height" ? value - edit.crop.height : 0 }, sourceSize, cropAspect);
+      updateCrop(next);
+      setNotice("");
+    } catch {
+      setNotice(english ? "That crop does not fit the original image at this ratio." : "当前比例下，这个裁剪范围无法容纳在原图中。");
+    }
+  };
   const save = async () => {
-    if (!item || !image.current || saving.current) return;
+    if (!item || !loaded || !image.current || saving.current) return;
+    const epoch = sourceEpoch.current;
+    const current = () => mounted.current && epoch === sourceEpoch.current;
     saving.current = true;
     setBusy(true);
     setNotice("");
@@ -189,18 +234,23 @@ export function CanvasImageTools({
         image.current.naturalHeight,
         edit,
       );
-      const result = await onSave(item, await canvasPngBlob(output), edit);
-      if (mounted.current) setNotice(result);
+      const blob = await canvasPngBlob(output);
+      // Encoding is async. Navigation or a different selection invalidates this save.
+      if (!current()) return;
+      const result = await onSave(item, blob, edit);
+      if (current()) setNotice(result);
     } catch {
-      if (mounted.current)
+      if (current())
         setNotice(
           english
             ? "The copy could not be completed. Original unchanged."
             : "副本未能完成，原图未改变。",
         );
     } finally {
-      saving.current = false;
-      if (mounted.current) setBusy(false);
+      if (current()) {
+        saving.current = false;
+        setBusy(false);
+      }
     }
   };
   const close = () => {
@@ -210,6 +260,7 @@ export function CanvasImageTools({
     <CanvasCreativeDialog
       className="canvas-image-tools-dialog"
       title={english ? "Image tools" : "图片精修"}
+      subtitle={english ? "Local adjustments · original unchanged" : "本地调整 · 始终保留原图"}
       onClose={close}
       english={english}
     >
@@ -220,93 +271,87 @@ export function CanvasImageTools({
             : "先回画布选中一张图片或图片生成结果。"}
         </div>
       ) : (
-        <div className="canvas-image-tools-layout">
-          <div className="canvas-image-tools-preview" ref={preview}>
-            {!loaded ? (english ? "Reading original…" : "正在读取原图…") : null}
+        <div className="canvas-image-tools-layout" aria-busy={busy || loading}>
+          <div className="canvas-image-tools-preview">
+            {loaded && image.current && sourceSize ? <CanvasImageCropOverlay
+              source={image.current} sourceSize={sourceSize} turns={edit.turns} flipX={edit.flipX} flipY={edit.flipY}
+              adjustments={compareOriginal ? undefined : edit.adjustments}
+              crop={edit.crop} aspectRatio={cropAspect} sessionKey={`${sourceEpoch.current}:${edit.turns}:${edit.flipX}:${edit.flipY}`}
+              disabled={busy} english={english} onChange={updateCrop}
+            /> : null}
+            {loading ? <span role="status">{english ? "Reading original…" : "正在读取原图…"}</span> : !loaded ? <div>
+              <span>{english ? "Original image unavailable" : "原图暂时不可用"}</span>
+              <button type="button" onClick={() => setRetry(value => value + 1)}>{english ? "Retry reading original" : "重新读取原图"}</button>
+            </div> : null}
           </div>
           <fieldset disabled={!loaded || busy}>
             <legend>{item.label}</legend>
             <div className="canvas-image-transform-buttons">
               <button
                 type="button"
-                onClick={() => setEdit(rotateImageEdit(edit))}
+                onClick={() => {
+                  if (saving.current) return;
+                  setEdit(rotateImageEdit(edit));
+                  if (cropAspect) setCropAspect(1 / cropAspect);
+                }}
               >
                 {english ? "Rotate 90°" : "旋转 90°"}
               </button>
               <button
                 type="button"
                 aria-pressed={edit.flipX}
-                onClick={() => setEdit({ ...edit, flipX: !edit.flipX })}
+                onClick={() => { if (!saving.current) setEdit({ ...edit, flipX: !edit.flipX }); }}
               >
                 {english ? "Flip horizontally" : "水平翻转"}
               </button>
               <button
                 type="button"
                 aria-pressed={edit.flipY}
-                onClick={() => setEdit({ ...edit, flipY: !edit.flipY })}
+                onClick={() => { if (!saving.current) setEdit({ ...edit, flipY: !edit.flipY }); }}
               >
                 {english ? "Flip vertically" : "垂直翻转"}
               </button>
             </div>
-            <strong>{english ? "Crop" : "裁剪"}</strong>
-            <div className="canvas-image-transform-buttons">
-              {[
-                ["原图", 0],
-                ["1:1", 1],
-                ["4:3", 4 / 3],
-                ["3:4", 3 / 4],
-                ["16:9", 16 / 9],
-                ["9:16", 9 / 16],
-              ].map(([name, ratio]) => (
-                <button
-                  type="button"
-                  key={name}
-                  onClick={() => crop(Number(ratio) || undefined)}
-                >
-                  {name === "原图" && english ? "Full image" : name}
-                </button>
+            <div className="canvas-image-crop-heading">
+              <strong>{english ? "Crop" : "裁剪"}</strong>
+              <button type="button" onClick={resetCrop}>{english ? "Reset crop" : "重置裁剪"}</button>
+            </div>
+            <label>
+              {english ? "Aspect ratio" : "裁剪比例"}
+              <select aria-label={english ? "Crop aspect ratio" : "裁剪比例"} value={cropAspect === undefined ? "free" : String(cropAspect)}
+                onChange={event => chooseCropAspect(event.target.value === "free" ? undefined : Number(event.target.value))}>
+                <option value="free">{english ? "Free" : "自由"}</option>
+                {cropAspectOptions.map(([name, ratio]) => <option key={name} value={String(ratio)}
+                  disabled={!!sourceSize && (ratio < 1 / sourceSize.height || ratio > sourceSize.width)}>{name}</option>)}
+              </select>
+            </label>
+            <div className="canvas-image-crop-fields">
+              {(["x", "y", "width", "height"] as const).map((key, index) => (
+                <label key={key}>
+                  {(english ? ["Left", "Top", "Width", "Height"] : ["左侧", "顶部", "宽度", "高度"])[index]} %
+                  <input aria-label={`${key}-crop`} type="number"
+                    min={sourceSize && (key === "width" || key === "height") ? 100 / sourceSize[key] : 0} max="100" step="any"
+                    value={cropPercent(edit.crop[key])}
+                    onChange={event => {
+                      if (!event.target.value) return;
+                      const value = Number(event.target.value) / 100;
+                      if (value >= 0 && value <= 1 && ((key === "x" || key === "y") || value > 0)) changeCropField(key, value);
+                    }} />
+                </label>
               ))}
             </div>
-            {(["x", "y", "width", "height"] as const).map((key, index) => (
-              <label key={key}>
-                {
-                  (english
-                    ? ["Left", "Top", "Width", "Height"]
-                    : ["左侧", "顶部", "宽度", "高度"])[index]
-                }{" "}
-                %
-                <input
-                  aria-label={`${key}-crop`}
-                  type="number"
-                  min={key === "width" || key === "height" ? 1 : 0}
-                  max="100"
-                  step="1"
-                  value={Math.round(edit.crop[key] * 100)}
-                  onChange={(event) => {
-                    const value = Number(event.target.value) / 100;
-                    const c = { ...edit.crop, [key]: value };
-                    if (
-                      value >= 0 &&
-                      c.width > 0 &&
-                      c.height > 0 &&
-                      c.x + c.width <= 1.000001 &&
-                      c.y + c.height <= 1.000001 &&
-                      image.current
-                    )
-                      setEdit(
-                        lock
-                          ? imageEditWithCrop(
-                              edit,
-                              c,
-                              image.current.naturalWidth,
-                              image.current.naturalHeight,
-                            )
-                          : { ...edit, crop: c },
-                      );
-                  }}
-                />
-              </label>
-            ))}
+            <section className="canvas-image-adjustments" aria-label={english ? "Color adjustments" : "色彩调整"}>
+              <div className="canvas-image-crop-heading"><strong>{english ? "Color" : "色彩"}</strong>
+                <button type="button" onClick={() => { setEdit(current => ({ ...current, adjustments: { ...NEUTRAL_IMAGE_ADJUSTMENTS } })); setCompareOriginal(false); }}>{english ? "Reset color" : "重置色彩"}</button>
+              </div>
+              {(["brightness", "contrast", "saturation"] as const).map((key, index) => <label key={key} className="canvas-image-adjustment-row">
+                <span>{(english ? ["Brightness", "Contrast", "Saturation"] : ["亮度", "对比度", "饱和度"])[index]}</span>
+                <input type="range" aria-label={key} min={-100} max={100} step={1} value={edit.adjustments?.[key] ?? 0}
+                  onChange={event => { const value = Number(event.target.value); setCompareOriginal(false); setEdit(current => ({ ...current, adjustments: { ...NEUTRAL_IMAGE_ADJUSTMENTS, ...current.adjustments, [key]: value } })); }} />
+                <output>{edit.adjustments?.[key] ?? 0}</output>
+              </label>)}
+              <button type="button" className="canvas-image-color-compare" aria-pressed={compareOriginal} onClick={() => setCompareOriginal(current => !current)}>{english ? "Compare original color" : "对比原图色彩"}</button>
+            </section>
             <strong>{english ? "Output size · PNG" : "输出尺寸 · PNG"}</strong>
             <small>
               {image.current
@@ -318,7 +363,9 @@ export function CanvasImageTools({
               <DimensionInput
                 label="output-width"
                 value={edit.width}
-                onValue={(value) =>
+                onValue={(value) => {
+                  if (saving.current) return;
+                  if (sourceSize) outputScale.current = value / (sourceSize.width * edit.crop.width);
                   setEdit({
                     ...edit,
                     width: value,
@@ -330,8 +377,8 @@ export function CanvasImageTools({
                           ),
                         }
                       : {}),
-                  })
-                }
+                  });
+                }}
               />
             </label>
             <label>
@@ -339,7 +386,9 @@ export function CanvasImageTools({
               <DimensionInput
                 label="output-height"
                 value={edit.height}
-                onValue={(value) =>
+                onValue={(value) => {
+                  if (saving.current) return;
+                  if (sourceSize) outputScale.current = value / (sourceSize.height * edit.crop.height);
                   setEdit({
                     ...edit,
                     height: value,
@@ -351,15 +400,19 @@ export function CanvasImageTools({
                           ),
                         }
                       : {}),
-                  })
-                }
+                  });
+                }}
               />
             </label>
             <label className="canvas-image-lock">
               <input
                 type="checkbox"
                 checked={lock}
-                onChange={(e) => setLock(e.target.checked)}
+                onChange={(e) => {
+                  if (saving.current) return;
+                  if (e.target.checked && sourceSize) outputScale.current = edit.width / (sourceSize.width * edit.crop.width);
+                  setLock(e.target.checked);
+                }}
               />
               {english ? "Keep output proportions" : "锁定输出比例"}
             </label>

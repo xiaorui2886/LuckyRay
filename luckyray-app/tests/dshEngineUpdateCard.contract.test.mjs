@@ -12,7 +12,7 @@ const viteRequire = createRequire(require.resolve("vite"));
 const { build } = viteRequire("esbuild");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-async function render(phase, canInstall = false, locale = "zh-CN") {
+async function render(phase, canInstall = false, locale = "zh-CN", splitLayout = false) {
   const status = { phase, currentVersion: "0.1.7-rc.2", candidateVersion: canInstall ? "0.2.0-rc.2" : null,
     upstreamVersion: "0.2.0-rc.2", sourceClass: "development", channel: "preview", canCheck: true, canInstall,
     canRecover: false, canVerify: false, canRestart: false, canPrepareExit: false, canCancel: false, workStage: null };
@@ -27,7 +27,11 @@ async function render(phase, canInstall = false, locale = "zh-CN") {
     } }] });
   const compiled = { exports: {} };
   new Function("require", "module", "exports", bundle.outputFiles[0].text)(require, compiled, compiled.exports);
-  return renderToStaticMarkup(React.createElement(compiled.exports.default));
+  return renderToStaticMarkup(React.createElement(compiled.exports.default, splitLayout ? {
+    renderLayout: ({ information, actions }) => React.createElement("section", null,
+      React.createElement("header", null, actions),
+      React.createElement("div", { hidden: true }, information)),
+  } : {}));
 }
 
 test("settings exposes the existing install action only for an admitted compatible candidate", async () => {
@@ -49,4 +53,16 @@ test("settings distinguishes catalog absence, legacy evidence, upgrade path and 
   assert.match(await render("untrusted"), /签名、格式或有效期/u);
   assert.match(await render("check_failed"), /失败或离线/u);
   assert.match(await render("upstream_unvalidated", false, "en-US"), /has not verified it/u);
+});
+
+test("split presentation exposes the same admitted actions while information is collapsed", async () => {
+  const html = await render("available", true, "zh-CN", true);
+  const header = html.match(/<header>([\s\S]*?)<\/header>/)?.[1] ?? "";
+  assert.match(header, /检查更新/);
+  assert.match(header, /下载并验证升级/);
+  assert.doesNotMatch(header, /当前引擎|受信版本/);
+  assert.match(html, /hidden=""[\s\S]*当前引擎/);
+  const denied = await render("untrusted", false, "zh-CN", true);
+  assert.doesNotMatch(denied, /下载并验证升级/);
+  assert.match(denied, /签名、格式或有效期/);
 });

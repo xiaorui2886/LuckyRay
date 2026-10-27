@@ -37,10 +37,10 @@ function ok(v) {
     nav = rail.querySelector("nav");
   eq(handle.getAttribute("aria-expanded"), "false");
   ok(nav.hasAttribute("inert"));
-  rail.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
-  await delay();
+  handle.dispatchEvent(new MouseEvent("pointerover", { bubbles: true, buttons: 0 }));
+  await new Promise(resolve => setTimeout(resolve, 280));
   eq(handle.getAttribute("aria-expanded"), "true");
-  eq(nav.querySelectorAll("button").length, 4);
+  eq(nav.querySelectorAll("button").length, 5);
   nav.querySelectorAll("button")[2].click();
   await delay();
   eq(f.events, ["editImage"]);

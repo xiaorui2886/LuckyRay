@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { validateQualifiedAssemblyDescription } from "./dsh-frozen-assembly-description.mjs";
 import { validateCompatibility } from "./dsh-host-compatibility.mjs";
+import { MAX_DSH_CLOSURE_FILE_COUNT } from "./dsh-supply-chain.mjs";
 
 export const REPOSITORY = "xiaorui2886/luckyray-update-metadata";
 export const ORIGIN = `https://raw.githubusercontent.com/${REPOSITORY}/main/`;
@@ -117,7 +118,7 @@ export function validateCandidate(candidate, descriptor, contract, now = Math.fl
       || candidate.expiresAt <= now || candidate.expiresAt <= candidate.issuedAt || candidate.expiresAt - candidate.issuedAt > 30 * 86400
       || !Array.isArray(candidate.fromVersions) || !candidate.fromVersions.length || candidate.fromVersions.length > 16
       || new Set(candidate.fromVersions).size !== candidate.fromVersions.length || !candidate.fromVersions.every(semver)
-      || candidate.dataCompatibility !== "no-migration" || !Number.isSafeInteger(candidate.closureFileCount) || candidate.closureFileCount < 1 || candidate.closureFileCount > 30000) bad("candidate-contract-invalid");
+      || candidate.dataCompatibility !== "no-migration" || !Number.isSafeInteger(candidate.closureFileCount) || candidate.closureFileCount < 1 || candidate.closureFileCount > MAX_DSH_CLOSURE_FILE_COUNT) bad("candidate-contract-invalid");
   keys(candidate.assembly, ["schema", "kind", "toolset"]);
   if (candidate.assembly.schema !== 2 || candidate.assembly.kind !== "official-npm-qualified-win-x64-v2" || candidate.assembly.toolset !== "node22.19.0-pnpm11.7.0-policy1"
       || candidate.artifactUrl !== `${ORIGIN}descriptors/${candidate.artifactSha256}.json` || candidate.artifactBytes !== descriptor.length || sha256(descriptor) !== candidate.artifactSha256) bad("descriptor-binding-invalid");

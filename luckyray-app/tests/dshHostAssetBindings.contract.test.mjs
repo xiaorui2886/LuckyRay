@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const nativeHost = readFileSync(new URL("../src-tauri/src/dsh_host.rs", import.meta.url), "utf8");
+const nativeRuntimeSeal = readFileSync(new URL("../src-tauri/src/dsh_runtime_seal.rs", import.meta.url), "utf8");
 const assetRoot = new URL("../src-tauri/dsh-host/", import.meta.url);
 const bindings = [
   ["HOST_SCRIPT_SHA256", "luckyray-dsh-host.mjs"],
@@ -17,11 +18,30 @@ const bindings = [
   ["LIGHTSEEK_UI_PACKAGE_SHA256", "luckyray-dsh-lightseek-ui/package.json"],
   ["LIGHTSEEK_UI_CLIENT_SHA256", "luckyray-dsh-lightseek-ui/client.js"],
   ["LIGHTSEEK_UI_BACKGROUND_SHA256", "luckyray-dsh-lightseek-ui/lightseek-cosmic-home.webp", "binary"],
+  ["CANVAS_PROJECTION_SHA256", "luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-projection.mjs"],
+  ["CANVAS_TASK_STATE_SHA256", "luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-task-state.mjs"],
+  ["CANVAS_CREATION_SCHEMA_SHA256", "luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-creation-schema.mjs"],
+  ["CANVAS_AGENT_SHA256", "luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs"],
   ["PROVIDER_EXPORT_SHA256", "luckyray-dsh-authenticated-webserver/luckyray-dsh-provider-export.mjs"],
   ["CARRIER_PACKAGE_SHA256", "luckyray-dsh-authenticated-webserver/package.json"],
   ["RESOURCE_PACKAGE_SHA256", "luckyray-dsh-resource-tools/package.json"],
 ];
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+
+test("Windows checkout keeps the host authority LF within the unchanged native byte limit", () => {
+  const attributes = readFileSync(new URL("../../.gitattributes", import.meta.url), "utf8");
+  assert.match(attributes, /^luckyray-app\/src-tauri\/dsh-host\/luckyray-dsh-host\.mjs text eol=lf$/m);
+  const bytes = readFileSync(new URL("luckyray-dsh-host.mjs", assetRoot));
+  assert.equal(bytes.includes(Buffer.from("\r\n")), false, "CRLF expansion must not exceed the fail-closed host byte bound on Windows");
+  assert.ok(bytes.length <= 128 * 1024);
+});
+
+test("R11 carrier reuses the separately pinned creation validator without widening asset admission", () => {
+  const carrier = readFileSync(new URL("luckyray-dsh-host.mjs", assetRoot), "utf8");
+  assert.match(carrier, /import \{ validCreationPayload \} from "\.\/luckyray-dsh-authenticated-webserver\/luckyray-dsh-canvas-agent\.mjs";/);
+  assert.match(nativeHost, /CANVAS_AGENT_SHA256/);
+  assert.doesNotMatch(carrier, /const CREATION_SCHEMAS = /);
+});
 function pin(name) {
   const match = nativeHost.match(new RegExp(`const ${name}: &str =\\s*"([a-f0-9]{64})";`));
   assert.ok(match, `missing Rust asset pin: ${name}`);
@@ -46,9 +66,34 @@ for (const [name, path, kind] of bindings) {
   });
 }
 
+// The runtime descriptor also verifies four compile-time record seals before
+// any preload can start. A generated closure/audit change must update these
+// exact pins as well as the Node staging authority; host/client pins alone do
+// not cover this admission path.
+for (const [name, path] of [
+  ["AUTHORITY", "runtime-authority.json"],
+  ["AUDIT", "records/dependency-audit.json"],
+  ["LAUNCH", "records/launch-manifest.json"],
+  ["RUNTIME", "records/runtime-manifest.json"],
+]) {
+  test(`native embedded runtime record pin matches generated source: ${name}`, () => {
+    const expected = nativeRuntimeSeal.match(new RegExp(`const ${name}_SHA256: &str =\\s*"([a-f0-9]{64})";`))?.[1];
+    assert.ok(expected, `missing production record pin: ${name}`);
+    assert.ok(nativeRuntimeSeal.includes(`include_bytes!("../../dsh-host/${path}")`));
+    const bytes = readFileSync(new URL(`../dsh-host/${path}`, import.meta.url));
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    assert.equal(text.startsWith("\uFEFF"), false, "Rust rejects a record BOM");
+    const normalized = text.replaceAll("\r\n", "\n");
+    assert.equal(normalized.includes("\r"), false, "Rust rejects bare record CR");
+    assert.equal(sha256(Buffer.from(normalized)), expected, path);
+    assert.notEqual(sha256(Buffer.from(normalized + "\n")), expected, "unbound record changes remain rejected");
+  });
+}
+
 test("the packaged dsh-host directory is the asset authority and build checks every pinned asset", () => {
   const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
-  assert.equal(config.bundle.resources["dsh-host/"], "dsh-host/");
+  assert.equal(config.bundle.resources["dsh-host/"], "lr-lsh/199-1/dsh-host/");
+  assert.equal(config.bundle.resources["dsh/"], "lr-lsh/199-1/deepseek-harness/");
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(pkg.scripts["test:dsh-host-assets"], "node --test tests/dshHostAssetBindings.contract.test.mjs");
   assert.ok(pkg.scripts.build.startsWith("npm run test:dsh-host-assets && "));

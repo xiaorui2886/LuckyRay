@@ -25,6 +25,10 @@ export const CANVAS_EDGE_ROLES = [
 export type CanvasEdgeRole = (typeof CANVAS_EDGE_ROLES)[number];
 
 export type CanvasEdgeSemanticData = {
+  /** A visual provenance link, never a model input. */
+  relation?: "derivation";
+  /** Exact source image selected by a focus token; validated against live source media. */
+  referenceMediaUrl?: string;
   role?: CanvasEdgeRole;
   semanticsVersion?: number;
   order?: number;
@@ -94,16 +98,17 @@ export function resolveCanvasEdgeSemanticData(
   incomingEdges: readonly CanvasSemanticEdge[] = [],
   current?: CanvasEdgeSemanticData | null,
 ): Required<Pick<CanvasEdgeSemanticData, "role" | "semanticsVersion" | "order">> {
+  const inputs = incomingEdges.filter(edge => edge.target === targetId && edge.data?.relation !== "derivation");
   return {
     role: isCanvasEdgeRole(current?.role)
       ? current.role
-      : inferCanvasEdgeRole(source, target, incomingEdges),
+      : inferCanvasEdgeRole(source, target, inputs),
     semanticsVersion: typeof current?.semanticsVersion === "number" && current.semanticsVersion > 0
       ? current.semanticsVersion
       : CANVAS_EDGE_SEMANTICS_VERSION,
     order: typeof current?.order === "number" && current.order >= 0
       ? current.order
-      : nextInputOrder(targetId, incomingEdges),
+      : nextInputOrder(targetId, inputs),
   };
 }
 

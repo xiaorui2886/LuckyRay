@@ -1,0 +1,243 @@
+/* Settings-only continuation of the approved appearance surface language.
+   Do not target shared controls outside this page or the appearance panel. */
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) {
+  max-width: 960px;
+  min-width: 0;
+  line-height: 1.5;
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) > .setting-group {
+  margin-bottom: 16px;
+  padding: 18px 20px 12px;
+  border: 1px solid var(--theme-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--theme-surface-panel);
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) > .setting-group > h3 {
+  margin: 0 0 10px;
+  color: var(--text-primary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .setting-row {
+  padding-block: 14px;
+  gap: 16px 24px;
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .setting-label { line-height: 1.5; }
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) :is(.desc, .settings-panel-sub, .settings-group-note, .settings-muted-text, .settings-empty, .settings-link-desc) {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .setting-control {
+  max-width: 100%;
+  flex-wrap: wrap;
+  flex-shrink: 1;
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) :is(.settings-input, .select) {
+  min-height: 32px;
+  max-width: 100%;
+  background: var(--theme-surface-raised);
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .settings-btn {
+  min-height: 32px;
+  justify-content: center;
+  white-space: normal;
+  line-height: 1.45;
+  text-align: center;
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .settings-segment { max-width: 100%; flex-wrap: wrap; }
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .settings-segment-item { min-height: 28px; }
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) :is(button, select, input, summary, [tabindex="0"]):focus-visible,
+.luckyray-settings-page .settings-confirm button:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 3px;
+}
+/* Merge the native select's accent border and keyboard focus into one stroke. */
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) select:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  box-shadow: none;
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none;
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .settings-btn:disabled:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .settings-btn-primary:disabled:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--theme-accent-on-solid, #fff);
+}
+.luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .settings-btn-danger:disabled:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+}
+
+/* Keyboard shortcuts stay a real table; its local horizontal scroll preserves
+   all descriptions and actions on narrow settings content. */
+.luckyray-settings-page .settings-shortcut-scope-tabs { gap: 6px; }
+.luckyray-settings-page .settings-shortcut-scope-panel .settings-table { background: var(--theme-surface-panel); }
+.luckyray-settings-page .settings-table thead th { background: var(--theme-surface-raised); color: var(--text-secondary); text-transform: none; letter-spacing: 0; font-size: 11px; }
+.luckyray-settings-page .settings-table tbody td { padding-block: 14px; }
+.luckyray-settings-page .settings-col-name small { color: var(--text-secondary); line-height: 1.5; }
+.luckyray-settings-page :is(.settings-shortcut-cell, .settings-shortcut-reset, .settings-backup-restore) { min-height: 30px; }
+.luckyray-settings-page .settings-shortcut-cell { font-family: var(--font-mono); }
+.luckyray-settings-page :is(.settings-inline-warning, .settings-shortcut-cell.conflict) {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--border));
+  background: color-mix(in srgb, var(--amber) 8%, var(--theme-surface-panel));
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.luckyray-settings-page .settings-shortcut-conflict { color: var(--amber); line-height: 1.5; }
+.luckyray-settings-page .settings-shortcut-conflict-row td { background: color-mix(in srgb, var(--amber) 4%, var(--theme-surface-panel)); }
+.luckyray-settings-page :is(.settings-shortcut-suggestion-keys button, .settings-shortcut-apply) {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 30%, var(--border));
+  background: color-mix(in srgb, var(--amber) 8%, var(--theme-surface-panel));
+  min-height: 30px;
+}
+
+/* AI connections are primary. Existing disclosures retain their hidden state. */
+.luckyray-settings-page .settings-ai-panel > .setting-group:has(> .settings-ai-disclosure) {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.luckyray-settings-page .settings-ai-panel > .setting-group:has(> .settings-ai-disclosure) > h3 { margin: 22px 0 10px; }
+.luckyray-settings-page .settings-ai-disclosure { border-color: var(--theme-border-strong); background: var(--theme-surface-panel); }
+.luckyray-settings-page .settings-ai-disclosure-head { padding: 16px 20px; }
+.luckyray-settings-page .settings-ai-disclosure-body { padding: 16px 20px; }
+.luckyray-settings-page .ai-profile-card { background: var(--theme-surface-raised); }
+.luckyray-settings-page .ai-profile-card:hover { transform: none; }
+.luckyray-settings-page :is(.ai-profile-manager-head span, .ai-profile-editor-head span, .settings-secret-copy span, .ai-profile-card-copy small, .ai-profile-compatibility small, .ai-profile-form-grid label) { color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
+.luckyray-settings-page .ai-profile-editor {
+  background: var(--theme-surface-panel);
+  border-color: var(--theme-border-strong);
+  box-shadow: var(--theme-shadow-sm);
+}
+.luckyray-settings-page :is(.ai-profile-editor-head, .ai-profile-editor-actions, .settings-secret-editor) { background: var(--theme-surface-raised); }
+.luckyray-settings-page .ai-profile-editor-head { gap: 16px; }
+.luckyray-settings-page .ai-profile-editor-close { flex: 0 0 30px; width: 30px; height: 30px; }
+.luckyray-settings-page .ai-profile-editor-actions { flex-wrap: wrap; gap: 8px; }
+.luckyray-settings-page .ai-profile-editor-actions > span { flex-basis: 180px; overflow-wrap: anywhere; }
+.luckyray-settings-page .ai-profile-compatibility { background: var(--theme-surface-raised); }
+.luckyray-settings-page .ai-profile-compatibility > span.ready { background: var(--mint); box-shadow: 0 0 0 4px color-mix(in srgb, var(--mint) 10%, transparent); }
+.luckyray-settings-page .settings-secret-input-row { flex-wrap: wrap; }
+.luckyray-settings-page .settings-secret-input { min-width: min(180px, 100%); }
+
+/* Storage: long paths and backup identifiers may wrap, never push actions out. */
+.luckyray-settings-page .settings-storage-overview { background: transparent; border: 0; padding: 8px 0 12px; margin: 0; }
+.luckyray-settings-page .settings-backup-item { flex-wrap: wrap; padding: 12px; background: var(--theme-surface-raised); }
+.luckyray-settings-page .settings-backup-name { flex-basis: 180px; white-space: normal; overflow-wrap: anywhere; }
+.luckyray-settings-page :is(.settings-backup-time, .settings-backup-size, .settings-backup-count, .settings-bar-size, .settings-bar-pct, .settings-ring-total) { color: var(--text-secondary); font-size: 11px; }
+.luckyray-settings-page .settings-panel > .setting-group.settings-danger {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--theme-border-strong));
+  background: color-mix(in srgb, var(--danger) 3%, var(--theme-surface-panel));
+}
+.luckyray-settings-page .settings-empty { background: var(--theme-surface-raised); margin-block: 10px; }
+
+/* About: quiet surfaces and useful update controls rather than extra decoration. */
+.luckyray-settings-page :is(.settings-about-hero, .settings-about-desc) { background: var(--theme-surface-panel); border-color: var(--theme-border-strong); }
+.luckyray-settings-page .settings-about-logo { filter: none; }
+.luckyray-settings-page .settings-credits { padding: 4px 0 8px; border: 0; background: transparent; color: var(--text-secondary); font-size: 12px; }
+.luckyray-settings-page .settings-link-card { padding: 14px; background: var(--theme-surface-raised); }
+.luckyray-settings-page .settings-link-card:hover { transform: none; background: var(--bg-hover); border-color: var(--theme-border-strong); }
+.luckyray-settings-page .settings-link-card > div { min-width: 0; overflow-wrap: anywhere; }
+.luckyray-settings-page .settings-update-panel { background: var(--theme-surface-raised); }
+
+/* Device and security details remain visible, including long endpoint names. */
+.luckyray-settings-page .companion-card { padding: 20px; border-color: var(--theme-border-strong); background: var(--theme-surface-panel); box-shadow: none; }
+.luckyray-settings-page :is(.companion-kicker, .companion-empty, .companion-device-copy small, .companion-endpoint-facts dt) { color: var(--text-secondary); }
+.luckyray-settings-page :is(.companion-endpoint-facts div, .companion-device, .companion-empty, .companion-audit-list, .companion-count, .companion-pairing-meta) { background: var(--theme-surface-raised); }
+.luckyray-settings-page :is(.companion-device, .companion-endpoint-facts div):hover { background: var(--bg-hover); }
+.luckyray-settings-page .companion-device { grid-template-columns: 38px minmax(0, 1fr) auto; }
+.luckyray-settings-page .companion-device-copy { grid-column: 2 / -1; }
+.luckyray-settings-page .companion-device > .settings-btn { grid-column: 2; grid-row: 2; justify-self: start; }
+.luckyray-settings-page .companion-device > .settings-btn:last-of-type { grid-column: 3; }
+.luckyray-settings-page .companion-device > small { grid-column: 2 / -1; line-height: 1.6; overflow-wrap: anywhere; }
+.luckyray-settings-page :is(.companion-device-copy b, .companion-device-copy small, .companion-endpoint-facts dd) { white-space: normal; overflow-wrap: anywhere; }
+.luckyray-settings-page .companion-firewall-note { border-color: color-mix(in srgb, var(--amber) 24%, var(--border)); background: color-mix(in srgb, var(--amber) 5%, var(--theme-surface-panel)); }
+.luckyray-settings-page .companion-firewall-note > span { background: color-mix(in srgb, var(--amber) 12%, transparent); }
+.luckyray-settings-page .companion-audit-row { grid-template-columns: 8px minmax(0, .8fr) minmax(0, 1fr) auto; padding-block: 10px; overflow-wrap: anywhere; }
+.luckyray-settings-page .companion-audit-row > span:nth-of-type(2) { display: block; }
+.luckyray-settings-page :is(.companion-inline-error, .settings-message.error) { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 25%, var(--border)); background: color-mix(in srgb, var(--danger) 6%, var(--theme-surface-panel)); overflow-wrap: anywhere; line-height: 1.6; }
+.luckyray-settings-page .companion-dialog-actions { flex-wrap: wrap; }
+.luckyray-settings-page .companion-pairing-meta { flex-wrap: wrap; overflow-wrap: anywhere; }
+.luckyray-settings-page :is(.settings-confirm, .companion-pairing-dialog, .companion-revoke-dialog) { background: var(--theme-surface-panel); border-color: var(--theme-border-strong); }
+.luckyray-settings-page .settings-confirm { max-height: calc(100dvh - 40px); overflow: auto; }
+.luckyray-settings-page .settings-confirm-head { padding-top: 20px; }
+.luckyray-settings-page .settings-confirm-body { padding-block: 8px 20px; overflow-wrap: anywhere; }
+.luckyray-settings-page .settings-confirm-actions { flex-wrap: wrap; }
+
+@container (max-width: 820px) {
+  .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .setting-row { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .setting-control { width: 100%; justify-content: flex-start; }
+  .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .settings-input-path { flex: 1 1 220px; width: 100%; }
+  .luckyray-settings-page .ai-profile-editor-core { grid-template-columns: minmax(0, 1fr); }
+  .luckyray-settings-page .settings-secret-editor { grid-template-columns: minmax(0, 1fr); }
+  .luckyray-settings-page .settings-secret-input-row.compact { width: 100%; }
+  .luckyray-settings-page .settings-storage-overview { flex-direction: column; align-items: stretch; gap: 16px; }
+  .luckyray-settings-page .settings-ring { align-self: center; }
+  .luckyray-settings-page .companion-device > .settings-btn:last-of-type { grid-column: 3; }
+}
+@container (max-width: 520px) {
+  .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) > .setting-group { padding: 16px 14px 10px; }
+  .luckyray-settings-page .settings-ai-panel > .setting-group:has(> .settings-ai-disclosure) { padding: 0; }
+  .luckyray-settings-page :is(.settings-ai-disclosure-head, .settings-ai-disclosure-body, .companion-card) { padding: 16px 14px; }
+  .luckyray-settings-page .ai-profile-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .luckyray-settings-page .ai-profile-form-grid label.wide { grid-column: auto; }
+  .luckyray-settings-page .companion-device { grid-template-columns: 38px minmax(0, 1fr); }
+  .luckyray-settings-page .companion-device > .settings-btn,
+  .luckyray-settings-page .companion-device > .settings-btn:last-of-type { grid-column: 2; grid-row: auto; }
+  .luckyray-settings-page .companion-audit-row { grid-template-columns: 8px minmax(0, 1fr); }
+  .luckyray-settings-page .companion-audit-row > span:nth-of-type(2),
+  .luckyray-settings-page .companion-audit-row > time { grid-column: 2; }
+  .luckyray-settings-page .settings-bar-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 10px; }
+  .luckyray-settings-page .settings-bar-track { grid-column: 1 / -1; grid-row: 2; }
+  .luckyray-settings-page .settings-bar-label { width: auto; }
+  .luckyray-settings-page .settings-about-links-with-updates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (max-width: 360px) {
+  .luckyray-settings-page .settings-about-links-with-updates { grid-template-columns: minmax(0, 1fr); }
+}
+:root[data-animations="off"] .luckyray-settings-page .settings-panel:not(.settings-appearance-panel),
+:root[data-animations="off"] .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) *,
+:root[data-animations="off"] .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) *::before,
+:root[data-animations="off"] .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .luckyray-settings-page .settings-panel:not(.settings-appearance-panel),
+  .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) *,
+  .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) *::before,
+  .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* The layout manager portals to body and is shared with other routes. Only
+   restyle it while the settings layout controls are actually mounted. */
+body:has(.react-nav-shell[data-route="settings"] .luckyray-settings-page [data-navigation-entry]) .integrated-layout-manager {
+  background: var(--theme-surface-panel);
+  border-color: var(--theme-border-strong);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+}
+body:has(.react-nav-shell[data-route="settings"] .luckyray-settings-page [data-navigation-entry]) .integrated-layout-manager :is(form, .integrated-layout-row, .integrated-layout-actions, .integrated-layout-confirm) { flex-wrap: wrap; gap: 10px; }
+body:has(.react-nav-shell[data-route="settings"] .luckyray-settings-page [data-navigation-entry]) .integrated-layout-manager :is(input, button) { min-height: 32px; max-width: 100%; }
+body:has(.react-nav-shell[data-route="settings"] .luckyray-settings-page [data-navigation-entry]) .integrated-layout-manager :is(input, button):focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 3px; }
+body:has(.react-nav-shell[data-route="settings"] .luckyray-settings-page [data-navigation-entry]) .integrated-layout-details { min-width: 0; overflow-wrap: anywhere; }
+.luckyray-settings-page .settings-confirm-btn { background: var(--theme-surface-raised); white-space: normal; }
+.luckyray-settings-page .settings-confirm-btn.primary { background: var(--accent); color: var(--theme-accent-on-solid, #fff); }
+.luckyray-settings-page .settings-confirm-btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); background: color-mix(in srgb, var(--danger) 8%, var(--theme-surface-panel)); }
+.luckyray-settings-page .settings-confirm-btn.danger:hover { background: color-mix(in srgb, var(--danger) 14%, var(--theme-surface-panel)); }
+.luckyray-settings-page .settings-confirm-stack strong { white-space: normal; overflow-wrap: anywhere; }
