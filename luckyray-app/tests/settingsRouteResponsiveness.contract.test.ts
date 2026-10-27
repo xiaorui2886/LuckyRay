@@ -7,7 +7,9 @@ const source = (path: string) => readFile(new URL(`../${path}`, import.meta.url)
 test("Settings only starts route-specific probes for the active tab", async () => {
   const page = await source("src/features/settings/SettingsPage.tsx");
 
-  assert.match(page, /activeTab\s*!==\s*"general"[\s\S]{0,240}refreshRuntimeStatus/u);
+  assert.doesNotMatch(page, /refreshRuntimeStatus|collectionTransportReady|getCollectionServerBaseUrl/u);
+  const community = await source("src/features/community/CommunityPage.tsx");
+  assert.match(community, /activeTab === "status"[\s\S]{0,1500}<CollectorServiceStatus/u);
   assert.match(page, /activeTab\s*!==\s*"ai"[\s\S]{0,700}agentSearchLifecycle\.attach/u);
   assert.match(page, /activeTab\s*!==\s*"ai"[\s\S]{0,700}createDefaultDshHostClient/u);
   assert.match(page, /activeTab\s*!==\s*"storage"[\s\S]{0,240}loadStorageInfo/u);

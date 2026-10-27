@@ -1,0 +1,93 @@
+/* The workspace is the sole vertical scroll owner. Tables fit the available width;
+   secondary planning and production fields are disclosed, never clipped offscreen. */
+.canvas-creative-dialog.canvas-storyboard-dialog{width:min(1480px,96vw);max-width:96vw;height:calc(100dvh - 48px);padding:24px;--canvas-storyboard-divider:color-mix(in srgb,var(--text-primary) 10%,transparent)}
+/* Native option popups need an opaque theme surface, not the transparent trigger. */
+.canvas-storyboard-dialog select{color-scheme:inherit}
+.canvas-storyboard-dialog select :is(option,optgroup){background-color:var(--theme-surface-raised);color:var(--text-primary)}
+.canvas-storyboard-dialog .canvas-storyboard-workspace{display:flex;flex-direction:column;gap:16px;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;scrollbar-gutter:auto;min-width:0;min-height:0}
+.canvas-storyboard-dialog .canvas-storyboard-workspace::-webkit-scrollbar{display:none;width:0;height:0}
+.canvas-storyboard-dialog .canvas-storyboard-library{display:flex;align-items:center;gap:16px;flex:none;width:auto;max-height:none;overflow:visible;border:0;padding:0;min-width:0}
+.canvas-storyboard-dialog .canvas-storyboard-library-heading{margin:0;gap:12px;flex:none}
+.canvas-storyboard-dialog .canvas-storyboard-library select{max-width:min(420px,60%);background:transparent;border-color:transparent;padding:6px 10px}
+.canvas-storyboard-dialog .canvas-storyboard-library select:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.canvas-storyboard-dialog .canvas-storyboard-main{flex:none;min-width:0;overflow:visible}
+.canvas-storyboard-dialog .canvas-storyboard-list{flex:none;display:flex;overflow:visible;scrollbar-gutter:auto;padding:16px 0 0;min-width:0}
+.canvas-storyboard-dialog.is-shot-table .canvas-storyboard-list{display:block;padding:0}
+.canvas-storyboard-dialog .canvas-storyboard-heading{align-items:center;gap:14px;margin-bottom:18px}
+.canvas-storyboard-dialog .canvas-storyboard-heading>.canvas-storyboard-field{min-width:0;flex:1 1 200px;gap:2px}
+.canvas-storyboard-dialog .canvas-storyboard-heading>.canvas-storyboard-field>span{font-size:10px;letter-spacing:.04em}
+.canvas-storyboard-dialog .canvas-storyboard-heading>.canvas-storyboard-field>input{font-size:20px;font-weight:550;padding:4px 0;border-color:transparent;border-bottom-color:var(--canvas-storyboard-divider);background:transparent;border-radius:3px}
+.canvas-storyboard-dialog .canvas-storyboard-heading>.canvas-storyboard-field>input:hover{border-bottom-color:var(--theme-border-strong)}
+.canvas-storyboard-dialog .canvas-storyboard-heading>.canvas-storyboard-field>input:focus{padding-left:8px;border-color:var(--accent)}
+.canvas-storyboard-dialog .canvas-storyboard-viewbar{flex-wrap:wrap;gap:12px;border:0;padding-bottom:16px}
+.canvas-storyboard-dialog .canvas-storyboard-viewbar>div{flex-wrap:wrap;min-width:0}
+.canvas-storyboard-dialog .canvas-storyboard-footer{margin-top:16px}
+.canvas-storyboard-dialog .canvas-storyboard-main :is(.canvas-storyboard-shot,.canvas-storyboard-generation,.canvas-storyboard-footer,.canvas-storyboard-script-shot){border-color:var(--canvas-storyboard-divider)}
+.canvas-storyboard-dialog .canvas-storyboard-prompt-review pre{max-height:none;overflow:visible}
+.canvas-storyboard-dialog .canvas-storyboard-field textarea{max-height:none}
+.canvas-shot-table-scroll{width:100%;min-width:0;overflow:visible;outline:none;border-top:1px solid var(--canvas-storyboard-divider)}
+.canvas-shot-table-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.canvas-shot-table{width:100%;min-width:0;border-collapse:separate;border-spacing:0;table-layout:fixed;color:var(--text-primary);font-size:12px}
+.canvas-shot-table caption{text-align:left;padding:12px 0;color:var(--text-secondary);font-size:10px;caption-side:bottom}
+.canvas-shot-table th,.canvas-shot-table td{box-sizing:border-box;text-align:left;vertical-align:top;border-bottom:1px solid var(--canvas-storyboard-divider);padding:16px 10px;overflow-wrap:anywhere}
+.canvas-shot-table thead th{font-weight:500;color:var(--text-secondary);padding:12px 10px;background:var(--theme-surface-base)}
+.canvas-shot-table th:nth-child(1){width:5%}.canvas-shot-table th:nth-child(2){width:7%}.canvas-shot-table th:nth-child(3){width:34%}.canvas-shot-table th:nth-child(4){width:9%}.canvas-shot-table th:nth-child(5){width:23%}.canvas-shot-table th:nth-child(6){width:13%}.canvas-shot-table th:nth-child(7){width:9%}
+.canvas-shot-table tbody tr{transition:background-color .15s ease}
+.canvas-shot-table tbody tr:hover,.canvas-shot-table tbody tr:focus-within,.canvas-shot-table tbody tr.is-expanded{background:var(--theme-hover)}
+.canvas-shot-table .canvas-shot-number{text-align:center;font-variant-numeric:tabular-nums;font-weight:500}
+.canvas-storyboard-dialog .canvas-shot-table button{border:1px solid transparent;background:transparent;box-shadow:none;padding:5px 4px;border-radius:6px;min-height:28px;color:var(--text-secondary);font-size:11px;white-space:normal}
+.canvas-storyboard-dialog .canvas-shot-table button:hover:not(:disabled),.canvas-storyboard-dialog .canvas-shot-table button:focus-visible{background:var(--theme-hover);border-color:var(--theme-border-subtle);color:var(--text-primary)}
+.canvas-shot-table button:focus-visible,.canvas-shot-table select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.canvas-storyboard-dialog .canvas-shot-table button:disabled{opacity:.3;cursor:default}
+.canvas-shot-table .canvas-shot-cell textarea{box-sizing:border-box;display:block;width:100%;min-width:0;min-height:52px;resize:none;border:1px solid transparent;background:transparent;box-shadow:none;outline:none;padding:5px 4px;font:inherit;line-height:1.7;color:var(--text-primary);border-radius:5px;overflow-wrap:anywhere}
+.canvas-shot-table .canvas-shot-cell textarea:hover{border-color:var(--theme-border-subtle)}
+.canvas-shot-table .canvas-shot-cell textarea:focus{background:var(--theme-surface-base);border-color:var(--accent)}
+.canvas-shot-table .canvas-shot-cell textarea::placeholder{color:var(--text-secondary);opacity:.6}
+.canvas-shot-table .canvas-shot-cell textarea[aria-invalid=true]{border-color:#d4825c}
+.canvas-shot-table .canvas-shot-cell textarea{scrollbar-width:none}
+.canvas-shot-table .canvas-shot-cell textarea::-webkit-scrollbar{display:none;width:0;height:0}
+.canvas-shot-cell>small,.canvas-shot-warning{color:var(--text-secondary);font-size:10px;line-height:1.45}
+.canvas-shot-duration .canvas-shot-cell textarea{min-height:32px;text-align:center;font-variant-numeric:tabular-nums}
+.canvas-storyboard-dialog .canvas-shot-table select{width:100%;min-width:0;max-width:100%;border:1px solid transparent;padding:5px 2px;border-radius:5px;background:transparent;color:var(--text-primary);font:inherit}
+.canvas-shot-table .canvas-shot-actions>div{display:flex;gap:1px;margin-top:9px;flex-wrap:wrap}
+.canvas-shot-references>button{max-width:100%;display:flex;flex-wrap:wrap;gap:3px;justify-content:flex-start!important}
+.canvas-shot-references img,.canvas-shot-reference-failed{width:32px;height:40px;border-radius:5px;object-fit:cover;background:var(--theme-surface-panel)}
+.canvas-shot-reference-failed{font-size:9px;overflow-wrap:anywhere;display:grid;place-items:center}
+.canvas-shot-references small{font-size:10px}
+.canvas-shot-reference-images{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.canvas-shot-reference-item{position:relative;display:inline-flex}
+.canvas-shot-table .canvas-shot-reference-item .canvas-shot-remove-reference{position:absolute;top:-5px;right:-5px;padding:0;min-height:16px;height:16px;width:16px;border-radius:50%;line-height:1;background:var(--theme-surface-raised);border:1px solid var(--theme-border-strong);color:var(--text-primary);opacity:0}
+.canvas-shot-reference-item:hover .canvas-shot-remove-reference,.canvas-shot-reference-item:focus-within .canvas-shot-remove-reference{opacity:1}
+.canvas-shot-detail-row>td{padding:16px;background:var(--theme-surface-panel)}
+.canvas-storyboard-dialog .canvas-shot-detail-row .canvas-storyboard-shot{grid-template-columns:160px minmax(0,1fr);max-width:100%;margin:0;border:0;padding:0}
+.canvas-shot-detail-row .canvas-storyboard-copy{grid-template-columns:repeat(2,minmax(0,1fr));align-content:start}
+.canvas-shot-detail-row .canvas-storyboard-row,.canvas-shot-detail-row .canvas-storyboard-generation{grid-column:1/-1}
+.canvas-shot-remove-row td{background:var(--theme-selected)}
+.canvas-shot-remove-row span{margin-right:18px;font-size:12px}
+.canvas-shot-table-footer{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-top:8px;flex:none}
+.canvas-shot-table-footer small{font-size:10px;color:var(--text-secondary)}
+.canvas-shot-planning-summary{display:flex;flex-wrap:wrap;gap:4px 12px;margin:7px 4px 0;font-size:10px;color:var(--text-secondary)}
+@media(max-width:720px){
+ .canvas-creative-dialog.canvas-storyboard-dialog{width:calc(100vw - 20px);max-width:calc(100vw - 20px);height:calc(100dvh - 20px);padding:16px}
+ .canvas-shot-table thead{display:none}
+ .canvas-shot-table,.canvas-shot-table tbody{display:block}
+ .canvas-shot-table tbody>tr:not(.canvas-shot-detail-row):not(.canvas-shot-remove-row){display:grid;grid-template-columns:44px 70px minmax(0,1fr);border-bottom:1px solid var(--canvas-storyboard-divider);padding:10px 0}
+ .canvas-shot-table th,.canvas-shot-table td{width:auto!important;border:0;padding:7px}
+ .canvas-shot-table td[data-label]::before{content:attr(data-label);display:block;font-size:10px;color:var(--text-secondary);margin-bottom:4px}
+ .canvas-shot-table .canvas-shot-visual-cell{grid-column:1/-1;grid-row:2}
+ .canvas-shot-table td:nth-child(5){grid-column:1/-1}
+ .canvas-shot-table td:nth-child(6){grid-column:1/3}
+ .canvas-shot-table .canvas-shot-actions{grid-column:3;justify-self:end}
+ .canvas-shot-table .canvas-shot-actions>div{display:inline-flex;margin:0 0 0 8px}
+ .canvas-shot-detail-row,.canvas-shot-remove-row,.canvas-shot-detail-row>td,.canvas-shot-remove-row>td{display:block}
+ .canvas-storyboard-dialog .canvas-shot-detail-row .canvas-storyboard-shot{grid-template-columns:1fr}
+ .canvas-shot-detail-row .canvas-storyboard-copy{grid-template-columns:1fr}
+ .canvas-storyboard-dialog .canvas-storyboard-library{gap:8px;flex-wrap:wrap}
+ .canvas-storyboard-dialog .canvas-storyboard-library select{max-width:100%;flex:1;min-width:100px}
+}
+@media(hover:none){.canvas-shot-table .canvas-shot-reference-item .canvas-shot-remove-reference{opacity:1}}
+@media(prefers-reduced-motion:reduce){.canvas-shot-table tbody tr{transition:none}}
+.reduce-motion .canvas-shot-table tbody tr{transition:none}
+.canvas-storyboard-dialog .canvas-storyboard-candidate-grid,
+.canvas-storyboard-dialog .canvas-script-import,
+.canvas-storyboard-dialog .canvas-script-import__preview{max-height:none;overflow:visible}

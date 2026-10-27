@@ -15,7 +15,10 @@ pub(super) fn is_service_route(path: &str) -> bool {
 }
 
 fn database(gateway: &CompanionGateway) -> ServiceResult<Connection> {
-    open_connection(gateway.backend.db_path()).map_err(|_| (503, "SERVICE_UNAVAILABLE"))
+    open_connection(gateway.backend.db_path()).map_err(|_| {
+        diagnostics::reason(diagnostics::Reason::DatabaseUnavailable);
+        (503, "SERVICE_UNAVAILABLE")
+    })
 }
 
 fn permission_revision(gateway: &CompanionGateway, device_id: &str) -> ServiceResult<u64> {
@@ -36,29 +39,25 @@ fn cursor_tag(gateway: &CompanionGateway, device_id: &str,
     Ok(tag[..16].to_owned())
 }
 
-fn granted(
+pub(super) fn granted(
     gateway: &CompanionGateway,
     device_id: &str,
     grant_class: &str,
     scope_kind: &str,
     scope_id: &str,
 ) -> ServiceResult<bool> {
-    let count: u32 = database(gateway)?
-        .query_row(
-            "SELECT COUNT(*) FROM companion_service_grant AS g
-             JOIN companion_device AS d ON d.device_id=g.device_id AND d.revoked_at IS NULL
-             WHERE g.device_id=?1 AND g.grant_class=?2 AND g.scope_kind=?3 AND g.scope_id=?4",
-            params![device_id, grant_class, scope_kind, scope_id],
-            |row| row.get(0),
-        )
-        .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
-    Ok(count > 0)
+    let scope_id = if scope_kind == "catalog" && scope_id.is_empty() { gateway.material_scope_id().unwrap_or("") } else { scope_id };
+    let legacy_catalog = gateway.backend.material_catalog().library_state().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.0;
+    let scope_id = if scope_kind == "catalog" && scope_id == legacy_catalog { "" } else { scope_id };
+    trust_policy::granted(&database(gateway)?, device_id, grant_class, scope_kind, scope_id)
+        .map_err(|_| (503, "SERVICE_UNAVAILABLE"))
 }
 
 fn live_generation(gateway: &CompanionGateway, device: &PairedDevice, generation: u64) -> ServiceResult<u64> {
     let lifecycle = gateway.lifecycle.lock().expect("companion lifecycle mutex");
     if lifecycle.stopping_generation.is_some() || lifecycle.running.as_ref().is_none_or(|running|
         running.generation != generation || running.stop.load(Ordering::SeqCst)) {
+        diagnostics::reason(diagnostics::Reason::GenerationRetired);
         return Err((503, "SERVICE_UNAVAILABLE"));
     }
     drop(lifecycle);
@@ -67,10 +66,14 @@ fn live_generation(gateway: &CompanionGateway, device: &PairedDevice, generation
 
 fn service_transition<'a>(gateway: &'a CompanionGateway, device: &PairedDevice,
     generation: u64, admission_permission: u64) -> ServiceResult<std::sync::MutexGuard<'a, ()>> {
+    diagnostics::stage(diagnostics::Stage::Commit);
     let guard = gateway.try_transition().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
+    gateway.validate_request_scope()?;
     if live_generation(gateway, device, generation)? != admission_permission {
+        diagnostics::reason(diagnostics::Reason::PermissionChanged);
         return Err((403, "SCOPE_DENIED"));
     }
+    diagnostics::scoped_response(gateway.material_scope_id().is_some() || gateway.request_vault_scope.is_some());
     Ok(guard)
 }
 
@@ -83,7 +86,7 @@ fn current_vault(gateway: &CompanionGateway) -> ServiceResult<Option<(String, St
 }
 
 fn operation_implemented(id: &str, legacy: bool) -> bool {
-    legacy || matches!(id, "services.discover" | "materials.detailV1" | "materials.metadataPatch" | "materials.removeRecord" | "materials.changes" | "materials.import" | "knowledge.vaults" | "knowledge.registeredList" | "knowledge.registeredChanges" | "knowledge.move" | "knowledge.createUnique" | "knowledge.editing" | "knowledge.editingOpen" | "knowledge.editingSet" | "knowledge.directories" | "knowledge.relations" | "knowledge.materialReferences" | "ingest.begin" | "ingest.status" | "ingest.chunk" | "ingest.complete" | "ingest.cancel" | "search.unified" | "changes.hints" | "presentation.open")
+    legacy || matches!(id, "libraries.list" | "services.discover" | "materials.detailV1" | "materials.metadataPatch" | "materials.removeRecord" | "materials.changes" | "materials.import" | "knowledge.vaults" | "knowledge.registeredList" | "knowledge.registeredChanges" | "knowledge.move" | "knowledge.createUnique" | "knowledge.editing" | "knowledge.editingOpen" | "knowledge.editingSet" | "knowledge.directories" | "knowledge.relations" | "knowledge.materialReferences" | "ingest.begin" | "ingest.status" | "ingest.chunk" | "ingest.complete" | "ingest.cancel" | "search.unified" | "changes.hints" | "presentation.open")
 }
 
 // Claim only the additive shapes, before the generic registered-vault GET.
@@ -115,9 +118,9 @@ fn material_detail(gateway: &CompanionGateway, device: &PairedDevice, asset_id: 
     if !granted(gateway, &device.device_id, "content.read", "catalog", "")? {
         return Err((403, "GRANT_REQUIRED"));
     }
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     let asset = catalog.get_assets(&[asset_id.to_owned()])
-        .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?
+        .map_err(|error| if error.code == "material-library-scope" { (404, "ENTITY_NOT_FOUND") } else { (503, "SERVICE_UNAVAILABLE") })?
         .into_iter().next().ok_or((404, "ENTITY_NOT_FOUND"))?;
     let revision = catalog.revision_for_asset(&asset).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
     let source = catalog.get_source_page(asset_id).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?
@@ -163,7 +166,7 @@ fn vaults(gateway: &CompanionGateway, device: &PairedDevice) -> ServiceResult<Va
     }
     let revision = format!("{:x}", Sha256::digest(vault_id.as_bytes()));
     Ok(json!({"items": [{"vaultId": vault_id, "displayName": label,
-        "activeInDesktop": true, "readGranted": true, "writeGranted": write_granted,
+        "activeInDesktop": gateway.knowledge().current_vault_id().ok() == gateway.backend.knowledge().current_vault_id().ok(), "readGranted": true, "writeGranted": write_granted,
         "revision": revision}]}))
 }
 
@@ -267,7 +270,8 @@ fn material_changes(
         return Err((403, "GRANT_REQUIRED"));
     }
     let revision = permission_revision(gateway, &device.device_id)?;
-    let tag = cursor_tag(gateway, &device.device_id, "materials", "catalog", revision)?;
+    let scope = gateway.material_catalog().library_scope_key().map_err(|_| (503,"SERVICE_UNAVAILABLE"))?;
+    let tag = cursor_tag(gateway, &device.device_id, "materials", gateway.material_scope_id().unwrap_or("catalog"), revision)?;
     let after = query.get("after").map(String::as_str).unwrap_or("m:0");
     let offset = if after == "m:0" { 0 } else {
         let rest = after.strip_prefix("m:").ok_or((400, "INPUT_INVALID"))?;
@@ -280,21 +284,21 @@ fn material_changes(
     if !(1..=100).contains(&limit) { return Err((400, "INPUT_INVALID")); }
     let connection = database(gateway)?;
     let high: u64 = connection.query_row(
-        "SELECT COALESCE(MAX(seq),0) FROM companion_service_change WHERE domain='materials' AND scope_id=''",
-        [], |row| row.get(0),
+        "SELECT COALESCE(MAX(seq),0) FROM companion_service_change WHERE domain='materials' AND scope_id='' AND object_id IN(SELECT asset_id FROM material_library_asset_history WHERE library_id=?1)",
+        [&scope], |row| row.get(0),
     ).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
     if offset > high { return Err((410, "CURSOR_TOO_OLD")); }
     let mut statement = connection.prepare(
         "SELECT seq,object_id,revision,kind,tombstone FROM companion_service_change
-         WHERE domain='materials' AND scope_id='' AND seq>?1 AND seq<=?2 AND object_id IN(SELECT h.asset_id FROM material_library_asset_history h JOIN material_library_state s ON h.library_id=s.legacy_id) ORDER BY seq LIMIT ?3"
+         WHERE domain='materials' AND scope_id='' AND seq>?1 AND seq<=?2 AND object_id IN(SELECT asset_id FROM material_library_asset_history WHERE library_id=?4) ORDER BY seq LIMIT ?3"
     ).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
-    let rows = statement.query_map(params![offset, high, limit], |row| {
+    let rows = statement.query_map(params![offset, high, limit, scope], |row| {
         Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?,
             row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?))
     }).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?
         .collect::<Result<Vec<_>, _>>().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
     let next = if rows.len()<limit as usize {high} else {rows.last().map(|row|row.0).unwrap_or(high)};
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     let mut items = Vec::with_capacity(rows.len());
     for (seq, asset_id, stored_revision, kind, tombstone) in rows {
         // Local catalog triggers cannot calculate the catalog's composite
@@ -391,13 +395,14 @@ fn material_patch(
         Some(_) => return Err((400, "INPUT_INVALID")),
         None => None,
     };
+    let target_key = gateway.material_scope_id().map(|scope| format!("materials:{scope}:{asset_id}")).unwrap_or_else(|| asset_id.to_owned());
     let _transition = service_transition(gateway, device, generation, admission_permission)?;
     let instance_id = gateway.identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.instance_id.clone();
-    let mut connection = database(gateway)?;
+    let mut connection = gateway.material_catalog().companion_open_write().map_err(|_| (503,"SERVICE_UNAVAILABLE"))?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
     if let Some(receipt) = replay_operation(&transaction, &instance_id, &device.device_id,
-        "materials.metadataPatch", op_id, asset_id, &hash)? { return Ok(receipt); }
+        "materials.metadataPatch", op_id, &target_key, &hash)? { return Ok(receipt); }
     let current = crate::materials::asset_revision_by_id_in(&transaction, asset_id)
         .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.ok_or((404, "ENTITY_NOT_FOUND"))?;
     if current != expected { return Err((409, "REVISION_CONFLICT")); }
@@ -415,7 +420,7 @@ fn material_patch(
         .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.ok_or((503, "SERVICE_UNAVAILABLE"))?;
     let receipt = json!({"opId": op_id, "assetId": asset_id, "revision": revision, "disposition": "updated"});
     record_operation(&transaction, &instance_id, &device.device_id,
-        "materials.metadataPatch", op_id, asset_id, &hash, &receipt)?;
+        "materials.metadataPatch", op_id, &target_key, &hash, &receipt)?;
     transaction.commit().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
     Ok(receipt)
 }
@@ -438,13 +443,14 @@ fn material_remove(
     let op_id = payload["opId"].as_str().filter(|id| valid_id(id)).ok_or((400, "INPUT_INVALID"))?;
     let expected = payload["expectedRevision"].as_str().filter(|v| !v.is_empty() && v.len() <= 160)
         .ok_or((400, "INPUT_INVALID"))?;
+    let target_key = gateway.material_scope_id().map(|scope| format!("materials:{scope}:{asset_id}")).unwrap_or_else(|| asset_id.to_owned());
     let _transition = service_transition(gateway, device, generation, admission_permission)?;
     let instance_id = gateway.identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.instance_id.clone();
-    let mut connection = database(gateway)?;
+    let mut connection = gateway.material_catalog().companion_open_write().map_err(|_| (503,"SERVICE_UNAVAILABLE"))?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
     if let Some(receipt) = replay_operation(&transaction, &instance_id, &device.device_id,
-        "materials.removeRecord", op_id, asset_id, &hash)? { return Ok(receipt); }
+        "materials.removeRecord", op_id, &target_key, &hash)? { return Ok(receipt); }
     let current = crate::materials::asset_revision_by_id_in(&transaction, asset_id)
         .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.ok_or((404, "ENTITY_NOT_FOUND"))?;
     if current != expected { return Err((409, "REVISION_CONFLICT")); }
@@ -471,9 +477,19 @@ fn material_remove(
     let receipt = json!({"opId": op_id, "assetId": asset_id,
         "revision": expected, "disposition": "removed"});
     record_operation(&transaction, &instance_id, &device.device_id,
-        "materials.removeRecord", op_id, asset_id, &hash, &receipt)?;
+        "materials.removeRecord", op_id, &target_key, &hash, &receipt)?;
     transaction.commit().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
     Ok(receipt)
+}
+
+// LSH has its own grant authority; its lsh.remote class is deliberately not
+// accepted by the content catalog/vault grant taxonomy.
+fn operation_uses_content_grant(id: &str, legacy: bool, explicit_policy: bool) -> bool {
+    id != "lsh.session" && (!legacy || explicit_policy)
+}
+
+fn lsh_catalog_state(granted: bool, available: bool) -> &'static str {
+    if !granted { "notGranted" } else if available { "implemented" } else { "temporarilyUnavailable" }
 }
 
 fn catalog(gateway: &CompanionGateway, device: &PairedDevice, generation: u64) -> ServiceResult<Value> {
@@ -482,6 +498,20 @@ fn catalog(gateway: &CompanionGateway, device: &PairedDevice, generation: u64) -
     let bundle_revision = map["bundleRevision"].as_str().ok_or((503, "SERVICE_UNAVAILABLE"))?;
     let vault = current_vault(gateway)?;
     let revision = permission_revision(gateway, &device.device_id)?;
+    let explicit_policy = trust_policy::has_policy(&database(gateway)?,&device.device_id).map_err(|_| (503,"SERVICE_UNAVAILABLE"))?
+        || gateway.material_scope_id().is_some() || gateway.request_vault_scope.is_some();
+    // A catalog evaluates the same class/scope tuple for many operations.
+    // Memoize only inside this response computation. service_transition still
+    // checks the current permission revision under the transition gate before
+    // any response is committed; nothing survives to another request.
+    let mut grants = HashMap::<(String, String, String), bool>::new();
+    let mut grant = |class: &str, kind: &str, scope: &str| -> ServiceResult<bool> {
+        let key = (class.to_owned(), kind.to_owned(), scope.to_owned());
+        if let Some(allowed) = grants.get(&key) { return Ok(*allowed); }
+        let allowed = granted(gateway, &device.device_id, class, kind, scope)?;
+        grants.insert(key, allowed);
+        Ok(allowed)
+    };
     let mut statuses = serde_json::Map::new();
     let mut summary: HashMap<&str, (bool, bool)> = HashMap::new();
     for operation in map["operations"].as_array().ok_or((503, "SERVICE_UNAVAILABLE"))? {
@@ -490,11 +520,10 @@ fn catalog(gateway: &CompanionGateway, device: &PairedDevice, generation: u64) -
         let legacy = operation["legacy"].as_bool().unwrap_or(false);
         let mut state = if operation_implemented(id, legacy) { "implemented" } else { "unsupported" };
         if id == "lsh.session" {
-            state = if !gateway.lsh_remote_granted(&device.device_id).map_err(|_| (503, "SERVICE_UNAVAILABLE"))? {
-                "notGranted"
-            } else if gateway.lsh_remote_host().is_some_and(|host| host.remote_surface_available()) {
-                "implemented"
-            } else { "temporarilyUnavailable" };
+            state = lsh_catalog_state(
+                gateway.lsh_remote_granted(&device.device_id).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?,
+                gateway.lsh_remote_host().is_some_and(|host| host.remote_surface_available()),
+            );
         }
         if id == "presentation.open" && gateway.presentation_sink.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner).is_none() {
@@ -503,38 +532,39 @@ fn catalog(gateway: &CompanionGateway, device: &PairedDevice, generation: u64) -
         // Legacy Content V1 is paired-device access, not retroactively gated
         // by the new explicit Services grants. A legacy mapping's grant field
         // is classification only, as specified in routes.md.
-        if !legacy && state == "implemented" && domain == "knowledge" && vault.is_none() {
+        if (!legacy || explicit_policy) && state == "implemented" && domain == "knowledge" && vault.is_none() {
             state = "temporarilyUnavailable";
         }
-        if !legacy && state == "implemented" {
+        if operation_uses_content_grant(id, legacy, explicit_policy) && state == "implemented" {
             if let Some(class) = operation["grant"].as_str() {
                 let scope = operation["scope"].as_str().unwrap_or("");
                 let allowed = if id == "knowledge.materialReferences" {
-                    granted(gateway, &device.device_id, class, "catalog", "")?
+                    grant(class, "catalog", "")?
                         && if let Some((id, _)) = vault.as_ref() {
-                            granted(gateway, &device.device_id, class, "vault", id)?
+                            grant(class, "vault", id)?
                         } else { false }
                 } else if matches!(scope, "visibleCatalogAndVaults" | "targetCatalogOrVault" | "ownedJob" | "typedAssetOrVaultNote") {
-                    granted(gateway, &device.device_id, class, "catalog", "")?
+                    grant(class, "catalog", "")?
                         || if let Some((id, _)) = vault.as_ref() {
-                            granted(gateway, &device.device_id, class, "vault", id)?
+                            grant(class, "vault", id)?
                         } else { false }
-                } else if scope.contains("Vault") || scope == "registeredVaults" {
-                    if let Some((id, _)) = vault.as_ref() { granted(gateway, &device.device_id, class, "vault", id)? } else { false }
+                } else if domain == "knowledge" || scope.contains("Vault") || scope == "registeredVaults" {
+                    if let Some((id, _)) = vault.as_ref() { grant(class, "vault", id)? } else { false }
                 } else {
-                    granted(gateway, &device.device_id, class, "catalog", "")?
+                    grant(class, "catalog", "")?
                 };
                 if !allowed { state = "notGranted"; }
             }
         }
         if id == "presentation.open" && state == "implemented" {
-            let catalog_pair = granted(gateway, &device.device_id, "desktop.open", "catalog", "")?
-                && granted(gateway, &device.device_id, "content.read", "catalog", "")?;
+            let catalog_pair = grant("desktop.open", "catalog", "")?
+                && grant("content.read", "catalog", "")?;
             let vault_pair = if let Some((id, _)) = vault.as_ref() {
-                granted(gateway, &device.device_id, "desktop.open", "vault", id)?
-                    && granted(gateway, &device.device_id, "content.read", "vault", id)?
+                grant("desktop.open", "vault", id)?
+                    && grant("content.read", "vault", id)?
             } else { false };
             if !catalog_pair && !vault_pair { state = "notGranted"; }
+            else if !(catalog_pair && gateway.presentation_scope_active("materials") || vault_pair && gateway.presentation_scope_active("knowledge")) { state = "temporarilyUnavailable"; }
         }
         let flags = summary.entry(domain).or_insert((false, false));
         if state != "unsupported" { flags.0 = true; }
@@ -553,6 +583,8 @@ fn catalog(gateway: &CompanionGateway, device: &PairedDevice, generation: u64) -
         .collect::<serde_json::Map<String, Value>>();
     Ok(json!({
         "catalogVersion": 1,
+        "scopeSelectionVersion": 1,
+        "reusableProofVersion": 1,
         "bundleRevision": bundle_revision,
         "desktopInstanceId": gateway.identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.instance_id,
         "gatewayGeneration": generation,
@@ -572,6 +604,12 @@ pub(super) fn serve(
     device: &PairedDevice,
     generation: u64,
 ) -> io::Result<()> {
+    diagnostics::stage(diagnostics::Stage::Scope);
+    let scoped = match gateway.scope_for_request(request) {
+        Ok(scoped) => scoped,
+        Err((status, code)) => return write_json(stream, status, &json!({"code":code})),
+    };
+    let gateway = &scoped;
     let admission_permission = match live_generation(gateway, device, generation) {
         Ok(permission) => permission,
         Err((status, code)) => return write_json(stream, status, &json!({"code": code})),
@@ -580,13 +618,19 @@ pub(super) fn serve(
     if let Some(gate) = gateway.policy.services_after_auth_gate.as_ref() {
         gate.pause_if_armed();
     }
+    diagnostics::stage(diagnostics::Stage::Execute);
     if request.method == "POST" && request.path == "/v1/services/ingest/jobs" {
         return match ingest::begin(gateway, device, generation, admission_permission, &request.body) {
-            Ok((status, value)) => write_json(stream, status, &value),
+            Ok((status, value)) => match service_transition(gateway,device,generation,admission_permission) {
+                Ok(_guard) => write_json(stream,status,&value),
+                Err((status,code)) => write_json(stream,status,&json!({"code":code})),
+            },
             Err((status, code)) => write_json(stream, status, &json!({"code": code})),
         };
     }
-    let result = if request.method == "GET" && request.path == "/v1/services" {
+    let result = if request.method == "GET" && request.path == "/v1/services/libraries" {
+        gateway.saved_libraries(device)
+    } else if request.method == "GET" && request.path == "/v1/services" {
         catalog(gateway, device, generation)
     } else if live_knowledge_route(&request.path) {
         knowledge::route(gateway, device, generation, admission_permission, request)
@@ -643,7 +687,10 @@ pub(super) fn serve(
         Err((404, "ENTITY_NOT_FOUND"))
     };
     match result {
-        Ok(value) => write_json(stream, 200, &value),
+        Ok(value) => match service_transition(gateway,device,generation,admission_permission) {
+            Ok(_guard) => write_json(stream,200,&value),
+            Err((status,code)) => write_json(stream,status,&json!({"code":code})),
+        },
         Err((status, code)) => write_json(stream, status, &json!({"code": code})),
     }
 }
@@ -669,7 +716,7 @@ impl CompanionGateway {
     }
 
     /// Desktop-only explicit consent: all changes or none, fenced by the exact
-    /// permission revision displayed for this device. No wildcard/future scopes.
+    /// permission revision displayed for this device. Trusted off-switches apply to every saved scope.
     pub(crate) fn set_service_grants(
         &self, device_id: &str, changes: &[ServiceGrantChange], expected_permission_revision: u64,
         expected_current_vault_id: Option<&str>,
@@ -684,16 +731,20 @@ impl CompanionGateway {
         let stale = || GatewayError::new("permission-state-changed", "Review the current device permissions and vault");
         if changes.is_empty() || changes.len() > 512 { return Err(invalid()); }
         let _transition = self.control_transition()?;
-        let grants_vault = changes.iter().any(|change| change.enabled && change.scope_kind == "vault");
+        let trusted = trust_policy::mode(&open_connection(self.backend.db_path())?, device_id)
+            .map_err(|_| invalid())? == AuthorizationMode::Trusted;
+        let grants_vault = !trusted && changes.iter().any(|change| change.enabled && change.scope_kind == "vault");
         let reviewed_vault = if grants_vault { current_vault(self).map_err(|_| stale())?.map(|(id, _)| id) } else { None };
         if grants_vault && expected.is_some_and(|(_, vault)| vault != reviewed_vault.as_deref()) { return Err(stale()); }
+        let saved_scopes = self.management_library_scopes()?;
         let mut seen = BTreeSet::new();
         for change in changes {
             if !matches!(change.grant_class.as_str(), "content.read" | "content.write" | "ingest.write" | "desktop.open")
                 || !seen.insert((&change.grant_class, &change.scope_kind, &change.scope_id))
                 || match change.scope_kind.as_str() {
-                    "catalog" => !change.scope_id.is_empty(),
-                    "vault" => !valid_id(&change.scope_id) || (change.enabled && reviewed_vault.as_deref() != Some(change.scope_id.as_str())),
+                    "catalog" | "vault" if trusted => !change.scope_id.is_empty() && !valid_id(&change.scope_id),
+                    "catalog" => !change.scope_id.is_empty() && (!valid_id(&change.scope_id) || change.enabled && !saved_scopes.iter().any(|scope| scope["scopeKind"] == "catalog" && scope["scopeId"] == change.scope_id && scope["available"] == true)),
+                    "vault" => !valid_id(&change.scope_id) || change.enabled && reviewed_vault.as_deref() != Some(change.scope_id.as_str()) && !saved_scopes.iter().any(|scope| scope["scopeKind"] == "vault" && scope["scopeId"] == change.scope_id && scope["available"] == true),
                     _ => true,
                 } { return Err(invalid()); }
         }
@@ -707,9 +758,25 @@ impl CompanionGateway {
         // The revision comparison belongs inside this write transaction: a
         // concurrent view cannot approve against stale read-before-write state.
         if expected.is_some_and(|(expected_revision, _)| expected_revision != revision) { return Err(stale()); }
+        let trusted = trust_policy::mode(&transaction, device_id)
+            .map_err(|_| invalid())? == AuthorizationMode::Trusted;
         let mut changed = 0;
         let now = chrono::Utc::now().to_rfc3339();
         for change in changes {
+            if trusted {
+                changed += trust_policy::set_override(&transaction, device_id, &change.grant_class, &change.scope_kind, change.enabled)
+                    .map_err(|_| GatewayError::new("companion-database-unavailable", "Permission override failed"))?;
+            }
+            // Trusted access is policy, never copied into manual grant rows.
+            if trusted { continue; }
+            // A manual per-library enable must not erase a global Trusted off-switch
+            // or reactivate unrelated remembered grants. Its exception is manual-only.
+            changed += if change.enabled && trust_policy::explicitly_denied(&transaction, device_id, &change.grant_class, &change.scope_kind)
+                .map_err(|_| GatewayError::new("companion-database-unavailable", "Permission read failed"))? {
+                transaction.execute("INSERT OR IGNORE INTO companion_manual_override(device_id,grant_class,scope_kind,scope_id) VALUES(?1,?2,?3,?4)", params![device_id,change.grant_class,change.scope_kind,change.scope_id])
+            } else {
+                transaction.execute("DELETE FROM companion_manual_override WHERE device_id=?1 AND grant_class=?2 AND scope_kind=?3 AND scope_id=?4", params![device_id,change.grant_class,change.scope_kind,change.scope_id])
+            }.map_err(|_| GatewayError::new("companion-database-unavailable", "Manual override failed"))?;
             changed += if change.enabled {
                 transaction.execute(
                     "INSERT OR IGNORE INTO companion_service_grant(device_id,grant_class,scope_kind,scope_id,granted_at)
@@ -734,9 +801,24 @@ impl CompanionGateway {
         // A switch after this check can only retain the explicitly reviewed
         // target's grant, never grant the new/current target or clone rights.
         if grants_vault && current_vault(self).map_err(|_| stale())?.map(|(id, _)| id) != reviewed_vault { return Err(stale()); }
+        if !trusted && changes.iter().any(|change| change.enabled) && self.management_library_scopes()? != saved_scopes { return Err(stale()); }
         transaction.commit().map_err(|_| GatewayError::new("companion-database-unavailable", "Permission commit failed"))?;
         if changed > 0 { self.retire_presentation_offers(Some(device_id)); }
         Ok(())
+    }
+
+    fn management_library_scopes(&self) -> Result<Vec<Value>, GatewayError> {
+        let unavailable = || GatewayError::new("companion-database-unavailable", "Saved libraries unavailable");
+        let catalog = self.backend.material_catalog();
+        let (legacy, _) = catalog.library_state().map_err(|_| unavailable())?;
+        let mut scopes = Vec::new();
+        for library in catalog.list_libraries(false).map_err(|_| unavailable())? {
+            scopes.push(json!({"scopeKind":"catalog", "scopeId":if library.id == legacy { String::new() } else { library.id }, "label":library.name, "available":library.state == "ready"}));
+        }
+        for vault in self.backend.knowledge().list_saved_scopes().map_err(|_| unavailable())? {
+            scopes.push(json!({"scopeKind":"vault", "scopeId":vault.vault_key, "label":vault.name, "available":vault.available}));
+        }
+        Ok(scopes)
     }
 
     pub(crate) fn service_grant_state(&self, device_id: &str) -> Result<Value, GatewayError> {
@@ -750,12 +832,87 @@ impl CompanionGateway {
         let mut statement = transaction.prepare(
             "SELECT grant_class,scope_kind,scope_id FROM companion_service_grant WHERE device_id=?1 ORDER BY grant_class,scope_kind,scope_id"
         ).map_err(|_| GatewayError::new("companion-database-unavailable", "Permission store unavailable"))?;
-        let grants = statement.query_map([device_id], |row| {
+        let mut grants = statement.query_map([device_id], |row| {
             Ok(json!({"grantClass": row.get::<_, String>(0)?, "scopeKind": row.get::<_, String>(1)?, "scopeId": row.get::<_, String>(2)?}))
         }).map_err(|_| GatewayError::new("companion-database-unavailable", "Permission read failed"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| GatewayError::new("companion-database-unavailable", "Permission read failed"))?;
         let vault = current_vault(self).ok().flatten().map(|(vault_id, label)| json!({"vaultId": vault_id, "label": label}));
-        Ok(json!({"permissionRevision": revision, "grants": grants, "currentVault": vault}))
+        let mode = trust_policy::mode(&transaction, device_id).map_err(|_| GatewayError::new("companion-database-unavailable", "Policy read failed"))?;
+        let mut overrides_statement = transaction.prepare("SELECT grant_class,scope_kind FROM companion_service_override WHERE device_id=?1 AND enabled=0")
+            .map_err(|_| GatewayError::new("companion-database-unavailable", "Override read failed"))?;
+        let overrides = overrides_statement.query_map([device_id], |r| Ok(json!({"grantClass": r.get::<_,String>(0)?, "scopeKind": r.get::<_,String>(1)?})))
+            .map_err(|_| GatewayError::new("companion-database-unavailable", "Override read failed"))?
+            .collect::<Result<Vec<_>,_>>().map_err(|_| GatewayError::new("companion-database-unavailable", "Override read failed"))?;
+        let mut effective = Vec::new();
+        for grant in grants {
+            if trust_policy::granted(&transaction, device_id, grant["grantClass"].as_str().unwrap_or(""), grant["scopeKind"].as_str().unwrap_or(""), grant["scopeId"].as_str().unwrap_or(""))
+                .map_err(|_| GatewayError::new("companion-database-unavailable", "Policy read failed"))? { effective.push(grant); }
+        }
+        let mut grants = effective;
+        if mode == AuthorizationMode::Trusted {
+            let mut scopes = vec![("catalog", String::new())];
+            if let Some(id) = vault.as_ref().and_then(|v| v["vaultId"].as_str()) { scopes.push(("vault", id.to_owned())); }
+            for (kind, id) in scopes {
+                for class in ["content.read", "content.write", "ingest.write", "desktop.open"] {
+                    if trust_policy::granted(&transaction, device_id, class, kind, &id).map_err(|_| GatewayError::new("companion-database-unavailable", "Policy read failed"))? {
+                        let grant = json!({"grantClass": class, "scopeKind": kind, "scopeId": id});
+                        if !grants.contains(&grant) { grants.push(grant); }
+                    }
+                }
+            }
+        }
+        Ok(json!({"permissionRevision": revision, "grants": grants, "currentVault": vault, "authorizationMode": mode, "authorizationConfigured": trust_policy::has_policy(&transaction, device_id).map_err(|_| GatewayError::new("companion-database-unavailable", "Policy read failed"))?, "serviceOverrides": overrides, "savedLibraries": self.management_library_scopes()?}))
+    }
+}
+
+
+#[cfg(test)]
+mod lsh_catalog_grant_tests {
+    use super::*;
+    fn db() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("PRAGMA foreign_keys=ON;
+            CREATE TABLE backend_schema_migration(version INTEGER PRIMARY KEY,name TEXT,applied_at TEXT);
+            CREATE TABLE companion_device(device_id TEXT PRIMARY KEY,revoked_at TEXT,lsh_remote_surface_granted_at TEXT);
+            CREATE TABLE companion_service_grant(device_id TEXT NOT NULL,grant_class TEXT NOT NULL,scope_kind TEXT NOT NULL,scope_id TEXT NOT NULL,granted_at TEXT NOT NULL,PRIMARY KEY(device_id,grant_class,scope_kind,scope_id));
+            INSERT INTO companion_device VALUES('phone',NULL,NULL);").unwrap();
+        db.execute_batch(include_str!("trust_schema.sql")).unwrap();
+        db
+    }
+    fn state(db: &Connection, host_available: bool) -> &'static str {
+        let mut state = lsh_catalog_state(trust_policy::lsh_granted(db,"phone").unwrap(),host_available);
+        if operation_uses_content_grant("lsh.session",false,trust_policy::has_policy(db,"phone").unwrap())
+            && state == "implemented" && !trust_policy::granted(db,"phone","lsh.remote","catalog","").unwrap() {
+            state = "notGranted";
+        }
+        state
+    }
+    #[test]
+    fn dedicated_lsh_grant_survives_catalog_classification_without_widening_content() {
+        let db = db();
+        assert_eq!(state(&db,true),"notGranted");
+        trust_policy::set_mode(&db,"phone",trust_policy::AuthorizationMode::Trusted).unwrap();
+        assert_eq!(state(&db,true),"implemented");
+        assert_eq!(state(&db,false),"temporarilyUnavailable");
+        trust_policy::set_override(&db,"phone","lsh.remote","lsh",false).unwrap();
+        assert_eq!(state(&db,true),"notGranted");
+        trust_policy::set_override(&db,"phone","lsh.remote","lsh",true).unwrap();
+        trust_policy::set_mode(&db,"phone",trust_policy::AuthorizationMode::Manual).unwrap();
+        assert_eq!(state(&db,true),"notGranted");
+        db.execute("UPDATE companion_device SET lsh_remote_surface_granted_at='test' WHERE device_id='phone'",[]).unwrap();
+        assert_eq!(state(&db,true),"implemented");
+        assert!(!trust_policy::granted(&db,"phone","content.read","vault","other").unwrap());
+        db.execute("UPDATE companion_device SET revoked_at='test' WHERE device_id='phone'",[]).unwrap();
+        assert_eq!(state(&db,true),"notGranted");
+    }
+    #[test]
+    fn only_lsh_bypasses_content_taxonomy() {
+        for legacy in [false,true] { for explicit in [false,true] {
+            assert!(!operation_uses_content_grant("lsh.session",legacy,explicit));
+            for id in ["materials.list","knowledge.registeredList","presentation.open"] {
+                assert_eq!(operation_uses_content_grant(id,legacy,explicit),!legacy || explicit);
+            }
+        }}
     }
 }

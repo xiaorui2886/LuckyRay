@@ -924,16 +924,16 @@
 
 .react-nav-shell[data-route="settings"] .toolbar-nav button,
 .react-nav-shell[data-route="settings"] .titlebar-import {
-  color: #5a5a62 !important;
+  color: var(--text-tertiary) !important;
 }
 
 .react-nav-shell[data-route="settings"] .toolbar-nav button:hover,
 .react-nav-shell[data-route="settings"] .titlebar-import:hover {
-  color: #f0f0f2 !important;
+  color: var(--text-primary) !important;
 }
 
 .react-nav-shell[data-route="settings"] .toolbar-nav button:disabled {
-  color: #5a5a62 !important;
+  color: var(--text-tertiary) !important;
   opacity: 0.3;
 }
 
@@ -2072,29 +2072,12 @@
   color: var(--text-primary);
 }
 
-.react-nav-shell .lightseek-content-browser-header {
-  padding: 18px 18px 12px;
-}
-
-.react-nav-shell .lightseek-content-browser-header h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.015em;
-}
-
-.react-nav-shell .lightseek-content-browser-header p {
-  margin: 5px 0 0;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  line-height: 1.5;
-}
 
 .react-nav-shell .lightseek-content-browser-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
-  margin: 0 18px 12px;
+  margin: 16px 18px 12px;
   padding: 3px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -2125,8 +2108,7 @@
 
 .react-nav-shell .lightseek-content-browser-tabs button:focus-visible,
 .react-nav-shell .lightseek-content-material:focus-visible,
-.react-nav-shell .lightseek-content-note:focus-visible,
-.react-nav-shell .lightseek-content-send:focus-visible {
+.react-nav-shell .lightseek-content-note:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
   outline-offset: 0;
 }
@@ -2169,10 +2151,11 @@
 }
 
 .react-nav-shell .lightseek-content-browser-body {
+  position: relative;
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-template-rows: minmax(160px, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   border-top: 1px solid var(--border);
 }
 
@@ -2226,7 +2209,8 @@
   color: var(--text-tertiary);
 }
 
-.react-nav-shell .lightseek-content-thumb img {
+.react-nav-shell .lightseek-content-thumb img,
+.react-nav-shell .lightseek-content-thumb video {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -2263,94 +2247,41 @@
   grid-column: 1 / -1;
   min-height: 48px;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
   padding: 5px 8px;
 }
 
 .react-nav-shell .lightseek-content-note-icon {
   color: var(--accent);
-  font-size: 15px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 38px;
+  border-radius: 8px;
+  background: var(--accent-muted);
+}
+
+.react-nav-shell .lightseek-content-note-icon svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-nav-shell .lightseek-content-material:disabled,
+.react-nav-shell .lightseek-content-note:disabled {
+  cursor: progress;
 }
 
 .react-nav-shell .lightseek-content-note > span:last-child {
   padding: 0;
 }
 
-.react-nav-shell .lightseek-content-browser-preview {
-  position: relative;
-  min-height: 118px;
-  max-height: 230px;
-  overflow: auto;
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  padding: 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-elevated);
-}
-
-.react-nav-shell .lightseek-content-preview-media {
-  width: 72px;
-  height: 72px;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border-radius: 9px;
-  background: var(--bg-base);
-  color: var(--text-tertiary);
-}
-
-.react-nav-shell .lightseek-content-preview-media img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.react-nav-shell .lightseek-content-preview-copy {
-  min-width: 0;
-}
-
-.react-nav-shell .lightseek-content-preview-copy b {
-  display: block;
-  overflow: hidden;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.react-nav-shell .lightseek-content-preview-copy p {
-  display: -webkit-box;
-  margin: 5px 0 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 10px;
-  line-height: 1.5;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.react-nav-shell .lightseek-content-send {
-  grid-column: 1 / -1;
-  min-height: 34px;
-  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--bg-base);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.react-nav-shell .lightseek-content-send:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-.react-nav-shell .lightseek-content-send:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
 
 .react-nav-shell .lightseek-content-status,
 .react-nav-shell .lightseek-content-empty {
@@ -2362,7 +2293,16 @@
 }
 
 .react-nav-shell .lightseek-content-status {
-  color: var(--accent);
+  position: absolute;
+  bottom: 12px;
+  left: 18px;
+  right: 18px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  pointer-events: none;
 }
 
 @media (max-width: 980px) {

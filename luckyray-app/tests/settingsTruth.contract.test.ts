@@ -48,6 +48,59 @@ async function renderSettingsTab(tab: string, options: { locale?: "zh-CN" | "en-
   }
 }
 
+test("Storage retires the local Codex installer and manual pairing in both languages", async () => {
+  for (const locale of ["zh-CN", "en-US"] as const) {
+    const html = await renderSettingsTab("storage", { locale });
+    assert.doesNotMatch(html, /连接 AI 客户端|Connect an AI client|高级手动配对|Advanced manual pairing|Codex|素材 MCP 授权|Materials MCP access/);
+    assert.match(html, locale === "zh-CN" ? /应用数据路径/ : /App data location/);
+  }
+});
+
+test("AI settings keeps actions outside collapsed information and connections first", async () => {
+  for (const locale of ["zh-CN", "en-US"] as const) {
+    const html = await renderSettingsTab("ai", { locale });
+    assert.match(html, /settings-ai-panel/);
+    assert.ok(html.indexOf('class="ai-profile-manager"') < html.indexOf('class="dsh-engine-update-card"'));
+    const disclosures = [...html.matchAll(/<section class="settings-ai-disclosure">([\s\S]*?)<\/section>/g)];
+    assert.equal(disclosures.length, 5, "model test, engine update, diagnostics, extensions and search remain available");
+    assert.ok(disclosures.every((match) => match[1].includes('aria-expanded="false"') && /class="settings-ai-disclosure-body" hidden=""/.test(match[1])), "information starts collapsed but stays mounted");
+    const actionsOutside = disclosures.map((match) => match[1].slice(0, match[1].indexOf('class="settings-ai-disclosure-body"'))).join("\n");
+    assert.match(html, locale === "zh-CN" ? /添加 API 连接/ : /Add API connection/);
+    for (const label of locale === "zh-CN" ? ["发送测试消息", "检查更新", "运行诊断", "重新检查扩展", "保存联网设置"] : ["Send test message", "Check for updates", "Run diagnostics", "Recheck extensions", "Save web settings"]) {
+      assert.ok(actionsOutside.includes(label), `collapsing never hides ${label}`);
+    }
+    assert.match(html, /type="password"/);
+    assert.doesNotMatch(html, /settings\.ai\.[a-zA-Z.]+/);
+  }
+});
+
+test("phone layout uses available settings width with content-based narrow fallbacks", async () => {
+  const css = await source("src/features/settings/settings.css");
+  const panel = css.match(/\.companion-panel\s*\{([^}]*)\}/s)?.[1] ?? "";
+  assert.match(panel, /width:\s*100%/);
+  assert.match(panel, /max-width:\s*none/);
+  assert.match(css, /\.settings-content\s*\{[^}]*container-type:\s*inline-size/s);
+  assert.match(css, /@container \(max-width: 820px\)[\s\S]*\.companion-console-grid \{ grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(css, /settings-ai-disclosure-toggle:focus-visible/);
+});
+
+test("appearance shows nine miniature interface previews without changing theme selection", async () => {
+  for (const locale of ["zh-CN", "en-US"] as const) {
+    const html = await renderSettingsTab("appearance", { locale });
+    assert.equal((html.match(/class="settings-theme-miniature"/g) ?? []).length, 9);
+    assert.equal((html.match(/role="radio"/g) ?? []).length, 9);
+    assert.equal((html.match(/aria-checked="true"/g) ?? []).length, 1);
+    assert.equal((html.match(/--preview-base:/g) ?? []).length, 9);
+    assert.match(html, /settings-theme-mini-sidebar/);
+    assert.match(html, /settings-theme-mini-tiles/);
+    assert.match(html, /settings-theme-preset-footer/);
+    assert.doesNotMatch(html, /settings-theme-swatch-dot/);
+  }
+  const page = await source("src/features/settings/SettingsPage.tsx");
+  assert.match(page, /onSelect=\{handleSelectThemePreset\}/);
+  assert.match(page, /onClick=\{\(\) => onSelect\(preset\)\}/);
+});
+
 test("global settings does not duplicate Knowledge or Materials export actions", async () => {
   const html = await renderSettingsTab("storage");
   assert.doesNotMatch(html, /导入 Markdown 笔记|导出笔记为 Markdown|导入笔记完成|导出笔记完成/);
@@ -199,10 +252,13 @@ test("AI settings no longer exposes the retired Agent startup acceleration choic
   assert.doesNotMatch(html, /Agent 启动加速|后台准备 Agent|agent-engine-warm-runtime/);
 });
 
-test("General settings reports the real browser collection transport without a duplicate Canvas entry", async () => {
+test("Browser collection status moved from General to Community Collector without a duplicate Canvas entry", async () => {
   const html = await renderSettingsTab("general");
-  assert.match(html, /浏览器收集服务/);
-  assert.match(html, /扩展连接状态仍以浏览器扩展自身为准/);
+  assert.doesNotMatch(html, /浏览器收集服务|扩展连接状态仍以浏览器扩展自身为准/);
+  const collector = await source("src/features/community/CollectorServiceStatus.tsx");
+  assert.match(collector, /getCollectionServerBaseUrl/);
+  assert.match(collector, /settings\.general\.collection\.service\.description/);
+  assert.match(await source("src/features/community/CommunityPage.tsx"), /<CollectorServiceStatus \/>/);
   assert.doesNotMatch(html, /画布工作台|打开画布|Canvas 状态/);
 });
 

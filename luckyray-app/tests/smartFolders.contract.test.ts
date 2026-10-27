@@ -270,8 +270,10 @@ test("source pages save only their real supported filters and automatic import h
   assert.match(materials, /sortBy === "random"/);
   assert.match(notes, /onSaveSmartFolder/);
   assert.match(canvas, /sortMode === "oldest" \? "modified-asc"/);
-  assert.match(page, /<AutoImportManager mode="inline" \/>/);
-  assert.match(page, /\.\/AutoImportManager/);
+  assert.doesNotMatch(page, /AutoImportManager|activeOverviewTab/);
+  const manager = await readFile(new URL("../src/features/materials/MaterialLibrarySwitcher.tsx", import.meta.url), "utf8");
+  assert.match(manager, /<MaterialLibraryAutoImport library=\{library\}/);
+  assert.match(manager, /<AutoImportManager key=\{snapshot.libraryId\}/, "legacy settings remain manageable, not silently removed");
   assert.doesNotMatch(page, /#settings\?focus=auto-import/);
   assert.doesNotMatch(settings, /addMaterialWatchSource|readMaterialWatchSources|updateMaterialWatchSource|removeMaterialWatchSource/);
   assert.doesNotMatch(settings, /settings-auto-import|focus !== "auto-import"|Watch 文件夹|自动导入/);

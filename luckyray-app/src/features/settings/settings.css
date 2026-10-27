@@ -1,22 +1,5 @@
 :root {
-  --bg-base: #0a0a0c;
-  --bg-surface: #111114;
-  --bg-elevated: #1a1a1f;
-  --bg-hover: #222228;
-  --bg-active: #2a2a32;
-  --text-primary: #f0f0f2;
-  --text-secondary: #8e8e96;
-  --text-tertiary: #5a5a62;
-  --accent: #7c8aff;
-  --accent-hover: #9aa4ff;
-  --accent-muted: rgba(124, 138, 255, 0.12);
-  --border: rgba(255, 255, 255, 0.06);
-  --border-subtle: rgba(255, 255, 255, 0.03);
-  --mint: #4ade80;
-  --amber: #fbbf24;
-  --rose: #fb7185;
-  --danger: var(--rose);
-  --danger-muted: rgba(251, 113, 133, 0.12);
+  /* Theme colors and legacy aliases come from core/theme/themeTokens.css. */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -141,13 +124,13 @@
 
 .react-nav-shell .luckyray-settings-page .settings-nav .settings-nav-item:not(.active),
 .react-nav-shell .luckyray-settings-page .settings-nav .settings-nav-item:not(.active) span {
-  color: #8e8e96 !important;
+  color: var(--text-secondary) !important;
   font-weight: 400;
 }
 
 .react-nav-shell .luckyray-settings-page .settings-nav .settings-nav-item:not(.active):hover,
 .react-nav-shell .luckyray-settings-page .settings-nav .settings-nav-item:not(.active):hover span {
-  color: #f0f0f2 !important;
+  color: var(--text-primary) !important;
 }
 
 .react-nav-shell .luckyray-settings-page .settings-nav .settings-nav-item.active,
@@ -162,6 +145,7 @@
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-9) var(--space-10);
+  container-type: inline-size;
 }
 
 .settings-panel {
@@ -296,7 +280,7 @@
 
 .select:hover,
 .settings-input:hover {
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: color-mix(in srgb, var(--text-secondary) 40%, var(--border));
 }
 
 .select:focus,
@@ -369,7 +353,31 @@
 
 .ai-profile-manager-head {
   justify-content: space-between;
+  flex-wrap: wrap;
 }
+
+.ai-profile-manager-head > div:first-child {
+  flex: 1 1 240px;
+}
+
+.ai-profile-manager-head .ai-profile-manager-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-profile-help {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+
+.ai-profile-help summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.ai-profile-help p { margin: 8px 0 0; }
 
 .ai-profile-manager-head > div,
 .ai-profile-editor-head > div,
@@ -516,7 +524,7 @@
 .ai-profile-card-badges i {
   padding: 2px 5px;
   border-radius: 4px;
-  color: var(--text-tertiary);
+  color: var(--text-primary);
   background: var(--bg-active);
   font-size: 8px;
   font-style: normal;
@@ -763,17 +771,17 @@
 
 .react-nav-shell .luckyray-settings-page .settings-segment .settings-segment-item:not(.active) {
   background: transparent !important;
-  color: #5a5a62 !important;
+  color: var(--text-secondary) !important;
   font-weight: 400;
 }
 
 .react-nav-shell .luckyray-settings-page .settings-segment .settings-segment-item:not(.active):hover {
-  color: #8e8e96 !important;
+  color: var(--text-secondary) !important;
 }
 
 .react-nav-shell .luckyray-settings-page .settings-segment .settings-segment-item.active {
-  background: #2a2a32 !important;
-  color: #f0f0f2 !important;
+  background: var(--bg-active) !important;
+  color: var(--text-primary) !important;
   font-weight: 600;
 }
 
@@ -796,7 +804,7 @@
 .settings-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: color-mix(in srgb, var(--text-secondary) 40%, var(--border));
 }
 
 .settings-btn:disabled {
@@ -838,75 +846,97 @@
 
 .settings-theme-preset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
   width: 100%;
 }
 
-.settings-theme-preset-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+.luckyray-settings-page .settings-theme-preset-card {
+  display: grid;
+  min-width: 0;
+  padding: 6px;
   border-radius: var(--radius-md);
-  background: var(--bg-surface);
+  background: var(--theme-card-bg);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all var(--transition);
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
   text-align: left;
-  min-height: 36px;
 }
 
-.settings-theme-preset-card:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--border-subtle);
-}
-
-.settings-theme-preset-card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.settings-theme-preset-card.active {
+.luckyray-settings-page .settings-theme-preset-card:hover {
   background: var(--bg-elevated);
   color: var(--text-primary);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  border-color: color-mix(in srgb, var(--text-secondary) 40%, var(--border));
 }
 
-.settings-theme-preview-swatches {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
+.luckyray-settings-page .settings-theme-preset-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
-.settings-theme-swatch-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.14);
-  flex-shrink: 0;
+.luckyray-settings-page .settings-theme-preset-card.active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--text-primary));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
 }
+
+.settings-theme-miniature {
+  position: relative;
+  display: grid;
+  grid-template: 17px 1fr / 25% 1fr;
+  aspect-ratio: 1.9;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--preview-text) 10%, transparent);
+  border-radius: 6px;
+  background: var(--preview-base);
+  color: var(--preview-text);
+}
+
+.settings-theme-mini-top { grid-column: 1 / -1; display: flex; align-items: center; gap: 3px; padding-inline: 7px; border-bottom: 1px solid color-mix(in srgb, var(--preview-text) 8%, transparent); background: var(--preview-sidebar); }
+.settings-theme-mini-top > i { width: 3px; height: 3px; border-radius: 50%; background: var(--preview-text); opacity: .25; }
+.settings-theme-mini-top > span { width: 22%; height: 5px; margin-left: auto; border-radius: 2px; background: var(--preview-surface); }
+.settings-theme-mini-sidebar { display: flex; flex-direction: column; gap: 5px; padding: 8px 6px; background: var(--preview-sidebar); }
+.settings-theme-mini-sidebar > b { width: 10px; height: 10px; margin-bottom: 4px; border-radius: 3px; background: var(--preview-accent); }
+.settings-theme-mini-sidebar > i { width: 75%; height: 3px; border-radius: 2px; background: var(--preview-text); opacity: .18; }
+.settings-theme-mini-sidebar > i.selected { width: 100%; height: 8px; margin-left: -2px; border-radius: 3px; background: var(--preview-accent); opacity: .6; }
+.settings-theme-mini-content { display: grid; align-content: start; gap: 7px; min-width: 0; padding: 9px; }
+.settings-theme-mini-title { width: 42%; height: 4px; border-radius: 2px; background: var(--preview-text); opacity: .65; }
+.settings-theme-mini-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.settings-theme-mini-tiles > i { aspect-ratio: 1.3; border: 1px solid color-mix(in srgb, var(--preview-text) 8%, transparent); border-radius: 4px; background: var(--preview-surface); }
+.settings-theme-mini-tiles > i:first-child { background: color-mix(in srgb, var(--preview-accent) 28%, var(--preview-surface)); }
+.settings-theme-mini-tiles > i:last-child { background: color-mix(in srgb, var(--preview-text) 10%, var(--preview-surface)); }
+.settings-theme-mini-lines { display: grid; gap: 4px; }
+.settings-theme-mini-lines > i { width: 78%; height: 3px; border-radius: 2px; background: var(--preview-text); opacity: .14; }
+.settings-theme-mini-lines > i:last-child { width: 53%; }
+.settings-theme-preset-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 7px 5px; }
+.settings-theme-preset-copy { display: grid; min-width: 0; gap: 3px; }
+.settings-theme-preset-copy small { color: var(--text-secondary); font-size: 10px; }
 
 .settings-theme-preset-name {
-  flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text-primary);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 550;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .settings-theme-preset-check {
-  font-size: 11px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 12px;
   font-weight: 700;
   color: var(--accent);
   flex-shrink: 0;
 }
+
+.settings-theme-preset-card.active .settings-theme-preset-check { background: var(--accent-muted); border-color: var(--text-secondary); color: var(--text-primary); }
 
 .settings-color-row {
   display: flex;
@@ -2101,7 +2131,8 @@
 
 /* Desktop Companion Gateway: a bounded, local-only Settings console. */
 .companion-panel {
-  max-width: 1080px;
+  width: 100%;
+  max-width: none;
 }
 
 .companion-heading,
@@ -2184,7 +2215,7 @@
 
 .companion-console-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -2820,3 +2851,172 @@
     width: 100%;
   }
 }
+
+/* AI settings: connections first, supporting tools available on demand. */
+.settings-ai-panel .setting-group > h3 {
+  margin: 24px 0 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.settings-ai-panel .setting-group:first-of-type > h3 {
+  display: none; /* The connection manager supplies this section's heading. */
+}
+
+.settings-ai-panel .ai-profile-manager {
+  padding: 0 0 16px;
+  border-bottom: 0;
+}
+
+.settings-ai-panel .ai-profile-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 10px;
+}
+
+.settings-ai-panel .ai-profile-card {
+  min-height: 78px;
+  column-gap: 10px;
+  padding: 14px;
+}
+
+.settings-ai-panel .ai-profile-card-badges {
+  gap: 6px;
+}
+
+.settings-ai-panel .ai-profile-card-badges em,
+.settings-ai-panel .ai-profile-card-badges i {
+  font-size: 10px;
+}
+
+.settings-ai-disclosure {
+  min-width: 0;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.settings-ai-disclosure-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 28px;
+  align-items: center;
+  gap: 16px;
+  padding: 15px 18px;
+}
+
+.luckyray-settings-page .settings-ai-disclosure-toggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.settings-ai-disclosure-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.settings-ai-disclosure-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.luckyray-settings-page .settings-ai-disclosure-toggle:hover { background: var(--bg-hover); color: var(--text-primary); }
+.settings-ai-disclosure-toggle:focus-visible,
+.ai-profile-help > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-sm); }
+
+.settings-ai-disclosure-copy { display: grid; min-width: 0; gap: 4px; }
+.settings-ai-disclosure-copy b { font-size: var(--fs-base); font-weight: 550; color: var(--text-primary); }
+.settings-ai-disclosure-copy small { font-size: var(--fs-sm); color: var(--text-secondary); }
+.settings-ai-disclosure-actions { min-width: 0; max-width: min(100%, 480px); }
+.settings-ai-disclosure-actions .settings-action-row { justify-content: flex-end; gap: 8px; }
+.settings-ai-disclosure-actions .dsh-plugin-compat-actions { margin-top: 0; }
+.settings-ai-disclosure-actions .dsh-plugin-compat-actions button { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--bg-elevated); }
+.settings-ai-disclosure-body { min-width: 0; padding: 16px 18px; border-top: 1px solid var(--border-subtle); }
+.settings-ai-detail-note { margin: 0 0 14px; color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.65; }
+.settings-ai-disclosure-body .settings-control-stack { flex-wrap: wrap; }
+.settings-ai-disclosure-body .setting-row { flex-wrap: wrap; }
+.settings-ai-disclosure-body .setting-control { flex-shrink: 1; }
+.settings-ai-disclosure-body .dsh-plugin-compat-settings-title,
+.settings-ai-disclosure-body .dsh-plugin-compat-settings-title + .dsh-plugin-compat-settings-desc { display: none; }
+
+/* Respond to the settings area, not the whole window including both sidebars. */
+@container (max-width: 820px) {
+  .companion-console-grid { grid-template-columns: minmax(0, 1fr); }
+  .companion-device { grid-template-columns: 38px minmax(0, 1fr) auto; }
+  .companion-device > .settings-btn:last-of-type { grid-column: 3; }
+  .settings-ai-panel .ai-profile-manager-head { align-items: flex-start; flex-direction: column; }
+  .settings-ai-panel .ai-profile-manager-head > div:first-child { flex-basis: auto; }
+  .settings-ai-disclosure-body .setting-row { flex-direction: column; align-items: flex-start; }
+  .settings-ai-disclosure-body .setting-control { width: 100%; justify-content: flex-start; }
+}
+
+@container (max-width: 520px) {
+  .companion-heading { flex-wrap: wrap; }
+  .companion-endpoint-facts { grid-template-columns: minmax(0, 1fr); }
+  .companion-audit-row { grid-template-columns: 8px minmax(0, 1fr); padding-block: 8px; }
+  .companion-audit-row > span:nth-of-type(2), .companion-audit-row > time { grid-column: 2; }
+  .settings-ai-disclosure-head { grid-template-columns: minmax(0, 1fr) 28px; gap: 10px; }
+  .settings-ai-disclosure-actions { grid-column: 1; grid-row: 2; }
+  .settings-ai-disclosure-actions .settings-action-row { justify-content: flex-start; }
+  .settings-ai-disclosure-toggle { grid-column: 2; grid-row: 1; }
+}
+
+/* Appearance keeps the existing palette; hierarchy comes from semantic surfaces,
+   measured whitespace and quiet separators, not another set of theme colors. */
+.settings-appearance-panel { max-width: 960px; }
+.settings-appearance-panel > .setting-group {
+  margin-bottom: 16px;
+  padding: 18px 20px 8px;
+  border: 1px solid var(--theme-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--theme-surface-panel);
+}
+.settings-appearance-panel > .setting-group > h3 {
+  margin: 0 0 10px;
+  color: var(--text-primary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.settings-appearance-panel .setting-row { padding-block: 14px; }
+.settings-appearance-panel .setting-row-stack { gap: 16px; }
+.settings-appearance-panel .setting-label .desc,
+.settings-appearance-panel .settings-panel-sub,
+.settings-appearance-panel .settings-color-name { color: var(--text-secondary); }
+.settings-appearance-panel .settings-color-row { gap: 18px; padding: 2px 4px 22px; }
+.settings-appearance-panel .settings-color-swatch:hover { transform: none; box-shadow: 0 0 0 3px var(--theme-hover); }
+.settings-appearance-panel .settings-color-swatch.active:hover { box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--text-primary); }
+.settings-appearance-panel :is(button, select, input):focus-visible,
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 3px;
+}
+.settings-appearance-panel .settings-preview-card {
+  border-color: var(--theme-border-strong);
+  background: var(--theme-card-bg);
+  box-shadow: var(--theme-shadow-sm);
+}
+@container (max-width: 650px) {
+  .settings-theme-preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-appearance-panel > .setting-group { padding-inline: 16px; }
+  .settings-appearance-panel .setting-row { flex-wrap: wrap; }
+}
+@container (max-width: 360px) {
+  .settings-theme-preset-grid { grid-template-columns: minmax(0, 1fr); }
+  .settings-appearance-panel > .setting-group { padding-inline: 12px; }
+}
+:root[data-animations="off"] .settings-appearance-panel,
+:root[data-animations="off"] .settings-appearance-panel *,
+:root[data-animations="off"] .settings-appearance-panel *::after {
+  transition: none !important;
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-appearance-panel, .settings-appearance-panel *, .settings-appearance-panel *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+.settings-shortcut-reference summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; padding: 4px 0; }
+.settings-shortcut-reference summary::before { content: "›"; width: 12px; color: var(--text-tertiary); }
+.settings-shortcut-reference[open] summary::before { transform: rotate(90deg); }
+.settings-shortcut-reference summary span { font-weight: 400; color: var(--text-tertiary); font-size: 11px; }
+.settings-shortcut-reference summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.settings-shortcut-reference kbd { white-space: normal; overflow-wrap: anywhere; }

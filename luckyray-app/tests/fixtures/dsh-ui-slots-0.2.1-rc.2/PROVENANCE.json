@@ -1,0 +1,24 @@
+{
+  "package": "@deepseek-ai/dsh-client-ui-slots",
+  "version": "0.2.1-rc.2",
+  "source": "package/lib/index.js",
+  "dist": {
+    "shasum": "4fbcdaab15b4301c1042df400d812012bd961110",
+    "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh-client-ui-slots/-/dsh-client-ui-slots-0.2.1-rc.2.tgz",
+    "fileCount": 9,
+    "integrity": "sha512-/DroOBXeQzFczr07RkMh2FolFL8yW8GTryc7fvaM7QPiFvwHv8oWoBGESQ3AaVQHY9TgpYhJ5X8JuMtaYovE4A==",
+    "signatures": [
+      {
+        "sig": "MEUCIQCJEqzj46Y42yOeuYzXCHe2BYjo0vWZrpKlnJAWbIV1jQIgRuIDElNeF0M+pjb2kgq9/75doCxXzc/ePweNvlSkoUo=",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      },
+      {
+        "sig": "MEUCIQCOa7giz4adfWd4nrWcBYC/RCpLmLh5R3SsZmjEjuISuAIgBrbBc77UNdvNCi4GnSJiSlv/2yga/YYbHPIOxvhn2Zc=",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      }
+    ],
+    "unpackedSize": 108030
+  },
+  "fixtureSha256": "57e1314e31a2015f30231e1e7596da658f1bb5cb64c103c4cf13381647412c99",
+  "modification": "Extension changed to .mjs only; source bytes unchanged; test-only, not deployed official runtime."
+}

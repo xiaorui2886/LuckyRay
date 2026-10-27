@@ -44,7 +44,7 @@ fn owned_runtime_blocks(path: &str, install: &str, profile: &str,
     // Only exact PIDs attested by the reserved host's authenticated lifecycle,
     // their exact parent links and the pinned bundled Node path qualify.
     // Never excuse siblings, arbitrary descendants or profile runtimes.
-    if path == format!(r"{}\deepseek-harness\node\node.exe", install) {
+    if path == format!(r"{}\lr-lsh\199-1\deepseek-harness\node\node.exe", install) {
         if let Some((host, surface)) = reserved {
             if pid == host && parent == std::process::id()
                 || surface == Some(pid) && parent == host { return false; }
@@ -185,7 +185,7 @@ mod tests {
     fn reserved_probe_is_not_another_instance_but_other_children_still_block() {
         let install = r"c:\fixture";
         let profile = r"c:\profile";
-        let node = r"c:\fixture\deepseek-harness\node\node.exe";
+        let node = r"c:\fixture\lr-lsh\199-1\deepseek-harness\node\node.exe";
         let parent = std::process::id();
         assert!(!owned_runtime_blocks(node, install, profile, 44, parent, Some((44, None))));
         assert!(owned_runtime_blocks(node, install, profile, 45, parent, Some((44, None))));
@@ -193,6 +193,8 @@ mod tests {
         assert!(owned_runtime_blocks(node, install, profile, 44, parent, None));
         assert!(owned_runtime_blocks(r"c:\profile\node.exe", install, profile, 44, parent, Some((44, None))));
         assert!(owned_runtime_blocks(r"c:\fixture\other\node.exe", install, profile, 44, parent, Some((44, None))));
+        assert!(owned_runtime_blocks(r"c:\fixture\deepseek-harness\node\node.exe", install, profile, 44, parent, Some((44, None))));
+        assert!(owned_runtime_blocks(r"c:\fixture\lr-lsh\199-1.saved-1\deepseek-harness\node\node.exe", install, profile, 44, parent, Some((44, None))));
         assert!(!owned_runtime_blocks(node, install, profile, 45, 44, Some((44, Some(45)))));
         assert!(owned_runtime_blocks(node, install, profile, 46, 44, Some((44, Some(45)))));
         assert!(owned_runtime_blocks(node, install, profile, 45, parent, Some((44, Some(45)))));

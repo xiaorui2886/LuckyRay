@@ -1,0 +1,56 @@
+// Semantic + real React event regression. This is not browser/native pixel acceptance.
+import assert from 'node:assert/strict';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const root = path.resolve(import.meta.dirname, '..');
+const tool = process.env.LR_TEST_TOOLS ? createRequire(path.join(process.env.LR_TEST_TOOLS, 'package.json')) : require;
+const { JSDOM } = tool('jsdom');
+const { build, stop } = createRequire(require.resolve('vite'))('esbuild');
+const out = mkdtempSync(path.join(tmpdir(), 'luckyray-theme-polish-'));
+process.on('exit', () => rmSync(out, { recursive: true, force: true }));
+await build({stdin:{contents:`export {ThemePresetSelector} from './src/features/settings/ThemePresetSelector'; export {I18nProvider} from './src/core/i18n'; export {THEME_PRESETS} from './src/core/theme/themePresets';`,resolveDir:root,loader:'tsx'},bundle:true,platform:'node',format:'cjs',jsx:'automatic',plugins:[{name:'existing-react-runtime',setup(b){b.onResolve({filter:/^react(?:\/.*)?$/}, args => ({path:require.resolve(args.path),external:true}));}}],outfile:path.join(out,'fixture.cjs')});
+stop();
+const { ThemePresetSelector, I18nProvider, THEME_PRESETS } = require(path.join(out,'fixture.cjs'));
+const css = readFileSync(path.join(root,'src/core/theme/themeTokens.css'),'utf8');
+const luminance = hex => { const a = hex.slice(1).match(/../g).map(x => parseInt(x,16)/255).map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4); return a[0]*.2126+a[1]*.7152+a[2]*.0722; };
+const contrast = (a,b) => { const x=luminance(a),y=luminance(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); };
+assert.deepEqual(THEME_PRESETS.map(p=>p.id), ['dark','light','ivory-editorial','rose-tea','github-dark','white-zero','bangladesh-green','lilac-milk','blue-whisper']);
+for (const preset of THEME_PRESETS) {
+ const body=css.match(new RegExp(':root\\[data-theme="'+preset.id+'"\\]\\s*\\{([^}]+)'))[1];
+ const token=k=>body.match(new RegExp(k+':\\s*([^;]+)'))[1];
+ assert.deepEqual(preset.previewTokens,['--theme-app-bg','--theme-sidebar-bg','--theme-surface-raised','--text-primary','--accent'].map(token), preset.id+' preview matches real theme');
+ for (const surface of ['base','panel','raised']) assert.ok(contrast(token('--theme-text-muted'),token('--theme-surface-'+surface))>=4.5,preset.id+' readable on '+surface);
+ assert.ok(contrast(token('--theme-text-muted'),token('--theme-card-bg'))>=4.5,preset.id+' readable on card');
+}
+const settingsCss=readFileSync(path.join(root,'src/features/settings/settings.css'),'utf8');
+assert.ok(!/color:\s*#(?:5a5a62|8e8e96|f0f0f2)\s*!important/.test(settingsCss));
+assert.match(settingsCss,/prefers-reduced-motion: reduce/);
+assert.match(settingsCss,/data-animations="off"/);
+const dom = new JSDOM('<div id="root"></div>', {url:'https://qa.invalid',pretendToBeVisual:true});
+for (const key of ['window','document','HTMLElement','Element','Node','Event','MouseEvent','KeyboardEvent','navigator']) Object.defineProperty(globalThis,key,{value:dom.window[key],configurable:true});
+const React=require('react');
+const {createRoot}=require('react-dom/client');
+const {flushSync}=require('react-dom');
+const reactRoot=createRoot(document.getElementById('root'));
+let value='dark', selections=0;
+const render=()=>flushSync(()=>reactRoot.render(React.createElement(I18nProvider,{locale:'zh-CN'},React.createElement(ThemePresetSelector,{value,onSelect:p=>{value=p.id;selections++;render();}}))));
+const radios=()=>Array.from(document.querySelectorAll('[role="radio"]'));
+const key=(el,key)=>flushSync(()=>el.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true})));
+const verify=(i)=>{assert.equal(radios().filter(x=>x.tabIndex===0).length,1);assert.equal(radios()[i].getAttribute('aria-checked'),'true');assert.equal(radios().filter(x=>x.getAttribute('aria-checked')==='true').length,1);};
+render(); assert.equal(radios().length,9); verify(0);
+for(let i=0;i<9;i++){flushSync(()=>radios()[i].click());verify(i);assert.equal(value,THEME_PRESETS[i].id);}
+radios()[8].focus(); key(radios()[8],'ArrowRight');verify(0);assert.equal(document.activeElement,radios()[0]);
+key(radios()[0],'ArrowLeft');verify(8);
+key(radios()[8],'Home');verify(0);
+key(radios()[0],'End');verify(8);
+key(radios()[8],'ArrowUp');verify(7);
+key(radios()[7],'ArrowDown');verify(8);
+const before=selections;key(radios()[8],'Escape');assert.equal(selections,before);
+flushSync(()=>radios()[8].click());verify(8);
+value='extension-theme';render();assert.equal(radios().filter(x=>x.tabIndex===0).length,1);assert.equal(radios().filter(x=>x.getAttribute('aria-checked')==='true').length,0);
+key(radios()[0],'ArrowRight');verify(1);
+flushSync(()=>reactRoot.unmount());dom.window.close();
+console.log('PASS: 9 palette/preview parity checks; 36 muted contrast checks; semantic settings + both motion policies; real React selection, roving tab stop, keyboard wrap/Home/End, repeated selection, unknown extension fallback. No native/browser pixel claim.');

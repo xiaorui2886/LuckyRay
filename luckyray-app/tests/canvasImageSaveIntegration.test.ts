@@ -21,6 +21,8 @@ function fixture() {
     events: [] as any[],
     file: "/qa/copy.png" as string | null,
     failImport: false,
+    failWrite: false,
+    writeOptions: null as null | {createNew?:boolean},
     waitImport: null as null | Promise<void>,
   };
   const bridge = {
@@ -45,7 +47,11 @@ function fixture() {
     bridge,
     useCallback: (fn: any) => fn,
     save: async () => state.file,
-    writeFile: async () => state.events.push("write"),
+    writeFile: async (_path: string, _bytes: Uint8Array, options: {createNew?:boolean}) => {
+      state.writeOptions = options;
+      if(state.failWrite) throw new Error("already-exists");
+      state.events.push("write");
+    },
     safeDeliveryName: () => "copy.png",
     resolveCanvasMediaUrl: (s: string) => s,
     addNode: (...args: any[]) => state.events.push(["add", ...args]),
@@ -104,4 +110,11 @@ test("successful copy uses absolute bounds and creates one derived card", async 
   assert.equal(adds.length, 1);
   assert.equal(adds[0][2].derivedFromNodeId, "n");
   assert.deepEqual(adds[0][3], { x: 901, y: 602 });
+});
+
+test("edited image copy is create-only and failure never imports or inserts", async () => {
+ const f=fixture();f.state.failWrite=true;
+ await assert.rejects(f.run(),/不会覆盖已有文件/);
+ assert.equal(f.state.writeOptions?.createNew,true);
+ assert.deepEqual(f.state.events,[]);
 });

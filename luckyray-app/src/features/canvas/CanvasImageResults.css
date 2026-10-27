@@ -1,0 +1,28 @@
+.canvas-generator-output:has(> .canvas-image-results) { overflow: visible; }
+.canvas-image-results { position: relative; isolation: isolate; width: 100%; height: 100%; border-radius: inherit; }
+/* Rear sheets never reach above the card into its title. Depth is a cue, not a count. */
+.canvas-image-results.is-stacked::before,
+.canvas-image-results.is-stacked[data-stack-depth="2"]::after { content: ''; position: absolute; inset: 6px 0 0 0; z-index: -1; border: 1px solid rgba(255,255,255,.23); border-radius: inherit; background: var(--theme-surface-raised, #363639); pointer-events: none; }
+.canvas-image-results.is-stacked::before { transform: translate(5px,4px); }
+.canvas-image-results.is-stacked[data-stack-depth="2"]::after { transform: translate(10px,8px); z-index: -2; background: var(--theme-surface-panel, #27272b); }
+.canvas-image-results-frame { position: relative; width: 100%; height: 100%; border-radius: inherit; }
+.canvas-image-results-strip { display: flex; width: 100%; height: 100%; border-radius: inherit; }
+.canvas-image-result-choice { position: relative; flex: 0 0 100%; width: 100%; height: 100%; min-width: 0; overflow: hidden; border-radius: 17px; background: var(--theme-surface-panel, #1e1e21); }
+.canvas-image-result-choice > img { display: block; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: contain; }
+.canvas-image-results .canvas-image-results-count { position: absolute; z-index: 3; top: 10px; right: 10px; display: flex; align-items: center; gap: 5px; min-height: 28px; padding: 4px 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; color: #fff; background: rgba(20,20,23,.78); font-size: 12px; line-height: 18px; font-weight: 500; cursor: pointer; backdrop-filter: blur(10px); box-shadow: 0 2px 8px #0002; }
+.canvas-image-results-count svg, .canvas-image-results-nav svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.canvas-image-results.is-expanded .canvas-image-results-frame { position: absolute; left: 0; top: 0; max-width: none; }
+.canvas-image-results.is-expanded .canvas-image-results-strip { gap: 12px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior: contain; background: transparent; box-shadow: 0 18px 50px rgba(0,0,0,.25); touch-action: pan-x; }
+.canvas-image-results-strip::-webkit-scrollbar { display: none; }
+.canvas-image-results.is-expanded .canvas-image-result-choice { flex: 0 0 var(--results-item-width, var(--generator-card-width, 430px)); width: var(--results-item-width, var(--generator-card-width, 430px)); }
+.canvas-image-results.is-expanded::before,
+.canvas-image-results.is-expanded::after { display: none; }
+.canvas-image-results .canvas-image-results-nav { position: absolute; top: 50%; z-index: 3; transform: translateY(-50%); display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid #ffffff40; border-radius: 50%; background: rgba(20,20,23,.8); color: #fff; box-shadow: 0 2px 12px #0003; cursor: pointer; backdrop-filter: blur(10px); }
+.canvas-image-results-nav.is-previous { left: 10px; }
+.canvas-image-results-nav.is-next { right: 10px; }
+.canvas-image-results .canvas-image-results-nav:disabled { opacity: 0; pointer-events: none; }
+.canvas-image-results .canvas-image-result-primary { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 7px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,.3); background: rgba(20,20,23,.83); color: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.canvas-image-results .canvas-image-result-primary[aria-pressed="true"] { background: rgba(255,255,255,.9); color: #242426; }
+.canvas-image-results button:focus-visible, .canvas-image-results-strip:focus-visible { outline: 2px solid #b4c7ff; outline-offset: 3px; }
+.canvas-generator-output.is-generating > .canvas-image-results { filter: blur(2px); opacity: .35; pointer-events: none; }
+.react-flow__node-spike:has(.canvas-image-results.is-expanded) { z-index: 1001 !important; }

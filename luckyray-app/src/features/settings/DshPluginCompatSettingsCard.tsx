@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   createDefaultDshPluginCompatClient,
   dshPluginCompatReasonToken,
@@ -51,7 +51,7 @@ const REASON_COPY = {
  * review or restore suspended extensions. Read-mostly; failures stay quiet
  * because the panel is informational, not a blocker.
  */
-export default function DshPluginCompatSettingsCard({ shouldShow }: { shouldShow?: boolean }) {
+export default function DshPluginCompatSettingsCard({ shouldShow, renderLayout }: { shouldShow?: boolean; renderLayout?: (parts: { information: ReactNode; actions: ReactNode }) => ReactNode }) {
   const { t } = useMessages(COPY);
   const [status, setStatus] = useState<DshPluginCompatStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -97,8 +97,8 @@ export default function DshPluginCompatSettingsCard({ shouldShow }: { shouldShow
 
   if (shouldShow === false) return null;
 
-  return (
-    <div className="dsh-plugin-compat-settings" data-testid="dsh-plugin-compat-settings">
+  const information = (
+    <>
       <p className="dsh-plugin-compat-settings-title">{t("title")}</p>
       <p className="dsh-plugin-compat-settings-desc">
         {status?.compatMode ? `${t("modeOn")} ` : ""}
@@ -143,7 +143,9 @@ export default function DshPluginCompatSettingsCard({ shouldShow }: { shouldShow
       {status && status.inactiveDependencies.length > 0 && <section><h3>{t("inactive")}</h3><ul className="dsh-plugin-compat-list">{status.inactiveDependencies.map((entry) => <li key={entry.packageName}><span>{entry.packageName}{entry.version ? `@${entry.version}` : ""}</span>{!entry.installed && <span>{t("missingPackage")}</span>}</li>)}</ul></section>}
       {status && status.historicalQuarantine.length > 0 && <section><h3>{t("historical")}</h3><ul className="dsh-plugin-compat-list">{status.historicalQuarantine.map((entry) => <li key={`${entry.packageName}/${entry.entryId}`}>{entry.packageName}{entry.version ? `@${entry.version}` : ""}</li>)}</ul></section>}
       <p className="dsh-plugin-compat-limited">{t("limited")}</p>
-      <div className="dsh-plugin-compat-actions">
+    </>
+  );
+  const actions = <div className="dsh-plugin-compat-actions settings-action-row">
         <button
           type="button"
           disabled={busy}
@@ -155,7 +157,6 @@ export default function DshPluginCompatSettingsCard({ shouldShow }: { shouldShow
           {busy ? t("rechecking") : t("recheck")}
         </button>
         {busy && <button type="button" onClick={() => { generation.current += 1; setBusy(false); setCancelled(true); }}>{t("cancel")}</button>}
-      </div>
-    </div>
-  );
+      </div>;
+  return renderLayout ? renderLayout({ information: <div className="dsh-plugin-compat-settings" data-testid="dsh-plugin-compat-settings">{information}</div>, actions }) : <div className="dsh-plugin-compat-settings" data-testid="dsh-plugin-compat-settings">{information}{actions}</div>;
 }

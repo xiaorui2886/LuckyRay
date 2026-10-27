@@ -9,21 +9,24 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (relative) => readFile(path.join(root, relative), "utf8");
 
 test("formal NSIS readiness owns every production resource and keeps one version", async () => {
-  const [packageJson, tauri, cargo, tauriIgnore, installerHooks] = await Promise.all([
+  const [packageJson, tauri, cargo, cargoLock, tauriIgnore, installerHooks] = await Promise.all([
     read("package.json").then(JSON.parse),
     read("src-tauri/tauri.conf.json").then(JSON.parse),
     read("src-tauri/Cargo.toml"),
+    read("src-tauri/Cargo.lock"),
     read("src-tauri/.gitignore"),
     read("src-tauri/windows/native-messaging-hooks.nsh"),
   ]);
 
-  assert.equal(packageJson.version, "1.9.15");
+  assert.equal(packageJson.version, "1.9.9");
   assert.equal(tauri.version, packageJson.version);
-  assert.match(cargo, /^version = "1\.9\.15"$/m);
+  assert.match(cargo, /^version = "1\.9\.9"$/m);
+  assert.match(cargoLock, /\[\[package\]\]\r?\nname = "luckyray-app"\r?\nversion = "1\.9\.9"\r?\n/);
   assert.deepEqual(tauri.bundle.resources, {
-    "dsh/": "deepseek-harness/",
-    "dsh-host/": "dsh-host/",
+    "dsh/": "lr-lsh/199-1/deepseek-harness/",
+    "dsh-host/": "lr-lsh/199-1/dsh-host/",
     "media-engine/": "media-engine/",
+    "../third-party-notices/": "third-party-notices/",
   });
   assert.doesNotMatch(JSON.stringify(tauri.bundle), /agent-engine|hermes/i);
   assert.deepEqual(tauri.bundle.windows.nsis.languages, ["SimpChinese", "English"]);

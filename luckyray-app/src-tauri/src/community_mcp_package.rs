@@ -356,7 +356,7 @@ mod tests {
     #[ignore = "Downloads the fixed public package anonymously; bounded distribution acceptance only"]
     fn public_distribution_download_install_and_bad_hash_refusal() {
         let c = catalog().unwrap();
-        assert!(c.artifact_url.as_deref().unwrap().contains("/releases/download/mcp-v0.1.1/"));
+        assert!(c.artifact_url.as_deref().unwrap().contains("/releases/download/mcp-v0.1.3/"));
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("公开下载 中文安装");
         // None is exactly the release source selection: no private debug ZIP.

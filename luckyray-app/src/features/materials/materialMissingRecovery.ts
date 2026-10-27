@@ -13,6 +13,35 @@ export type MaterialMissingItem = {
 
 export type MaterialMissingScanReason = "initial" | "focus" | "visibility" | "data-change" | "manual";
 
+/** Freeze the confirmed IDs; reuse the canonical record-only operation, never file deletion. */
+export async function removeMissingMaterialRecords({ ids, scanMissing, removeRecord, canContinue, onRemoved }: {
+  ids: readonly string[];
+  scanMissing: () => Promise<readonly { id: string }[]>;
+  removeRecord: (id: string) => Promise<{ success: boolean }>;
+  canContinue: () => boolean;
+  onRemoved?: (id: string) => void;
+}) {
+  const candidates = [...new Set(ids)];
+  const removedIds: string[] = [], skippedIds: string[] = [];
+  const result = (remainingIds: string[], stopped = false, failure: { id: string; error: unknown } | null = null) => ({ removedIds, skippedIds, remainingIds, stopped, failure });
+  if (candidates.length === 0) return result([]);
+  if (!canContinue()) return result(candidates, true);
+  const missing = new Set((await scanMissing()).map((item) => item.id));
+  for (const [index, id] of candidates.entries()) {
+    if (!canContinue()) return result(candidates.slice(index), true);
+    if (!missing.has(id)) { skippedIds.push(id); continue; }
+    try {
+      const response = await removeRecord(id);
+      if (response.success !== true) throw new Error("missing-record-removal-not-confirmed");
+      removedIds.push(id);
+      if (canContinue()) onRemoved?.(id);
+    } catch (error) {
+      return result(candidates.slice(index), false, { id, error });
+    }
+  }
+  return result([], !canContinue());
+}
+
 type EventTargetLike = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
 type ConfirmDialogLike = { onCancel?: () => void };

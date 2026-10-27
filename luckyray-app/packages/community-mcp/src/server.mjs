@@ -60,7 +60,7 @@ async function main() {
       tools: TOOLS,
       serverInfo: {
         name: "luckyray-library-web-mcp",
-        version: "0.1.1",
+        version: "0.1.3",
       },
     },
   );

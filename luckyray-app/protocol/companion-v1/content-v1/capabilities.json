@@ -1,9 +1,9 @@
 {
   "contentVersion": 1,
-  "bundleRevision": "2026-09-21.1",
+  "bundleRevision": "2026-10-23.scopes-1",
   "capabilities": {
     "materialPreview": true,
- "lshRemoteSurface": true,
+    "lshRemoteSurface": true,
     "noteRead": true,
     "noteWrite": true,
     "noteChanges": true,
@@ -19,5 +19,6 @@
     "attachmentBytes": 67108864,
     "chunkBytes": 262144,
     "batchAssets": 100
-  }
+  },
+  "scopeSelectionVersion": 1
 }

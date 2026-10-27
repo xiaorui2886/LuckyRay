@@ -25,7 +25,7 @@ LuckyRay-owned source is available under **[MIT](LICENSE)**. Explore, modify and
 - **Want to contribute?** [Build and test](docs/development/README.md) · [Contribution guide](CONTRIBUTING.md) · [Browse source](luckyray-app/)
 - **Building a plugin?** [Plugin SDK](sdk/README.md) · [Submit a plugin](catalog/SUBMISSION.md)
 
-The source includes the **1.9.15 updater-acceptance candidate**; the stable desktop release is **1.9.7**. Passing source CI does not establish installed upgrade acceptance. See [candidate validation](docs/development/updater-validation.md) and the stable Release.
+The current stable desktop release is **1.9.9**. Public source snapshots and packaged releases may follow different schedules. Use the [stable Release](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.9) for packaged features and version details.
 
 
 ## Good references deserve more than a bookmark
@@ -64,13 +64,15 @@ We learn from thoughtful asset and knowledge tools, while focusing on a simple g
 
 ## Get started
 
-**Current stable release: LuckyRay 1.9.7 + Collector 1.9.6** · October 16, 2026
+**Current stable release: LuckyRay 1.9.9 + Collector 1.9.6** · October 27, 2026
+
+This release adds Canvas Agent, script/storyboard tools and the 3D Director; bundles LSH 0.2.1-rc.3; fixes overlay-install startup and streaming-reply jumps; and improves phone connection diagnostics and address recovery in Settings. [Full release notes (Chinese)](docs/releases/v1.9.9.md).
 
 | What you need | Start here |
 | :--- | :--- |
-| **Use the desktop app** | [Official download page](https://luckyray.me/atelier/edition/download) · [Direct Windows x64 installer](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.7/LuckyRay_1.9.7_x64-setup.exe) |
-| **Install or update Collector** | [Extension guide](https://luckyray.me/atelier/edition/collector) · [Direct extension ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.7/LuckyRay-Collector-1.9.6.zip) |
-| **See what changed** | [What's new](https://luckyray.me/atelier/edition/changelog) · [Release files and checksums](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.7) |
+| **Use the desktop app** | [Official download page](https://luckyray.me/atelier/edition/download) · [Direct Windows x64 installer](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.9/LuckyRay_1.9.9_x64-setup.exe) |
+| **Install or update Collector** | [Extension guide](https://luckyray.me/atelier/edition/collector) · [Direct extension ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.8/LuckyRay-Collector-1.9.6.zip) |
+| **See what changed** | [What's new](https://luckyray.me/atelier/edition/changelog) · [Release files and checksums](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.9) |
 
 1. **Open the desktop app.** Available for Windows 10/11 x64. Read the [installation and verification guide](docs/downloads.md) and keep independent backups of important data.
 2. **Keep your first reference.** Import an image, write a note or explore a small idea on the canvas.
@@ -81,7 +83,7 @@ We learn from thoughtful asset and knowledge tools, while focusing on a simple g
 
 - The current installer is not Authenticode-signed. Verify its official SHA-256 and keep the third-party materials and desktop component supplement linked in the release notes.
 - Collector is a separate extension package, loaded and updated manually. Updating the desktop app does not automatically update the browser extension.
-- For the current stable release, download and install updates manually from the official website. Full automatic updating is undergoing candidate validation and is not enabled on the stable channel.
+- Version 1.9.8 introduced signed in-app updates. Users of the original public 1.9.7 or earlier must first install a newer version manually. Save notes and exit the app normally before updating.
 - Android remains in testing. macOS, Linux and iOS are not released. Features under development are not promises about the current installer.
 - Capture depends on site structure, access permissions and DRM restrictions. Not every website or media format is supported.
 
@@ -113,6 +115,6 @@ For release notifications, choose **Watch → Custom → Releases**. A specific 
 
 LuckyRay-owned source is now available under [MIT](LICENSE), including the desktop, Collector and optional MCP candidate source in `luckyray-app/`. See [build and tests](docs/development/README.md), [contributing](CONTRIBUTING.md), [third-party licenses](docs/development/third-party.md) and [branding](BRANDING.md). Third-party files retain their original licenses.
 
-This is the **1.9.15 updater-acceptance candidate source**, not a new stable release. Stable downloads, Latest Release and the production update manifest are unchanged. See [candidate validation status](docs/development/updater-validation.md).
+The source directory includes development and validation records and should not be assumed to match the latest installer exactly. See the [release notes](docs/releases/v1.9.9.md) for packaged versions and known limitations.
 
 Eagle and Obsidian belong to their respective owners. They are referenced as inspirations for working habits, not as claims of affiliation, full compatibility or feature parity. The website has a language switch; some repository documentation is currently in Chinese.

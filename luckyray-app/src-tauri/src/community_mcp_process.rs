@@ -1,5 +1,108 @@
 //! A private job owns the tunnel and all of its descendants. Assign the suspended
 //! child before resuming it; no fork race and no taskkill /IM against other apps.
+
+// Shared bounded command runner retained from the retired Codex settings
+// installer. Community secret storage and binding checks still use it; keep
+// their stdin, hidden-window, output limits and timeout behavior unchanged.
+pub(crate) fn run(
+    exe: &std::path::Path,
+    args: &[String],
+    input: Option<&[u8]>,
+    seconds: u64,
+) -> Result<(bool, String, String), String> {
+    use std::{io::{Read, Write}, process::{Command, Stdio}, time::{Duration, Instant}};
+    let mut command = Command::new(exe);
+    command
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command.spawn().map_err(|_| "client-process-start-failed")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Some(bytes) = input {
+            if stdin.write_all(bytes).is_err() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("client-input-failed".into());
+            }
+        }
+    }
+    let stdout = child.stdout.take().ok_or("client-output-failed")?;
+    let stderr = child.stderr.take().ok_or("client-output-failed")?;
+    let out = std::thread::spawn(move || {
+        let mut b = String::new();
+        let _ = stdout.take(65536).read_to_string(&mut b);
+        b
+    });
+    let err = std::thread::spawn(move || {
+        let mut b = String::new();
+        let _ = stderr.take(4096).read_to_string(&mut b);
+        b
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {}
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("client-process-failed".into());
+            }
+        }
+        if start.elapsed() > Duration::from_secs(seconds) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("client-check-timeout".into());
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    };
+    Ok((
+        status.success(),
+        out.join().unwrap_or_default(),
+        err.join().unwrap_or_default(),
+    ))
+}
+
+#[cfg(all(test, windows))]
+mod command_tests {
+    use super::run;
+    use std::{path::PathBuf, time::{Duration, Instant}};
+
+    fn node() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dsh/node/node.exe")
+    }
+
+    #[test]
+    fn shared_check_preserves_utf8_stdin_and_failed_exit() {
+        let (ok, out, err) = run(&node(), &[
+            "-e".into(), "process.stdin.setEncoding('utf8');let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>process.stdout.write(s))".into(),
+        ], Some("合成检查 🎨".as_bytes()), 5).unwrap();
+        assert!(ok);
+        assert_eq!(out, "合成检查 🎨");
+        assert!(err.is_empty());
+        let (ok, out, err) = run(&node(), &[
+            "-e".into(), "process.stderr.write('synthetic-failure');process.exitCode=2".into(),
+        ], None, 5).unwrap();
+        assert!(!ok);
+        assert!(out.is_empty());
+        assert_eq!(err, "synthetic-failure");
+    }
+
+    #[test]
+    fn shared_check_timeout_remains_bounded() {
+        let start = Instant::now();
+        let result = run(&node(), &["-e".into(), "setInterval(()=>{},1000)".into()], None, 1);
+        assert_eq!(result, Err("client-check-timeout".into()));
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+}
+
 #[cfg(windows)]
 mod platform {
     use std::{

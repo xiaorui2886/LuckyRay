@@ -24,12 +24,34 @@ export function validateConfig(config){
  if(typeof config.credentialFile!=='string'||!isAbsolute(config.credentialFile)||config.credentialFile.startsWith('\\\\')||config.credentialFile.startsWith('//'))fail('configuration-invalid');
  return Object.freeze({...config,scope:Object.freeze([...config.scope])});
 }
-export async function inventory(){
+export async function inventory(deps={}){
  if(process.platform!=='win32')fail('platform-unsupported');
  // Node decodes stdout as UTF-8. Windows PowerShell otherwise emits the local
  // code page, corrupting non-ASCII executable paths before exact identity checks.
- const command=`[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); $ports=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {$_.LocalAddress -eq '127.0.0.1'}); @((Get-CimInstance Win32_Process -Filter "Name='luckyray-app.exe'") | ForEach-Object {$p=$_; [PSCustomObject]@{pid=$p.ProcessId;exe=$p.ExecutablePath;created=$p.CreationDate.ToUniversalTime().ToString('o');ports=@($ports|Where-Object {$_.OwningProcess -eq $p.ProcessId}|ForEach-Object {$_.LocalPort})}}) | ConvertTo-Json -Compress -Depth 4`;
- try{const {stdout}=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',command],{windowsHide:true,timeout:15000,maxBuffer:1048576});const data=JSON.parse(stdout.trim()||'[]');return Array.isArray(data)?data:[data];}catch{fail('instance-inventory-unavailable');}
+ const command=`[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); @((Get-CimInstance Win32_Process -Filter "Name='luckyray-app.exe'") | ForEach-Object {$p=$_; [PSCustomObject]@{pid=$p.ProcessId;exe=$p.ExecutablePath;created=$p.CreationDate.ToUniversalTime().ToString('o')}}) | ConvertTo-Json -Compress -Depth 4`;
+ try{
+  const root=process.env.SystemRoot;
+  if(!root||!isAbsolute(root))fail('instance-inventory-unavailable');
+  const run=deps.exec||exec;
+  // Numeric OS listener ownership avoids loading NetTCPIP's slow CIM provider.
+  // No cache or name-based port assumption: retain PID/EXE/creation snapshots,
+  // v3 signed proof and the second fresh ownership check in bind().
+  const [{stdout:processes},{stdout:sockets}]=await Promise.all([
+   run(resolve(root,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',command],{windowsHide:true,timeout:15000,maxBuffer:1048576}),
+   run(resolve(root,'System32/netstat.exe'),['-ano','-p','tcp'],{windowsHide:true,timeout:15000,maxBuffer:1048576}),
+  ]);
+  const data=JSON.parse(processes.trim()||'[]'),items=Array.isArray(data)?data:[data];
+  const owned=new Map();
+  for(const line of sockets.split(/\r?\n/)){
+   const match=/^\s*TCP\s+127\.0\.0\.1:([0-9]{1,5})\s+0\.0\.0\.0:0\s+LISTEN(?:ING)?\s+([0-9]+)\s*$/i.exec(line);
+   if(!match)continue;
+   const port=Number(match[1]),pid=Number(match[2]);
+   if(!Number.isSafeInteger(pid)||pid<=0||port<=0||port>65535)continue;
+   if(!owned.has(pid))owned.set(pid,new Set());
+   owned.get(pid).add(port);
+  }
+  return items.map(item=>({...item,ports:[...(owned.get(item.pid)||[])]}));
+ }catch{fail('instance-inventory-unavailable');}
 }
 export function selectTarget(config,items){
  const matches=items.filter(item=>typeof item.exe==='string'&&normalize(item.exe)===normalize(config.desktopExe));

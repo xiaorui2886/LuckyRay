@@ -59,6 +59,13 @@ const copy = defineMessages({
       "An optional download, not installed by default. Stopping or uninstalling keeps your assets and notes.",
   },
   access: { "zh-CN": "素材库与知识库", "en-US": "Materials & knowledge" },
+  about: { "zh-CN": "插件说明", "en-US": "About this plugin" },
+  accessDetails: { "zh-CN": "查看授权范围", "en-US": "View access scope" },
+  accessSummary: {
+    "zh-CN": "可搜索与读取所选库、导入素材和新建 Markdown 笔记；不编辑或删除已有笔记，不开放终端或 Agent。",
+    "en-US": "Search and read selected libraries, import assets, and create Markdown notes. No editing or deleting existing notes, terminal access, or Agent control.",
+  },
+  connectionDetails: { "zh-CN": "连接说明", "en-US": "Connection help" },
   scope: {
     "zh-CN":
       "允许搜索与读取所选库、导入素材、新建 Markdown 笔记；不允许修改或删除已有笔记，也不开放终端与 Agent 控制。授权固定绑定这两个库，切换软件当前库不会改变它。",
@@ -412,7 +419,11 @@ export default function OfficialMcpCard() {
           }
         >
           <div className="official-mcp-body">
-            <p className="community-card-desc">{t("detail")}</p>
+            <div className="official-mcp-overview">
+              <p>{t("intro")}</p>
+              {status && <div className="official-mcp-overview-meta"><span className={`community-status${label === "ready" ? " is-on" : ""}`}>{t(label)}</span>{status.version && <span className="official-mcp-version">v{status.version}</span>}</div>}
+              <details className="official-mcp-explanation"><summary>{t("about")}</summary><p>{t("detail")}</p></details>
+            </div>
             {busy && operation === "install" && <div className="official-mcp-progress">
               <span>{t("installing")}</span>
               <progress aria-label={t("installing")} />
@@ -463,7 +474,8 @@ export default function OfficialMcpCard() {
                     <CommunityIcon name="note" />
                     {t("access")}
                   </h3>
-                  <p>{t("scope")}</p>
+                  <p>{t("accessSummary")}</p>
+                  <details className="official-mcp-explanation"><summary>{t("accessDetails")}</summary><p>{t("scope")}</p></details>
                   {status.authorized && status.grant ? (
                     <div className="official-mcp-granted">
                       <strong>{t("granted")}</strong>
@@ -581,8 +593,7 @@ export default function OfficialMcpCard() {
                     <CommunityIcon name="browser" />
                     {t("tunnel")}
                   </h3>
-                  <p>{t("tunnelHint")}</p>
-                  <p id="official-mcp-tunnel-help" className="official-mcp-muted">{t("tunnelIdHelp")}</p>
+                  <details className="official-mcp-explanation"><summary>{t("connectionDetails")}</summary><p>{t("tunnelHint")}</p></details>
                   <button
                     type="button"
                     className="community-text-button"
@@ -610,6 +621,7 @@ export default function OfficialMcpCard() {
                         onChange={(e) => setTunnelId(e.target.value)}
                       />
                     </label>
+                    <p id="official-mcp-tunnel-help" className="official-mcp-muted">{t("tunnelIdHelp")}</p>
                     {tunnelIdInvalid && <p id="official-mcp-tunnel-error" className="official-mcp-field-error" role="alert">{t("tunnelIdError")}</p>}
                     <label>
                       {t("key")}

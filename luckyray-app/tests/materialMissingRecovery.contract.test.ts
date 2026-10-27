@@ -10,6 +10,7 @@ import {
   replaceCurrentConfirmDialog,
   resolveMaterialPathAction,
   runMaterialRelocationWithConfirmation,
+  removeMissingMaterialRecords,
 } from "../src/features/materials/materialMissingRecovery.ts";
 import {
   performMaterialExternalActionWithTransport,
@@ -23,6 +24,76 @@ import {
 } from "../src/core/services/materialCatalog.ts";
 
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+test("missing bulk removal deduplicates the frozen selection and skips restored records", async () => {
+  const removed: string[] = [];
+  const result = await removeMissingMaterialRecords({
+    ids: ["a", "a", "restored", "b"],
+    scanMissing: async () => [{ id: "a" }, { id: "b" }, { id: "new-after-confirm" }],
+    removeRecord: async (id) => { removed.push(id); return { success: true }; },
+    canContinue: () => true,
+  });
+  assert.deepEqual(removed, ["a", "b"]);
+  assert.deepEqual(result.removedIds, ["a", "b"]);
+  assert.deepEqual(result.skippedIds, ["restored"]);
+  assert.deepEqual(result.remainingIds, []);
+  assert.equal(result.failure, null);
+});
+
+test("missing bulk removal fails closed on scan failure or an identity change during scanning", async () => {
+  let current = true;
+  let writes = 0;
+  const inputs = {
+    ids: ["a"],
+    scanMissing: async () => { current = false; return [{ id: "a" }]; },
+    removeRecord: async () => { writes++; return { success: true }; },
+    canContinue: () => current,
+  };
+  const stopped = await removeMissingMaterialRecords(inputs);
+  assert.equal(stopped.stopped, true);
+  assert.deepEqual(stopped.remainingIds, ["a"]);
+  assert.equal(writes, 0);
+  current = true;
+  await assert.rejects(removeMissingMaterialRecords({ ...inputs, scanMissing: async () => { throw Error("scan-failed"); } }), /scan-failed/);
+  assert.equal(writes, 0);
+});
+
+test("missing bulk removal stops on failure and never reports an unconfirmed removal", async () => {
+  for (const failure of ["reject", "false"]) {
+    const calls: string[] = [];
+    const result = await removeMissingMaterialRecords({
+      ids: ["a", "b", "c"],
+      scanMissing: async () => ["a", "b", "c"].map((id) => ({ id })),
+      removeRecord: async (id) => {
+        calls.push(id);
+        if (id === "b") { if (failure === "reject") throw Error("unconfirmed"); return { success: false }; }
+        return { success: true };
+      },
+      canContinue: () => true,
+    });
+    assert.deepEqual(calls, ["a", "b"]);
+    assert.deepEqual(result.removedIds, ["a"]);
+    assert.deepEqual(result.remainingIds, ["b", "c"]);
+    assert.equal(result.failure?.id, "b");
+  }
+});
+
+test("missing bulk removal does not dispatch or publish to a replacement library", async () => {
+  let current = true;
+  const calls: string[] = [], published: string[] = [];
+  const result = await removeMissingMaterialRecords({
+    ids: ["a", "b"],
+    scanMissing: async () => [{ id: "a" }, { id: "b" }],
+    removeRecord: async (id) => { calls.push(id); current = false; return { success: true }; },
+    canContinue: () => current,
+    onRemoved: (id) => published.push(id),
+  });
+  assert.deepEqual(calls, ["a"]);
+  assert.deepEqual(published, []);
+  assert.deepEqual(result.removedIds, ["a"]);
+  assert.deepEqual(result.remainingIds, ["b"]);
+  assert.equal(result.stopped, true);
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

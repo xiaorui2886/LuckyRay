@@ -1,3 +1,5 @@
+import {normalizeGenerationEditorSnapshot} from "./generationEditorSnapshot";
+import { materialProvenanceFromHistory, type MaterialGenerationProvenance } from "./materialProvenance";
 import {
   CANVAS_GENERATION_TASK_VERSION,
   type CanvasGenerationKind,
@@ -51,6 +53,8 @@ export type CanvasGenerationHistoryOutput = {
 };
 
 export type CanvasGenerationLibraryCandidate = {
+  name?: string;
+  provenance?: MaterialGenerationProvenance;
   historyId: string;
   taskId: string;
   kind: "image" | "video";
@@ -76,6 +80,7 @@ export function historyEntryFromTask(
     status: task.status,
     request: {
       ...task.request,
+      editor: normalizeGenerationEditorSnapshot(task.request.editor, task.request.references.length),
       references: task.request.references.map((reference) => ({ ...reference })),
     },
     attempt: task.attempt,
@@ -154,6 +159,7 @@ export function normalizeGenerationHistory(value: unknown): CanvasGenerationHist
         : undefined,
       request: {
         ...request,
+        editor: normalizeGenerationEditorSnapshot(request.editor, Array.isArray(request.references)?request.references.length:0),
         references: Array.isArray(request.references) ? request.references.map((reference) => ({ ...reference })) : [],
       },
       attempt: Math.max(1, Math.floor(entry.attempt || 1)),
@@ -170,6 +176,7 @@ export function toGenerationLibraryCandidate(
   if ((entry.kind !== "image" && entry.kind !== "video") || !entry.outputMediaUrl) return null;
   return {
     historyId: entry.id,
+    provenance: materialProvenanceFromHistory(entry),
     taskId: entry.taskId,
     kind: entry.kind,
     mediaUrl: entry.outputMediaUrl,
@@ -189,6 +196,7 @@ export function generationTaskFromHistory(entry: CanvasGenerationHistoryEntry): 
     status: entry.status,
     request: {
       ...entry.request,
+      editor: normalizeGenerationEditorSnapshot(entry.request.editor, entry.request.references.length),
       references: entry.request.references.map((reference) => ({ ...reference })),
     },
     attempt: entry.attempt,

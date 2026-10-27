@@ -69,6 +69,15 @@ function panelHarness(invoke: Parameters<typeof createCompanionGatewayClient>[0]
   const jsx = (type: any, props: any) => typeof type === "function" ? type(props) : ({ type, props });
   const client = createCompanionGatewayClient(invoke);
   const store = createCompanionPresentationStore(client);
+  const authorization: any = {};
+  const authorizationSource = readFileSync(new URL("../src/features/settings/PhoneAuthorizationChoice.tsx", import.meta.url), "utf8");
+  new Function("require", "exports", ts.transpileModule(authorizationSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText)((name: string) => {
+    if (name === "react") return { useId: () => "synthetic-choice" };
+    if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    if (name.endsWith("/i18n/index")) return { defineMessages: (value: unknown) => value, useMessages: () => ({ t }) };
+    if (name.endsWith(".css")) return {};
+    throw new Error(`unexpected authorization dependency ${name}`);
+  }, authorization);
   const source = readFileSync(new URL("../src/features/settings/CompanionGatewayPanel.tsx", import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const exports: { default?: () => unknown } = {};
@@ -76,6 +85,7 @@ function panelHarness(invoke: Parameters<typeof createCompanionGatewayClient>[0]
     if (name === "react") return hooks;
     if (name.endsWith("/companionAccess")) return companionAccess;
     if (name.endsWith("/PhoneAccessManager")) return { default: () => null };
+    if (name.endsWith("/PhoneAuthorizationChoice")) return authorization;
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
     if (name.endsWith("/companionGateway")) return gatewayService;
     if (name.endsWith("/companionPresentationStore")) return { companionGrantKey };
@@ -107,14 +117,17 @@ function panelHarness(invoke: Parameters<typeof createCompanionGatewayClient>[0]
   }
   function find(predicate: (node: any) => boolean, node = tree): any {
     if (!node || typeof node !== "object") return undefined;
-    if (Array.isArray(node)) return node.map((child) => find(predicate, child)).find(Boolean);
+    if (Array.isArray(node)) return node.map((child) => find(predicate, child ?? null)).find(Boolean);
     if (predicate(node)) return node;
     return find(predicate, node.props?.children ?? null);
   }
   return {
     async settle() { for (let pass = 0; pass < 3; pass++) { render(); await new Promise(setImmediate); } render(); },
     button(key: string) { return find((node) => node.type === "button" && (node.props.children === key || node.props["aria-label"] === key)); },
+    chooseManual() { find((node) => node.type === "input" && node.props.type === "radio" && node.props.value === "manual").props.onChange(); },
+    choiceInsideDialog() { const dialog = find((node) => node.props?.["aria-labelledby"] === "companion-pair-title"); return Boolean(dialog && find((node) => node.type === "input" && node.props.type === "radio", dialog)); },
     dialog() { return find((node) => node.props?.["aria-labelledby"] === "companion-pair-title"); },
+    recoveryDialog() { return find((node) => node.props?.["aria-labelledby"] === "companion-recover-title"); },
     escape() { find((node) => node.props?.["aria-labelledby"] === "companion-pair-title").props.onKeyDown({ key: "Escape", preventDefault() {} }); },
     unmount() { slots.forEach((slot) => slot?.cleanup?.()); store.dispose(); },
   };
@@ -143,6 +156,12 @@ for (const action of ["pair.close", "pair.done", "Escape"]) {
     await panel.settle();
     panel.button("gateway.pair").props.onClick();
     await panel.settle();
+    assert.equal(panel.choiceInsideDialog(), true, "consent controls must be inside the active focus-trapped dialog");
+    assert.equal(panel.button("pairChoose").props.disabled, true);
+    panel.chooseManual();
+    await panel.settle();
+    panel.button("pairManual").props.onClick();
+    await panel.settle();
     assert.ok(panel.dialog());
     if (action === "Escape") panel.escape();
     else panel.button(action).props.onClick();
@@ -162,6 +181,10 @@ test("real panel keeps cancellation failure visible and permits retry", async ()
   const panel = panelHarness(transport.invoke);
   await panel.settle();
   panel.button("gateway.pair").props.onClick();
+  await panel.settle();
+  panel.chooseManual();
+  await panel.settle();
+  panel.button("pairManual").props.onClick();
   await panel.settle();
   panel.button("pair.close").props.onClick();
   await panel.settle();
@@ -186,6 +209,10 @@ test("real panel Escape during regeneration cancels the late response and stays 
   });
   await panel.settle();
   panel.button("gateway.pair").props.onClick();
+  await panel.settle();
+  panel.chooseManual();
+  await panel.settle();
+  panel.button("pairManual").props.onClick();
   await panel.settle();
   panel.button("pair.regenerate").props.onClick();
   await panel.settle();
@@ -241,6 +268,35 @@ test("real panel shows failed saved endpoint, retries that address and offers ex
   assert.deepEqual(calls, [presentation.ip]);
   assert.equal(panel.button("gateway.retry").props.disabled, false);
   panel.unmount();
+});
+
+test("endpoint change requires a separate confirmation and cancellation sends no IPC", async () => {
+  const transport = panelTransport();
+  const recoveries: unknown[] = [];
+  const panel = panelHarness(async (command, args) => {
+    if (command === "companion_gateway_status") return { state: "resume-failed", bindAddress: presentation.ip, port: presentation.port, code: "gateway-bind-access-denied", bindFailure: { stage: "bind", kind: "access-denied", osCode: 10013, attempts: 1 } };
+    if (command === "companion_gateway_recover_endpoint") { recoveries.push(args); return { state: "running", bindAddress: presentation.ip, port: 49123 }; }
+    return transport.invoke(command, args);
+  });
+  await panel.settle();
+  assert.equal(panel.button("recovery.select").props.disabled, false);
+  panel.button("recovery.select").props.onClick();
+  await panel.settle();
+  assert.ok(panel.recoveryDialog()); assert.deepEqual(recoveries, []);
+  panel.button("revoke.cancel").props.onClick(); await panel.settle();
+  assert.equal(panel.recoveryDialog(), undefined); assert.deepEqual(recoveries, []);
+  panel.button("recovery.select").props.onClick(); await panel.settle();
+  panel.button("recovery.confirm").props.onClick(); await panel.settle();
+  assert.deepEqual(recoveries, [{ expectedAddress: presentation.ip, expectedPort: presentation.port, confirmed: true }]);
+  panel.unmount();
+});
+
+test("unavailable interface and unrelated failures do not offer blind endpoint changes", async () => {
+  const transport = panelTransport();
+  for (const code of ["gateway-listener-config-unavailable", "gateway-bind-address-unavailable", "gateway-listener-unavailable"]) {
+    const panel = panelHarness(async (command, args) => command === "companion_gateway_status" ? { state: "resume-failed", bindAddress: presentation.ip, port: presentation.port, code } : transport.invoke(command, args));
+    await panel.settle(); assert.equal(panel.button("recovery.select"), undefined); panel.unmount();
+  }
 });
 
 test("canonical QR envelope is the exact Mobile-compatible seven-field v1 shape", () => {
@@ -419,7 +475,7 @@ test("console exposes one safe interface selector and bounded lifecycle, device,
   const store = readFileSync(new URL("../src/core/services/companionPresentationStore.ts", import.meta.url), "utf8");
   assert.match(store, /catch \(error\) \{ publish\(\{ status: null, error \}\); \}/);
   assert.match(panel, /useApplicationModalSurface<HTMLDivElement>\(pairViewOpen/);
-  assert.match(store, /ownedSession\.issue\(replace\)/);
+  assert.match(store, /ownedSession\.issue\(replace, authorizationMode\)/);
   for (const command of [
     "companion_gateway_status",
     "companion_gateway_start",

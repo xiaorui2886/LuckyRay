@@ -321,6 +321,8 @@ test("actual context-save handler creates a new note once and suppresses stale c
     canvasLoadEpochRef = { current: 1 };
   const sourceIdentity = { vaultId: "vault-a" };
   const deps = {
+    locale: "en-US",
+    requestMaterialNames: () => { throw Error("note save must not request material names"); },
     readActiveKnowledgeWriteSource: () => sourceIdentity,
     useCallback: (fn: any) => fn,
     nodesRef,

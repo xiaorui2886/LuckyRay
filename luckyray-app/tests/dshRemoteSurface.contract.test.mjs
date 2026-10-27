@@ -1,3 +1,4 @@
+import { cleanupLinuxSyntheticChildren } from './fixtures/dshLinuxSyntheticCleanup.mjs';
 // LSH Remote Surface (M1) — real-runtime contract tests.
 // Boots the UNMODIFIED official @deepseek-ai/dsh 0.1.5-rc.2 web composition
 // through the app-owned authenticated carrier (same as
@@ -123,7 +124,9 @@ async function bootOwner(stateSuffix) {
     await readFile(join(appRoot, "src-tauri", "dsh-host", "luckyray-dsh-native-surface.patch.yml"), "utf8"),
     { encoding: "utf8", flag: "wx" },
   );
+  const children = [];
   const owner = createNativeSurfaceOwner({
+    onChildStarted: child => children.push(child),
     runtimeRoot,
     stateRoot,
     surfaceHome: stateRoot,
@@ -131,11 +134,11 @@ async function bootOwner(stateSuffix) {
   });
   const ready = await owner.open();
   assert.equal(ready.stage, "surface-ready");
-  return { owner, ready };
+  return { owner, ready, children };
 }
 
 test("remote surface: bootstrap settles the official token server-side and never leaks it", { timeout: 90_000 }, async () => {
-  const { owner, ready } = await bootOwner("-remote");
+  const { owner, ready, children } = await bootOwner("-remote");
   try {
     const base = `http://127.0.0.1:${ready.port}`;
     // The companion gateway advertises exactly one remote origin.
@@ -229,11 +232,12 @@ test("remote surface: bootstrap settles the official token server-side and never
     assert.equal(indexB.status, 200);
   } finally {
     await owner.shutdown();
+    await cleanupLinuxSyntheticChildren(children);
   }
 });
 
 test("remote surface WS upgrade: real /api/remote.mux handshake under the remote origin, killed on revoke", { timeout: 90_000 }, async () => {
-  const { owner, ready } = await bootOwner("-remote-ws");
+  const { owner, ready, children } = await bootOwner("-remote-ws");
   try {
     await owner.setRemoteAuthority({ host: `${REMOTE_HOST}:${REMOTE_GATEWAY_PORT}`, origin: REMOTE_ORIGIN, gatewayGeneration: 7 });
     const deviceId = `device-${crypto.randomBytes(16).toString("hex")}`;
@@ -289,11 +293,12 @@ test("remote surface WS upgrade: real /api/remote.mux handshake under the remote
     if (!wsResult.socket.destroyed) wsResult.socket.destroy();
   } finally {
     await owner.shutdown();
+    await cleanupLinuxSyntheticChildren(children);
   }
 });
 
 test("remote authority change invalidates every previous remote session; desktop channel unaffected", { timeout: 90_000 }, async () => {
-  const { owner, ready } = await bootOwner("-remote-rotate");
+  const { owner, ready, children } = await bootOwner("-remote-rotate");
   try {
     const base = `http://127.0.0.1:${ready.port}`;
     await owner.setRemoteAuthority({ host: `${REMOTE_HOST}:${REMOTE_GATEWAY_PORT}`, origin: REMOTE_ORIGIN, gatewayGeneration: 7 });
@@ -341,5 +346,6 @@ test("remote authority change invalidates every previous remote session; desktop
     assert.equal(desktopIndex.status, 200);
   } finally {
     await owner.shutdown();
+    await cleanupLinuxSyntheticChildren(children);
   }
 });

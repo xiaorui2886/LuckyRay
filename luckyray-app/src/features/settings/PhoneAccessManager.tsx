@@ -1,14 +1,27 @@
+import { companionGrantEnabled } from "../../core/services/companionAccess";
 import { createPortal } from "react-dom";
 import { useEffect, useState } from "react";
 import { defineMessages, useMessages } from "../../core/i18n/index";
 import { useApplicationModalSurface } from "../../app/applicationModalIsolation";
-import { companionTrustChanges, type CompanionTrustSelection } from "../../core/services/companionAccess";
+import PhoneAuthorizationChoice, { PHONE_AUTHORIZATION_COPY } from "./PhoneAuthorizationChoice";
+import type { CompanionAuthorizationMode } from "../../core/services/companionGateway";
 import type { CompanionServiceGrantState } from "../../core/services/companionGateway";
 import { companionDeviceDisplayLabel, type CompanionPresentationStore } from "../../core/services/companionPresentationStore";
 import { useCompanionSnapshot } from "./CompanionPresentation";
 import "./phoneAccessManager.css";
 
 const COPY = defineMessages({
+  "legacy": { "zh-CN": "原有配对权限保持不变。先选择权限模式，再使用按库开关。无需重新配对。", "en-US": "Your existing pairing permissions are unchanged. Choose an access mode before using library switches. No re-pairing needed." },
+  "legacyMode": { "zh-CN": "保留原有授权", "en-US": "Existing access preserved" },
+  "changeMode": { "zh-CN": "更改模式…", "en-US": "Change mode…" },
+  "allMaterials": { "zh-CN": "所有素材库", "en-US": "All material libraries" },
+  "allVaults": { "zh-CN": "所有知识库", "en-US": "All knowledge libraries" },
+  "chooseLibrary": { "zh-CN": "选择已保存的库", "en-US": "Choose a saved library" },
+  "read": { "zh-CN": "读取", "en-US": "Read" },
+  "write": { "zh-CN": "编辑与删除", "en-US": "Edit and delete" },
+  "ingest": { "zh-CN": "导入", "en-US": "Import" },
+  "desktop": { "zh-CN": "在桌面打开", "en-US": "Open on desktop" },
+  "unavailable": { "zh-CN": "暂不可用", "en-US": "Unavailable" },
   "trust": { "zh-CN": "信任这台手机…", "en-US": "Trust this phone…" },
   "title": { "zh-CN": "授权给 {name}", "en-US": "Allow access for {name}" },
   "remember": { "zh-CN": "权限按手机和知识库保存，重连、重启及切回已授权库会沿用。首次使用其他库时，请打开该库后明确授权。", "en-US": "Access is saved per phone and vault, including reconnects, restarts and switching back. Open another vault to explicitly authorize it for the first time." },
@@ -37,9 +50,10 @@ const COPY = defineMessages({
 
 type Review = { mode: "trust" | "revoke"; snapshot: CompanionServiceGrantState; scopeId?: string };
 export default function PhoneAccessManager({ store, deviceId }: { store: CompanionPresentationStore; deviceId: string }) {
-  const { t } = useMessages(COPY), state = useCompanionSnapshot(store);
+  const { t } = useMessages(COPY), { t: auth } = useMessages(PHONE_AUTHORIZATION_COPY), state = useCompanionSnapshot(store);
+  const [selectedScope, setSelectedScope] = useState("");
   const [review, setReview] = useState<Review | null>(null);
-  const [selection, setSelection] = useState<CompanionTrustSelection>({ catalog: true, vault: true, catalogWrite: false, vaultWrite: false });
+  const [selection, setSelection] = useState<CompanionAuthorizationMode | null>(null);
   const services = state.services[deviceId], device = state.devices.find(item => item.deviceId === deviceId && !item.revokedAt);
   const busy = Boolean(state.busy || state.grantLoading[deviceId] || Object.values(state.grantBusy).some(Boolean));
   const close = () => { if (!busy) setReview(null); };
@@ -51,42 +65,62 @@ export default function PhoneAccessManager({ store, deviceId }: { store: Compani
   const name = companionDeviceDisplayLabel(device, state.devices);
   const otherVaults = [...new Set(services.grants.filter(grant => grant.scopeKind === "vault" && grant.scopeId !== services.currentVault?.vaultId).map(grant => grant.scopeId))];
   const open = (mode: Review["mode"], scopeId?: string) => {
-    setSelection({ catalog: true, vault: Boolean(services.currentVault), catalogWrite: false, vaultWrite: false });
+    setSelection(null);
     setReview({ mode, snapshot: structuredClone(services), scopeId });
   };
   const changed = Boolean(review && (review.snapshot.permissionRevision !== services.permissionRevision || review.snapshot.currentVault?.vaultId !== services.currentVault?.vaultId));
-  const changes = !review ? [] : review.mode === "trust" ? companionTrustChanges(review.snapshot, selection)
+  const changes = !review ? [] : review.mode === "trust" ? []
     : review.snapshot.grants.filter(grant => !review.scopeId || grant.scopeKind === "vault" && grant.scopeId === review.scopeId).map(grant => ({ ...grant, enabled: false }));
   const scopeLabel = (scopeId: string) => scopeId === review?.snapshot.currentVault?.vaultId
     ? t("vault", { name: review.snapshot.currentVault.label }) : t("savedVault", { id: scopeId.replace(/^vault-/, "").slice(0, 12) });
-  const confirm = async () => { if (!review || changed || busy) return; if (await store.applyServiceChanges(deviceId, changes, review.snapshot)) setReview(null); };
-  const check = (key: keyof CompanionTrustSelection, label: string, disabled = false) => <label className="phone-access-choice">
-    <input type="checkbox" checked={selection[key]} disabled={busy || changed || disabled} onChange={event => setSelection(current => ({ ...current, [key]: event.target.checked }))} />
-    <span>{label}</span></label>;
+  const confirm = async () => {
+    if (!review || changed || busy) return;
+    const saved = review.mode === "trust" && selection
+      ? await store.setAuthorizationMode(deviceId, selection, review.snapshot)
+      : review.mode === "revoke" && await store.applyServiceChanges(deviceId, changes, review.snapshot);
+    if (saved) setReview(null);
+  };
+  const scopes = services.authorizationMode === "trusted"
+    ? [{ scopeKind: "catalog" as const, scopeId: "", label: t("allMaterials"), available: true }, { scopeKind: "vault" as const, scopeId: "", label: t("allVaults"), available: true }]
+    : services.savedLibraries || [];
+  const scopeKey = (scope: typeof scopes[number]) => scope.scopeKind + ":" + scope.scopeId;
+  const selected = scopes.find(scope => scopeKey(scope) === selectedScope) || scopes[0];
+  const visibleScopes = services.authorizationMode === "trusted" ? scopes : selected ? [selected] : [];
   return <div className="phone-access-manager">
-    <p className="phone-access-hint">{t("remember")}</p>
-    <div className="phone-access-actions"><button type="button" className="settings-btn settings-btn-primary" disabled={busy || !state.status} onClick={() => open("trust")}>{t("trust")}</button>
-      <button type="button" className="settings-btn" disabled={busy || !services.grants.length} onClick={() => open("revoke")}>{t("revokeAll")}</button></div>
-    {otherVaults.length > 0 && <details className="phone-access-saved"><summary>{t("saved")} · {otherVaults.length}</summary><p>{t("savedHint")}</p>
+    <div className="phone-access-mode"><span>{services.authorizationConfigured === false ? t("legacyMode") : auth(services.authorizationMode === "trusted" ? "trusted" : "manual")}</span>
+      <button type="button" className="settings-btn" disabled={busy || !state.status} onClick={() => open("trust")}>{t("changeMode")}</button></div>
+    <p className="phone-access-hint">{services.authorizationConfigured === false ? t("legacy") : services.authorizationMode === "trusted" ? auth("trustedHint") : auth("manualHint")}</p>
+    <div className="phone-access-actions">
+      {services.authorizationConfigured !== false && services.authorizationMode !== "trusted" && <button type="button" className="settings-btn" disabled={busy || !services.grants.length} onClick={() => open("revoke")}>{t("revokeAll")}</button>}</div>
+    {services.authorizationConfigured !== false && services.authorizationMode !== "trusted" && otherVaults.length > 0 && <details className="phone-access-saved"><summary>{t("saved")} · {otherVaults.length}</summary><p>{t("savedHint")}</p>
       {otherVaults.map(scopeId => <div key={scopeId}><span title={scopeId}>{t("savedVault", { id: scopeId.replace(/^vault-/, "").slice(0, 12) })}</span>
         <button type="button" className="phone-link" disabled={busy} onClick={() => open("revoke", scopeId)}>{t("revokeScope")}</button></div>)}</details>}
+    {services.authorizationMode !== "trusted" && scopes.length > 0 && <label className="phone-access-library-select">{t("chooseLibrary")}
+      <select value={selected ? scopeKey(selected) : ""} disabled={busy} onChange={event => setSelectedScope(event.target.value)}>
+        {scopes.map(scope => <option key={scopeKey(scope)} value={scopeKey(scope)}>{scope.label}{scope.available ? "" : ` · ${t("unavailable")}`}</option>)}
+      </select></label>}
+    {visibleScopes.map(scope => <section key={scopeKey(scope)} className="phone-access-services"><h4>{scope.label}</h4>
+      {([["content.read", "read"], ["content.write", "write"], ["ingest.write", "ingest"], ["desktop.open", "desktop"]] as const).map(([grantClass, label]) => {
+        const grant = { grantClass, scopeKind: scope.scopeKind, scopeId: scope.scopeId }, enabled = companionGrantEnabled(services, grant);
+        return <div className="phone-access-service" key={grantClass}><span>{t(label)}</span>
+          <button type="button" role="switch" aria-checked={enabled} aria-label={`${scope.label} · ${t(label)}`} className="phone-access-switch"
+            disabled={busy || !state.status || services.authorizationConfigured === false || !scope.available && !enabled}
+            onClick={() => void store.toggleService(deviceId, grant)}><i /></button></div>;
+      })}
+    </section>)}
+    {Object.entries(state.grantErrors).some(([key, value]) => key.startsWith(deviceId + ":") && value) && !review && <p className="phone-error" role="alert">{t("failed")}</p>}
     {review && createPortal(<div className="phone-access-backdrop experience-dialog-backdrop" onPointerDown={modal.onBackdropPointerDown}>
       <div ref={modal.surfaceRef} onKeyDown={modal.onSurfaceKeyDown} className="phone-access-dialog experience-dialog" role="dialog" aria-modal="true" aria-label={t(review.mode === "trust" ? "title" : "revokeTitle", { name })} tabIndex={-1}>
         <h3>{t(review.mode === "trust" ? "title" : "revokeTitle", { name })}</h3>
-        {review.mode === "trust" ? <><h4>{t("scope")}</h4>{check("catalog", t("catalog"))}
-          {review.snapshot.currentVault && check("vault", t("vault", { name: review.snapshot.currentVault.label }))}
-          <p>{t("common")}</p><h4>{t("extra")}</h4>
-          {check("catalogWrite", t("catalogWrite"), !selection.catalog)}
-          {review.snapshot.currentVault && check("vaultWrite", t("vaultWrite"), !selection.vault)}
-          <p className="phone-access-hint">{t("boundary")}</p>
-          {!changes.length && (selection.catalog || selection.vault && review.snapshot.currentVault) && <p role="status">{t("nothing")}</p>}
+        {review.mode === "trust" ? <><PhoneAuthorizationChoice value={selection} onChange={setSelection} disabled={busy || changed} />
+          <p className="phone-access-hint">{auth("existingOff")}</p>
         </> : <><p>{t("revokeHint")}</p><ul>
           {changes.some(change => change.scopeKind === "catalog") && <li>{t("catalog")}</li>}
           {[...new Set(changes.filter(change => change.scopeKind === "vault").map(change => change.scopeId))].map(scopeId => <li key={scopeId} title={scopeId}>{scopeLabel(scopeId)}</li>)}
         </ul></>}
         {changed ? <p className="phone-error" role="alert">{t("changed")}</p> : state.grantErrors[deviceId + ":batch"] ? <p className="phone-error" role="alert">{t("failed")}</p> : null}
         <div className="phone-access-actions"><button type="button" data-modal-initial-focus className="settings-btn" disabled={busy} onClick={close}>{t("cancel")}</button>
-          <button type="button" className="settings-btn settings-btn-primary" disabled={busy || changed || !changes.length} onClick={() => void confirm()}>{t(review.mode === "trust" ? "confirm" : "revokeConfirm")}</button></div>
+          <button type="button" className="settings-btn settings-btn-primary" disabled={busy || changed || (review.mode === "trust" ? !selection : !changes.length)} onClick={() => void confirm()}>{review.mode === "trust" ? auth(selection === "trusted" ? "confirmTrusted" : selection === "manual" ? "confirmManual" : "confirm") : t("revokeConfirm")}</button></div>
       </div></div>, document.querySelector(".react-nav-shell") || document.body)}
   </div>;
 }

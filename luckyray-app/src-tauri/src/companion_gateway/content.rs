@@ -122,9 +122,7 @@ fn asset_value(a: &MaterialAsset) -> Value {
 /// Authoritative material favorites, read from the EXISTING favorite_item
 /// authority (never a mirror). A failed read cannot be presented as false.
 fn favorite_ids(gateway: &CompanionGateway) -> ContentResult<std::collections::HashSet<String>> {
-    let connection = gateway
-        .backend
-        .open_read()
+    let connection = gateway.material_catalog().companion_open_read()
         .map_err(|_| (503, "CONTENT_UNAVAILABLE"))?;
     let items = crate::favorites::list(&connection, crate::favorites::FavoriteItemType::Material)
         .map_err(|_| (503, "CONTENT_UNAVAILABLE"))?;
@@ -156,7 +154,7 @@ fn json_route(gateway: &CompanionGateway, request: &HttpRequest) -> ContentResul
         }
         return Err((405, "METHOD_NOT_ALLOWED"));
     }
-    let catalog = gateway.backend.material_catalog();
+    let catalog = gateway.material_catalog();
     if matches!(path, "/v1/vaults" | "/v1/notes" | "/v1/sync/changes")
         || path.starts_with("/v1/notes/")
     {
@@ -166,10 +164,14 @@ fn json_route(gateway: &CompanionGateway, request: &HttpRequest) -> ContentResul
         "/v1/capabilities" => {
             query(&request.path, &[])?;
             // Each capability is enabled only with its implemented domain.
-            serde_json::from_str(include_str!(
+            let mut value: Value = serde_json::from_str(include_str!(
                 "../../../protocol/companion-v1/content-v1/capabilities.json"
-            ))
-            .map_err(|_| (503, "CONTENT_CONTRACT_INVALID"))
+            )).map_err(|_| (503, "CONTENT_CONTRACT_INVALID"))?;
+            // Runtime extension; the sealed legacy Content bundle is unchanged.
+            value["knowledgeImportPlan"] = json!({"version":1,"exactPaths":true,"maxPlanEntries":256});
+            value["knowledgeFolders"] = json!({"version":1,"create":true});
+            value["replicaManifest"] = json!({"version":1,"resourceIdentity":"scoped-target-alias","bodyEncoding":"utf-8"});
+            Ok(value)
         }
         "/v1/assets/navigation" => {
             query(&request.path, &[])?;
@@ -341,9 +343,7 @@ fn resource(
     }
     query(&request.path, &[])?;
     let thumbnail = suffix == "thumbnail";
-    let (asset, mut file) = gateway
-        .backend
-        .material_catalog()
+    let (asset, mut file) = gateway.material_catalog()
         .companion_resource(id, thumbnail)
         .map_err(|_| (404, "RESOURCE_UNAVAILABLE"))?;
     let metadata = file.metadata().map_err(|_| (404, "RESOURCE_UNAVAILABLE"))?;
@@ -402,19 +402,71 @@ fn resource(
     Ok(Some((file, mime(&asset.name).into(), version)))
 }
 
+/// Legacy requests keep their paired-device semantics until an explicit off
+/// switch is chosen. Explicit saved-scope requests always require real grants.
+fn access(gateway: &CompanionGateway, request: &HttpRequest) -> ContentResult<()> {
+    gateway.validate_request_scope()?;
+    let device = presented_device_id(request).ok_or((401, "PAIRING_REQUIRED"))?;
+    let db = open_connection(gateway.backend.db_path()).map_err(|_| (503, "CONTENT_UNAVAILABLE"))?;
+    let alive: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM companion_device WHERE device_id=?1 AND revoked_at IS NULL)", [&device], |r| r.get(0))
+        .map_err(|_| (503, "CONTENT_UNAVAILABLE"))?;
+    if !alive { return Err((401, "AUTH_REVOKED")); }
+    let path = request.path.split('?').next().unwrap_or("");
+    if path == "/v1/capabilities" { return Ok(()); }
+    let knowledge = path.starts_with("/v1/notes") || matches!(path,"/v1/vaults"|"/v1/sync/changes");
+    let kind = if knowledge { "vault" } else { "catalog" };
+    let class = if request.method == "GET" && !path.contains("/attachments/") { "content.read" } else { "content.write" };
+    let denied = trust_policy::explicitly_denied(&db,&device,class,kind).map_err(|_| (503,"CONTENT_UNAVAILABLE"))?;
+    let explicit = if knowledge { gateway.request_vault_scope.as_deref() } else { gateway.material_scope_id() };
+    if explicit.is_some() || trust_policy::has_policy(&db,&device).map_err(|_| (503,"CONTENT_UNAVAILABLE"))? {
+        let scope = if knowledge { current_vault_for_service(gateway)?.0 } else { String::new() };
+        if !services::granted(gateway,&device,class,kind,&scope)? {
+            return Err((403,if denied {"SCOPE_DENIED"} else {"GRANT_REQUIRED"}));
+        }
+    } else if denied { return Err((403,"SCOPE_DENIED")); }
+    Ok(())
+}
+
 pub(super) fn serve(
     gateway: &CompanionGateway,
     request: &HttpRequest,
     stream: &mut impl Write,
     stop: &AtomicBool,
 ) -> io::Result<()> {
+    diagnostics::stage(diagnostics::Stage::Scope);
+    let scoped = match gateway.scope_for_request(request) {
+        Ok(scoped) => scoped,
+        Err((status,code)) => return write_json(stream,status,&json!({"code":code})),
+    };
+    let gateway = &scoped;
+    // Serialize mutation with revocation. No global target changes occur.
+    let _mutation = if request.method != "GET" {
+        match gateway.try_transition() {
+            Ok(guard) => Some(guard),
+            Err(_) => return write_json(stream,503,&json!({"code":"CONTENT_UNAVAILABLE"})),
+        }
+    } else { None };
+    if let Err((status,code)) = access(gateway,request) { return write_json(stream,status,&json!({"code":code})); }
+    diagnostics::stage(diagnostics::Stage::Execute);
     match resource(gateway, request) {
         Ok(Some((mut file, mime, version))) => {
+            diagnostics::stage(diagnostics::Stage::Commit);
+            // No bytes have been committed yet: return the real HTTP error
+            // rather than closing silently (which clients report as HTTP 0).
+            let header_guard = match gateway.try_transition() {
+                Ok(guard) => guard,
+                Err(_) => return write_json(stream,503,&json!({"code":"CONTENT_UNAVAILABLE"})),
+            };
+            if let Err((status,code)) = access(gateway,request) {
+                return write_json(stream,status,&json!({"code":code}));
+            }
+            diagnostics::scoped_response(gateway.material_scope_id().is_some() || gateway.request_vault_scope.is_some());
             let size = file.metadata()?.len();
             if request.headers.get("if-none-match") == Some(&version) {
+                let diagnostics = diagnostics::response_headers(304);
                 return write!(
                     stream,
-                    "HTTP/1.1 304 Not Modified\r\nETag: {version}\r\nConnection: close\r\n\r\n"
+                    "HTTP/1.1 304 Not Modified\r\nETag: {version}\r\nConnection: close\r\n{diagnostics}\r\n"
                 );
             }
             let requested_range = if request
@@ -435,11 +487,15 @@ pub(super) fn serve(
             if let Some((s, e)) = range {
                 write!(stream, "Content-Range: bytes {s}-{e}/{size}\r\n")?;
             }
+            stream.write_all(diagnostics::response_headers(if range.is_some() { 206 } else { 200 }).as_bytes())?;
             stream.write_all(b"\r\n")?;
+            drop(header_guard);
             file.seek(SeekFrom::Start(start))?;
             let mut remaining = length;
             let mut buffer = [0u8; 64 * 1024];
             while remaining > 0 && !stop.load(Ordering::Acquire) {
+                let _chunk_guard = gateway.try_transition().map_err(|_| io::Error::new(ErrorKind::Interrupted,"Gateway control pending"))?;
+                access(gateway,request).map_err(|_| io::Error::new(ErrorKind::PermissionDenied,"Phone access revoked"))?;
                 if request.path.starts_with("/v1/notes/")
                     && !notes::resource_source_current(gateway, request)
                 {
@@ -461,7 +517,23 @@ pub(super) fn serve(
             stream.flush()
         }
         Ok(None) => match json_route(gateway, request) {
-            Ok(value) => write_json(stream, 200, &value),
+            Ok(value) => {
+                diagnostics::stage(diagnostics::Stage::Commit);
+                // Mutations already hold this gate through commit and ACK.
+                let _response = if _mutation.is_none() {
+                    match gateway.try_transition() {
+                        Ok(guard) => Some(guard),
+                        Err(_) => return write_json(stream,503,&json!({"code":"CONTENT_UNAVAILABLE"})),
+                    }
+                } else { None };
+                match access(gateway,request) {
+                    Ok(()) => {
+                        diagnostics::scoped_response(gateway.material_scope_id().is_some() || gateway.request_vault_scope.is_some());
+                        write_json(stream,200,&value)
+                    },
+                    Err((status,code)) => write_json(stream,status,&json!({"code":code})),
+                }
+            },
             Err((status, code)) => write_json(stream, status, &json!({"code": code})),
         },
         Err((status, code)) => write_json(stream, status, &json!({"code": code})),

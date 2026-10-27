@@ -22,5 +22,11 @@ path = "lib.rs"
 name="luckyray-update-verify"
 path="../../src-tauri/src/release_tools/desktop-update-verify.rs"
 
+[[bin]]
+name="luckyray-runtime-record-verify"
+path="runtime-record-verify.rs"
+test=false
+bench=false
+
 [dev-dependencies]
 minisign="=0.8.0"

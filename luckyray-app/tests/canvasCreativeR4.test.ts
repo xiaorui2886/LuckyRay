@@ -337,17 +337,17 @@ test("body-only replay policy blocks title-bearing histories before rebuilding a
   );
   assert.ok(
     history.indexOf("!uiSettings.noteReferenceIncludeTitle") <
-      history.indexOf("ensureGenerationHistoryResultNode(entry)"),
+      history.indexOf("createGenerationDraft(entry,'parameters',0,false)"),
   );
   assert.match(history, /setGenerationHistoryNotice/);
   const submit = s.slice(
     s.indexOf("  const submitGenerationFromNode ="),
     s.indexOf("  const cancelGeneration ="),
   );
-  assert.ok(
-    submit.indexOf("retry && !uiSettings.noteReferenceIncludeTitle") <
-      submit.indexOf("const request = retry?.request"),
-  );
+  const replayPolicy = submit.indexOf("retry && !uiSettings.noteReferenceIncludeTitle");
+  const compileRequest = submit.indexOf("request = retry?.request || createGenerationRequestSnapshot(");
+  assert.ok(replayPolicy >= 0 && compileRequest > replayPolicy,
+    "body-only replay policy must run before either historical reuse or fresh request compilation");
 });
 
 test("note body keeps literal code and dates but omits frontmatter metadata", () => {

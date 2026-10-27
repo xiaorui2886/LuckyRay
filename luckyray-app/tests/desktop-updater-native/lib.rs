@@ -3,8 +3,7 @@ mod policy;
 #[path="../../src-tauri/src/desktop_app_update/verification.rs"]
 mod verification;
 
-// The public provenance reference changes no key, feed or validation boundary.
-// Exercise the actual host parser rather than a copied test implementation.
+// Exercise the same publicly reviewed provenance parser used by the host.
 #[path="../../src-tauri/src/dsh_update_metadata_policy.rs"]
 mod dsh_update_metadata_policy;
 
@@ -37,3 +36,6 @@ mod store;
 
 #[path="../../src-tauri/src/desktop_app_update/feed.rs"]
 mod feed;
+
+#[path="../../src-tauri/src/dsh_update_remote_policy.rs"]
+mod dsh_update_remote_policy;

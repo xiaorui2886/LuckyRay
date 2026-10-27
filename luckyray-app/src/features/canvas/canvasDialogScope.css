@@ -1,0 +1,74 @@
+/* The fixed body portal escapes app transforms; only its owning canvas is modal. */
+.canvas-dialog-scope{position:fixed;inset:0;overflow:hidden;pointer-events:none;container:canvas-dialog / size}
+.canvas-dialog-scope>:is(.canvas-creative-overlay,.director-backdrop,.clp-backdrop,.canvas-library-destination-backdrop){position:absolute;inset:0;pointer-events:auto}
+.canvas-dialog-scope .canvas-creative-dialog{max-width:100%;max-height:100%}
+.canvas-dialog-scope .canvas-creative-dialog.is-compact{max-height:min(760px,100%)}
+.canvas-dialog-scope .canvas-creative-dialog.canvas-image-tools-dialog{height:min(760px,100%)}
+.canvas-dialog-scope .canvas-creative-dialog.canvas-storyboard-dialog{width:min(1480px,100%);max-width:100%;height:100%}
+.canvas-dialog-scope .director-workspace{height:min(920px,100%)}
+.canvas-dialog-scope .canvas-library-destination-dialog{max-width:100%;max-height:100%;overflow:auto}
+
+/* Image controls remain scrollable by wheel, touch and keyboard, without chrome. */
+.canvas-image-tools-dialog fieldset{scrollbar-width:none;scrollbar-gutter:auto}
+.canvas-image-tools-dialog fieldset::-webkit-scrollbar{display:none;width:0;height:0}
+
+/* Breakpoints use the available canvas, not the shell window outside it. */
+@container canvas-dialog (max-width:700px){
+ .canvas-dialog-scope .canvas-workflow-layout{grid-template-columns:1fr;gap:16px}
+ .canvas-dialog-scope .canvas-workflow-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+ .canvas-dialog-scope .canvas-workflow-eyebrow{grid-column:1/-1}
+ .canvas-dialog-scope .canvas-workflow-export{grid-template-columns:1fr}
+ .canvas-dialog-scope .canvas-creative-dialog .canvas-workflow-preview{height:180px}
+}
+@container canvas-dialog (max-width:680px){
+ .canvas-dialog-scope .canvas-image-tools-dialog .canvas-image-tools-layout{grid-template-columns:1fr;grid-template-rows:minmax(120px,38%) minmax(0,1fr);gap:12px}
+ .canvas-dialog-scope .canvas-review-stage.is-side{grid-template-columns:1fr}
+}
+@container canvas-dialog (max-width:600px){
+ .canvas-dialog-scope>.canvas-creative-overlay{padding:10px}
+ .canvas-dialog-scope .canvas-creative-dialog{padding:14px;border-radius:14px}
+ .canvas-dialog-scope .canvas-review-select{display:block}
+ .canvas-dialog-scope .canvas-review-select select{margin-top:6px}
+ .canvas-dialog-scope .canvas-review-parameters section>div{grid-template-columns:1fr;gap:4px}
+}
+@container canvas-dialog (max-width:720px){
+ .canvas-dialog-scope .canvas-storyboard-dialog{padding:16px}
+ .canvas-dialog-scope .canvas-storyboard-dialog .canvas-storyboard-library{gap:8px;flex-wrap:wrap}
+ .canvas-dialog-scope .canvas-storyboard-dialog .canvas-storyboard-library select{max-width:100%;flex:1;min-width:100px}
+ .canvas-dialog-scope .canvas-storyboard-dialog .canvas-shot-detail-row .canvas-storyboard-shot{grid-template-columns:1fr}
+}
+@container canvas-dialog (max-width:1100px){
+ .canvas-dialog-scope .director-body{grid-template-columns:155px minmax(0,1fr) 215px}
+ .canvas-dialog-scope .director-header{padding:12px 15px}
+ .canvas-dialog-scope .director-header-actions{gap:1px}
+ .canvas-dialog-scope .director-header-actions>button{font-size:10px}
+ .canvas-dialog-scope .director-title span{display:none}
+ .canvas-dialog-scope .director-section{padding:14px 10px}
+ .canvas-dialog-scope .director-view-tools{gap:5px;padding:8px}
+ .canvas-dialog-scope .director-segment button{padding:5px 7px}
+ .canvas-dialog-scope .director-title h2{font-size:14px}
+}
+@container canvas-dialog (max-width:780px){
+ .canvas-dialog-scope>.director-backdrop{padding:5px}
+ .canvas-dialog-scope .director-workspace{border-radius:12px}
+ .canvas-dialog-scope .director-body{grid-template-columns:120px minmax(0,1fr);grid-template-rows:minmax(350px,1fr) auto;overflow:auto}
+ .canvas-dialog-scope .director-inspector{grid-column:1/-1;border-top:1px solid var(--director-line);overflow:visible;max-height:none}
+ .canvas-dialog-scope .director-inspector-fields{display:flex;max-height:230px;overflow:auto}
+ .canvas-dialog-scope .director-inspector-fields>.director-section{min-width:220px;flex:1;border-right:1px solid var(--director-line);border-bottom:0}
+ .canvas-dialog-scope .director-inspector-tabs{position:static}
+ .canvas-dialog-scope .director-header{flex-wrap:wrap;gap:8px}
+ .canvas-dialog-scope .director-header-actions{flex:1;justify-content:flex-end}
+ .canvas-dialog-scope .director-title>svg,.canvas-dialog-scope .director-header-actions>.director-divider{display:none}
+ .canvas-dialog-scope .director-object-palette{grid-template-columns:repeat(2,1fr)}
+ .canvas-dialog-scope .director-object-row{flex-wrap:wrap}
+ .canvas-dialog-scope .director-object-row>.director-object-name{flex-basis:100%}
+ .canvas-dialog-scope .director-center{min-height:350px}
+ .canvas-dialog-scope .director-shot-strip{max-height:95px}
+ .canvas-dialog-scope .director-footer>span:last-child{display:none}
+}
+@container canvas-dialog (min-width:781px) and (max-height:780px){
+ .canvas-dialog-scope .director-body{overflow:auto;min-height:0}
+ .canvas-dialog-scope .director-center{min-height:440px}
+ .canvas-dialog-scope .director-library,.canvas-dialog-scope .director-inspector{max-height:none}
+ .canvas-dialog-scope .director-header{padding:10px 15px}
+}

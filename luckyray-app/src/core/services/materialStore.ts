@@ -33,6 +33,7 @@ export type MaterialStoreStatus = "idle" | "loading" | "refreshing" | "ready" | 
 
 export type MaterialStoreInvalidation = {
   reason: string;
+  background?: boolean;
   affectedIds?: string[];
   foldersChanged?: boolean;
   sourceVersion?: number;
@@ -220,7 +221,7 @@ export class MaterialStore {
     return this.revalidate({ reason: input.reason, query });
   }
 
-  revalidate(input: { reason: string; query?: MaterialStoreQuery; force?: boolean }) {
+  revalidate(input: { reason: string; query?: MaterialStoreQuery; force?: boolean; background?: boolean }) {
     const query = normalizeQuery(input.query || this.currentQuery,this.context());
     const context = this.context();
     if (query.libraryId !== context.libraryId || query.libraryGeneration !== context.generation) return Promise.resolve(this.snapshot);
@@ -232,7 +233,7 @@ export class MaterialStore {
     const sequence = ++this.sequence;
     const controller = new AbortController();
     this.publish({
-      status: this.snapshot.loaded ? "refreshing" : "loading",
+      status: this.snapshot.loaded ? input.background ? "ready" : "refreshing" : "loading",
       error: null,
       queryKey: query.key,
       lastReason: input.reason,
@@ -255,11 +256,16 @@ export class MaterialStore {
           this.reads.change().catch(() => null),
         ]);
         if (!this.isCurrentRequest(request)) return this.snapshot;
-        const normalizedAssets = Array.isArray(allAssets) ? allAssets : [];
+        const previous = new Map(this.snapshot.allAssets.map(asset => [asset.id, asset]));
+        const retainRows = (assets: MaterialAsset[]) => input.background ? assets.map(asset => {
+          const old = previous.get(asset.id);
+          return old && JSON.stringify(old) === JSON.stringify(asset) ? old : asset;
+        }) : assets;
+        const normalizedAssets = retainRows(Array.isArray(allAssets) ? allAssets : []);
         const sourceVersion = change?.version ?? this.snapshot.sourceVersion;
         if (typeof sourceVersion === "number") this.observedSourceVersion = Math.max(this.observedSourceVersion, sourceVersion);
         this.publish({
-          assets: query.filters && Array.isArray(filteredAssets) ? filteredAssets : normalizedAssets,
+          assets: query.filters && Array.isArray(filteredAssets) ? retainRows(filteredAssets) : normalizedAssets,
           allAssets: normalizedAssets,
           recentOrder: reconcileMaterialRecentOrder(normalizedAssets),
           folders,
@@ -309,6 +315,7 @@ export class MaterialStore {
               reason: invalidation.reason,
               query: invalidation.query || this.currentQuery,
               force: true,
+              background: invalidation.background,
             });
         }
         resolve(result);
@@ -352,6 +359,7 @@ export class MaterialStore {
     };
     return {
       reason: `${current.reason},${next.reason}`,
+      background: current.background === true && next.background === true,
       affectedIds: [...new Set([...(current.affectedIds || []), ...(next.affectedIds || [])])],
       foldersChanged: Boolean(current.foldersChanged || next.foldersChanged),
       sourceVersion: Math.max(current.sourceVersion || 0, next.sourceVersion || 0) || undefined,
@@ -435,7 +443,14 @@ export class MaterialStore {
     };
     window.addEventListener(MATERIAL_CHANGE_LOCAL_EVENT, this.localChangeListener);
     this.libraryChangeListener = event => {
-      if ((event as CustomEvent<{ libraryId: string }>).detail?.libraryId === this.context().libraryId) void this.reconcileMaterialVersion("library-mutation");
+      const detail = (event as CustomEvent<{ libraryId: string; source?: string; change?: MaterialChange; previousVersion?: number }>).detail;
+      if (detail?.libraryId !== this.context().libraryId) return;
+      if (detail.source === "auto-import") {
+        // Reconcile authoritative metadata as well: a different writer may have
+        // committed during this import. Do not advance a global version using
+        // only this batch's IDs and accidentally hide concurrent changes.
+        void this.invalidate({ reason: "library-auto-import", background: true });
+      } else void this.reconcileMaterialVersion("library-mutation");
     };
     window.addEventListener("luckyray:material-library-change", this.libraryChangeListener);
     this.bridgeReadyListener = () => {

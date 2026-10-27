@@ -1,0 +1,49 @@
+/* Scoped launcher: transparent cosmic dust, with no canvas-wide paint overrides. */
+.canvas-agent-orb { position:relative; display:grid; place-items:center; width:64px; height:64px; flex-shrink:0; padding:0; border:0; border-radius:50%; background:transparent; isolation:isolate; cursor:pointer; }
+.canvas-agent-orb:hover { background:transparent; }
+.canvas-agent-orb-visual { position:absolute; width:88px; height:64px; pointer-events:none; transition:transform .25s ease,filter .25s ease; }
+.canvas-agent-orb-black-hole,.canvas-agent-orb-fallback { position:absolute; inset:0; width:88px; height:64px; }
+.canvas-agent-orb-visual:has(.canvas-agent-orb-black-hole[data-ready="true"]) .canvas-agent-orb-fallback { visibility:hidden; }
+.canvas-agent-orb:is(:hover,:focus-visible) .canvas-agent-orb-visual { transform:translateY(-2px) scale(1.055); filter:brightness(1.16); }
+.canvas-agent-orb:active .canvas-agent-orb-visual { transform:translateY(-1px) scale(1.015); }
+.canvas-agent-orb.is-busy .canvas-agent-orb-visual { filter:brightness(1.2); }
+.canvas-agent-orb.is-unavailable:not(.is-busy) .canvas-agent-orb-visual { filter:saturate(.42); }
+.canvas-agent-orb-status { position:absolute; width:4px; height:4px; right:11px; bottom:12px; border-radius:50%; background:transparent; pointer-events:none; }
+.canvas-agent-orb.is-busy .canvas-agent-orb-status { background:#aaa8e2; box-shadow:0 0 5px #8583c780; }
+.canvas-agent-orb.is-unavailable:not(.is-busy) .canvas-agent-orb-status { background:#d7b286; }
+.canvas-agent-orb:focus-visible { outline:2px solid var(--accent,#aba6f7); outline-offset:2px; }
+@media (prefers-reduced-motion:reduce) {
+  .canvas-agent-orb * { transition:none !important; }
+  .canvas-agent-orb:is(:hover,:focus-visible,:active) .canvas-agent-orb-visual { transform:none; }
+}
+.reduce-motion .canvas-agent-orb * { transition:none !important; }
+.reduce-motion .canvas-agent-orb:is(:hover,:focus-visible,:active) .canvas-agent-orb-visual { transform:none; }
+/* Extra breathing room applies only to the launcher, not the expanded panel. */
+.canvas-editor-body > .canvas-agent-orb { position:absolute; z-index:35; }
+.canvas-editor-body > .canvas-agent-orb,
+.canvas-r1-agent-panel.is-collapsed:has(> .canvas-agent-orb) {
+  /* Main luminous disk contour estimate: radius 43, flatten .49, tilt -15deg,
+     half-extents x=41.9/y=23.3. Preserve the right offset and lower the disk.
+     This is NOT an exact alpha-paint bound: the faint .66-flatten halo extends
+     to x=42.18/y=29.59. Main's 1443x903 screenshot measured visible halo gaps
+     right=50px/bottom=45px; raise it 5px to align the perceived outer edge. */
+  --orb-edge-gap:max(clamp(22px,3vw,42px),env(safe-area-inset-right,0px),env(safe-area-inset-bottom,0px));
+  right:calc(var(--orb-edge-gap) + 9.9px);
+  bottom:calc(var(--orb-edge-gap) - 3.7px);
+}
+.canvas-r1-agent-panel .canvas-agent-orb { border-radius:50%; }
+.canvas-r1-agent-panel .canvas-agent-orb:hover:not(:disabled) { background:transparent; }
+.canvas-r1-agent-panel .canvas-r1-agent-black-hole-mark { position:relative; border:0; background:transparent; overflow:visible; }
+.canvas-r1-agent-black-hole-mark .canvas-agent-orb-visual { left:50%; top:50%; transform:translate(-50%,-50%) scale(.49); }
+.canvas-r1-agent-panel .canvas-r1-agent-black-hole-mark svg { width:88px; height:64px; }
+/* Placement gestures affect only the entrance, never the black-hole renderer or panel. */
+.canvas-agent-orb.is-draggable { cursor:grab; touch-action:none; user-select:none; }
+.canvas-agent-orb.is-dragging { cursor:grabbing; }
+.canvas-agent-orb.is-dragging .canvas-agent-orb-visual { transform:none; }
+.canvas-editor-root .canvas-agent-orb-position-setting > button.canvas-agent-orb-reset { display:inline-flex; align-items:center; gap:5px; width:auto; min-height:26px; margin:0 0 12px; padding:3px 8px; border:1px solid var(--theme-border-subtle); border-radius:6px; background:var(--theme-hover); color:var(--text-secondary,#a5a5b8); font:inherit; font-size:10px; font-weight:500; line-height:1.4; cursor:pointer; }
+.canvas-editor-root .canvas-agent-orb-position-setting > button.canvas-agent-orb-reset:hover { background:var(--theme-selected); color:var(--text-primary,#e8e8f2); }
+.canvas-agent-orb-reset svg { width:12px; height:12px; flex:none; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.canvas-agent-orb-reset:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.canvas-agent-orb-save-error { display:block; margin:0 0 12px; color:var(--text-secondary,#a5a5b8); }
+.canvas-r1-agent-panel.is-collapsed { pointer-events:none; }
+.canvas-r1-agent-panel.is-collapsed > .canvas-agent-orb { position:absolute; pointer-events:auto; }

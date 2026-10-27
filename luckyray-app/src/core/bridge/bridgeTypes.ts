@@ -25,6 +25,7 @@ export type MaterialFolderImportOptions = {
 };
 
 export type BridgeAsset = {
+  materialGenerationProvenance?: import("../canvas/materialProvenance").MaterialGenerationProvenance;
   id: string;
   name: string;
   originalPath: string;
@@ -421,10 +422,23 @@ export type BridgeCollectionItem = {
   trigger: string | null;
 };
 
+/** Canvas's existing material catalog is fixed, independent of materials-page selection. */
+export type BridgeCanvasFolder = { id: string; name: string; parentId: string | null };
+export type BridgeCanvasMaterialDestination = { catalogId: "legacy-material-catalog"; folderId: string | null };
+export type BridgeCanvasMaterialFolders = { catalogId: "legacy-material-catalog"; folders: BridgeCanvasFolder[] };
+export type BridgeCanvasKnowledgeFolders = {
+  vaultId: string | null;
+  folders: BridgeCanvasFolder[];
+  noteFolderIds: Record<string, string | null>;
+};
+
 export type LuckyRayBridge = {
   importAssets: (options?: MaterialImportOptions) => Promise<{ assets: BridgeAsset[]; source: "tauri" | "browser"; skippedDuplicates: number }>;
   importDroppedFiles: (files: File[] | FileList, options?: MaterialImportOptions) => Promise<{ assets: BridgeAsset[]; source: "tauri" | "browser"; skippedDuplicates: number; errors?: Array<{ name: string; error: string }> }>;
   listAssets: () => Promise<BridgeAsset[]>;
+  listCanvasAssets?: () => Promise<BridgeAsset[]>;
+  listCanvasMaterialFolders?: () => Promise<BridgeCanvasMaterialFolders>;
+  listCanvasKnowledgeFolders?: () => Promise<BridgeCanvasKnowledgeFolders>;
   getAssetsByIds: (assetIds: string[]) => Promise<BridgeAsset[]>;
   getMaterialChangeState: () => Promise<MaterialChange | null>;
   updateAsset: (id: string, patch: BridgeAssetPatch) => Promise<BridgeAsset | null>;
@@ -495,9 +509,13 @@ export type LuckyRayBridge = {
     request: import("../canvas/generationTasks").CanvasGenerationRequestSnapshot,
     onProgress?: (progress: import("../canvas/videoGenerationAdapter").CanvasVideoGenerationProgress) => void,
     providerTaskId?: string,
+    clientTaskId?: string,
   ) => Promise<import("../canvas/videoGenerationAdapter").CanvasVideoGenerationResponse>;
+  /** Persist one local PNG slice using the existing generated-image storage. */
+  storeCanvasImageSlice?: (png: string) => Promise<string>;
   saveCanvasGenerationToLibrary: (
     candidate: import("../canvas/generationHistory").CanvasGenerationLibraryCandidate,
+    destination?: BridgeCanvasMaterialDestination,
   ) => Promise<{ success: boolean; assetId?: string; message?: string }>;
   listAiConversations: () => Promise<BridgeAiConversation[]>;
   createAiConversation: (title?: string) => Promise<BridgeAiConversation>;

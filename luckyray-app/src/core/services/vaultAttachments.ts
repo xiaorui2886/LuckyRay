@@ -99,3 +99,11 @@ export const previewMaterialFileMove = (vaultId: string, assetId: string, destin
 
 export type DiscoveredAttachmentMove = { assetId: string; previousPath: string; newPath: string };
 export const discoverAttachmentMoves = (vaultId: string) => invoke<DiscoveredAttachmentMove[]>("knowledge_discover_attachment_moves", { vaultId });
+
+/** Export only this saved note and its resolved attachments; remote URLs stay links. */
+export async function exportNoteArchive(documentRef: KnowledgeDocumentRef, targetPath: string) {
+  const source = readActiveKnowledgeWriteSource();
+  const active = await ensureActiveKnowledgeUiSource();
+  if (!source || source !== readActiveKnowledgeWriteSource() || active.vaultId !== documentRef.vaultId) throw new Error("知识库已切换，请重试");
+  return invoke<AttachmentExportResult>("knowledge_export_note_archive", { documentRef, targetPath, sourceEpoch: active.sourceEpoch });
+}

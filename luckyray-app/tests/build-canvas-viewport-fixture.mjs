@@ -1,0 +1,7 @@
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url); const {build}=createRequire(require.resolve('vite'))('esbuild');
+import {mkdir,writeFile} from 'node:fs/promises';
+if(process.argv[2]){await build({entryPoints:['tests/fixtures/viewport/entry.tsx'],bundle:true,platform:'node',format:'cjs',jsx:'automatic',loader:{'.css':'empty'},external:['react','react-dom','react-dom/*','@xyflow/react'],outfile:process.argv[2]});process.exit(0);}
+await mkdir('viewport-qa',{recursive:true});
+await build({entryPoints:['tests/fixtures/viewport/entry.tsx'],bundle:true,format:'esm',jsx:'automatic',outdir:'viewport-qa',define:{'process.env.NODE_ENV':'"development"'}});
+await writeFile('viewport-qa/index.html',`<!doctype html><meta charset="utf-8"><title>LuckyRay Canvas Zoom QA</title><link rel="stylesheet" href="./entry.css"><style>:root{--theme-glass-bg:#252528;--theme-border-subtle:#ffffff14;--theme-border-strong:#ffffff26;--theme-hover:#ffffff0d;--theme-selected:#ffffff16;--theme-shadow-lg:0 10px 36px #0006;--theme-shadow-md:0 4px 18px #0003;--theme-canvas-workspace:#141416;--theme-text-muted:#99999f;--text-primary:#ededf0;--text-secondary:#a6a6b0;--accent:#a69bff;--theme-glass-filter:blur(18px)}body{margin:0;background:#19191b;color:var(--text-primary);font-family:Arial,sans-serif}*{box-sizing:border-box}output{font-size:10px}header{font-size:12px}button,input,textarea{font:inherit}</style><div id="root"></div><script type="module" src="./entry.js"></script>`);

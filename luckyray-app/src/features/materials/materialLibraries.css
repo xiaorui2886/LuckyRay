@@ -27,5 +27,11 @@
 .material-library-management .material-library-management-footer{justify-content:space-between;flex-wrap:wrap;gap:8px;border-top:1px solid var(--border);padding-top:14px}
 .material-library-management-footer>div{display:flex;flex-wrap:wrap;gap:8px}
 .material-library-notice{color:var(--text-secondary);font-size:12px}
+.material-library-auto-import{margin-top:8px;border-top:1px solid var(--border);padding-top:8px}
+.material-library-dialog .material-library-auto-import label{margin:0;flex-direction:row;align-items:center;gap:7px;font-size:12px}
+.material-library-auto-import input{accent-color:var(--accent);width:14px;height:14px;flex:none}
+.material-library-auto-import p{font-size:10px;color:var(--text-muted);overflow-wrap:anywhere;margin:5px 0}
+.material-library-auto-import small{display:block;color:var(--text-secondary);font-size:10px;line-height:1.5;margin-top:4px}
+.material-library-legacy-watch{max-height:35vh;overflow:auto;margin-top:10px;font-size:12px}
 .material-library-unavailable{padding:32px;line-height:1.8;color:var(--text-secondary)}
 @media(max-width:620px){.material-library-switcher{padding:5px 8px}.material-library-switcher select{max-width:175px}.material-library-dialog{padding:14px}}

@@ -31,6 +31,7 @@ function component(store: presentation.CompanionPresentationStore, file: string,
     if (id.endsWith("companionPresentationStore")) return presentation;
     if (id.endsWith("CompanionGatewayPanel")) return { COMPANION_COPY: {}, gatewayErrorMessage: () => "error" };
     if (id.endsWith("PhoneAccessManager")) return { default: () => null };
+    if (id.endsWith("PhoneAuthorizationChoice")) return { default: () => null, PHONE_AUTHORIZATION_COPY: {} };
     if (id.endsWith("CompanionPresentation")) return { useCompanionSnapshot: () => store.getSnapshot(), useCompanionStore: () => store, useCompanionView: () => ({ state: store.getSnapshot(), owner: null, seconds: 60 }) };
     if (id.endsWith("i18n/index")) return { defineMessages: (value: any) => value, useMessages: () => ({ locale: "en-US", t: (key: string) => key }) };
     if (id.endsWith("applicationModalIsolation")) return { useApplicationModalSurface: () => ({ surfaceRef: {}, onSurfaceKeyDown() {}, onBackdropPointerDown() {} }) };
@@ -78,7 +79,7 @@ test("production quick/advanced/trust controls remain enabled through unchanged 
     quickPaneBusy: Boolean(quick().find(node => node.props?.className === "phone-connection-right").props["aria-busy"]),
     advancedRefreshDisabled: Boolean(button(advanced(), "action.refresh").props.disabled),
     advancedLshDisabled: Boolean(button(advanced(), "devices.lshRemote").props.disabled),
-    trustDisabled: Boolean(button(trust(), "trust").props.disabled),
+    trustDisabled: Boolean(button(trust(), "changeMode").props.disabled),
   });
   const before = visible(); assert.ok(Object.values(before).every(value => value === false));
   const trace: any[] = [];

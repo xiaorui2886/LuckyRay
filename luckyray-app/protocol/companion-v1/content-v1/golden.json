@@ -1,7 +1,8 @@
 {
   "capabilities": {
     "contentVersion": 1,
-    "bundleRevision": "2026-09-21.1",
+    "bundleRevision": "2026-10-23.scopes-1",
+    "scopeSelectionVersion": 1,
     "capabilities": {
       "materialPreview": true,
       "lshRemoteSurface": true,

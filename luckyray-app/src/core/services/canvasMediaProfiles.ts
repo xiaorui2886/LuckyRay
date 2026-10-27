@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { BridgeAiMessageContent } from "../bridge/bridgeTypes";
 
-export type CanvasImageProtocol = "agnes" | "openai-image" | "gemini-image" | "12ai-task" | "disabled";
-export type CanvasVideoProtocol = "agnes" | "openai-video" | "12ai-task" | "disabled";
+export type CanvasImageProtocol = "easycli-auto" | "agnes" | "openai-image" | "gemini-image" | "12ai-task" | "disabled";
+export type CanvasVideoProtocol = "agnes" | "openai-video" | "bigmodel-video" | "12ai-task" | "disabled";
 export type CanvasTextProtocol = "legacy" | "openai-chat" | "disabled";
 export type CanvasMediaProfile = {
   id: string; name: string; baseUrl: string; imageModel: string; videoModel: string;
@@ -16,9 +17,12 @@ export type CanvasMediaProfileInput = Omit<CanvasMediaProfile, "revision" | "api
 };
 export const CANVAS_MEDIA_PRESETS = {
   agnes: { name: "Agnes", baseUrl: "https://apihub.agnes-ai.com/v1", imageModel: "agnes-image-2.1-flash", videoModel: "agnes-video-v2.0", imageProtocol: "agnes", videoProtocol: "agnes" },
-  openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1", imageModel: "gpt-image-1", videoModel: "", imageProtocol: "openai-image", videoProtocol: "disabled" },
+  openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1", imageModel: "", videoModel: "", imageProtocol: "openai-image", videoProtocol: "disabled" },
   twelve: { name: "12API", baseUrl: "https://new.12ai.org/v1", imageModel: "", videoModel: "", imageProtocol: "openai-image", videoProtocol: "12ai-task" },
-  easycli: { name: "EasyCLIProxyAPI · Gemini", baseUrl: "http://127.0.0.1:8317/v1", imageModel: "gemini-3.1-flash-image", videoModel: "", imageProtocol: "gemini-image", videoProtocol: "disabled" },
+  easycli: { name: "EasyCLIProxyAPI", baseUrl: "http://127.0.0.1:8317/v1", imageModel: "gemini-3.1-flash-image", videoModel: "", imageProtocol: "easycli-auto", videoProtocol: "disabled" },
+  genericImage: { name: "通用图片备用", baseUrl: "", imageModel: "", videoModel: "", imageProtocol: "openai-image", videoProtocol: "disabled" },
+  genericVideo: { name: "通用视频备用", baseUrl: "", imageModel: "", videoModel: "", imageProtocol: "disabled", videoProtocol: "openai-video" },
+  bigmodel: { name: "智谱 CogVideoX-Flash", baseUrl: "https://open.bigmodel.cn/api/paas/v4", imageModel: "", videoModel: "cogvideox-flash", imageProtocol: "disabled", videoProtocol: "bigmodel-video", videoModels: ["cogvideox-flash"] },
   custom: { name: "", baseUrl: "", imageModel: "", videoModel: "", imageProtocol: "openai-image", videoProtocol: "disabled" },
 } satisfies Record<string, Omit<CanvasMediaProfileInput,"id"|"expectedRevision">>;
 
@@ -40,8 +44,8 @@ export function projectCanvasMediaProfiles(value: unknown): CanvasMediaProfilesS
     ids.add(id);
     const imageProtocol = field("imageProtocol",32) as CanvasImageProtocol;
     const videoProtocol = field("videoProtocol",32) as CanvasVideoProtocol;
-    if (!["agnes","openai-image","gemini-image","12ai-task","disabled"].includes(imageProtocol)
-      || !["agnes","openai-video","12ai-task","disabled"].includes(videoProtocol)
+    if (!["easycli-auto","agnes","openai-image","gemini-image","12ai-task","disabled"].includes(imageProtocol)
+      || !["agnes","openai-video","bigmodel-video","12ai-task","disabled"].includes(videoProtocol)
       || !Number.isSafeInteger(row.revision) || Number(row.revision) < 1) throw new Error("canvas-media-profiles-invalid");
     const textProtocol = row.textProtocol ?? "legacy";
     if (!["legacy","openai-chat","disabled"].includes(String(textProtocol))) throw new Error("canvas-media-profiles-invalid");
@@ -92,7 +96,7 @@ export const canvasMediaProfilesClient = createCanvasMediaProfilesClient();
 /** Credentials are resolved in native code from this immutable binding. */
 export async function completeCanvasProfileText(
   profileId: string, profileRevision: number,
-  messages: Array<{role:string;content:string}>,
+  messages: Array<{role:string;content:BridgeAiMessageContent}>,
   options?: {systemPrompt?:string;temperature?:number;maxTokens?:number;model?:string},
 ): Promise<{success:boolean;content?:string;error_kind?:string;error_message?:string;error_detail?:string}> {
   return invoke("canvas_text_generate", {profileId,profileRevision,request:{messages,system_prompt:options?.systemPrompt,temperature:options?.temperature,max_tokens:options?.maxTokens,model:options?.model}});
@@ -103,3 +107,23 @@ export function resolveCanvasTextSelection(profile: CanvasMediaProfile | null, l
   const model = profile.textModel?.trim() || "";
   return {model,models:Array.from(new Set([model,...(profile.textModels ?? [])].filter(Boolean))),providerLabel:profile.name};
 }
+
+export type CanvasComfyUiConfig = {baseUrl:string};
+export type CanvasComfyUiConnection = {reachable:boolean;version?:string;error?:string};
+function projectComfyUiConfig(value: unknown): CanvasComfyUiConfig {
+  const row = value as Partial<CanvasComfyUiConfig> | null;
+  if (!row || typeof row.baseUrl !== "string" || row.baseUrl.length > 2048) throw Error("canvas-comfyui-config-invalid");
+  return {baseUrl:row.baseUrl};
+}
+export function createCanvasComfyUiClient(call: typeof invoke = invoke) {
+  return {
+    get: async () => projectComfyUiConfig(await call("canvas_comfyui_get_config")),
+    save: async (baseUrl:string) => projectComfyUiConfig(await call("canvas_comfyui_set_config",{baseUrl})),
+    test: async (baseUrl:string):Promise<CanvasComfyUiConnection> => {
+      const row = await call("canvas_comfyui_test_connection",{baseUrl}) as CanvasComfyUiConnection;
+      if (!row || typeof row.reachable !== "boolean" || (row.version != null && typeof row.version !== "string") || (row.error != null && typeof row.error !== "string")) throw Error("canvas-comfyui-response-invalid");
+      return {reachable:row.reachable,version:row.version ?? undefined,error:row.error ?? undefined};
+    },
+  };
+}
+export const canvasComfyUiClient = createCanvasComfyUiClient();

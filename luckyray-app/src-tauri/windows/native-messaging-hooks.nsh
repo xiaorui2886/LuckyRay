@@ -3,11 +3,13 @@
 ; the supported passive update path before the installation even begins.
 ; Never allow an ignored extraction failure to certify an installed update.
 AllowSkipFiles off
+!include "${__FILEDIR__}\lsh-owned-resources.nsh"
 !include "${__FILEDIR__}\signed-update-lock.nsh"
 
 !macro NSIS_HOOK_POSTINSTALL
   IfErrors 0 +2
     Abort "An installation step failed. Please repair the installation."
+  !insertmacro LR_LSH_VERIFY_SLOT
   ; The pinned template's GetSize clears earlier NSIS errors.
   ClearErrors
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -66,5 +68,6 @@ AllowSkipFiles off
   Delete "$INSTDIR\luckyray-install-complete.txt"
   Delete "$INSTDIR\luckyray-install-in-progress.txt"
   !insertmacro LR_UPDATE_RELEASE
+  !insertmacro LR_LSH_UNINSTALL_EMPTY_NAMESPACE
   RMDir "$INSTDIR" ; Nonrecursive: only an empty directory after marker cleanup.
 !macroend

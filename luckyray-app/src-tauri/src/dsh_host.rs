@@ -1,8 +1,12 @@
+#[path = "dsh_update_remote_policy.rs"]
+mod update_remote_policy;
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -13,8 +17,14 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 pub(crate) const UPDATE_ADAPTER_PROTOCOL: u64 = 1;
+// The pinned authenticated carrier announces readiness only after both the
+// official loader and its one-way authenticated login URL relay have settled.
+pub(crate) const UPDATE_LOGIN_RELAY_READY_PROTOCOL: u64 = 1;
 const PROTOCOL: u64 = UPDATE_ADAPTER_PROTOCOL;
-const MAX_FRAME_BYTES: usize = 384 * 1024;
+const MAX_FRAME_BYTES: usize = 3 * 1024 * 1024;
+const MAX_CANVAS_AGENT_JSON_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CANVAS_AGENT_ENCODED_BYTES: usize = ((MAX_CANVAS_AGENT_JSON_BYTES + 2) / 3) * 4;
+const MAX_EXPIRED_CANVAS_REQUESTS: usize = 8;
 const MAX_RESOURCE_RESULT_JSON_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RESOURCE_RESULT_ENCODED_BYTES: usize = 12 * 1024 * 1024;
 const MAX_OPEN_INTENT_BYTES: usize = 280 * 1024;
@@ -23,9 +33,11 @@ const MAX_OPEN_INTENT_LOCAL_RESOURCES: usize = 64;
 const MAX_OPEN_INTENT_LOCAL_PATH_BYTES: usize = 4 * 1024;
 const MAX_OPEN_INTENT_IMAGE_ATTACHMENTS: usize = 20;
 const MAX_OPEN_INTENT_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_OPEN_INTENT_FILE_BYTES: u64 = 200 * 1024 * 1024;
 const RESOURCE_RESULT_CHUNK_BYTES: usize = 180 * 1024;
 const MAX_HOST_SCRIPT_BYTES: usize = 128 * 1024;
-const HOST_SCRIPT_SHA256: &str = "180f66cec31e584698297f19bee3ec664359f16071da3990269f3ad1d605f72b";
+const HOST_SCRIPT_SHA256: &str =
+    "ff1f65ad0cf81c24630c4d0c37f7266bafd90dd402c016c5daf1128431a4d08d";
 const HOST_COMPAT_SCRIPT: &str = "luckyray-dsh-plugin-compat.mjs";
 const HOST_COMPAT_SCRIPT_SHA256: &str =
     "667322ba0a798db057bcf5152a5fcf0b7664b57d0041045beaa011fd296e40d1";
@@ -43,7 +55,15 @@ fn verify_host_compat_script(host_script: &Path) -> Result<(), ()> {
     Ok(())
 }
 const SURFACE_PLUGIN_SHA256: &str =
-    "44180b332c03153554a03d8a7dd33a87b1091a4e3f942185a4525d9913495f53";
+    "c61767ce9c54abfde8360e0a39d178e5930319ef4f31e81b538b8eef6657ce86";
+const CANVAS_AGENT_SHA256: &str =
+    "33a88964c2aedd9eb5c00a6a9201bd50a5ae475d9f722984e5f353817185a2d0";
+const CANVAS_PROJECTION_SHA256: &str =
+    "ef52770a12f58d420604b20314e59b788589fdf61754b72704106bda1c125ac9";
+const CANVAS_TASK_STATE_SHA256: &str =
+    "21cd9363da81e675da1e28278a45ac6673d629a0f875f9dc3e49d875c2659178";
+const CANVAS_CREATION_SCHEMA_SHA256: &str =
+    "1fad00eb10b6c9c577a15491a7f149f4c9bcc5a169167fb516d9aef1fd6e7026";
 const PROVIDER_EXPORT_SHA256: &str =
     "ec8eb5f6a939a8555d0b7341b27bc34131ba75a27ecf0317e788fecfc32d11c3";
 const RESOURCE_PLUGIN_SHA256: &str =
@@ -59,11 +79,11 @@ const SURFACE_PATCH_SHA256: &str =
 const SURFACE_STATE_PACKAGE_SHA256: &str =
     "c3336a0c3dd50b9f0d1d01f7455abc684df1de1bc6a12a08d659a85fb0246e01";
 const SURFACE_STATE_CLIENT_SHA256: &str =
-    "6f2e008e32c70cd4f1aa3de428f67b2fb1a94368c6aa3c37eb7dc9458722fa74";
+    "ca72af88d8cb7e2886111e3a970e4265c4660594e9a2d1eb2a111105a113d3ca";
 const LIGHTSEEK_UI_PACKAGE_SHA256: &str =
-    "e5dd404c081f740cebbe1cbf7737f2f2a8080952d165883870387ad8d1c4585e";
+    "bb3a22eb538eb2807cc12f3e7a09d341af9739f6f51e5effaadbcb49090518a9";
 const LIGHTSEEK_UI_CLIENT_SHA256: &str =
-    "25dd6e54cad3df4cd2d9885484da1594116e92524b0c8165e12b57f927f22f00";
+    "d32daa2219406438c582aab4d703ede17b4576049ea0d0e9dded69831a6ee81d";
 const LIGHTSEEK_UI_BACKGROUND_SHA256: &str =
     "c9a7c10921c97717d99a8630ec3ba39436a8557d723a64c12bffc996a96fd97a";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(75);
@@ -320,6 +340,7 @@ impl DshOpenIntent {
                 let path = Path::new(&resource.canonical_path);
                 let image_attachment = resource.delivery == "image-attachment";
                 let path_reference = resource.delivery == "path-reference";
+                let file_attachment = resource.delivery == "file-attachment";
                 let image_extension = path
                     .extension()
                     .and_then(|value| value.to_str())
@@ -331,6 +352,11 @@ impl DshOpenIntent {
                     });
                 resource.kind == "material"
                     && (path_reference
+                        || file_attachment
+                            && matches!(self.source.as_str(), "materials" | "notes")
+                            && path.metadata().is_ok_and(|metadata| {
+                                metadata.is_file() && metadata.len() <= MAX_OPEN_INTENT_FILE_BYTES
+                            })
                         || image_attachment
                             && matches!(self.source.as_str(), "materials" | "notes")
                             && image_extension
@@ -384,6 +410,14 @@ impl DshHostStatusView {
     }
 }
 
+#[cfg(all(test, windows, feature = "browser-host-runtime"))]
+#[path = "dsh_host/bundled_install_proof.rs"]
+mod bundled_install_proof;
+
+#[path = "dsh_host/installation.rs"]
+mod installation;
+pub(crate) use installation::verify_installation;
+
 #[derive(Debug)]
 struct RuntimeDescriptor {
     runtime_identity: crate::dsh_runtime_seal::RuntimeIdentityLease,
@@ -394,11 +428,11 @@ struct RuntimeDescriptor {
     host_script: PathBuf,
     state_root: PathBuf,
     surface_state_root: PathBuf,
-    surface_assets: [PathBuf; 12],
+    surface_assets: [PathBuf; 16],
     surface_patch: PathBuf,
     surface_patch_sha256: String,
-    surface_module_files: [PathBuf; 11],
-    surface_module_sha256: [String; 11],
+    surface_module_files: [PathBuf; 15],
+    surface_module_sha256: [String; 15],
 }
 
 /// Holds stable leases for the lifetime of one Host generation use; the
@@ -433,6 +467,26 @@ impl RuntimeDescriptor {
         let (state_root, surface_state_root) = prepare_dsh_state_roots(app_data_dir)?;
         let update_store = Arc::new(crate::dsh_engine_update::UpdateStore::open(app_data_dir)
             .map_err(|_| ())?);
+        // Layout diagnostics share the existing update writer ownership; even
+        // an invalid installed tree must not write into another live store.
+        #[cfg(not(feature = "issue189-frozen-old-fixture"))]
+        let (bundled_root, host_dir) = installation::resource_roots(&resource_dir).map_err(|_| {
+            crate::dsh_engine_update::record_invalid_resource_at_stage(app_data_dir, "bundled-resource-layout");
+        })?;
+        #[cfg(feature = "issue189-frozen-old-fixture")]
+        let (bundled_root, host_dir) = (resource_dir.join("deepseek-harness-issue189-old"), resource_dir.join("dsh-host"));
+        #[cfg(not(feature = "issue189-frozen-old-fixture"))]
+        installation::verify_host_tree(&host_dir).map_err(|_| {
+            crate::dsh_engine_update::record_invalid_resource_at_stage(app_data_dir, "bundled-host-layout");
+        })?;
+        // A desktop package update has its own compiled, sealed authority.
+        // Adopt only its qualified predecessors before launching any writer;
+        // retain old signed active/journal evidence and never delete user data.
+        #[cfg(not(feature = "issue189-frozen-old-fixture"))]
+        if let Err(error) = update_store.adopt_desktop_bundle(&bundled_root) {
+            crate::dsh_engine_update::record_switch_error_at_stage(app_data_dir, &error, "adopt-desktop-bundle");
+            return Err(());
+        }
         if let Err(error) = update_store.complete_pending_switch(app_data_dir) {
             // Persist the redacted failure category so the settings surface
             // can name the stage instead of reporting a generic dead host.
@@ -442,15 +496,8 @@ impl RuntimeDescriptor {
         let active = update_store.load_active().map_err(|_| ())?;
         let (root, dynamic_candidate, dynamic_pending_health) = match active {
             Some(installed) => (installed.root, Some(installed.candidate), installed.pending_health),
-            None => {
-                #[cfg(feature = "issue189-frozen-old-fixture")]
-                let bundled = resource_dir.join("deepseek-harness-issue189-old");
-                #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-                let bundled = resource_dir.join("deepseek-harness");
-                (bundled, None, false)
-            },
+            None => (bundled_root, None, false),
         };
-        let host_dir = resource_dir.join("dsh-host");
         Self::from_verified_root_with_candidate(
             root,
             dynamic_candidate,
@@ -459,21 +506,7 @@ impl RuntimeDescriptor {
             host_dir.join("luckyray-dsh-host.mjs"),
             state_root,
             surface_state_root,
-            [
-                host_dir.join("luckyray-dsh-authenticated-webserver/index.mjs"),
-                host_dir.join("luckyray-dsh-resource-tools/index.mjs"),
-                host_dir.join("luckyray-dsh-resource-tools/luckyray-dsh-resource-tools.json"),
-                host_dir.join("luckyray-dsh-native-surface.patch.yml"),
-                host_dir.join("luckyray-dsh-native-surface-state/package.json"),
-                host_dir.join("luckyray-dsh-native-surface-state/client.js"),
-                host_dir.join("luckyray-dsh-lightseek-ui/package.json"),
-                host_dir.join("luckyray-dsh-lightseek-ui/client.js"),
-                host_dir.join("luckyray-dsh-lightseek-ui/lightseek-cosmic-home.webp"),
-                host_dir
-                    .join("luckyray-dsh-authenticated-webserver/luckyray-dsh-provider-export.mjs"),
-                host_dir.join("luckyray-dsh-authenticated-webserver/package.json"),
-                host_dir.join("luckyray-dsh-resource-tools/package.json"),
-            ],
+            installation::surface_assets(&host_dir),
         )
     }
 
@@ -482,7 +515,7 @@ impl RuntimeDescriptor {
         host_script: PathBuf,
         state_root: PathBuf,
         surface_state_root: PathBuf,
-        surface_assets: [PathBuf; 12],
+        surface_assets: [PathBuf; 16],
     ) -> Result<Self, ()> {
         Self::from_verified_root_with_candidate(
             root, None, false, None, host_script, state_root, surface_state_root, surface_assets,
@@ -497,7 +530,7 @@ impl RuntimeDescriptor {
         host_script: PathBuf,
         state_root: PathBuf,
         surface_state_root: PathBuf,
-        surface_assets: [PathBuf; 12],
+        surface_assets: [PathBuf; 16],
     ) -> Result<Self, ()> {
         if !root.is_absolute()
             || !state_root.is_absolute()
@@ -621,7 +654,7 @@ fn acquire_verified_surface_patch(
     Ok(lease)
 }
 
-fn verify_surface_assets(paths: &[PathBuf; 12]) -> Result<(), ()> {
+fn verify_surface_assets(paths: &[PathBuf; 16]) -> Result<(), ()> {
     let expected = [
         SURFACE_PLUGIN_SHA256,
         RESOURCE_PLUGIN_SHA256,
@@ -635,6 +668,10 @@ fn verify_surface_assets(paths: &[PathBuf; 12]) -> Result<(), ()> {
         PROVIDER_EXPORT_SHA256,
         CARRIER_PACKAGE_SHA256,
         RESOURCE_PACKAGE_SHA256,
+        CANVAS_AGENT_SHA256,
+        CANVAS_PROJECTION_SHA256,
+        CANVAS_TASK_STATE_SHA256,
+        CANVAS_CREATION_SCHEMA_SHA256,
     ];
     for (index, (path, digest)) in paths.iter().zip(expected).enumerate() {
         let actual = if index == 8 {
@@ -697,7 +734,7 @@ fn acquire_verified_exact_file(
     Ok(lease)
 }
 
-fn materialize_surface_patch(root: &Path, assets: &[PathBuf; 12]) -> Result<(PathBuf, String), ()> {
+fn materialize_surface_patch(root: &Path, assets: &[PathBuf; 16]) -> Result<(PathBuf, String), ()> {
     let template = std::fs::read_to_string(&assets[3])
         .map_err(|_| ())?
         .replace("\r\n", "\n");
@@ -741,8 +778,8 @@ fn materialize_surface_patch(root: &Path, assets: &[PathBuf; 12]) -> Result<(Pat
 
 fn materialize_surface_modules(
     root: &Path,
-    assets: &[PathBuf; 12],
-) -> Result<([PathBuf; 11], [String; 11]), ()> {
+    assets: &[PathBuf; 16],
+) -> Result<([PathBuf; 15], [String; 15]), ()> {
     // Every carrier plugin is a real @luckyray package under
     // profiles/node_modules: the 0.1.5 loader resolves plugin entries by
     // package name and no longer loads file URL entries.
@@ -766,8 +803,12 @@ fn materialize_surface_modules(
         ("dsh-lightseek-ui", "package.json", 6usize),
         ("dsh-lightseek-ui", "client.js", 7usize),
         ("dsh-lightseek-ui", "lightseek-cosmic-home.webp", 8usize),
+        ("dsh-authenticated-webserver", "luckyray-dsh-canvas-agent.mjs", 12usize),
+        ("dsh-authenticated-webserver", "luckyray-dsh-canvas-projection.mjs", 13usize),
+        ("dsh-authenticated-webserver", "luckyray-dsh-canvas-task-state.mjs", 14usize),
+        ("dsh-authenticated-webserver", "luckyray-dsh-canvas-creation-schema.mjs", 15usize),
     ];
-    let mut targets: [PathBuf; 11] = std::array::from_fn(|_| PathBuf::new());
+    let mut targets: [PathBuf; 15] = std::array::from_fn(|_| PathBuf::new());
     for (index, (package, file, _)) in packages.iter().enumerate() {
         let directory = root
             .join("profiles")
@@ -780,7 +821,7 @@ fn materialize_surface_modules(
         }
         targets[index] = directory.join(file);
     }
-    let mut digests: [String; 11] = std::array::from_fn(|_| String::new());
+    let mut digests: [String; 15] = std::array::from_fn(|_| String::new());
     for index in 0..targets.len() {
         let source = std::fs::read(&assets[packages[index].2]).map_err(|_| ())?;
         let max_bytes = if packages[index].1.ends_with(".webp") {
@@ -916,6 +957,368 @@ fn hash_normalized_host_script(path: &Path) -> Result<String, ()> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
+fn canvas_agent_id(value: Option<&serde_json::Value>) -> bool {
+    value.and_then(serde_json::Value::as_str).map(|id| {
+        !id.is_empty() && id.len() <= 160
+            && id.as_bytes()[0].is_ascii_alphanumeric()
+            && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_.:-".contains(&byte))
+    }).unwrap_or(false)
+}
+
+fn canvas_agent_fields(value: &serde_json::Value, allowed: &[&str], required: &[&str]) -> bool {
+    value.as_object().map(|o| o.keys().all(|k| allowed.contains(&k.as_str())) && required.iter().all(|k| o.contains_key(*k))).unwrap_or(false)
+}
+fn canvas_agent_text(value: Option<&serde_json::Value>, max: usize, empty: bool) -> bool {
+    value.and_then(serde_json::Value::as_str).map(|v| v.chars().count() <= max && (empty || !v.trim().is_empty())
+        && !v.chars().any(|c| c == '\u{7f}' || (c < ' ' && !['\n','\r','\t'].contains(&c)))).unwrap_or(false)
+}
+fn canvas_agent_count(value: Option<&serde_json::Value>, max: u64) -> bool {
+    value.and_then(serde_json::Value::as_u64).map(|v| v <= max).unwrap_or(false)
+}
+fn canvas_agent_revision(value: Option<&serde_json::Value>) -> bool {
+    value.and_then(serde_json::Value::as_str).map(|s|s.len()==16 && s.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b))).unwrap_or(false)
+}
+fn canvas_agent_context_valid(c: &serde_json::Value, canvas_id: &str, images: bool) -> bool {
+    let keys = ["version","canvasId","canvasName","nodes","connections","generation"];
+    if !canvas_agent_fields(c,&["version","canvasId","canvasName","nodes","connections","generation","snapshotRevision","coverage"],&keys)
+        || c.get("snapshotRevision").map(|v|!canvas_agent_revision(Some(v))).unwrap_or(false) || c.get("version").and_then(serde_json::Value::as_u64) != Some(1)
+        || c.get("canvasId").and_then(serde_json::Value::as_str) != Some(canvas_id) || !canvas_agent_text(c.get("canvasName"),256,true) { return false; }
+    let Some(nodes) = c.get("nodes").and_then(serde_json::Value::as_array) else { return false; };
+    if nodes.len() > 256 { return false; }
+    if let Some(coverage)=c.get("coverage") {
+        let keys=["mode","totalNodes","returnedNodes","offset","textComplete"];
+        if !canvas_agent_fields(coverage,&keys,&keys)
+            || !matches!(coverage.get("mode").and_then(serde_json::Value::as_str),Some("overview"|"target"|"full"))
+            || !["totalNodes","returnedNodes","offset"].iter().all(|k|canvas_agent_count(coverage.get(*k),9007199254740991))
+            || coverage["returnedNodes"].as_u64()!=Some(nodes.len() as u64)
+            || coverage["returnedNodes"].as_u64()>coverage["totalNodes"].as_u64()
+            || !coverage["textComplete"].is_boolean() {return false;}
+    }
+    let mut ids=std::collections::HashSet::new(); let mut text_bytes=0usize; let mut image_bytes=0usize; let mut image_count=0usize;
+    for n in nodes {
+        let required=["id","title","kind","text","editable","revision"];
+        let allowed=if images { vec!["id","title","kind","text","editable","revision","layout","imageUnavailable","image","textTruncated","textRange"] } else { vec!["id","title","kind","text","editable","revision","layout","imageUnavailable","textTruncated","textRange"] };
+        if !canvas_agent_fields(n,&allowed,&required) || !canvas_agent_id(n.get("id")) || !ids.insert(n.get("id").and_then(serde_json::Value::as_str).unwrap_or(""))
+            || !canvas_agent_text(n.get("title"),256,true) || !canvas_agent_text(n.get("text"),24000,true)
+            || !matches!(n.get("kind").and_then(serde_json::Value::as_str),Some("text"|"image"|"video"|"note"|"group"))
+            || !n.get("editable").map(serde_json::Value::is_boolean).unwrap_or(false)
+            || !n.get("revision").and_then(serde_json::Value::as_str).map(|r|r.len()==16 && r.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))).unwrap_or(false)
+            || n.get("layout").map(|l|!canvas_agent_fields(l,&["x","y","parentId"],&["x","y"]) || !["x","y"].iter().all(|k|l.get(*k).and_then(serde_json::Value::as_f64).map(|n|n.is_finite()&&n.abs()<=1e7).unwrap_or(false)) || l.get("parentId").map(|id|!canvas_agent_id(Some(id))).unwrap_or(false)).unwrap_or(false)
+            || n.get("imageUnavailable").map(|v|!v.is_boolean()).unwrap_or(false) { return false; }
+        if n.get("textTruncated").map(|v|!v.is_boolean()).unwrap_or(false) {return false;}
+        if let Some(range)=n.get("textRange") {
+            let keys=["start","end","total"];
+            if !canvas_agent_fields(range,&keys,&keys) || !keys.iter().all(|k|canvas_agent_count(range.get(*k),9007199254740991)) {return false;}
+            let start=range["start"].as_u64().unwrap();let end=range["end"].as_u64().unwrap();let total=range["total"].as_u64().unwrap();
+            if start>end || end>total || end-start!=n["text"].as_str().unwrap_or("").encode_utf16().count() as u64 {return false;}
+        }
+        text_bytes += n.get("text").and_then(serde_json::Value::as_str).unwrap_or("").len();
+        if let Some(image)=n.get("image") {
+            if !matches!(n.get("kind").and_then(serde_json::Value::as_str),Some("image"|"video")) || !canvas_agent_fields(image,&["mimeType","data"],&["mimeType","data"]) || !matches!(image.get("mimeType").and_then(serde_json::Value::as_str),Some("image/jpeg"|"image/png")) { return false; }
+            let Some(data)=image.get("data").and_then(serde_json::Value::as_str) else { return false; };
+            let Ok(bytes)=base64::engine::general_purpose::STANDARD.decode(data) else { return false; };
+            if bytes.is_empty() || bytes.len()>128*1024 || base64::engine::general_purpose::STANDARD.encode(&bytes)!=data { return false; } image_bytes+=bytes.len(); image_count+=1;
+        }
+    }
+    if text_bytes>256*1024 || image_bytes>1024*1024 || image_count>8 { return false; }
+    if !c.get("connections").and_then(serde_json::Value::as_array).map(|edges|edges.len()<=2048 && edges.iter().all(|e|canvas_agent_fields(e,&["source","target"],&["source","target"])
+        && e.get("source")!=e.get("target") && e.get("source").and_then(serde_json::Value::as_str).map(|v|ids.contains(v)).unwrap_or(false) && e.get("target").and_then(serde_json::Value::as_str).map(|v|ids.contains(v)).unwrap_or(false))).unwrap_or(false) { return false; }
+    let Some(g)=c.get("generation") else {return false;};
+    if !canvas_agent_fields(g,&["imageModels","videoModels","imageReady","videoReady","imageOptions","videoOptions"],&["imageModels","videoModels","imageReady","videoReady"])
+        || !["imageReady","videoReady"].iter().all(|k|g.get(*k).map(serde_json::Value::is_boolean).unwrap_or(false))
+        || !["imageModels","videoModels"].iter().all(|k|g.get(*k).and_then(serde_json::Value::as_array).map(|a|a.len()<=32 && a.iter().all(|v|canvas_agent_text(Some(v),160,false))).unwrap_or(false)) { return false; }
+    ["imageOptions","videoOptions"].iter().all(|k|g.get(*k).map(|o|canvas_agent_fields(o,&["aspects","resolutions","qualities","durations"],&["aspects","resolutions","qualities","durations"])
+        && ["aspects","resolutions","qualities"].iter().all(|k|o.get(*k).and_then(serde_json::Value::as_array).map(|a|a.len()<=32 && a.iter().all(|v|canvas_agent_text(Some(v),160,false))).unwrap_or(false))
+        && o.get("durations").and_then(serde_json::Value::as_array).map(|a|a.len()<=32 && a.iter().all(|v|v.as_f64().map(|n|n.is_finite()&&n>0.0).unwrap_or(false))).unwrap_or(false)).unwrap_or(true))
+}
+fn canvas_agent_plan_valid(p: &serde_json::Value, canvas_id: &str, run_id: Option<&serde_json::Value>) -> bool {
+    let keys=["version","id","canvasId","runId","title","summary","steps"];
+    serde_json::to_vec(p).map(|bytes|bytes.len()<=256*1024).unwrap_or(false) && canvas_agent_fields(p,&keys,&keys) && p.get("version").and_then(serde_json::Value::as_u64)==Some(1) && canvas_agent_id(p.get("id"))
+        && p.get("canvasId").and_then(serde_json::Value::as_str)==Some(canvas_id) && p.get("runId")==run_id && canvas_agent_id(p.get("runId"))
+        && canvas_agent_text(p.get("title"),160,true) && canvas_agent_text(p.get("summary"),2000,true)
+        && p.get("steps").and_then(serde_json::Value::as_array).map(|steps|!steps.is_empty() && steps.len()<=64 && steps.iter().all(|step|
+            canvas_agent_fields(step,&["id","kind","title","content","references","targetNodeId","settings"],&["id","kind","title","content","references"])
+            && canvas_agent_id(step.get("id")) && matches!(step.get("kind").and_then(serde_json::Value::as_str),Some("text"|"image"|"video"))
+            && canvas_agent_text(step.get("title"),160,true) && canvas_agent_text(step.get("content"),16000,true)
+            && step.get("references").and_then(serde_json::Value::as_array).map(|a|a.len()<=256 && a.iter().all(|v|canvas_agent_id(Some(v)))).unwrap_or(false)
+            && step.get("targetNodeId").map(|v|canvas_agent_id(Some(v))).unwrap_or(true)
+            && step.get("settings").map(|v|canvas_agent_fields(v,&["aspect","resolution","quality","duration"],&[]) && v.as_object().unwrap().iter().all(|(k,v)|if k=="duration" {v.is_number()} else {canvas_agent_text(Some(v),160,false)})).unwrap_or(true))).unwrap_or(false)
+}
+fn canvas_agent_execution_valid(e: &serde_json::Value) -> bool { canvas_agent_execution_state_valid(e,false) }
+fn canvas_agent_execution_state_valid(e: &serde_json::Value, snapshot: bool) -> bool {
+    canvas_agent_fields(e,if snapshot {&["mode","allowGeneration","maxMediaJobs","reservedMediaJobs"]} else {&["mode","allowGeneration","maxMediaJobs"]},&["mode","allowGeneration","maxMediaJobs"])
+        && matches!(e.get("mode").and_then(serde_json::Value::as_str),Some("plan"|"autonomous")) && e.get("allowGeneration").map(serde_json::Value::is_boolean).unwrap_or(false)
+        && canvas_agent_count(e.get("maxMediaJobs"),1000) && e.get("reservedMediaJobs").map(|v|canvas_agent_count(Some(v),e.get("maxMediaJobs").and_then(serde_json::Value::as_u64).unwrap_or(0))).unwrap_or(true) && (e.get("allowGeneration").and_then(serde_json::Value::as_bool)==Some(false)
+            || e.get("mode").and_then(serde_json::Value::as_str)==Some("autonomous") && e.get("maxMediaJobs").and_then(serde_json::Value::as_u64).unwrap_or(0)>0)
+}
+
+// R11 fixed canvas creation schemas, mirrored by the TS and authenticated JS contracts.
+const CANVAS_CREATION_SCHEMAS_JSON: &str = r###"{"read":{"type":"object","properties":{"scope":{"enum":["overview","referencePacks","templates","storyboards","shots","review","directions","delivery","scriptText","directorScene","directorObjects","directorShots"]},"objectId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"offset":{"type":"integer","minimum":0,"maximum":1000000},"expectedRevision":{"type":"string","maxLength":16,"minLength":16,"pattern":"^[a-f0-9]{16}$"}},"required":["scope"],"additionalProperties":false,"minProperties":0},"edit":{"oneOf":[{"type":"object","properties":{"expectedRevision":{"type":"string","maxLength":16,"minLength":16,"pattern":"^[a-f0-9]{16}$"},"operation":{"oneOf":[{"type":"object","properties":{"op":{"const":"referencePack.create"},"name":{"type":"string","maxLength":60,"minLength":1},"packKind":{"enum":["character","product","style"]},"nodeIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":1,"maxItems":256,"uniqueItems":true}},"required":["op","name","packKind","nodeIds"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"referencePack.update"},"packId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"name":{"type":"string","maxLength":60,"minLength":1},"packKind":{"enum":["character","product","style"]},"nodeIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":1,"maxItems":256,"uniqueItems":true}},"required":["op","packId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"referencePack.unmark"},"packId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","packId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"referencePack.apply"},"packId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"targetId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","packId","targetId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"template.instantiate"},"templateId":{"enum":["builtin-0","builtin-1","builtin-2","builtin-3"]}},"required":["op","templateId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"storyboard.create"},"name":{"type":"string","maxLength":60,"minLength":1},"nodeIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":0,"maxItems":64,"uniqueItems":true}},"required":["op","name"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"storyboard.rename"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"name":{"type":"string","maxLength":60,"minLength":1}},"required":["op","boardId","name"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"storyboard.unmark"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","boardId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"storyboard.importScript"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"sourceText":{"type":"string","maxLength":100000,"minLength":1}},"required":["op","boardId","sourceText"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.add"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"kind":{"enum":["image","video"]},"fields":{"type":"object","properties":{"title":{"type":"string","maxLength":100,"minLength":0},"description":{"type":"string","maxLength":4000,"minLength":0},"action":{"type":"string","maxLength":2000,"minLength":0},"dialogue":{"type":"string","maxLength":2000,"minLength":0},"lighting":{"type":"string","maxLength":2000,"minLength":0},"sound":{"type":"string","maxLength":2000,"minLength":0},"cameraMovement":{"type":"string","maxLength":2000,"minLength":0},"durationSeconds":{"type":"number","minimum":0.1,"maximum":3600},"framing":{"enum":["wide","full","medium","close","detail"]}},"required":[],"additionalProperties":false,"minProperties":1}},"required":["op","boardId","kind","fields"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.update"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"fields":{"type":"object","properties":{"title":{"type":"string","maxLength":100,"minLength":0},"description":{"type":"string","maxLength":4000,"minLength":0},"action":{"type":"string","maxLength":2000,"minLength":0},"dialogue":{"type":"string","maxLength":2000,"minLength":0},"lighting":{"type":"string","maxLength":2000,"minLength":0},"sound":{"type":"string","maxLength":2000,"minLength":0},"cameraMovement":{"type":"string","maxLength":2000,"minLength":0},"durationSeconds":{"type":"number","minimum":0.1,"maximum":3600},"framing":{"enum":["wide","full","medium","close","detail"]}},"required":[],"additionalProperties":false,"minProperties":1},"prompt":{"type":"string","maxLength":16000,"minLength":0}},"required":["op","boardId","shotId","fields"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.duplicate"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","boardId","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.detach"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","boardId","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.clearChoice"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","boardId","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.reorder"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":1,"maxItems":64,"uniqueItems":true}},"required":["op","boardId","shotIds"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.adopt"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"candidateIndex":{"type":"integer","minimum":0,"maximum":99999}},"required":["op","boardId","shotId","candidateIndex"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"generator.recipe"},"nodeId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"recipe":{"oneOf":[{"type":"null"},{"type":"object","properties":{"version":{"const":1},"id":{"const":"story-grid"},"options":{"type":"object","properties":{"grid":{"enum":["2x2","3x3","5x5"]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"blocking-board"},"options":{"type":"object","properties":{"grid":{"enum":["2x2","3x3","5x5"]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"multi-angle"},"options":{"type":"object","properties":{},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"character-sheet"},"options":{"type":"object","properties":{},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"scene-sheet"},"options":{"type":"object","properties":{},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"product-sheet"},"options":{"type":"object","properties":{},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"time-shift"},"options":{"type":"object","properties":{"direction":{"enum":["before","after"]},"seconds":{"enum":[3,5]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"relight"},"options":{"type":"object","properties":{"lighting":{"enum":["soft-daylight","golden-hour","neon-night","studio"]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"cinematic-grade"},"options":{"type":"object","properties":{"tone":{"enum":["natural-film","warm-vintage","cool-suspense","black-white"]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0}]}},"required":["op","nodeId","recipe"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"generator.cinematography"},"nodeId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"settings":{"type":"object","properties":{"version":{"const":1},"enabled":{"type":"boolean"},"camera":{"enum":["auto","sony-venice","arri-alexa-35","arri-alexa-65","red-v-raptor","panavision-dxl2","arricam-lt","arriflex-435","imax"]},"lens":{"enum":["auto","zeiss-ultra-prime","cooke-sf-1.8x","canon-k35","cooke-s4","cooke-panchro","arri-signature","helios","panavision","hawk"]},"focalLength":{"enum":["auto","8","14","24","35","50","75","125"]},"aperture":{"enum":["auto","1.4","4","11"]},"framing":{"enum":["auto","extreme-wide","wide","full","medium","close-up","extreme-close-up"]},"angle":{"enum":["auto","eye-level","low","high","overhead","dutch"]},"movement":{"enum":["auto","static","pan","tilt","dolly-in","dolly-out","tracking","orbit","handheld"]}},"required":["version","enabled","camera","lens","focalLength","aperture","framing","angle","movement"],"additionalProperties":false,"minProperties":0}},"required":["op","nodeId","settings"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"reference.role"},"sourceId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"targetId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"role":{"enum":["generic","reference","promptContext","firstFrame","lastFrame","videoReference"]}},"required":["op","sourceId","targetId","role"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"reference.order"},"targetId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"sourceIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":1,"maxItems":256,"uniqueItems":true}},"required":["op","targetId","sourceIds"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"review.prefer"},"historyId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"mediaIndex":{"type":"integer","minimum":0,"maximum":99999},"preferred":{"type":"boolean"}},"required":["op","historyId","mediaIndex","preferred"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"review.restore"},"historyId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"mediaIndex":{"type":"integer","minimum":0,"maximum":99999}},"required":["op","historyId","mediaIndex"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"review.continue"},"historyId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"mediaIndex":{"type":"integer","minimum":0,"maximum":99999}},"required":["op","historyId","mediaIndex"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"director.create"},"name":{"type":"string","minLength":1,"maxLength":60}},"required":["op","name"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"director.edit"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"change":{"oneOf":[{"type":"object","properties":{"action":{"const":"object.add"},"kind":{"type":"string","enum":["actor","box","sphere","cylinder","wall","platform"],"maxLength":160,"minLength":0},"name":{"type":"string","maxLength":120,"minLength":1},"position":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3}},"required":["action","kind"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"object.update"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"patch":{"type":"object","properties":{"name":{"type":"string","maxLength":120,"minLength":1},"position":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"rotation":{"type":"array","items":{"type":"number","minimum":-3600,"maximum":3600},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number","minimum":0.05,"maximum":100},"minItems":3,"maxItems":3},"color":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0},"visible":{"type":"boolean"},"locked":{"type":"boolean"}},"required":[],"additionalProperties":false,"minProperties":1}},"required":["action","objectId","patch"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"pose.preset"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"preset":{"type":"string","enum":["stand","sit","walk","kneel","reach","wave","crouch"],"maxLength":160,"minLength":0}},"required":["action","objectId","preset"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"pose.joint"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"joint":{"type":"string","enum":["pelvis","spine","chest","neck","head","leftShoulder","leftUpperArm","leftForearm","leftHand","leftThigh","leftShin","leftFoot","rightShoulder","rightUpperArm","rightForearm","rightHand","rightThigh","rightShin","rightFoot"],"maxLength":160,"minLength":0},"rotation":{"type":"array","items":{"type":"number","minimum":-3600,"maximum":3600},"minItems":3,"maxItems":3}},"required":["action","objectId","joint","rotation"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"pose.ik"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"limb":{"type":"string","enum":["leftArm","rightArm","leftLeg","rightLeg"],"maxLength":160,"minLength":0},"target":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"pole":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"space":{"const":"actor-local"}},"required":["action","objectId","limb","target","space"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"pose.mirror"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"}},"required":["action","objectId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"camera.update"},"patch":{"type":"object","properties":{"position":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"target":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"up":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"focalLength":{"type":"number","minimum":12,"maximum":200},"aspect":{"type":"string","enum":["16:9","9:16","4:3","1:1","2.39:1"],"maxLength":160,"minLength":0}},"required":[],"additionalProperties":false,"minProperties":1}},"required":["action","patch"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"camera.preset"},"preset":{"type":"string","enum":["wide","medium","close","overhead"],"maxLength":160,"minLength":0}},"required":["action","preset"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"camera.lookAt"},"target":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3}},"required":["action","target"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"lighting.update"},"patch":{"type":"object","properties":{"preset":{"type":"string","enum":["studio","day","night"],"maxLength":160,"minLength":0},"intensity":{"type":"number","minimum":0,"maximum":10},"azimuth":{"type":"number","minimum":-360,"maximum":360},"elevation":{"type":"number","minimum":1,"maximum":89},"color":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0},"ambient":{"type":"number","minimum":0,"maximum":3},"background":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0},"ground":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0}},"required":[],"additionalProperties":false,"minProperties":1}},"required":["action","patch"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"lighting.preset"},"preset":{"type":"string","enum":["studio","day","night"],"maxLength":160,"minLength":0}},"required":["action","preset"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"presentation.update"},"mode":{"type":"string","enum":["original","clay"],"maxLength":160,"minLength":0},"clayColor":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0}},"required":["action","mode","clayColor"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"shot.add"},"name":{"type":"string","maxLength":120,"minLength":1},"duration":{"type":"number","minimum":0.1,"maximum":3600},"notes":{"type":"string","maxLength":8000,"minLength":0}},"required":["action","name"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"shot.update"},"shotId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"name":{"type":"string","maxLength":120,"minLength":1},"duration":{"type":"number","minimum":0.1,"maximum":3600},"notes":{"type":"string","maxLength":8000,"minLength":0},"replaceScene":{"type":"boolean"}},"required":["action","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"shot.restore"},"shotId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"}},"required":["action","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"shot.remove"},"shotId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"}},"required":["action","shotId"],"additionalProperties":false,"minProperties":0}]}},"required":["op","boardId","change"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"director.capture"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"name":{"type":"string","minLength":1,"maxLength":120}},"required":["op","boardId"],"additionalProperties":false,"minProperties":0}]}},"required":["expectedRevision","operation"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"expectedRevision":{"type":"string","maxLength":16,"minLength":16,"pattern":"^[a-f0-9]{16}$"},"operations":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"op":{"const":"referencePack.create"},"name":{"type":"string","maxLength":60,"minLength":1},"packKind":{"enum":["character","product","style"]},"nodeIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":1,"maxItems":256,"uniqueItems":true}},"required":["op","name","packKind","nodeIds"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"referencePack.update"},"packId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"name":{"type":"string","maxLength":60,"minLength":1},"packKind":{"enum":["character","product","style"]},"nodeIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":1,"maxItems":256,"uniqueItems":true}},"required":["op","packId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"referencePack.unmark"},"packId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","packId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"referencePack.apply"},"packId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"targetId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","packId","targetId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"template.instantiate"},"templateId":{"enum":["builtin-0","builtin-1","builtin-2","builtin-3"]}},"required":["op","templateId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"storyboard.create"},"name":{"type":"string","maxLength":60,"minLength":1},"nodeIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":0,"maxItems":64,"uniqueItems":true}},"required":["op","name"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"storyboard.rename"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"name":{"type":"string","maxLength":60,"minLength":1}},"required":["op","boardId","name"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"storyboard.unmark"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","boardId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"storyboard.importScript"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"sourceText":{"type":"string","maxLength":100000,"minLength":1}},"required":["op","boardId","sourceText"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.add"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"kind":{"enum":["image","video"]},"fields":{"type":"object","properties":{"title":{"type":"string","maxLength":100,"minLength":0},"description":{"type":"string","maxLength":4000,"minLength":0},"action":{"type":"string","maxLength":2000,"minLength":0},"dialogue":{"type":"string","maxLength":2000,"minLength":0},"lighting":{"type":"string","maxLength":2000,"minLength":0},"sound":{"type":"string","maxLength":2000,"minLength":0},"cameraMovement":{"type":"string","maxLength":2000,"minLength":0},"durationSeconds":{"type":"number","minimum":0.1,"maximum":3600},"framing":{"enum":["wide","full","medium","close","detail"]}},"required":[],"additionalProperties":false,"minProperties":1}},"required":["op","boardId","kind","fields"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.update"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"fields":{"type":"object","properties":{"title":{"type":"string","maxLength":100,"minLength":0},"description":{"type":"string","maxLength":4000,"minLength":0},"action":{"type":"string","maxLength":2000,"minLength":0},"dialogue":{"type":"string","maxLength":2000,"minLength":0},"lighting":{"type":"string","maxLength":2000,"minLength":0},"sound":{"type":"string","maxLength":2000,"minLength":0},"cameraMovement":{"type":"string","maxLength":2000,"minLength":0},"durationSeconds":{"type":"number","minimum":0.1,"maximum":3600},"framing":{"enum":["wide","full","medium","close","detail"]}},"required":[],"additionalProperties":false,"minProperties":1},"prompt":{"type":"string","maxLength":16000,"minLength":0}},"required":["op","boardId","shotId","fields"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.duplicate"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","boardId","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.detach"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","boardId","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.clearChoice"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"}},"required":["op","boardId","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.reorder"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":1,"maxItems":64,"uniqueItems":true}},"required":["op","boardId","shotIds"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"shot.adopt"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"shotId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"candidateIndex":{"type":"integer","minimum":0,"maximum":99999}},"required":["op","boardId","shotId","candidateIndex"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"generator.recipe"},"nodeId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"recipe":{"oneOf":[{"type":"null"},{"type":"object","properties":{"version":{"const":1},"id":{"const":"story-grid"},"options":{"type":"object","properties":{"grid":{"enum":["2x2","3x3","5x5"]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"blocking-board"},"options":{"type":"object","properties":{"grid":{"enum":["2x2","3x3","5x5"]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"multi-angle"},"options":{"type":"object","properties":{},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"character-sheet"},"options":{"type":"object","properties":{},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"scene-sheet"},"options":{"type":"object","properties":{},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"product-sheet"},"options":{"type":"object","properties":{},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"time-shift"},"options":{"type":"object","properties":{"direction":{"enum":["before","after"]},"seconds":{"enum":[3,5]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"relight"},"options":{"type":"object","properties":{"lighting":{"enum":["soft-daylight","golden-hour","neon-night","studio"]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"version":{"const":1},"id":{"const":"cinematic-grade"},"options":{"type":"object","properties":{"tone":{"enum":["natural-film","warm-vintage","cool-suspense","black-white"]}},"required":[],"additionalProperties":false,"minProperties":0}},"required":["version","id","options"],"additionalProperties":false,"minProperties":0}]}},"required":["op","nodeId","recipe"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"generator.cinematography"},"nodeId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"settings":{"type":"object","properties":{"version":{"const":1},"enabled":{"type":"boolean"},"camera":{"enum":["auto","sony-venice","arri-alexa-35","arri-alexa-65","red-v-raptor","panavision-dxl2","arricam-lt","arriflex-435","imax"]},"lens":{"enum":["auto","zeiss-ultra-prime","cooke-sf-1.8x","canon-k35","cooke-s4","cooke-panchro","arri-signature","helios","panavision","hawk"]},"focalLength":{"enum":["auto","8","14","24","35","50","75","125"]},"aperture":{"enum":["auto","1.4","4","11"]},"framing":{"enum":["auto","extreme-wide","wide","full","medium","close-up","extreme-close-up"]},"angle":{"enum":["auto","eye-level","low","high","overhead","dutch"]},"movement":{"enum":["auto","static","pan","tilt","dolly-in","dolly-out","tracking","orbit","handheld"]}},"required":["version","enabled","camera","lens","focalLength","aperture","framing","angle","movement"],"additionalProperties":false,"minProperties":0}},"required":["op","nodeId","settings"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"reference.role"},"sourceId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"targetId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"role":{"enum":["generic","reference","promptContext","firstFrame","lastFrame","videoReference"]}},"required":["op","sourceId","targetId","role"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"reference.order"},"targetId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"sourceIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":1,"maxItems":256,"uniqueItems":true}},"required":["op","targetId","sourceIds"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"review.prefer"},"historyId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"mediaIndex":{"type":"integer","minimum":0,"maximum":99999},"preferred":{"type":"boolean"}},"required":["op","historyId","mediaIndex","preferred"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"review.restore"},"historyId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"mediaIndex":{"type":"integer","minimum":0,"maximum":99999}},"required":["op","historyId","mediaIndex"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"review.continue"},"historyId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"mediaIndex":{"type":"integer","minimum":0,"maximum":99999}},"required":["op","historyId","mediaIndex"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"director.create"},"name":{"type":"string","minLength":1,"maxLength":60}},"required":["op","name"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"op":{"const":"director.edit"},"boardId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"change":{"oneOf":[{"type":"object","properties":{"action":{"const":"object.add"},"kind":{"type":"string","enum":["actor","box","sphere","cylinder","wall","platform"],"maxLength":160,"minLength":0},"name":{"type":"string","maxLength":120,"minLength":1},"position":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3}},"required":["action","kind"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"object.update"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"patch":{"type":"object","properties":{"name":{"type":"string","maxLength":120,"minLength":1},"position":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"rotation":{"type":"array","items":{"type":"number","minimum":-3600,"maximum":3600},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number","minimum":0.05,"maximum":100},"minItems":3,"maxItems":3},"color":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0},"visible":{"type":"boolean"},"locked":{"type":"boolean"}},"required":[],"additionalProperties":false,"minProperties":1}},"required":["action","objectId","patch"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"pose.preset"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"preset":{"type":"string","enum":["stand","sit","walk","kneel","reach","wave","crouch"],"maxLength":160,"minLength":0}},"required":["action","objectId","preset"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"pose.joint"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"joint":{"type":"string","enum":["pelvis","spine","chest","neck","head","leftShoulder","leftUpperArm","leftForearm","leftHand","leftThigh","leftShin","leftFoot","rightShoulder","rightUpperArm","rightForearm","rightHand","rightThigh","rightShin","rightFoot"],"maxLength":160,"minLength":0},"rotation":{"type":"array","items":{"type":"number","minimum":-3600,"maximum":3600},"minItems":3,"maxItems":3}},"required":["action","objectId","joint","rotation"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"pose.ik"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"limb":{"type":"string","enum":["leftArm","rightArm","leftLeg","rightLeg"],"maxLength":160,"minLength":0},"target":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"pole":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"space":{"const":"actor-local"}},"required":["action","objectId","limb","target","space"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"pose.mirror"},"objectId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"}},"required":["action","objectId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"camera.update"},"patch":{"type":"object","properties":{"position":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"target":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"up":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3},"focalLength":{"type":"number","minimum":12,"maximum":200},"aspect":{"type":"string","enum":["16:9","9:16","4:3","1:1","2.39:1"],"maxLength":160,"minLength":0}},"required":[],"additionalProperties":false,"minProperties":1}},"required":["action","patch"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"camera.preset"},"preset":{"type":"string","enum":["wide","medium","close","overhead"],"maxLength":160,"minLength":0}},"required":["action","preset"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"camera.lookAt"},"target":{"type":"array","items":{"type":"number","minimum":-1000,"maximum":1000},"minItems":3,"maxItems":3}},"required":["action","target"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"lighting.update"},"patch":{"type":"object","properties":{"preset":{"type":"string","enum":["studio","day","night"],"maxLength":160,"minLength":0},"intensity":{"type":"number","minimum":0,"maximum":10},"azimuth":{"type":"number","minimum":-360,"maximum":360},"elevation":{"type":"number","minimum":1,"maximum":89},"color":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0},"ambient":{"type":"number","minimum":0,"maximum":3},"background":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0},"ground":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0}},"required":[],"additionalProperties":false,"minProperties":1}},"required":["action","patch"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"lighting.preset"},"preset":{"type":"string","enum":["studio","day","night"],"maxLength":160,"minLength":0}},"required":["action","preset"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"presentation.update"},"mode":{"type":"string","enum":["original","clay"],"maxLength":160,"minLength":0},"clayColor":{"type":"string","pattern":"^#[a-fA-F0-9]{6}$","maxLength":160,"minLength":0}},"required":["action","mode","clayColor"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"shot.add"},"name":{"type":"string","maxLength":120,"minLength":1},"duration":{"type":"number","minimum":0.1,"maximum":3600},"notes":{"type":"string","maxLength":8000,"minLength":0}},"required":["action","name"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"shot.update"},"shotId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"},"name":{"type":"string","maxLength":120,"minLength":1},"duration":{"type":"number","minimum":0.1,"maximum":3600},"notes":{"type":"string","maxLength":8000,"minLength":0},"replaceScene":{"type":"boolean"}},"required":["action","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"shot.restore"},"shotId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"}},"required":["action","shotId"],"additionalProperties":false,"minProperties":0},{"type":"object","properties":{"action":{"const":"shot.remove"},"shotId":{"type":"string","maxLength":120,"minLength":1,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"}},"required":["action","shotId"],"additionalProperties":false,"minProperties":0}]}},"required":["op","boardId","change"],"additionalProperties":false,"minProperties":0}]},"minItems":1,"maxItems":64}},"required":["expectedRevision","operations"],"additionalProperties":false,"minProperties":0}]},"open":{"type":"object","properties":{"expectedRevision":{"type":"string","maxLength":16,"minLength":16,"pattern":"^[a-f0-9]{16}$"},"panel":{"enum":["imageTools","delivery","templateImport","templateExport","storyboardExport"]},"nodeIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":0,"maxItems":256,"uniqueItems":true},"objectId":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"imageIndex":{"type":"integer","minimum":0,"maximum":63},"imageEdit":{"type":"object","properties":{"turns":{"type":"integer","minimum":0,"maximum":3},"flipX":{"type":"boolean"},"flipY":{"type":"boolean"},"crop":{"type":"object","properties":{"x":{"type":"number","minimum":0,"maximum":1},"y":{"type":"number","minimum":0,"maximum":1},"width":{"type":"number","minimum":1e-06,"maximum":1},"height":{"type":"number","minimum":1e-06,"maximum":1}},"required":["x","y","width","height"],"additionalProperties":false,"minProperties":0},"width":{"type":"integer","minimum":1,"maximum":8192},"height":{"type":"integer","minimum":1,"maximum":8192}},"required":["turns","flipX","flipY","crop","width","height"],"additionalProperties":false,"minProperties":0}},"required":["expectedRevision","panel"],"additionalProperties":false,"minProperties":0},"result":{"type":"object","properties":{"version":{"const":1},"revision":{"type":"string","maxLength":16,"minLength":16,"pattern":"^[a-f0-9]{16}$"},"scope":{"enum":["overview","referencePacks","templates","storyboards","shots","review","directions","delivery","scriptText","directorScene","directorObjects","directorShots"]},"offset":{"type":"integer","minimum":0,"maximum":1000000},"total":{"type":"integer","minimum":0,"maximum":1000000},"nextOffset":{"type":"integer","minimum":0,"maximum":1000000},"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","maxLength":160,"minLength":1},"kind":{"type":"string","maxLength":80,"minLength":1},"title":{"type":"string","maxLength":240,"minLength":0},"description":{"type":"string","maxLength":16000,"minLength":0},"memberIds":{"type":"array","items":{"type":"string","maxLength":160,"minLength":0,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},"minItems":0,"maxItems":256,"uniqueItems":true},"fields":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string","maxLength":80,"minLength":1},"value":{"type":"string","maxLength":4000,"minLength":0}},"required":["name","value"],"additionalProperties":false,"minProperties":0},"minItems":0,"maxItems":64,"uniqueItems":true}},"required":["id","kind","title","description"],"additionalProperties":false,"minProperties":0},"minItems":0,"maxItems":32,"uniqueItems":true},"completion":{"enum":["read","applied","awaiting-user","applied-unconfirmed"]},"notice":{"type":"string","maxLength":4000,"minLength":0}},"required":["version","revision","scope","offset","total","items","completion"],"additionalProperties":false,"minProperties":0}}"###;
+fn canvas_creation_schema_match(value: &serde_json::Value, schema: &serde_json::Value) -> bool {
+    if let Some(options)=schema.get("oneOf").and_then(serde_json::Value::as_array) { return options.iter().filter(|s|canvas_creation_schema_match(value,s)).count()==1; }
+    if schema.get("const").map(|expected|expected!=value).unwrap_or(false) {return false;}
+    if schema.get("enum").and_then(serde_json::Value::as_array).map(|values|!values.contains(value)).unwrap_or(false) {return false;}
+    let Some(kind)=schema.get("type").and_then(serde_json::Value::as_str) else{return true;};
+    let number=|key:&str|schema.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    match kind {
+        "null"=>value.is_null(),
+        "boolean"=>value.is_boolean(),
+        "string"=>value.as_str().map(|v| {
+            let len=v.encode_utf16().count();
+            len>=number("minLength") as usize && len<=number("maxLength") as usize
+            && !v.chars().any(|c| matches!(c as u32,0..=8|11|12|14..=31|127))
+            && schema.get("pattern").and_then(serde_json::Value::as_str).map(|p|match p {
+                "^[a-f0-9]{16}$"=>canvas_agent_revision(Some(value)),
+                "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"=>canvas_agent_id(Some(value)),
+                "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$"=>v.len()<=120 && canvas_agent_id(Some(value)),
+                "^#[a-fA-F0-9]{6}$"=>v.len()==7 && v.starts_with('#') && v.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit),
+                _=>false,
+            }).unwrap_or(true)
+        }).unwrap_or(false),
+        "number"|"integer"=>value.as_f64().map(|v|v.is_finite() && v>=number("minimum") && v<=number("maximum") && (kind!="integer"||(v.fract()==0.0 && v.abs()<=9007199254740991.0))).unwrap_or(false),
+        "array"=>value.as_array().map(|values| {
+            let unique=values.iter().map(|v|v.to_string()).collect::<std::collections::HashSet<_>>();
+            values.len()>=number("minItems") as usize && values.len()<=number("maxItems") as usize
+                && (schema.get("uniqueItems").and_then(serde_json::Value::as_bool)!=Some(true)||unique.len()==values.len())
+                && schema.get("items").map(|item|values.iter().all(|v|canvas_creation_schema_match(v,item))).unwrap_or(false)
+        }).unwrap_or(false),
+        "object"=>value.as_object().map(|obj| {
+            obj.len()>=number("minProperties") as usize
+                && schema.get("required").and_then(serde_json::Value::as_array).map(|req|req.iter().all(|k|k.as_str().map(|k|obj.contains_key(k)).unwrap_or(false))).unwrap_or(false)
+                && obj.iter().all(|(k,v)|schema.get("properties").and_then(|p|p.get(k)).map(|s|canvas_creation_schema_match(v,s)).unwrap_or(false))
+        }).unwrap_or(false),
+        _=>false,
+    }
+}
+fn canvas_creation_valid(value: &serde_json::Value, kind:&str) -> bool {
+    static SCHEMAS:std::sync::OnceLock<serde_json::Value>=std::sync::OnceLock::new();
+    let schemas=SCHEMAS.get_or_init(||serde_json::from_str(CANVAS_CREATION_SCHEMAS_JSON).expect("fixed canvas creation schema"));
+    if !schemas.get(kind).map(|s|canvas_creation_schema_match(value,s)).unwrap_or(false)
+        || !serde_json::to_vec(value).map(|v|v.len()<=if kind=="result" {128*1024}else{256*1024}).unwrap_or(false) {return false;}
+    if kind=="read" && value.get("scope").and_then(serde_json::Value::as_str)==Some("scriptText") && value.get("objectId").is_none() {return false;}
+    if kind=="read" && value.get("offset").and_then(serde_json::Value::as_u64).unwrap_or(0)>0 && value.get("expectedRevision").is_none() {return false;}
+    if kind=="edit" {
+        let operations:Vec<&serde_json::Value>=if let Some(batch)=value.get("operations").and_then(serde_json::Value::as_array) {batch.iter().collect()} else {value.get("operation").into_iter().collect()};
+        if operations.iter().any(|operation|operation.get("op").and_then(serde_json::Value::as_str)==Some("referencePack.update") && operation.as_object().map(|o|o.len()<3).unwrap_or(true)) {return false;}
+    }
+    if kind=="open" && value.get("imageIndex").is_some() && value.get("panel").and_then(serde_json::Value::as_str)!=Some("imageTools") {return false;}
+    if kind=="open" {if let Some(edit)=value.get("imageEdit") {
+        let n=|o:&serde_json::Value,k:&str|o.get(k).and_then(serde_json::Value::as_f64).unwrap_or(f64::INFINITY);
+        let crop=&edit["crop"];
+        if value.get("panel").and_then(serde_json::Value::as_str)!=Some("imageTools") || n(edit,"width")*n(edit,"height")>32000000.0 || n(crop,"x")+n(crop,"width")>1.000001 || n(crop,"y")+n(crop,"height")>1.000001 {return false;}
+    }}
+    if kind=="result" {
+        let offset=value["offset"].as_u64().unwrap_or(0);let total=value["total"].as_u64().unwrap_or(0);
+        if offset>total || value.get("nextOffset").and_then(serde_json::Value::as_u64).map(|next|next<=offset||next>=total).unwrap_or(false){return false;}
+    }
+    true
+}
+fn canvas_creation_action_valid(a:&serde_json::Value)->bool {
+    let (kind,field)=match a.get("kind").and_then(serde_json::Value::as_str) {
+        Some("readCreation")=>("read","creationQuery"),Some("editCreation")=>("edit","creationEdit"),Some("openCreation")=>("open","creationOpen"),
+        _=>return ["creationQuery","creationEdit","creationOpen"].iter().all(|k|a.get(*k).is_none()),
+    };
+    ["plan","generate","operations","nodeIds","offset","expectedRevision","readMode","textOffset"].iter().all(|k|a.get(*k).is_none()) && a.get("context").is_some()
+        && (kind=="read" || a.get("execution").and_then(|e|e.get("mode")).and_then(serde_json::Value::as_str)==Some("autonomous"))
+        && ["creationQuery","creationEdit","creationOpen"].iter().all(|k|if *k==field {a.get(*k).map(|v|canvas_creation_valid(v,kind)).unwrap_or(false)}else{a.get(*k).is_none()})
+}
+fn canvas_agent_action_result_valid(r: &serde_json::Value, canvas_id: &str) -> bool {
+    canvas_agent_fields(r,&["status","summary","context","generatedJobs","nodes","creation","operationReceipts"],&["status","summary","generatedJobs"])
+        && matches!(r.get("status").and_then(serde_json::Value::as_str),Some("completed"|"failed"|"cancelled")) && canvas_agent_text(r.get("summary"),8000,true) && canvas_agent_count(r.get("generatedJobs"),1000)
+        && r.get("operationReceipts").map(|receipts|r.get("status").and_then(serde_json::Value::as_str)==Some("completed") && receipts.as_array().map(|items|items.len()<=64 && items.iter().enumerate().all(|(index,item)|canvas_agent_fields(item,&["index","summary"],&["index","summary"]) && item.get("index").and_then(serde_json::Value::as_u64)==Some(index as u64) && canvas_agent_text(item.get("summary"),4000,true))).unwrap_or(false)).unwrap_or(true)
+        && r.get("creation").map(|v|canvas_creation_valid(v,"result") && r.get("status").and_then(serde_json::Value::as_str)==Some(if v.get("completion").and_then(serde_json::Value::as_str)==Some("applied-unconfirmed") {"failed"}else{"completed"})).unwrap_or(true)
+        && r.get("context").map(|v|canvas_agent_context_valid(v,canvas_id,true)).unwrap_or(true)
+        && r.get("nodes").map(|v|v.as_array().map(|a|a.len()<=256 && a.iter().all(|n|canvas_agent_fields(n,&["id","status","summary"],&["id","status"]) && canvas_agent_id(n.get("id"))
+            && matches!(n.get("status").and_then(serde_json::Value::as_str),Some("completed"|"failed"|"cancelled")) && n.get("summary").map(|v|canvas_agent_text(Some(v),4000,true)).unwrap_or(true))).unwrap_or(false)).unwrap_or(true)
+}
+
+/// Single-purpose authenticated canvas command; never an arbitrary runtime proxy.
+fn encode_canvas_agent_request(request: &serde_json::Value) -> Result<String, String> {
+    let invalid=||"canvas-agent-invalid-request".to_owned();
+    let object=request.as_object().ok_or_else(invalid)?;
+    if !canvas_agent_id(object.get("canvasId")) {return Err(invalid());}
+    let canvas_id=object.get("canvasId").and_then(serde_json::Value::as_str).ok_or_else(invalid)?;
+    let valid=match object.get("op").and_then(serde_json::Value::as_str) {
+        Some("status"|"models"|"history")=>canvas_agent_fields(request,&["op","canvasId"],&["op","canvasId"]),
+        Some("cancel")=>canvas_agent_fields(request,&["op","canvasId","runId"],&["op","canvasId","runId"]) && canvas_agent_id(object.get("runId")),
+        Some("newConversation")=>canvas_agent_fields(request,&["op","canvasId","requestId","expectedConversationId"],&["op","canvasId","requestId","expectedConversationId"]) && canvas_agent_id(object.get("requestId")) && canvas_agent_id(object.get("expectedConversationId")),
+        Some("resumeConversation")=>canvas_agent_fields(request,&["op","canvasId","requestId","expectedConversationId","conversationId"],&["op","canvasId","requestId","expectedConversationId","conversationId"]) && ["requestId","expectedConversationId","conversationId"].iter().all(|k|canvas_agent_id(object.get(*k))),
+        Some("actionResult")=>canvas_agent_fields(request,&["op","canvasId","runId","actionId","result"],&["op","canvasId","runId","actionId","result"]) && canvas_agent_id(object.get("runId")) && canvas_agent_id(object.get("actionId")) && object.get("result").map(|v|canvas_agent_action_result_valid(v,canvas_id)).unwrap_or(false),
+        Some("start")=>canvas_agent_fields(request,&["op","canvasId","conversationId","requestId","prompt","context","modelSelection","execution"],&["op","canvasId","conversationId","requestId","prompt","context"])
+            && canvas_agent_id(object.get("requestId")) && canvas_agent_id(object.get("conversationId")) && canvas_agent_text(object.get("prompt"),48000,false)
+            && object.get("context").map(|v|canvas_agent_context_valid(v,canvas_id,true)).unwrap_or(false)
+            && object.get("execution").map(canvas_agent_execution_valid).unwrap_or(true)
+            && object.get("modelSelection").map(|v|canvas_agent_fields(v,&["provider","model","reasoningEffort"],&["provider","model"]) && v.as_object().unwrap().values().all(|v|canvas_agent_text(Some(v),160,false))).unwrap_or(true),
+        _=>false,
+    };
+    if !valid {return Err(invalid());}
+    let bytes=serde_json::to_vec(request).map_err(|_|invalid())?;
+    if bytes.len()>MAX_CANVAS_AGENT_JSON_BYTES {return Err(invalid());}
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn canvas_agent_reasoning_valid(value: &serde_json::Value) -> bool {
+    let text = |v: Option<&serde_json::Value>, max: usize| v.and_then(serde_json::Value::as_str)
+        .map(|s| !s.trim().is_empty() && s.chars().count() <= max && !s.chars().any(char::is_control)).unwrap_or(false);
+    value.as_object().map(|r| r.keys().all(|k| ["efforts", "defaultEffort"].contains(&k.as_str()))
+        && r.get("efforts").and_then(serde_json::Value::as_array).map(|efforts| !efforts.is_empty() && efforts.len() <= 32
+            && efforts.iter().all(|e| e.as_object().map(|e| e.keys().all(|k| ["id", "name", "description"].contains(&k.as_str()))
+                && text(e.get("id"),160) && text(e.get("name"),160) && e.get("description").map(|v| text(Some(v),640)).unwrap_or(true)).unwrap_or(false))
+            && efforts.iter().filter_map(|e| e.get("id").and_then(serde_json::Value::as_str)).collect::<std::collections::HashSet<_>>().len() == efforts.len()
+            && r.get("defaultEffort").map(|d| efforts.iter().any(|e| e.get("id") == Some(d))).unwrap_or(true)
+        ).unwrap_or(false)).unwrap_or(false)
+}
+
+fn canvas_agent_models_valid(value: &serde_json::Value) -> bool {
+    let text = |value: Option<&serde_json::Value>, max: usize| value.and_then(serde_json::Value::as_str)
+        .map(|text| !text.trim().is_empty() && text.chars().count() <= max && !text.chars().any(char::is_control)).unwrap_or(false);
+    let selection = |value: &serde_json::Value| value.as_object().map(|item|
+        item.keys().all(|key| ["provider", "model", "reasoningEffort"].contains(&key.as_str()))
+        && text(item.get("provider"), 160) && text(item.get("model"), 160)
+        && item.get("reasoningEffort").map(|v| text(Some(v), 160)).unwrap_or(true)).unwrap_or(false);
+    value.as_object().map(|models| models.len() == 3
+        && models.keys().all(|key| ["available", "defaultModel", "currentModel"].contains(&key.as_str()))
+        && ["defaultModel", "currentModel"].iter().all(|key| models.get(*key).map(|v| v.is_null() || selection(v)).unwrap_or(false))
+        && models.get("available").and_then(serde_json::Value::as_array).map(|items| items.len() <= 256 && items.iter().all(|item|
+            item.as_object().map(|item| (item.len() == 4 || item.len() == 5)
+                && item.keys().all(|key| ["provider", "model", "label", "inputModalities", "reasoning"].contains(&key.as_str()))
+                && item.get("reasoning").map(canvas_agent_reasoning_valid).unwrap_or(true)
+                && text(item.get("provider"), 160) && text(item.get("model"), 160) && text(item.get("label"), 323)
+                && item.get("inputModalities").and_then(serde_json::Value::as_array).map(|items| items.len() <= 2
+                    && items.iter().all(|v| matches!(v.as_str(), Some("text" | "image")))).unwrap_or(false)
+            ).unwrap_or(false)
+        )).unwrap_or(false)
+    ).unwrap_or(false)
+}
+
+fn canvas_agent_activity_valid(value: &serde_json::Value) -> bool {
+    let time = |value: Option<&serde_json::Value>| value.and_then(serde_json::Value::as_u64).filter(|n| *n <= 9_007_199_254_740_991);
+    value.as_array().map(|items| items.len() <= 24 && items.iter().all(|entry| entry.as_object().map(|entry| {
+        entry.keys().all(|key| ["id", "kind", "label", "status", "startedAt", "endedAt"].contains(&key.as_str()))
+        && canvas_agent_id(entry.get("id"))
+        && matches!(entry.get("kind").and_then(serde_json::Value::as_str), Some("phase" | "tool"))
+        && matches!(entry.get("label").and_then(serde_json::Value::as_str), Some("preparing" | "resolving-model" | "opening-session" | "waiting-model" | "reading-context" | "proposing-plan" | "finalizing" | "stopping"))
+        && matches!(entry.get("status").and_then(serde_json::Value::as_str), Some("running" | "completed" | "failed"))
+        && time(entry.get("startedAt")).is_some()
+        && entry.get("endedAt").map(|end| time(Some(end)).zip(time(entry.get("startedAt"))).map(|(end, start)| end >= start).unwrap_or(false)).unwrap_or(true)
+    }).unwrap_or(false))).unwrap_or(false)
+}
+
+fn canvas_agent_graph_operations_valid(operations: &serde_json::Value) -> bool {
+    operations.as_array().map(|ops|!ops.is_empty() && ops.len()<=64 && ops.iter().all(|o|match o.get("op").and_then(serde_json::Value::as_str) {
+        Some("move")=>canvas_agent_fields(o,&["op","nodeId","x","y"],&["op","nodeId","x","y"]) && canvas_agent_id(o.get("nodeId")) && ["x","y"].iter().all(|k|o.get(*k).and_then(serde_json::Value::as_f64).map(|n|n.is_finite()&&n.abs()<=1_000_000.0).unwrap_or(false)),
+        Some("connect"|"disconnect")=>canvas_agent_fields(o,&["op","source","target"],&["op","source","target"]) && canvas_agent_id(o.get("source")) && canvas_agent_id(o.get("target")) && o.get("source")!=o.get("target"),
+        Some("arrange")=>canvas_agent_fields(o,&["op","nodeIds","layout"],&["op","nodeIds","layout"]) && matches!(o.get("layout").and_then(serde_json::Value::as_str),Some("grid"|"horizontal"|"vertical")) && o.get("nodeIds").and_then(serde_json::Value::as_array).map(|ids|!ids.is_empty() && ids.len()<=256 && ids.iter().all(|id|canvas_agent_id(Some(id))) && ids.iter().filter_map(serde_json::Value::as_str).collect::<std::collections::HashSet<_>>().len()==ids.len()).unwrap_or(false),
+        _=>false,
+    })).unwrap_or(false)
+}
+fn canvas_agent_reasoning_timing_valid(v: &serde_json::Value, active: bool) -> bool {
+    let fields = if active { &["reasoningStartedAt","reasoningEndedAt","reasoningDurationMs","reasoningActiveStartedAt"][..] } else { &["reasoningStartedAt","reasoningEndedAt","reasoningDurationMs"][..] };
+    fields.iter().all(|k|v.get(*k).map(|x|canvas_agent_count(Some(x),9_007_199_254_740_991)).unwrap_or(true))
+        && (!fields.iter().skip(1).any(|k|v.get(*k).is_some()) || v.get("reasoningStartedAt").is_some())
+        && ["reasoningEndedAt","reasoningActiveStartedAt"].iter().all(|k|v.get(*k).map(|x|x.as_u64()>=v.get("reasoningStartedAt").and_then(serde_json::Value::as_u64)).unwrap_or(true))
+}
+fn canvas_agent_error_detail_valid(snapshot: &serde_json::Value) -> bool {
+    let Some(detail) = snapshot.get("errorDetail") else { return true; };
+    if snapshot.get("status").and_then(serde_json::Value::as_str) != Some("failed")
+        || snapshot.get("error").and_then(serde_json::Value::as_str).is_none()
+        || !canvas_agent_fields(detail, &["message"], &["message"]) { return false; }
+    detail.get("message").and_then(serde_json::Value::as_str).map(|message| {
+        !message.trim().is_empty() && message.len() <= 2000
+            && !message.chars().any(|c| (c.is_control() && c != '\n' && c != '\t')
+                || matches!(c, '\u{061c}' | '\u{200e}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
+    }).unwrap_or(false)
+}
+fn canvas_agent_extensions_valid(v: &serde_json::Value, canvas_id: &str) -> bool {
+    if !canvas_agent_error_detail_valid(v) { return false; }
+    let time=|v:Option<&serde_json::Value>|canvas_agent_count(v,9_007_199_254_740_991);
+    if v.get("error").map(|v|!v.as_str().map(|s|s.starts_with("canvas-agent-") && s.bytes().all(|b|b.is_ascii_lowercase()||b==b'-')).unwrap_or(false)).unwrap_or(false) || v.get("model").map(|v|!canvas_agent_text(Some(v),160,false)).unwrap_or(false) {return false;}
+    if v.get("updatedAt").map(|v|!time(Some(v))).unwrap_or(false) || v.get("execution").map(|e|!canvas_agent_execution_state_valid(e,true)).unwrap_or(false) {return false;}
+    if v.get("context").map(|c|!canvas_agent_context_valid(c,canvas_id,false)).unwrap_or(false)
+        || v.get("plan").map(|p|!canvas_agent_plan_valid(p,canvas_id,v.get("runId"))).unwrap_or(false) {return false;}
+    if let Some(s)=v.get("stream") {
+        if !canvas_agent_fields(s,&["attemptId","text","status","reasoning","reasoningText","turnId","startedAt","reasoningStartedAt","reasoningEndedAt","reasoningDurationMs","reasoningActiveStartedAt"],&["attemptId","text","status","reasoning"])
+            || !canvas_agent_reasoning_timing_valid(s,true)
+            || s.get("turnId").map(|id|!canvas_agent_id(Some(id)) || Some(id)!=v.get("runId")).unwrap_or(false)
+            || s.get("startedAt").map(|v|!time(Some(v))).unwrap_or(false)
+            || !canvas_agent_id(s.get("attemptId")) || !canvas_agent_text(s.get("text"),256000,true)
+            || !matches!(s.get("status").and_then(serde_json::Value::as_str),Some("streaming"|"settled"|"interrupted"))
+            || !s.get("reasoning").map(serde_json::Value::is_boolean).unwrap_or(false)
+            || s.get("reasoningText").map(|v|!canvas_agent_text(Some(v),256000,true)).unwrap_or(false) {return false;}
+    }
+    if let Some(p)=v.get("progress") {
+        if !p.as_array().map(|a|a.len()<=64 && a.iter().all(|p|canvas_agent_fields(p,&["id","summary","createdAt"],&["id","summary","createdAt"])
+            && canvas_agent_id(p.get("id")) && canvas_agent_text(p.get("summary"),4000,true) && time(p.get("createdAt")))).unwrap_or(false) {return false;}
+    }
+    if let Some(t)=v.get("tools") {
+        if !t.as_array().map(|a|a.len()<=128 && a.iter().all(|t|canvas_agent_fields(t,&["callId","name","status","startedAt","endedAt","summary","turnId","eventSeq","displayTitle","displayTitleEn"],&["callId","name","status","startedAt"])
+            && ["displayTitle","displayTitleEn"].iter().all(|k|t.get(*k).map(|x|canvas_agent_text(Some(x),240,true)).unwrap_or(true))
+            && t.get("eventSeq").map(|v|time(Some(v))).unwrap_or(true) && t.get("turnId").map(|v|canvas_agent_id(Some(v))).unwrap_or(true) && canvas_agent_id(t.get("callId")) && canvas_agent_text(t.get("name"),160,false)
+            && matches!(t.get("status").and_then(serde_json::Value::as_str),Some("running"|"completed"|"failed")) && time(t.get("startedAt"))
+            && t.get("endedAt").map(|end|time(Some(end)) && end.as_u64()>=t.get("startedAt").and_then(serde_json::Value::as_u64)).unwrap_or(true)
+            && t.get("summary").map(|v|canvas_agent_text(Some(v),4000,true)).unwrap_or(true))).unwrap_or(false) {return false;}
+    }
+    if let Some(c)=v.get("conversations") {
+        if !c.as_array().map(|a|a.len()<=256 && a.iter().all(|c|canvas_agent_fields(c,&["conversationId","sessionId","title","updatedAt","messageCount"],&["conversationId","sessionId","title","updatedAt","messageCount"])
+            && canvas_agent_id(c.get("conversationId")) && c.get("sessionId").map(|s|s.is_null()||canvas_agent_id(Some(s))).unwrap_or(false)
+            && canvas_agent_text(c.get("title"),200,true) && time(c.get("updatedAt")) && time(c.get("messageCount")))).unwrap_or(false) {return false;}
+    }
+    if let Some(a)=v.get("pendingAction") {
+        if v.get("status").and_then(serde_json::Value::as_str)!=Some("running") || !canvas_agent_fields(a,&["actionId","runId","kind","nodeIds","offset","plan","operations","context","generate","execution","expectedRevision","creationQuery","creationEdit","creationOpen","readMode","textOffset"],&["actionId","runId","kind"])
+            || a.get("expectedRevision").map(|v|!canvas_agent_revision(Some(v))).unwrap_or(false)
+            || !canvas_agent_id(a.get("actionId")) || !canvas_agent_id(a.get("runId")) || a.get("runId")!=v.get("runId")
+            || !matches!(a.get("kind").and_then(serde_json::Value::as_str),Some("readContext"|"applyPlan"|"editGraph"|"readCreation"|"editCreation"|"openCreation")) || !canvas_creation_action_valid(a)
+            || a.get("nodeIds").map(|v|!v.as_array().map(|a|a.len()<=256 && a.iter().all(|id|canvas_agent_id(Some(id)))).unwrap_or(false)).unwrap_or(false)
+            || a.get("offset").map(|v|!canvas_agent_count(Some(v),1000000)).unwrap_or(false)
+            || a.get("readMode").map(|mode|a.get("kind").and_then(serde_json::Value::as_str)!=Some("readContext") || !matches!(mode.as_str(),Some("overview"|"target"|"full"))).unwrap_or(false)
+            || a.get("textOffset").map(|offset|a.get("kind").and_then(serde_json::Value::as_str)!=Some("readContext") || !canvas_agent_count(Some(offset),100000000) || a.get("nodeIds").and_then(serde_json::Value::as_array).map(Vec::len)!=Some(1) || !canvas_agent_revision(a.get("expectedRevision"))).unwrap_or(false)
+            || a.get("context").map(|v|!canvas_agent_context_valid(v,canvas_id,false)).unwrap_or(false)
+            || a.get("generate").map(|v|!v.is_boolean()).unwrap_or(false)
+            || a.get("execution").map(|v|!canvas_agent_execution_state_valid(v,true)).unwrap_or(false) {return false;}
+        if a.get("kind").and_then(serde_json::Value::as_str)==Some("applyPlan") {
+            if a.get("operations").is_some() || !a.get("plan").map(|p|canvas_agent_plan_valid(p,canvas_id,a.get("runId"))).unwrap_or(false) || a.get("context").is_none() || a.get("execution").and_then(|e|e.get("mode")).and_then(serde_json::Value::as_str)!=Some("autonomous")
+                || (a.get("generate").and_then(serde_json::Value::as_bool)==Some(true) && a.get("execution").and_then(|e|e.get("allowGeneration")).and_then(serde_json::Value::as_bool)!=Some(true)) {return false;}
+        } else if a.get("kind").and_then(serde_json::Value::as_str)==Some("editGraph") {
+            if !a.get("operations").map(canvas_agent_graph_operations_valid).unwrap_or(false) || a.get("plan").is_some() || a.get("context").is_none() || a.get("generate").and_then(serde_json::Value::as_bool)==Some(true) || a.get("execution").and_then(|e|e.get("mode")).and_then(serde_json::Value::as_str)!=Some("autonomous") {return false;}
+        } else if a.get("plan").is_some() || a.get("operations").is_some() || a.get("generate").and_then(serde_json::Value::as_bool)==Some(true) {return false;}
+    }
+    true
+}
+
+fn decode_canvas_agent_snapshot(encoded: &str, canvas_id: &str) -> Result<serde_json::Value, String> {
+    let invalid = || "canvas-agent-invalid-response".to_owned();
+    if encoded.is_empty() || encoded.len() > MAX_CANVAS_AGENT_ENCODED_BYTES { return Err(invalid()); }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded.as_bytes()).map_err(|_| invalid())?;
+    if bytes.len() > MAX_CANVAS_AGENT_JSON_BYTES || URL_SAFE_NO_PAD.encode(&bytes) != encoded { return Err(invalid()); }
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    let object = value.as_object().ok_or_else(invalid)?;
+    let allowed = ["canvasId", "conversationId", "activity", "sessionId", "runId", "requestId", "status", "messages", "context", "plan", "error", "errorDetail", "model", "models", "pendingAction", "conversations", "stream", "progress", "tools", "updatedAt", "execution"];
+    if object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || !canvas_agent_id(object.get("conversationId"))
+        || object.get("activity").map(|activity| !canvas_agent_activity_valid(activity)).unwrap_or(false)
+        || object.get("requestId").map(|id| !canvas_agent_id(Some(id))).unwrap_or(false)
+        || value.get("canvasId").and_then(serde_json::Value::as_str) != Some(canvas_id)
+        || !matches!(value.get("status").and_then(serde_json::Value::as_str), Some("idle" | "running" | "completed" | "failed" | "cancelled"))
+        || !object.get("sessionId").map(|id| id.is_null() || canvas_agent_id(Some(id))).unwrap_or(false)
+        || !object.get("runId").map(|id| id.is_null() || canvas_agent_id(Some(id))).unwrap_or(false)
+    { return Err(invalid()); }
+    if object.get("models").map(|models| !canvas_agent_models_valid(models)).unwrap_or(false) { return Err(invalid()); }
+    let messages = value.get("messages").and_then(serde_json::Value::as_array).ok_or_else(invalid)?;
+    if messages.len() > 128 || messages.iter().any(|message| {
+        message.as_object().map(|message| !message.keys().all(|k| ["role","text","reasoningText","turnId","messageId","attemptId","createdAt","eventSeq","reasoningStartedAt","reasoningEndedAt","reasoningDurationMs"].contains(&k.as_str()))
+            || !canvas_agent_reasoning_timing_valid(&serde_json::Value::Object(message.clone()),false)
+            || !matches!(message.get("role").and_then(serde_json::Value::as_str), Some("user" | "assistant"))
+            || ["turnId","messageId","attemptId"].iter().any(|key|message.get(*key).map(|v|!canvas_agent_id(Some(v))).unwrap_or(false))
+            || message.get("eventSeq").map(|v|!canvas_agent_count(Some(v),9_007_199_254_740_991)).unwrap_or(false)
+            || message.get("createdAt").map(|v|!canvas_agent_count(Some(v),9_007_199_254_740_991)).unwrap_or(false)
+            || !canvas_agent_text(message.get("text"),256000,true)
+            || message.get("reasoningText").map(|v|!canvas_agent_text(Some(v),256000,true)).unwrap_or(false)).unwrap_or(true)
+    }) { return Err(invalid()); }
+    if !canvas_agent_extensions_valid(&value,canvas_id) {return Err(invalid());}
+
+    Ok(value)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct ChildFrame {
@@ -937,6 +1340,56 @@ struct ChildFrame {
     rss_bytes: Option<u64>,
     owned_process_count: Option<u8>,
     mac: String,
+}
+
+#[derive(Default)]
+struct ExpiredCanvasRequests {
+    ids: VecDeque<String>,
+}
+
+impl ExpiredCanvasRequests {
+    fn has_capacity(&self) -> bool { self.ids.len() < MAX_EXPIRED_CANVAS_REQUESTS }
+
+    fn record(&mut self, request_id: String) -> Result<(), ()> {
+        if self.ids.contains(&request_id) { return Ok(()); }
+        // Never evict an old ID: its delayed authenticated ACK might still
+        // arrive. Stop admitting new canvas requests when this ledger is full.
+        if !self.has_capacity() { return Err(()); }
+        self.ids.push_back(request_id);
+        Ok(())
+    }
+
+    fn consume(&mut self, frame: &ChildFrame) -> bool {
+        if frame.kind != "canvas-agent-result" { return false; }
+        let Some(request_id) = frame.request_id.as_ref() else { return false; };
+        let Some(index) = self.ids.iter().position(|expired| expired == request_id) else { return false; };
+        self.ids.remove(index);
+        true
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum HostFrameReadError { TimedOut, Unavailable }
+
+fn read_authenticated_host_frame(
+    frames: &mpsc::Receiver<Result<ChildFrame, ()>>,
+    expired_canvas: &mut ExpiredCanvasRequests,
+    timeout: Duration,
+) -> Result<ChildFrame, HostFrameReadError> {
+    let deadline = Instant::now().checked_add(timeout).ok_or(HostFrameReadError::Unavailable)?;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return Err(HostFrameReadError::TimedOut); }
+        let frame = frames.recv_timeout(remaining).map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => HostFrameReadError::TimedOut,
+            mpsc::RecvTimeoutError::Disconnected => HostFrameReadError::Unavailable,
+        })?.map_err(|_| HostFrameReadError::Unavailable)?;
+        // This receiver is fed only after frame_reader verifies the exact
+        // generation, sequence and MAC. Skip only a known expired canvas ACK,
+        // once, without extending this operation's original read deadline.
+        if expired_canvas.consume(&frame) { continue; }
+        return Ok(frame);
+    }
 }
 
 #[derive(Deserialize)]
@@ -1390,6 +1843,8 @@ struct HostHandle {
     model_sync_index: u64,
     open_intent_index: u64,
     remote_index: u64,
+    canvas_agent_index: u64,
+    expired_canvas_requests: ExpiredCanvasRequests,
     surface_binding_generation: u64,
 }
 
@@ -1399,7 +1854,7 @@ impl HostHandle {
     fn diagnostic_only(&self, generation: u64) -> bool {
         self.generation == generation && self.probe_index > 0
             && self.surface_index == 0 && self.model_sync_index == 0
-            && self.open_intent_index == 0 && self.remote_index == 0
+            && self.open_intent_index == 0 && self.remote_index == 0 && self.canvas_agent_index == 0
             && self.surface_binding_generation == 0 && self.is_running()
     }
 
@@ -1431,7 +1886,8 @@ impl HostHandle {
     }
 
     fn read(&mut self, timeout: Duration) -> Result<ChildFrame, ()> {
-        self.frames.recv_timeout(timeout).map_err(|_| ())?
+        read_authenticated_host_frame(&self.frames, &mut self.expired_canvas_requests, timeout)
+            .map_err(|_| ())
     }
 
     fn validate_host(&mut self) -> bool {
@@ -1635,6 +2091,42 @@ impl HostHandle {
             return Err("dsh-remote-size".to_owned());
         }
         serde_json::from_slice(&bytes).map_err(|_| "dsh-remote-json".to_owned())
+    }
+
+    fn canvas_agent_dispatch(&mut self, payload: &str, canvas_id: &str) -> Result<serde_json::Value, String> {
+        if !self.expired_canvas_requests.has_capacity() { return Err("canvas-agent-unavailable".to_owned()); }
+        self.canvas_agent_index = self.canvas_agent_index.checked_add(1)
+            .ok_or_else(|| "canvas-agent-unavailable".to_owned())?;
+        let request_id = format!("canvas-agent-{}-{}", self.generation, self.canvas_agent_index);
+        self.write_with_payload("canvas-agent", Some(&request_id), Some(payload))
+            .map_err(|_| "canvas-agent-unavailable".to_owned())?;
+        let frame = match read_authenticated_host_frame(
+            &self.frames, &mut self.expired_canvas_requests, Duration::from_secs(6),
+        ) {
+            Ok(frame) => frame,
+            Err(HostFrameReadError::TimedOut) => {
+                self.expired_canvas_requests.record(request_id)
+                    .map_err(|_| "canvas-agent-unavailable".to_owned())?;
+                return Err("canvas-agent-unavailable".to_owned());
+            },
+            Err(HostFrameReadError::Unavailable) => return Err("canvas-agent-unavailable".to_owned()),
+        };
+        if frame.kind != "canvas-agent-result" || frame.request_id.as_deref() != Some(request_id.as_str())
+            || frame.carrier_generation.is_some() || frame.stage.is_some() || frame.duration_ms.is_some()
+            || frame.port.is_some() || frame.bootstrap_path.is_some() || frame.bootstrap_ref.is_some()
+            || frame.rss_bytes.is_some() || frame.owned_process_count.is_some()
+        { return Err("canvas-agent-invalid-response".to_owned()); }
+        if frame.outcome.as_deref() == Some("rejected") && frame.payload.is_none() {
+            return Err(match frame.reason.as_deref() {
+                Some(reason @ ("canvas-agent-invalid-request" | "canvas-agent-invalid-response" | "canvas-agent-request-failed" | "canvas-agent-unavailable" | "canvas-agent-transport-busy" | "canvas-agent-busy" | "canvas-agent-capacity" | "canvas-agent-conversation-conflict" | "canvas-agent-request-conflict" | "canvas-agent-request-already-used" | "canvas-agent-run-conflict" | "canvas-agent-storage-unavailable" | "canvas-agent-model-unavailable" | "canvas-agent-runtime-unavailable" | "canvas-agent-cancelled" | "canvas-agent-disposed" | "canvas-agent-host-paused")) => reason,
+                _ => "canvas-agent-unavailable",
+            }.to_owned());
+        }
+        if frame.outcome.as_deref() != Some("accepted") || frame.reason.is_some() {
+            return Err("canvas-agent-invalid-response".to_owned());
+        }
+        decode_canvas_agent_snapshot(frame.payload.as_deref()
+            .ok_or_else(|| "canvas-agent-invalid-response".to_owned())?, canvas_id)
     }
 
     fn update_request(&mut self, kind: &str, id: &str) -> Result<serde_json::Value, &'static str> {
@@ -2193,7 +2685,11 @@ impl DshHostService {
         let _admission = self.start_admission.lock().unwrap();
         if self.shutting_down.load(Ordering::Acquire)
             || !self.last_teardown_settled.load(Ordering::Acquire)
-            || self.remote_authority_active.load(Ordering::Acquire) {
+            || !update_remote_policy::permits_update_reservation(
+                self.desired_remote_authority.lock().unwrap().is_some(),
+                self.surface_binding_generation.load(Ordering::Acquire) != 0,
+                self.remote_authority_active.load(Ordering::Acquire),
+            ) {
             return Err("update-lsh-not-quiescent");
         }
         let generation = self.generation.load(Ordering::Acquire);
@@ -2450,9 +2946,16 @@ impl DshHostService {
             },
         };
         self.surface_port.store(bootstrap.port, Ordering::Release);
-        let remote_pushed = self.push_remote_authority_locked(bootstrap.carrier_generation);
-        self.remote_authority_active
-            .store(remote_pushed, Ordering::Release);
+        {
+            // Publish the ACK against the same desired authority that was sent.
+            // Otherwise a stale open ACK can overwrite a later failed clear.
+            let _admission = self.start_admission.lock().unwrap();
+            if self.shutting_down.load(Ordering::Acquire) {
+                return Err("dsh-host-shutting-down".to_owned());
+            }
+            let remote_pushed = self.push_remote_authority_locked(bootstrap.carrier_generation);
+            self.remote_authority_active.store(remote_pushed, Ordering::Release);
+        }
         *self.surface_lease.lock().unwrap() = Some(lease);
         *self.surface_status.lock().unwrap() = status.clone();
         Ok((status, bootstrap))
@@ -2503,6 +3006,10 @@ impl DshHostService {
         host: Option<String>,
         gateway_generation: u64,
     ) -> Result<(), String> {
+        // Serialize changing the desired authority with update admission. A
+        // setter which passed an earlier external check cannot advertise a new
+        // origin after the update reserved an acknowledged, cleared carrier.
+        let _admission = self.start_admission.lock().unwrap();
         if self.shutting_down.load(Ordering::Acquire) {
             return Err("dsh-host-shutting-down".to_owned());
         }
@@ -2569,6 +3076,7 @@ impl DshHostService {
         device_id: &str,
         gateway_generation: u64,
     ) -> Result<DshRemoteSessionBootstrap, String> {
+        let _admission = self.start_admission.lock().unwrap();
         if self.shutting_down.load(Ordering::Acquire) {
             return Err("dsh-host-shutting-down".to_owned());
         }
@@ -2624,6 +3132,13 @@ impl DshHostService {
     /// which clears every carrier-side session/ref, or disable the relay until
     /// a later successful authority push clears them.
     pub(crate) fn drop_remote_sessions(&self, device_id: &str) -> Result<(), String> {
+        // A late single-device ACK must not overwrite a newer failed clear
+        // and falsely authorize a desktop update. Keep the entire revoke/rekey
+        // operation in the same ordering as authority setters and reservations.
+        let _admission = self.start_admission.lock().unwrap();
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err("dsh-host-shutting-down".to_owned());
+        }
         if !self.remote_surface_available() {
             return Ok(());
         }
@@ -2864,6 +3379,31 @@ impl DshHostService {
         #[cfg(not(all(windows, feature = "browser-host-runtime")))]
         let result: Result<(), ()> = Err(());
         result.or_else(|_| self.fail_surface_generation("dsh-open-intent-unavailable"))
+    }
+
+    /// Join the existing official carrier. Never open a window, start a second
+    /// host, or hold the host operation mutex for the duration of a model run.
+    pub(crate) fn canvas_agent_dispatch(&self, request: serde_json::Value) -> Result<serde_json::Value, String> {
+        let payload = encode_canvas_agent_request(&request)?;
+        if self.shutting_down.load(Ordering::Acquire) { return Err("canvas-agent-unavailable".to_owned()); }
+        let _operation = self.operation.try_lock().map_err(|_| "canvas-agent-transport-busy".to_owned())?;
+        if self.shutting_down.load(Ordering::Acquire) { return Err("canvas-agent-unavailable".to_owned()); }
+        if !matches!(self.surface_status().stage,
+            DshNativeSurfaceStage::ClientReady | DshNativeSurfaceStage::SessionOpen)
+        { return Err("canvas-agent-not-ready".to_owned()); }
+        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        {
+            let canvas_id = request.get("canvasId").and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "canvas-agent-invalid-request".to_owned())?;
+            let mut host = self.host.lock().map_err(|_| "canvas-agent-unavailable".to_owned())?;
+            let host = host.as_mut().filter(|host| host.is_running())
+                .ok_or_else(|| "canvas-agent-unavailable".to_owned())?;
+            // Application errors are returned here, never escalated through
+            // fail_surface_generation (which would kill unrelated LSH work).
+            host.canvas_agent_dispatch(&payload, canvas_id)
+        }
+        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        { let _ = payload; Err("canvas-agent-unavailable".to_owned()) }
     }
 
     pub(crate) fn open_intent_status(&self, intent_id: &str) -> Result<String, String> {
@@ -3535,6 +4075,8 @@ impl DshHostService {
             model_sync_index: 0,
             open_intent_index: 0,
             remote_index: 0,
+            canvas_agent_index: 0,
+            expired_canvas_requests: ExpiredCanvasRequests::default(),
             surface_binding_generation: 0,
         };
         self.publish(DshHostStage::ProcessAlive, retry_attempt, None);
@@ -3910,6 +4452,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn desktop_update_reservation_distinguishes_clear_ack_from_configured_origin() {
+        let service = DshHostService::new(None, true);
+        service.publish(DshHostStage::BundledVerified, 0, None);
+        service.remote_authority_active.store(true, Ordering::Release);
+        let reservation = service.reserve_desktop_update_restart()
+            .expect("a successful clear ACK is not an active remote origin");
+        assert!(service.set_remote_surface_authority(Some("phone.example:443".into()), 1).is_err(),
+            "authority cannot be added after update admission");
+        drop(reservation);
+        *service.desired_remote_authority.lock().unwrap() = Some("phone.example:443".into());
+        for ack in [false, true] {
+            service.remote_authority_active.store(ack, Ordering::Release);
+            assert!(service.reserve_desktop_update_restart().is_err(),
+                "configured origins remain blocked even if synchronization failed");
+        }
+    }
+
+    #[test]
     fn desktop_update_reservation_does_not_undo_a_replacement_generation() {
         let service = DshHostService::new(None, true);
         service.publish(DshHostStage::BundledVerified, 0, None);
@@ -4122,6 +4682,10 @@ pub(crate) mod tests {
                 host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-provider-export.mjs"),
                 host_dir.join("luckyray-dsh-authenticated-webserver/package.json"),
                 host_dir.join("luckyray-dsh-resource-tools/package.json"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-projection.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-task-state.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-creation-schema.mjs"),
             ],
         ).expect("host descriptor");
         eprintln!("dynamic descriptor ms={}", started.elapsed().as_millis());
@@ -4227,6 +4791,10 @@ pub(crate) mod tests {
                 host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-provider-export.mjs"),
                 host_dir.join("luckyray-dsh-authenticated-webserver/package.json"),
                 host_dir.join("luckyray-dsh-resource-tools/package.json"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-projection.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-task-state.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-creation-schema.mjs"),
             ]).unwrap();
         service_from_test_descriptor(descriptor)
     }
@@ -4276,6 +4844,10 @@ pub(crate) mod tests {
                     .join("luckyray-dsh-authenticated-webserver/luckyray-dsh-provider-export.mjs"),
                 host_dir.join("luckyray-dsh-authenticated-webserver/package.json"),
                 host_dir.join("luckyray-dsh-resource-tools/package.json"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-projection.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-task-state.mjs"),
+                host_dir.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-creation-schema.mjs"),
             ],
         )
         .unwrap();
@@ -4654,7 +5226,7 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    fn tracked_surface_assets() -> [PathBuf; 12] {
+    fn tracked_surface_assets() -> [PathBuf; 16] {
         let host = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dsh-host");
         [
             host.join("luckyray-dsh-authenticated-webserver/index.mjs"),
@@ -4669,7 +5241,262 @@ pub(crate) mod tests {
             host.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-provider-export.mjs"),
             host.join("luckyray-dsh-authenticated-webserver/package.json"),
             host.join("luckyray-dsh-resource-tools/package.json"),
+            host.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs"),
+            host.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-projection.mjs"),
+            host.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-task-state.mjs"),
+            host.join("luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-creation-schema.mjs"),
         ]
+    }
+
+    fn canvas_timeout_test_frame(kind: &str, request_id: Option<&str>) -> ChildFrame {
+        serde_json::from_value(serde_json::json!({
+            "type": kind, "protocol": PROTOCOL, "generation": 1, "seq": 1,
+            "requestId": request_id, "mac": "a".repeat(64),
+        })).unwrap()
+    }
+
+    #[test]
+    fn expired_canvas_ack_is_removed_once_without_swallowing_other_frames() {
+        let (sender, receiver) = mpsc::channel();
+        let mut expired = ExpiredCanvasRequests::default();
+        expired.record("canvas-agent-1-1".to_owned()).unwrap();
+        assert!(sender.send(Ok(canvas_timeout_test_frame("pong", Some("canvas-agent-1-1")))).is_ok());
+        assert!(sender.send(Ok(canvas_timeout_test_frame("canvas-agent-result", Some("canvas-agent-1-2")))).is_ok());
+        assert!(sender.send(Ok(canvas_timeout_test_frame("canvas-agent-result", Some("canvas-agent-1-1")))).is_ok());
+        assert!(sender.send(Ok(canvas_timeout_test_frame("pong", None))).is_ok());
+        assert_eq!(read_authenticated_host_frame(&receiver, &mut expired, Duration::from_secs(1)).unwrap().kind, "pong");
+        assert_eq!(expired.ids.len(), 1, "same request ID on a different frame kind is not discarded");
+        assert_eq!(read_authenticated_host_frame(&receiver, &mut expired, Duration::from_secs(1)).unwrap().request_id.as_deref(), Some("canvas-agent-1-2"));
+        assert_eq!(read_authenticated_host_frame(&receiver, &mut expired, Duration::from_secs(1)).unwrap().kind, "pong");
+        assert!(expired.ids.is_empty());
+        assert!(sender.send(Ok(canvas_timeout_test_frame("canvas-agent-result", Some("canvas-agent-1-1")))).is_ok());
+        assert_eq!(read_authenticated_host_frame(&receiver, &mut expired, Duration::from_secs(1)).unwrap().kind, "canvas-agent-result", "a duplicate is unknown after its exact expired ID was consumed");
+    }
+
+    #[test]
+    fn expired_canvas_ledger_is_bounded_without_evicting_pending_ids_or_hiding_errors() {
+        let mut expired = ExpiredCanvasRequests::default();
+        for index in 0..MAX_EXPIRED_CANVAS_REQUESTS {
+            expired.record(format!("canvas-agent-1-{index}")).unwrap();
+        }
+        assert!(!expired.has_capacity());
+        assert!(expired.record("canvas-agent-1-extra".to_owned()).is_err());
+        assert_eq!(expired.ids.front().map(String::as_str), Some("canvas-agent-1-0"));
+        let (sender, receiver) = mpsc::channel();
+        assert!(sender.send(Err(())).is_ok());
+        assert!(matches!(read_authenticated_host_frame(&receiver, &mut expired, Duration::from_secs(1)), Err(HostFrameReadError::Unavailable)));
+        assert_eq!(expired.ids.len(), MAX_EXPIRED_CANVAS_REQUESTS);
+        drop(sender);
+        assert!(matches!(read_authenticated_host_frame(&receiver, &mut expired, Duration::from_secs(1)), Err(HostFrameReadError::Unavailable)));
+    }
+
+    #[test]
+    fn skipped_expired_canvas_acks_do_not_extend_the_original_read_deadline() {
+        let (sender, receiver) = mpsc::channel();
+        let mut expired = ExpiredCanvasRequests::default();
+        for index in 0..4 { expired.record(format!("canvas-agent-1-{index}")).unwrap(); }
+        let producer = thread::spawn(move || {
+            for index in 0..4 {
+                thread::sleep(Duration::from_millis(30));
+                let _ = sender.send(Ok(canvas_timeout_test_frame("canvas-agent-result", Some(&format!("canvas-agent-1-{index}")))));
+            }
+            let _ = sender.send(Ok(canvas_timeout_test_frame("pong", None)));
+        });
+        let result = read_authenticated_host_frame(&receiver, &mut expired, Duration::from_millis(90));
+        assert!(matches!(result, Err(HostFrameReadError::TimedOut)), "late expired ACKs must not reset the operation's timeout");
+        producer.join().unwrap();
+    }
+
+    #[test]
+    fn canvas_agent_request_is_bounded_to_known_operations() {
+        let status = serde_json::json!({"op": "status", "canvasId": "canvas-1"});
+        let encoded = encode_canvas_agent_request(&status).unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap(), status);
+        for invalid in [
+            serde_json::json!({"op": "shell", "canvasId": "canvas-1"}),
+            serde_json::json!({"op": "status", "canvasId": "../../other"}),
+            serde_json::json!({"op": "status", "canvasId": "canvas-1", "url": "https://example.com"}),
+            serde_json::json!({"op": "cancel", "canvasId": "canvas-1", "runId": ""}),
+        ] { assert!(encode_canvas_agent_request(&invalid).is_err()); }
+        let mut request = serde_json::json!({"op": "start", "canvasId": "canvas-1", "conversationId": "conversation-test", "requestId": "request-1", "prompt": "Create a plan",
+            "context": {"version": 1, "canvasId": "canvas-1", "canvasName":"Canvas", "nodes": [], "connections": [], "generation": {"imageModels":[],"videoModels":[],"imageReady":false,"videoReady":false}}});
+        assert!(encode_canvas_agent_request(&request).is_ok());
+        request["prompt"] = serde_json::Value::String("x".repeat(48001));
+        assert!(encode_canvas_agent_request(&request).is_err());
+        request["prompt"] = serde_json::json!("valid");
+        request["context"]["canvasId"] = serde_json::json!("canvas-2");
+        assert!(encode_canvas_agent_request(&request).is_err());
+        request["context"]["canvasId"] = serde_json::json!("canvas-1");
+        request["context"]["nodes"] = serde_json::json!([{"text": "x".repeat(MAX_CANVAS_AGENT_JSON_BYTES)}]);
+        assert!(encode_canvas_agent_request(&request).is_err());
+    }
+
+    #[test]
+    fn canvas_agent_snapshot_rejects_cross_canvas_extra_authority_and_size() {
+        let mut snapshot = serde_json::json!({"canvasId": "canvas-1", "conversationId": "conversation-test", "sessionId": null, "runId": null, "status": "idle", "messages": []});
+        let encode = |value: &serde_json::Value| URL_SAFE_NO_PAD.encode(serde_json::to_vec(value).unwrap());
+        assert_eq!(decode_canvas_agent_snapshot(&encode(&snapshot), "canvas-1").unwrap(), snapshot);
+        assert!(decode_canvas_agent_snapshot(&encode(&snapshot), "canvas-2").is_err());
+        snapshot["credential"] = serde_json::json!("must-not-cross");
+        assert!(decode_canvas_agent_snapshot(&encode(&snapshot), "canvas-1").is_err());
+        assert!(decode_canvas_agent_snapshot(&"a".repeat(MAX_CANVAS_AGENT_ENCODED_BYTES + 1), "canvas-1").is_err());
+        assert!(decode_canvas_agent_snapshot("_w", "canvas-1").is_err());
+    }
+
+    #[test]
+    fn canvas_agent_error_detail_is_bounded_and_failure_scoped() {
+        let valid = serde_json::json!({"canvasId":"canvas-1","conversationId":"conversation-test","sessionId":null,"runId":null,"status":"failed","messages":[],"error":"canvas-agent-model-failed","errorDetail":{"message":"模型未找到，请检查所选模型。"}});
+        let encode = |value: &serde_json::Value| URL_SAFE_NO_PAD.encode(serde_json::to_vec(value).unwrap());
+        assert_eq!(decode_canvas_agent_snapshot(&encode(&valid),"canvas-1").unwrap(),valid);
+        for detail in [serde_json::json!(null), serde_json::json!({}), serde_json::json!({"message":" "}), serde_json::json!({"message":"bad\u{0000}text"}), serde_json::json!({"message":"bad\u{0085}text"}), serde_json::json!({"message":"bad\u{202e}text"}), serde_json::json!({"message":"x","raw":"forbidden"}), serde_json::json!({"message":"x".repeat(2001)}), serde_json::json!({"message":"界".repeat(667)})] {
+            let mut value=valid.clone(); value["errorDetail"]=detail;
+            assert!(decode_canvas_agent_snapshot(&encode(&value),"canvas-1").is_err());
+        }
+        for status in ["idle","running","completed","cancelled"] {
+            let mut value=valid.clone(); value["status"]=serde_json::json!(status);
+            assert!(decode_canvas_agent_snapshot(&encode(&value),"canvas-1").is_err());
+        }
+        let mut missing=valid.clone(); missing.as_object_mut().unwrap().remove("error");
+        assert!(decode_canvas_agent_snapshot(&encode(&missing),"canvas-1").is_err());
+        let mut legacy=valid.clone(); legacy.as_object_mut().unwrap().remove("errorDetail");
+        assert!(decode_canvas_agent_snapshot(&encode(&legacy),"canvas-1").is_ok());
+    }
+
+    #[test]
+    fn canvas_agent_conversation_and_activity_contract_is_bounded() {
+        let mut rotation = serde_json::json!({"op":"newConversation","canvasId":"canvas-1","requestId":"rotate-1","expectedConversationId":"conversation-1"});
+        assert!(encode_canvas_agent_request(&rotation).is_ok());
+        rotation["sessionId"] = serde_json::json!("must-not-select-engine-session");
+        assert!(encode_canvas_agent_request(&rotation).is_err());
+        let mut activity = serde_json::json!([{"id":"activity-1","kind":"phase","label":"waiting-model","status":"running","startedAt":1}]);
+        assert!(canvas_agent_activity_valid(&activity));
+        activity[0]["endedAt"] = serde_json::json!(0);
+        assert!(!canvas_agent_activity_valid(&activity));
+        activity[0]["endedAt"] = serde_json::json!(2);
+        activity[0]["label"] = serde_json::json!("raw-provider-secret");
+        assert!(!canvas_agent_activity_valid(&activity));
+        assert!(!canvas_agent_activity_valid(&serde_json::json!(vec![serde_json::json!({}); 25])));
+    }
+
+    #[test]
+    fn canvas_agent_model_contract_is_exact_and_rejects_private_fields() {
+        assert!(encode_canvas_agent_request(&serde_json::json!({"op":"models","canvasId":"canvas-1"})).is_ok());
+        let mut models = serde_json::json!({"available":[{"provider":"lsh","model":"chosen","label":"LSH chosen","inputModalities":["text"]}],"defaultModel":{"provider":"lsh","model":"default"},"currentModel":null});
+        assert!(canvas_agent_models_valid(&models));
+        models["available"][0]["reasoning"] = serde_json::json!({"efforts":[{"id":"high","name":"High"}],"defaultEffort":"high"});
+        assert!(canvas_agent_models_valid(&models));
+        models["available"][0]["reasoning"]["defaultEffort"] = serde_json::json!("unsupported");
+        assert!(!canvas_agent_models_valid(&models));
+        models["available"][0]["reasoning"]["defaultEffort"] = serde_json::json!("high");
+        models["available"][0]["apiKey"] = serde_json::json!("must-not-cross");
+        assert!(!canvas_agent_models_valid(&models));
+        let mut request = serde_json::json!({"op":"start","canvasId":"canvas-1","conversationId":"conversation-test","requestId":"request-1","prompt":"Plan","context":{"version":1,"canvasId":"canvas-1","canvasName":"Canvas","nodes":[],"connections":[],"generation":{"imageModels":[],"videoModels":[],"imageReady":false,"videoReady":false}},"modelSelection":{"provider":"lsh","model":"chosen"}});
+        assert!(encode_canvas_agent_request(&request).is_ok());
+        request["modelSelection"]["reasoningEffort"] = serde_json::json!("high");
+        assert!(encode_canvas_agent_request(&request).is_ok());
+        request["modelSelection"]["reasoningEffort"] = serde_json::json!(42);
+        assert!(encode_canvas_agent_request(&request).is_err());
+        request["modelSelection"]["reasoningEffort"] = serde_json::json!("high");
+        request["modelSelection"]["apiKey"] = serde_json::json!("must-not-cross");
+        assert!(encode_canvas_agent_request(&request).is_err());
+    }
+
+    #[test]
+    fn canvas_agent_r5_history_execution_and_stream_contract() {
+        let context=serde_json::json!({"version":1,"canvasId":"canvas-1","canvasName":"Canvas","nodes":[],"connections":[],"generation":{"imageModels":[],"videoModels":[],"imageReady":false,"videoReady":false}});
+        let execution=serde_json::json!({"mode":"autonomous","allowGeneration":false,"maxMediaJobs":0});
+        let start=serde_json::json!({"op":"start","canvasId":"canvas-1","conversationId":"conversation-1","requestId":"request-1","prompt":"Create a scene","context":context,"execution":execution});
+        assert!(encode_canvas_agent_request(&start).is_ok());
+        let mut invalid=start.clone(); invalid["execution"]["allowGeneration"]=serde_json::json!(true);
+        assert!(encode_canvas_agent_request(&invalid).is_err());
+        assert!(encode_canvas_agent_request(&serde_json::json!({"op":"history","canvasId":"canvas-1"})).is_ok());
+        assert!(encode_canvas_agent_request(&serde_json::json!({"op":"resumeConversation","canvasId":"canvas-1","requestId":"resume-1","expectedConversationId":"conversation-1","conversationId":"conversation-2"})).is_ok());
+        let mut result=serde_json::json!({"op":"actionResult","canvasId":"canvas-1","runId":"run-1","actionId":"action-1","result":{"status":"completed","summary":"Created scene","generatedJobs":0,"context":context}});
+        assert!(encode_canvas_agent_request(&result).is_ok()); result["result"]["context"]["canvasId"]=serde_json::json!("foreign");
+        assert!(encode_canvas_agent_request(&result).is_err());
+        let mut snapshot=serde_json::json!({"canvasId":"canvas-1","conversationId":"conversation-1","sessionId":"session-1","runId":"run-1","status":"running","messages":[{"role":"assistant","text":"Answer","reasoningText":"Provider-visible reasoning"}],"stream":{"attemptId":"attempt-1","text":"Output","status":"streaming","reasoning":true,"reasoningText":"Visible reasoning"},"execution":{"mode":"autonomous","allowGeneration":false,"maxMediaJobs":0,"reservedMediaJobs":0},"updatedAt":1,"pendingAction":{"actionId":"action-1","runId":"run-1","kind":"readContext","offset":256}});
+        let encode=|v:&serde_json::Value|URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).unwrap());
+        assert!(decode_canvas_agent_snapshot(&encode(&snapshot),"canvas-1").is_ok());
+        snapshot["pendingAction"]["runId"]=serde_json::json!("foreign");
+        assert!(decode_canvas_agent_snapshot(&encode(&snapshot),"canvas-1").is_err());
+    }
+
+    #[test]
+    fn canvas_agent_r11_creation_schemas_reject_paths_and_wrong_authority() {
+        let good=serde_json::json!({"expectedRevision":"0123456789abcdef","operation":{"op":"storyboard.create","name":"Scene"}});
+        assert!(canvas_creation_valid(&good,"edit"));
+        assert!(!canvas_creation_valid(&serde_json::json!({"scope":"scriptText"}),"read"));
+        assert!(canvas_creation_valid(&serde_json::json!({"scope":"scriptText","objectId":"board-1"}),"read"));
+        let mut bad=good.clone();bad["operation"]["path"]=serde_json::json!("C:/private");assert!(!canvas_creation_valid(&bad,"edit"));
+        assert!(!canvas_creation_valid(&serde_json::json!({"scope":"shots","offset":32}),"read"));
+        assert!(canvas_creation_valid(&serde_json::json!({"scope":"shots","offset":32,"expectedRevision":"0123456789abcdef"}),"read"));
+        assert!(!canvas_creation_valid(&serde_json::json!({"panel":"delivery","imageIndex":0}),"open"));
+        assert!(!canvas_creation_valid(&serde_json::json!({"expectedRevision":"0123456789abcdef","panel":"imageTools","imageIndex":64}),"open"));
+    }
+    #[test]
+    fn canvas_agent_r11_creation_snapshot_and_receipt_round_trip() {
+        let context=serde_json::json!({"version":1,"canvasId":"canvas-1","canvasName":"Canvas","nodes":[],"connections":[],"generation":{"imageModels":[],"videoModels":[],"imageReady":false,"videoReady":false}});
+        let mut snapshot=serde_json::json!({"canvasId":"canvas-1","conversationId":"conversation-1","sessionId":null,"runId":"run-1","status":"running","messages":[],"pendingAction":{"actionId":"action-1","runId":"run-1","kind":"editCreation","context":context,"execution":{"mode":"autonomous","allowGeneration":false,"maxMediaJobs":0},"creationEdit":{"expectedRevision":"0123456789abcdef","operation":{"op":"storyboard.create","name":"Scene"}}}});
+        let encode=|v:&serde_json::Value|URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).unwrap());
+        assert!(decode_canvas_agent_snapshot(&encode(&snapshot),"canvas-1").is_ok());
+        snapshot["pendingAction"]["generate"]=serde_json::json!(false);assert!(decode_canvas_agent_snapshot(&encode(&snapshot),"canvas-1").is_err());
+        snapshot["pendingAction"].as_object_mut().unwrap().remove("generate");snapshot["pendingAction"]["execution"]["mode"]=serde_json::json!("plan");assert!(decode_canvas_agent_snapshot(&encode(&snapshot),"canvas-1").is_err());
+        let mut reply=serde_json::json!({"op":"actionResult","canvasId":"canvas-1","runId":"run-1","actionId":"action-1","result":{"status":"completed","summary":"Actual result","generatedJobs":0,"creation":{"version":1,"revision":"0123456789abcdef","scope":"overview","offset":0,"total":0,"items":[],"completion":"applied"}}});
+        assert!(encode_canvas_agent_request(&reply).is_ok());reply["result"]["creation"]["path"]=serde_json::json!("private");assert!(encode_canvas_agent_request(&reply).is_err());
+    }
+    #[test]
+    fn canvas_agent_r11_creation_unicode_and_transform_bounds() {
+        let edit=serde_json::json!({"expectedRevision":"0123456789abcdef","panel":"imageTools","imageIndex":0,"imageEdit":{"turns":1,"flipX":false,"flipY":false,"crop":{"x":0.0,"y":0.0,"width":1.0,"height":1.0},"width":100,"height":200}});
+        assert!(canvas_creation_valid(&edit,"open"));
+        let mut bad=edit.clone();bad["imageEdit"]["width"]=serde_json::json!(8192);bad["imageEdit"]["height"]=serde_json::json!(8192);assert!(!canvas_creation_valid(&bad,"open"));
+        let mut bad=edit.clone();bad["imageEdit"]["crop"]["x"]=serde_json::json!(0.5);assert!(!canvas_creation_valid(&bad,"open"));
+        let long=serde_json::json!({"expectedRevision":"0123456789abcdef","operation":{"op":"storyboard.create","name":"😀".repeat(31)}});assert!(!canvas_creation_valid(&long,"edit"));
+    }
+
+    #[test]
+    fn canvas_agent_r7_reasoning_timing_and_tool_title_contract() {
+        let snapshot=serde_json::json!({"canvasId":"canvas-1","conversationId":"conversation-1","sessionId":null,"runId":"run-1","status":"running",
+            "messages":[{"role":"assistant","text":"Answer","reasoningText":"Public","reasoningStartedAt":100,"reasoningEndedAt":800,"reasoningDurationMs":500}],
+            "stream":{"attemptId":"attempt-1","text":"","status":"streaming","reasoning":true,"reasoningStartedAt":900,"reasoningDurationMs":100,"reasoningActiveStartedAt":1100},
+            "tools":[{"callId":"call-1","name":"canvas_apply_plan","status":"completed","startedAt":1,"endedAt":3,"displayTitle":"编辑节点","displayTitleEn":"Edit node"}]});
+        let encode=|v:&serde_json::Value|URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).unwrap());
+        assert!(decode_canvas_agent_snapshot(&encode(&snapshot),"canvas-1").is_ok());
+        let mut bad=snapshot.clone();bad["messages"][0]["reasoningEndedAt"]=serde_json::json!(50);
+        assert!(decode_canvas_agent_snapshot(&encode(&bad),"canvas-1").is_err());
+        let mut bad=snapshot.clone();bad["stream"]["reasoningActiveStartedAt"]=serde_json::json!(-1);
+        assert!(decode_canvas_agent_snapshot(&encode(&bad),"canvas-1").is_err());
+        let mut bad=snapshot.clone();bad["tools"][0]["displayTitle"]=serde_json::json!("x".repeat(241));
+        assert!(decode_canvas_agent_snapshot(&encode(&bad),"canvas-1").is_err());
+        let mut legacy=snapshot.clone();legacy["messages"]=serde_json::json!([{"role":"assistant","text":"Old answer"}]);legacy.as_object_mut().unwrap().remove("stream");legacy.as_object_mut().unwrap().remove("tools");
+        assert!(decode_canvas_agent_snapshot(&encode(&legacy),"canvas-1").is_ok());
+    }
+
+    #[test]
+    fn canvas_agent_r6_turn_identity_and_context_revision_contract() {
+        let mut snapshot=serde_json::json!({"canvasId":"canvas-1","conversationId":"conversation-1","sessionId":"session-1","runId":"run-2","status":"running",
+            "messages":[{"role":"assistant","text":"Answer","turnId":"run-1","messageId":"message-1","attemptId":"attempt-1","createdAt":1,"eventSeq":2}],
+            "stream":{"attemptId":"attempt-2","turnId":"run-2","startedAt":5,"text":"Output","status":"streaming","reasoning":false},
+            "tools":[{"callId":"call-1","turnId":"run-1","name":"canvas_read_context","status":"completed","startedAt":1,"endedAt":3,"eventSeq":3}],
+            "context":{"version":1,"canvasId":"canvas-1","canvasName":"Canvas","snapshotRevision":"0123456789abcdef","nodes":[],"connections":[],"generation":{"imageModels":[],"videoModels":[],"imageReady":false,"videoReady":false}},
+            "pendingAction":{"actionId":"action-2","runId":"run-2","kind":"readContext","offset":256,"expectedRevision":"0123456789abcdef"}});
+        let encode=|v:&serde_json::Value|URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).unwrap());
+        assert!(decode_canvas_agent_snapshot(&encode(&snapshot),"canvas-1").is_ok());
+        for key in ["turnId","messageId","attemptId"] {
+            let mut bad=snapshot.clone(); bad["messages"][0][key]=serde_json::json!("../private");
+            assert!(decode_canvas_agent_snapshot(&encode(&bad),"canvas-1").is_err());
+        }
+        for array in ["messages","tools"] {
+            let mut bad=snapshot.clone(); bad[array][0]["eventSeq"]=serde_json::json!(-1);
+            assert!(decode_canvas_agent_snapshot(&encode(&bad),"canvas-1").is_err());
+        }
+        for path in ["context","pendingAction"] {
+            let mut bad=snapshot.clone(); bad[path][if path=="context" {"snapshotRevision"} else {"expectedRevision"}]=serde_json::json!("BAD");
+            assert!(decode_canvas_agent_snapshot(&encode(&bad),"canvas-1").is_err());
+        }
+        let mut bad=snapshot.clone(); bad["messages"][0]["hiddenChain"]=serde_json::json!("private");
+        assert!(decode_canvas_agent_snapshot(&encode(&bad),"canvas-1").is_err());
+        snapshot["stream"]["turnId"]=serde_json::json!("run-other");
+        assert!(decode_canvas_agent_snapshot(&encode(&snapshot),"canvas-1").is_err());
     }
 
     #[test]
@@ -4761,6 +5588,27 @@ pub(crate) mod tests {
             collection_attachment.encode().unwrap_err(),
             "dsh-open-intent-invalid"
         );
+        let file_path = fixture_root.join("中文 文档.md");
+        std::fs::write(&file_path, "# 文件附件\n完整正文🙂\n").unwrap();
+        let file_intent = || DshOpenIntent {
+            intent_id: "intent-00000008-0000-4000-8000-000000000000".to_owned(),
+            source: "notes".to_owned(),
+            text: String::new(),
+            local_resources: vec![DshOpenIntentLocalResource {
+                library_id: None,
+                kind: "material".to_owned(),
+                asset_id: "note-file".to_owned(),
+                canonical_path: file_path.canonicalize().unwrap().to_string_lossy().into_owned(),
+                delivery: "file-attachment".to_owned(),
+            }],
+        };
+        assert!(file_intent().encode().is_ok());
+        let mut collection_file = file_intent();
+        collection_file.source = "collection".to_owned();
+        assert_eq!(collection_file.encode().unwrap_err(), "dsh-open-intent-invalid");
+        let mut directory_file = file_intent();
+        directory_file.local_resources[0].canonical_path = fixture_root.canonicalize().unwrap().to_string_lossy().into_owned();
+        assert_eq!(directory_file.encode().unwrap_err(), "dsh-open-intent-invalid");
         std::fs::remove_dir_all(&fixture_root).unwrap();
 
         for invalid in [
@@ -5042,7 +5890,7 @@ pub(crate) mod tests {
         let assets = tracked_surface_assets();
         let (paths, _digests) = materialize_surface_modules(&root, &assets).unwrap();
         // Carrier and resource packages now precede the two client modules.
-        let source_indices = [10, 0, 9, 11, 1, 2, 4, 5, 6, 7, 8];
+        let source_indices = [10, 0, 9, 11, 1, 2, 4, 5, 6, 7, 8, 12, 13, 14, 15];
         assert_eq!(paths.len(), source_indices.len());
         for (path, source_index) in paths.iter().zip(source_indices) {
             assert_eq!(
@@ -5485,11 +6333,15 @@ pub(crate) mod tests {
             std::process::id(),
             rand::random::<u64>()
         ));
-        std::fs::write(&temp, normalized.replace('\n', "\r\n")).unwrap();
-        assert_eq!(
-            hash_normalized_host_script(&temp).unwrap(),
-            HOST_SCRIPT_SHA256
-        );
+        let crlf = normalized.replace('\n', "\r\n");
+        std::fs::write(&temp, &crlf).unwrap();
+        // The host authority is checked out as LF. Raw-byte admission remains
+        // fail-closed if a synthetic CRLF expansion crosses the fixed bound.
+        if crlf.len() > MAX_HOST_SCRIPT_BYTES {
+            assert!(hash_normalized_host_script(&temp).is_err());
+        } else {
+            assert_eq!(hash_normalized_host_script(&temp).unwrap(), HOST_SCRIPT_SHA256);
+        }
         std::fs::write(&temp, format!("{normalized}\n// unbound mutation\n")).unwrap();
         assert_ne!(
             hash_normalized_host_script(&temp).unwrap(),
@@ -5546,18 +6398,13 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "requires the exact verified DSH-0 runtime fixture"]
     fn crash_restart_and_explicit_retry_each_use_a_new_generation() {
-        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        // Keep the complete, digest-bound host asset directory. Copying only
+        // the entry script creates an incomplete descriptor before the
+        // crash/retry behavior under test is ever reached.
+        let host_script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("dsh-host")
             .join("luckyray-dsh-host.mjs");
-        let temp = std::env::temp_dir().join(format!(
-            "luckyray-dsh-host-restart-{}-{}",
-            std::process::id(),
-            rand::random::<u64>()
-        ));
-        std::fs::create_dir_all(&temp).unwrap();
-        let host_script = temp.join("luckyray-dsh-host.mjs");
-        std::fs::copy(&source, &host_script).unwrap();
-        let service = real_service(host_script.clone());
+        let service = real_service(host_script);
         assert_eq!(
             service.probe(DshHostAction::Probe).unwrap().stage,
             DshHostStage::ProbeCompleted
@@ -5594,7 +6441,6 @@ pub(crate) mod tests {
         );
         assert_eq!(service.generation.load(Ordering::Acquire), 3);
         service.shutdown();
-        let _ = std::fs::remove_dir_all(temp);
     }
 
     #[cfg(all(windows, feature = "browser-host-runtime"))]
@@ -5675,6 +6521,23 @@ pub(crate) mod tests {
             .join("dsh-host")
             .join("luckyray-dsh-host.mjs");
         let service = real_service(host_script);
+        // A visible terminal stage can precede the old monitor releasing its
+        // single-operation guard. Model a later user Retry, not a scheduler
+        // race; only the exact transient busy result may wait, and only within
+        // this test budget. All production admission/recovery assertions stay.
+        let retry_after_monitor = || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match service.probe(DshHostAction::ExplicitRetry) {
+                    Ok(_) => break,
+                    Err(error) if error == "dsh-host-action-busy" => {
+                        assert!(Instant::now() < deadline, "old monitor failed to settle");
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("settled explicit retry failed: {error}"),
+                }
+            }
+        };
         service.probe(DshHostAction::Probe).unwrap();
         let (_, first_bootstrap) = service.open_native_surface().unwrap();
         let initial_generation = service.generation.load(Ordering::Acquire);
@@ -5767,7 +6630,7 @@ pub(crate) mod tests {
         // Cross the old monitor's operation boundary before simulating a
         // later user Retry; the generation fence makes the monitor a no-op.
         drop(service.operation.lock().unwrap());
-        service.probe(DshHostAction::ExplicitRetry).unwrap();
+        retry_after_monitor();
         service.open_native_surface().unwrap();
         assert_eq!(
             service.generation.load(Ordering::Acquire),
@@ -5802,7 +6665,7 @@ pub(crate) mod tests {
         assert!(service.active_job.lock().unwrap().is_none());
 
         drop(service.operation.lock().unwrap());
-        service.probe(DshHostAction::ExplicitRetry).unwrap();
+        retry_after_monitor();
         let (_, recovered) = service.open_native_surface().unwrap();
         assert_eq!(
             service.generation.load(Ordering::Acquire),

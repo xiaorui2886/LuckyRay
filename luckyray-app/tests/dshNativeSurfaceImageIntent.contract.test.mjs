@@ -35,6 +35,58 @@ const IMAGE_LIMITS = Object.freeze({
   mediaTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
 });
 
+test("generic file drafts preserve full bytes/name and existing text; one receipt cannot duplicate attachments", async () => {
+  const harness = sessionHarness({ imageLimitsReady: false });
+  harness.input.setDraft("existing 用户草稿");
+  const contents = [Buffer.from("# 中文笔记\n原文🙂\n"), Buffer.from([0, 1, 8, 255, 20])];
+  const names = ["中文 笔记.md", "视频.mp4"];
+  const intent = { intentId: "intent-00000021-0000-4000-8000-000000000000", source: "notes", text: "",
+    localResources: names.map((name, index) => ({ kind: "material", assetId: `file-${index}`,
+      canonicalPath: `C:\\Library\\${name}`, delivery: "file-attachment" })) };
+  let acknowledged = false;
+  const files = [];
+  const conversation = { input: { for: () => harness.input },
+    createDrafts: (session, incoming) => { assert.equal(session, "session-one"); files.push(...incoming); return incoming.map((file, i) => ({ id: `file-${i}`, kind: "file", file })); },
+    resolveDraftAttachments: () => [], releaseDraftAttachments: () => {} };
+  const request = async (path, init = {}) => {
+    if (path.includes("open-intent-resource")) {
+      const bytes = contents[Number(path.split("/").pop())];
+      return new Response(bytes, { headers: { "content-type": "application/octet-stream", "content-length": String(bytes.length) } });
+    }
+    if (init.method === "POST") { acknowledged = true; return new Response(null, { status: 204 }); }
+    return acknowledged ? new Response(null, { status: 204 }) : Response.json(intent);
+  };
+  const consumer = surfaceState.createOpenIntentConsumer(harness.sessions, conversation, request, new EventTarget(), harness.selectedSession);
+  try {
+    await consumer.run(); await consumer.run();
+    assert.equal(acknowledged, true);
+    assert.equal(harness.input.state.getSnapshot().draft, "existing 用户草稿");
+    assert.deepEqual(harness.attachmentIds, ["file-0", "file-1"]);
+    assert.deepEqual(files.map(file => file.name), names);
+    for (let i = 0; i < files.length; i++) assert.deepEqual(Buffer.from(await files[i].arrayBuffer()), contents[i]);
+  } finally { consumer.dispose(); }
+});
+
+test("generic files still require an exact live intent, canonical file, source and generation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lsh-file-intent-"));
+  try {
+    const file = join(directory, "中文 文档.pdf");
+    await writeFile(file, "synthetic PDF bytes");
+    const canonicalPath = await realpath(file);
+    const intent = { intentId: "intent-00000022-0000-4000-8000-000000000000", source: "materials", text: "",
+      localResources: [{ kind: "material", assetId: "document", canonicalPath, delivery: "file-attachment" }] };
+    const slot = createOpenIntentSlot(); slot.bind(7);
+    slot.stage(7, Buffer.from(JSON.stringify(intent)).toString("base64url"));
+    assert.equal(resolveOpenIntentImageResource(slot, 7, intent.intentId, 0).mediaType, "application/octet-stream");
+    assert.throws(() => resolveOpenIntentImageResource(slot, 8, intent.intentId, 0), /unavailable/);
+    assert.throws(() => resolveOpenIntentImageResource(slot, 7, intent.intentId, 1), /unavailable/);
+    assert.equal(slot.acknowledge(7, intent.intentId), true);
+    assert.throws(() => resolveOpenIntentImageResource(slot, 7, intent.intentId, 0), /unavailable/);
+    const other = createOpenIntentSlot(); other.bind(1);
+    assert.throws(() => other.stage(1, Buffer.from(JSON.stringify({ ...intent, source: "collection" })).toString("base64url")), /invalid/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 function sessionHarness({ imageLimitsReady = true } = {}) {
   const writes = [];
   const attachmentIds = [];

@@ -23,7 +23,6 @@ import {
 } from "../../core/services/smartFolders";
 import { listTags, type TagRecord } from "../../core/services/tags";
 import { openCanvasById } from "../canvas/canvasNavigation";
-import AutoImportManager from "./AutoImportManager";
 import { openMaterialAppearanceFromNavigation } from "../materials/materialsToolbarProtocol";
 import "../../components/editorialContentChrome.css";
 import {
@@ -337,7 +336,6 @@ function SmartFolderOverview({
   onCreate: () => void;
 }) {
   const { t } = useMessages(COPY);
-  const [activeOverviewTab, setActiveOverviewTab] = useState<"quick" | "auto-import">("quick");
   const grouped = useMemo(() => Object.fromEntries(
     (["material", "note", "canvas"] as SmartFolderSource[]).map((source) => [source, definitions.filter((item) => item.source === source)]),
   ) as Record<SmartFolderSource, SmartFolderDefinition[]>, [definitions]);
@@ -351,13 +349,7 @@ function SmartFolderOverview({
         <div className="smart-overview-actions"><button type="button" className="smart-primary-action editorial-primary-action" onClick={onCreate}>{t("action.create")}</button></div>
       </header>
 
-      <div className="smart-overview-tabs" role="tablist" aria-label={t("tabs.aria")}>
-        <button type="button" role="tab" aria-selected={activeOverviewTab === "quick"} aria-controls="smart-quick-views" className={activeOverviewTab === "quick" ? "active" : ""} onClick={() => setActiveOverviewTab("quick")}>{t("tab.quick")}</button>
-        <button type="button" role="tab" aria-selected={activeOverviewTab === "auto-import"} aria-controls="smart-auto-import-panel" className={activeOverviewTab === "auto-import" ? "active" : ""} onClick={() => setActiveOverviewTab("auto-import")}>{t("tab.autoImport")}</button>
-      </div>
-
-      {activeOverviewTab === "quick" ? (
-        <div id="smart-quick-views" role="tabpanel">
+        <div id="smart-quick-views">
           <section className="smart-section" aria-labelledby="smart-built-in-title">
             <div className="smart-section-heading">
               <div><h2 id="smart-built-in-title">{t("tab.quick")}</h2><p>{t("quick.description")}</p></div>
@@ -391,9 +383,6 @@ function SmartFolderOverview({
             ) : null)}
           </section>
         </div>
-      ) : (
-        <div id="smart-auto-import-panel" role="tabpanel"><AutoImportManager mode="inline" /></div>
-      )}
     </div>
   );
 }

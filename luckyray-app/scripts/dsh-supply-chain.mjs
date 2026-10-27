@@ -14,118 +14,124 @@ export class DshSupplyChainError extends Error {
   }
 }
 
+// Whole-closure budget, not the unchanged per-npm-archive entry budget.
+// The admitted Windows 0.2.1-rc.3 tree contains 35,192 files.
+export const MAX_DSH_CLOSURE_FILE_COUNT = 40_000;
 const EXPECTED_AUTHORITY = Object.freeze({
-  schemaVersion: 1,
-  runtimePackage: {
-    name: "@deepseek-ai/dsh",
-    version: "0.1.7-rc.2",
-    tarball: "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz",
-    registryIntegrity: "sha512-SQFhriLvza8GnFApnC5/32AgpcyKxrWnYXhvwDOLJdgWpkCX2EexyR9c8kCkMITJXnFLEN3Qb2CEh0W36vkLyw==",
-    registrySha1: "2078409337e9934df3366535d873494e601f90d0",
-    sha256: "5f2da7272d9485abc223e681075809a8d929697c5232ee445718e1b7e066bff8",
-    size: 23335,
-    license: "MIT",
+  "schemaVersion": 1,
+  "runtimePackage": {
+    "name": "@deepseek-ai/dsh",
+    "version": "0.2.1-rc.3",
+    "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.1-rc.3.tgz",
+    "registryIntegrity": "sha512-H+E9HLnHf7fJqzen84Z9Bq8ggb5xbrcbyhZjXTJLE9NabHr3zteGvTRvdvGkxPl4ov80is4WLglFmSo+/olJjg==",
+    "registrySha1": "ccc527065b9f736ea299a1f78150a21143d961aa",
+    "sha256": "9a8f9493bfab8218215a8ca38ab8821e76dff63dc4fcb65841ef87c0aa277141",
+    "size": 25130,
+    "license": "MIT"
   },
-  sourceReference: {
-    repository: "https://github.com/deepseek-ai/deepseek-harness",
-    commit: "477b4f420553e8a52c2fbccc464d7561b239c443",
-    tree: "e3e63253d1d35ad07f785273235c40813cb6c8bd",
-    declaredVersion: "0.1.7-rc.2",
-    role: "audit-only",
-    provenanceBoundToRuntime: false,
+  "sourceReference": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "commit": "1f81c047fc48fa190a683e469daa699857e9afe8",
+    "tree": "fe242286aaa4a399c91814de21e55f874ea34295",
+    "declaredVersion": "0.2.1-rc.3",
+    "role": "audit-only",
+    "provenanceBoundToRuntime": false
   },
-  nodeRuntime: {
-    version: "22.19.0",
-    platform: "win32",
-    architecture: "x64",
-    archive: "https://nodejs.org/dist/v22.19.0/node-v22.19.0-win-x64.zip",
-    archiveSha256: "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86",
-    nodeExeSha256: "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362",
-    licenseSha256: "339c50294da6a84322dcbe7285b57b248123bd4d9e37a2f72d68d5abf2574783",
-    stagedFiles: ["LICENSE", "node.exe"],
+  "nodeRuntime": {
+    "version": "22.19.0",
+    "platform": "win32",
+    "architecture": "x64",
+    "archive": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-win-x64.zip",
+    "archiveSha256": "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86",
+    "nodeExeSha256": "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362",
+    "licenseSha256": "339c50294da6a84322dcbe7285b57b248123bd4d9e37a2f72d68d5abf2574783",
+    "stagedFiles": [
+      "LICENSE",
+      "node.exe"
+    ]
   },
-  packageManager: {
-    name: "pnpm",
-    version: "11.7.0",
-    tarball: "https://registry.npmjs.org/pnpm/-/pnpm-11.7.0.tgz",
-    registryIntegrity: "sha512-GcyFLBIMcSV2DyRD7mvgyltA+fUFmN4aCaHxd1A+AQ5Xwjx3ZG4B52HeWb+HT7IqM5jDOrlpH8E+uUa28PTWIA==",
-    registrySha1: "bea54364524dadf0a42dae28dbfeeab25ff177e5",
-    sha256: "deafa7ec98a1218b6a047289b92fbe2395c1e22d3495bb711653013218ee15ee",
-    license: "MIT",
-    archivePolicy: {
-      schemaVersion: 1,
-      format: "ustar",
-      magicHex: "757374617200",
-      version: "00",
-      regularFilesOnly: true,
-      requireEmptyPrefix: true,
-      requireEmptyLinkName: true,
-      windowsCanonicalPaths: true,
-      compressedByteLimit: 33554432,
-      uncompressedByteLimit: 33554432,
-      entryCountLimit: 1024,
-      entryByteLimit: 16777216,
-      pathByteLimit: 100,
-      pathDepthLimit: 32,
-      pathSegmentByteLimit: 255,
-      endZeroBlockCount: 2,
+  "packageManager": {
+    "name": "pnpm",
+    "version": "11.7.0",
+    "tarball": "https://registry.npmjs.org/pnpm/-/pnpm-11.7.0.tgz",
+    "registryIntegrity": "sha512-GcyFLBIMcSV2DyRD7mvgyltA+fUFmN4aCaHxd1A+AQ5Xwjx3ZG4B52HeWb+HT7IqM5jDOrlpH8E+uUa28PTWIA==",
+    "registrySha1": "bea54364524dadf0a42dae28dbfeeab25ff177e5",
+    "sha256": "deafa7ec98a1218b6a047289b92fbe2395c1e22d3495bb711653013218ee15ee",
+    "license": "MIT",
+    "archivePolicy": {
+      "schemaVersion": 1,
+      "format": "ustar",
+      "magicHex": "757374617200",
+      "version": "00",
+      "regularFilesOnly": true,
+      "requireEmptyPrefix": true,
+      "requireEmptyLinkName": true,
+      "windowsCanonicalPaths": true,
+      "compressedByteLimit": 33554432,
+      "uncompressedByteLimit": 33554432,
+      "entryCountLimit": 1024,
+      "entryByteLimit": 16777216,
+      "pathByteLimit": 100,
+      "pathDepthLimit": 32,
+      "pathSegmentByteLimit": 255,
+      "endZeroBlockCount": 2
     },
-    extractedTree: {
-      schemaVersion: 1,
-      fileCount: 449,
-      byteCount: 18644360,
-      sha256: "ccb8af2ce09e65f728ab5689a1bc00df5b1f508bc23cfc9829d95d3dccc1340e",
-      entryPoint: "package/bin/pnpm.mjs",
+    "extractedTree": {
+      "schemaVersion": 1,
+      "fileCount": 449,
+      "byteCount": 18644360,
+      "sha256": "ccb8af2ce09e65f728ab5689a1bc00df5b1f508bc23cfc9829d95d3dccc1340e",
+      "entryPoint": "package/bin/pnpm.mjs"
     },
-    installPolicy: {
-      ignorePnpmfile: true,
-      isolatedGlobalConfig: true,
-      packageImportMethod: "copy",
-      nodeLinker: "isolated",
-      virtualStoreDir: "node_modules/.pnpm",
-      installScripts: false,
-      offline: true,
-      frozenLockfile: true,
-      minimumReleaseAge: 1440,
-      minimumReleaseAgeStrict: true,
-      minimumReleaseAgeIgnoreMissingTime: false,
-      missingReleaseTimeBehavior: "reject",
-      workspacePolicySha256: "460e2012bf651c0b13acdc433a98255ee144585461ba280a335211a1b0af56f7",
+    "installPolicy": {
+      "ignorePnpmfile": true,
+      "isolatedGlobalConfig": true,
+      "packageImportMethod": "copy",
+      "nodeLinker": "isolated",
+      "virtualStoreDir": "node_modules/.pnpm",
+      "installScripts": false,
+      "offline": true,
+      "frozenLockfile": true,
+      "minimumReleaseAge": 1440,
+      "minimumReleaseAgeStrict": true,
+      "minimumReleaseAgeIgnoreMissingTime": false,
+      "missingReleaseTimeBehavior": "reject",
+      "workspacePolicySha256": "460e2012bf651c0b13acdc433a98255ee144585461ba280a335211a1b0af56f7"
+    }
+  },
+  "dependencyClosure": {
+    "lockfile": "pnpm-lock.yaml",
+    "lockfileVersion": "9.0",
+    "sha256": "0faaa6a7163bf2248735883e69e6051825b45fafb253a42432b4b6ee5a3bbbea",
+    "packageCount": 634,
+    "stagedPackageCount": 562,
+    "installedAuditSha256": "b361fd576b25e6cd37d4c1c4fe01203cf544da5b4cfd0506cdf83a8e17d46619",
+    "resolverGraphSha256": "65eb2c38f0fe86830a22ef6fb41e821b8965b7b8b3f7680dd4f77b567784be40",
+    "lockReconciliationSha256": "33bd8d500dc0403353f29060aa9c5f66d5f7f2a2b8f492efbc877276c83fa880",
+    "releaseLayout": {
+      "schemaVersion": 1,
+      "nodeLinker": "hoisted",
+      "packageImportMethod": "copy",
+      "physicalPackageRootCount": 570,
+      "resolverGraphEdgeCount": 0,
+      "maxNodeModulesRelativePathLength": 161,
+      "maxRelativePathLength": 179,
+      "fileCount": 35192,
+      "contentSha256": "c454ae927c4109ab33b5708c6258432ea0d5884d513c9e206a5df7aa62e04615",
+      "normalizedShimCount": 13,
+      "fixedEntryPoint": "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
+      "reparsePoints": 0
     },
+    "nodeVersion": "22.19.0",
+    "pnpmVersion": "11.7.0"
   },
-  dependencyClosure: {
-    lockfile: "pnpm-lock.yaml",
-    lockfileVersion: "9.0",
-    sha256: "27879348455b15729c05aa9491710a7a4cbd252130a5137a6be809a4df2cb25b",
-    packageCount: 591,
-    stagedPackageCount: 516,
-    installedAuditSha256: "1101b53e0a4713f031247e6110e9e11c76375e17d6b2751aafcc411847c940e3",
-    resolverGraphSha256: "26b7346fa62a3ffde6364b957e2044d6d8cad5d0b8c5092e238f88cc430629fa",
-    lockReconciliationSha256: "a36fbceae4aac3ff17f1f84d89e93d27b3a87c754ca58c85fff46013f030b503",
-    releaseLayout: {
-      schemaVersion: 1,
-      nodeLinker: "hoisted",
-      packageImportMethod: "copy",
-      physicalPackageRootCount: 517,
-      resolverGraphEdgeCount: 0,
-      maxNodeModulesRelativePathLength: 157,
-      maxRelativePathLength: 175,
-      fileCount: 25658,
-      contentSha256: "35e43f0fc3b627e74a5b53b14e19dc18f4e2e8c48ffa0e030df0b96eb1a5f98b",
-      normalizedShimCount: 13,
-      fixedEntryPoint: "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
-      reparsePoints: 0,
-    },
-    nodeVersion: "22.19.0",
-    pnpmVersion: "11.7.0",
-  },
-  policy: {
-    runtimeAuthority: "npm-tarball-and-frozen-closure",
-    upstreamPatchCount: 0,
-    allowSystemNodeFallback: false,
-    allowNetworkDuringOfflineStage: false,
-    allowInstallScripts: false,
-  },
+  "policy": {
+    "runtimeAuthority": "npm-tarball-and-frozen-closure",
+    "upstreamPatchCount": 0,
+    "allowSystemNodeFallback": false,
+    "allowNetworkDuringOfflineStage": false,
+    "allowInstallScripts": false
+  }
 });
 
 // Only fixed qualification validation can create this in-memory identity. The
@@ -165,7 +171,7 @@ export function validateQualifiedDshRuntimeAuthority(value) {
       || value.sourceReference?.declaredVersion !== runtime.version
       || !count(closure.packageCount, 2048) || !count(closure.stagedPackageCount, closure.packageCount)
       || !["sha256", "installedAuditSha256", "resolverGraphSha256", "lockReconciliationSha256"].every(k => hex(closure[k]))
-      || !count(layout.physicalPackageRootCount, 2048) || !count(layout.fileCount, 30000)
+      || !count(layout.physicalPackageRootCount, 2048) || !count(layout.fileCount, MAX_DSH_CLOSURE_FILE_COUNT)
       || !count(layout.maxNodeModulesRelativePathLength, 220) || !count(layout.maxRelativePathLength, 240)
       || !count(layout.normalizedShimCount, 128) || !hex(layout.contentSha256)) invalid();
   // Substitute ONLY version-qualified data, then compare ALL policy, tool,
@@ -199,7 +205,7 @@ const EXPECTED_HOST_PACKAGE = Object.freeze({
   packageManager: "pnpm@11.7.0",
   engines: { node: "=22.19.0" },
   dependencies: {
-    "@deepseek-ai/dsh": "0.1.7-rc.2",
+    "@deepseek-ai/dsh": "0.2.1-rc.3",
     react: "18.3.1",
     "react-dom": "18.3.1",
   },
@@ -481,24 +487,24 @@ const ALLOWED_LICENSES = new Set([
 const LIFECYCLE_SCRIPT_REVIEWS = Object.freeze([
   {
     name: "@deepseek-ai/dsh-subprocess-local",
-    version: "0.1.7-rc.2",
+    version: "0.2.1-rc.3",
     scripts: [{ stage: "postinstall", command: "node scripts/ensure-spawn-helper.mjs" }],
     windowsRuntimeEvidence: [],
     rationale: "The script only restores a POSIX executable bit on node-pty spawn-helper; Windows does not use that permission bit.",
   },
   {
     name: "@google/genai",
-    version: "1.52.0",
+    version: "2.21.0",
     scripts: [{ stage: "preinstall", command: "echo 'preinstall: no-op'" }],
     windowsRuntimeEvidence: [],
     rationale: "The published preinstall command is explicitly a no-op.",
   },
   {
     name: "koffi",
-    version: "3.3.1",
+    version: "3.1.1",
     scripts: [{ stage: "install", command: "node ./cnoke.cjs -P . -D src/koffi --prebuild --release" }],
     windowsRuntimeEvidence: [{
-      package: "@koromix/koffi-win32-x64@3.3.1",
+      package: "@koromix/koffi-win32-x64@3.1.1",
       path: "win32_x64/koffi.node",
     }],
     rationale: "The exact Windows x64 optional prebuild is present and hashed, so local compilation is neither required nor allowed.",
@@ -529,16 +535,16 @@ const LIFECYCLE_SCRIPT_REVIEWS = Object.freeze([
 
 const WINDOWS_X64_RUNTIME_EVIDENCE = Object.freeze([
   ...LIFECYCLE_SCRIPT_REVIEWS.flatMap((review) => review.windowsRuntimeEvidence),
-  { package: "@img/sharp-win32-x64@0.35.4", path: "lib/libvips-42.dll" },
-  { package: "@img/sharp-win32-x64@0.35.4", path: "lib/libvips-cpp-8.18.6.dll" },
-  { package: "@img/sharp-win32-x64@0.35.4", path: "lib/sharp-win32-x64-0.35.4.node" },
+  { package: "@img/sharp-win32-x64@0.35.5", path: "lib/libvips-42.dll" },
+  { package: "@img/sharp-win32-x64@0.35.5", path: "lib/libvips-cpp-8.18.7.dll" },
+  { package: "@img/sharp-win32-x64@0.35.5", path: "lib/sharp-win32-x64-0.35.5.node" },
   { package: "@vscode/ripgrep-win32-x64@1.18.0", path: "bin/rg.exe" },
-  { package: "node-addon-require-builtin-win32-x64-msvc@0.1.6", path: "prebuilt/win32-x64-msvc-napi-v9.node" },
-  { package: "@deepseek-ai/libreoffice-kit-win32-x64@0.1.1", path: "bin/libreoffice-kit.exe" },
+  { package: "node-addon-require-builtin-win32-x64-msvc@0.1.9", path: "prebuilt/win32-x64-msvc-napi-v9.node" },
+  { package: "@deepseek-ai/libreoffice-kit-win32-x64@0.1.5", path: "bin/libreoffice-kit.exe" },
 ]);
 
 // Qualified closures still require reviewed, exact PE paths. Sharp 0.35.5
-// updates both the addon and libvips filenames; the bundled closure stays fixed.
+// updates both the addon and libvips filenames; the bundled closure is 0.35.5.
 const QUALIFIED_SHARP_WINDOWS_PATHS = Object.freeze({
   "0.35.4": ["lib/libvips-42.dll", "lib/libvips-cpp-8.18.6.dll", "lib/sharp-win32-x64-0.35.4.node"],
   "0.35.5": ["lib/libvips-42.dll", "lib/libvips-cpp-8.18.7.dll", "lib/sharp-win32-x64-0.35.5.node"],
@@ -1171,7 +1177,7 @@ async function validateWindowsX64NativeEvidence(nodeModulesRoot, qualified = fal
     if (qualified && name === "@img/sharp-win32-x64") {
       const version = matches[0][0].slice(matches[0][0].lastIndexOf("@") + 1);
       const paths = QUALIFIED_SHARP_WINDOWS_PATHS[version];
-      const index = QUALIFIED_SHARP_WINDOWS_PATHS["0.35.4"].indexOf(evidence.path);
+      const index = QUALIFIED_SHARP_WINDOWS_PATHS["0.35.5"].indexOf(evidence.path);
       if (!paths || index < 0) throw new DshSupplyChainError("dsh-native-prebuild-evidence-missing");
       evidencePath = paths[index];
     }
@@ -1193,10 +1199,10 @@ export async function probeDshNativeModules({ stageRoot, expectedNodeVersion = "
       byIdentity.set(`${manifest.name}@${manifest.version}`, root);
     }
     for (const identity of [
-      "koffi@3.3.1",
+      "koffi@3.1.1",
       "node-pty@1.2.0-beta.15",
-      "sharp@0.35.4",
-      "node-addon-require-builtin@0.1.6",
+      "sharp@0.35.5",
+      "node-addon-require-builtin@0.1.9",
     ]) {
       const name = identity.slice(0, identity.lastIndexOf("@"));
       const matches = [...byIdentity].filter(([key]) => key.slice(0, key.lastIndexOf("@")) === name);
@@ -1233,7 +1239,7 @@ export function buildPublishedDshRecords({ authority, dependencyAudit }) {
     || dependencyAudit.lockReconciliation?.stagedCount !== closure.stagedPackageCount
     || (qualifiedAuthorities.has(validatedAuthority)
       ? dependencyAudit.lockReconciliation?.mandatoryReachableCount + dependencyAudit.lockReconciliation?.optionalOnlyReachableCount !== closure.packageCount
-      : dependencyAudit.lockReconciliation?.mandatoryReachableCount !== 510 || dependencyAudit.lockReconciliation?.optionalOnlyReachableCount !== 81)
+      : dependencyAudit.lockReconciliation?.mandatoryReachableCount !== 556 || dependencyAudit.lockReconciliation?.optionalOnlyReachableCount !== 78)
     || sha256(canonicalBytes(dependencyAudit.resolverGraph)) !== closure.resolverGraphSha256
     || sha256(canonicalBytes(dependencyAudit.lockReconciliation)) !== closure.lockReconciliationSha256
     || sha256(canonicalBytes(dependencyAudit)) !== closure.installedAuditSha256

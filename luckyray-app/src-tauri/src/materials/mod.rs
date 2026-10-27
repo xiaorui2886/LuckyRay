@@ -12,6 +12,11 @@ mod video_tools;
 mod appearance_descriptor;
 mod appearance;
 mod libraries;
+mod library_auto_import;
+mod library_root_watch;
+#[cfg(test)]
+mod library_watch_browser_fixture;
+pub(crate) use library_root_watch::{start_library_root_watch, stop_library_root_watch};
 mod library_commands;
 mod library_package;
 mod library_package_preferences;

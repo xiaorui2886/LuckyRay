@@ -17,7 +17,8 @@ async function openWorkspaceServices(runtimeRoot, home) {
     await ctx.plugin((await load("@deepseek-ai/dsh-storage")).default);
     await ctx.plugin(await load("@deepseek-ai/dsh-storage-json"), { root: join(home, "storages") });
     await ctx.plugin(await load("@deepseek-ai/dsh-storage-domain"), { backend: "json" });
-    const Persistence = (await load("@deepseek-ai/dsh-session-persistence-jsonl")).default;
+    const persistenceModule = await load("@deepseek-ai/dsh-session-persistence-jsonl");
+    const Persistence = persistenceModule.default ?? persistenceModule;
     if (Persistence.inject?.includes("sessions")) {
       await ctx.plugin((await load("@deepseek-ai/dsh-session")).default);
     }
@@ -44,19 +45,22 @@ function workspaceSnapshot(registry) {
 // The probe talks only to its own deterministic loopback provider, never user APIs.
 test("an in-place upgrade retains old turns, legacy settings backup and credentials across a second restart", {
   timeout: 120_000,
-}, async () => {
+}, async (t) => {
   const home = await mkdtemp(join(tmpdir(), "luckyray-dsh-upgrade-"));
   try {
     const oldRoot = process.env.DSH_UPGRADE_FROM_RUNTIME_ROOT;
     const newRoot = process.env.DSH_UPGRADE_TO_RUNTIME_ROOT;
     const load = (name) => import(pathToFileURL(join(newRoot, "host/node_modules", name, "lib/index.js")));
     const { Context } = await load("@deepseek-ai/cordis");
-    const { default: Persistence } = await load("@deepseek-ai/dsh-session-persistence-jsonl");
+    const persistenceModule = await load("@deepseek-ai/dsh-session-persistence-jsonl");
     const { parseCredentialsDocument } = await load("@deepseek-ai/dsh-credentials-local");
     const { default: yaml } = await import(pathToFileURL(join(newRoot, "host/node_modules/yaml/dist/index.js")));
 
     await runNativeDshProbe({ runtimeRoot: oldRoot, stateRoot: home });
-    const storage = () => new Persistence(new Context(), { root: join(home, "sessions") });
+    const persistenceContext = new Context();
+    await persistenceContext.plugin(persistenceModule.default ?? persistenceModule, { root: join(home, "sessions") });
+    t.after(() => persistenceContext.fiber.dispose());
+    const storage = () => persistenceContext.sessionPersistence;
     const firstStore = storage();
     const oldSessions = await firstStore.list();
     assert.equal(oldSessions.length, 1);
@@ -129,7 +133,7 @@ test("an in-place upgrade retains old turns, legacy settings backup and credenti
 
 test("official workspace services preserve IDs, project paths and ownership across upgrade and later project activity", {
   timeout: 120_000,
-}, async () => {
+}, async (t) => {
   const home = await mkdtemp(join(tmpdir(), "luckyray-dsh-workspaces-"));
   let services;
   try {

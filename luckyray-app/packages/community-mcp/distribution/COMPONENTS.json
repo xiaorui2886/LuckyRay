@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "package": "luckyray.official.web-mcp",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "platform": "windows-x86_64",
   "components": [
     {
@@ -38,6 +38,6 @@
       "modified": false
     }
   ],
-  "runtimeCompatibility": "Vendor executable and third-party license bytes are unchanged from published 0.1.0. LuckyRay process discovery now emits UTF-8 for exact Unicode executable identity; authentication, permissions and protocol are unchanged.",
+  "runtimeCompatibility": "Vendor executables, third-party licenses, Unicode process discovery, authentication, permissions and protocol are unchanged from published 0.1.1. Markdown folder guidance and missing-parent error forwarding are updated; matching desktop parent preflight is required.",
   "includedUserState": false
 }

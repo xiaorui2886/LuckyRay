@@ -15,7 +15,7 @@ export function resolveContainedMaterialMediaRect(
   available: MaterialMediaDimensions,
   intrinsic: MaterialMediaDimensions,
 ): MaterialMediaDimensions {
-  if (available.width <= 0 || available.height <= 0 || intrinsic.width <= 0 || intrinsic.height <= 0) {
+  if (![available.width, available.height, intrinsic.width, intrinsic.height].every(value => Number.isFinite(value) && value > 0)) {
     return { width: 0, height: 0 };
   }
   const scale = Math.min(available.width / intrinsic.width, available.height / intrinsic.height);

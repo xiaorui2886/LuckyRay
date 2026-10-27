@@ -28,6 +28,29 @@ static TOOLS: OnceLock<Mutex<Option<VerifiedTools>>> = OnceLock::new();
 const VIDEO_FORMATS: &str =
     "mov,matroska,webm,avi,asf,flv,mpeg,mpegts,ogg,nut,rm,h264,hevc,av1,m4v";
 static CACHE: OnceLock<Mutex<VecDeque<(String, Value, usize)>>> = OnceLock::new();
+// Failed device/codec combinations are not retried for every timeline tile.
+// Bounded per source revision; never affects covers or playback.
+static SOFTWARE_ONLY: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
+// 2026-10-23 Windows 4K H264 sample: CPU median 156 ms, DXVA2 auto 484 ms.
+// Keep the accepted CPU default; a supported device is not proof of a speedup.
+const TIMELINE_HARDWARE_ENABLED: bool = false;
+fn timeline_hardware_candidate(metadata: Option<&Value>, cover: bool) -> bool {
+    if cover { return false; }
+    metadata.is_some_and(|m| {
+        m["width"].as_u64().unwrap_or(0).saturating_mul(m["height"].as_u64().unwrap_or(0)) >= 3_686_400
+            && matches!(m["codec"].as_str(), Some("h264" | "hevc" | "vp9" | "av1"))
+    })
+}
+fn hardware_allowed(key: &str) -> bool {
+    SOFTWARE_ONLY.get_or_init(|| Mutex::new(VecDeque::new())).lock()
+        .map(|items| !items.iter().any(|item| item == key)).unwrap_or(false)
+}
+fn remember_software_only(key: &str) {
+    if let Ok(mut items) = SOFTWARE_ONLY.get_or_init(|| Mutex::new(VecDeque::new())).lock() {
+        if !items.iter().any(|item| item == key) { items.push_back(key.to_owned()); }
+        while items.len() > 32 { items.pop_front(); }
+    }
+}
 struct Permit;
 impl Drop for Permit {
     fn drop(&mut self) {
@@ -84,6 +107,10 @@ fn tool_dir(resources: &Path) -> Result<PathBuf, String> {
     Ok(tools)
 }
 fn run(exe: &Path, args: &[String], cancel: &AtomicBool) -> Result<Vec<u8>, String> {
+    run_before(exe, args, cancel, Instant::now() + Duration::from_secs(8))
+}
+fn run_before(exe: &Path, args: &[String], cancel: &AtomicBool, deadline: Instant) -> Result<Vec<u8>, String> {
+    if Instant::now() >= deadline { return Err("native-video-preview-timeout".into()); }
     if cancel.load(Ordering::Acquire) {
         return Err("native-video-preview-cancelled".into());
     }
@@ -106,10 +133,9 @@ fn run(exe: &Path, args: &[String], cancel: &AtomicBool) -> Result<Vec<u8>, Stri
             .read_to_end(&mut bytes)
             .map(|_| bytes)
     });
-    let start = Instant::now();
     let mut failure = None;
     loop {
-        if cancel.load(Ordering::Acquire) || start.elapsed() > Duration::from_secs(8) {
+        if cancel.load(Ordering::Acquire) || Instant::now() >= deadline {
             failure = Some(if cancel.load(Ordering::Acquire) {
                 "native-video-preview-cancelled"
             } else {
@@ -277,7 +303,7 @@ pub(super) fn request(
         return Err("native-video-preview-cancelled".into());
     }
     // Scope and source revision are checked even for a cache hit.
-    let key = serde_json::to_string(&(catalog.db_path(), library, &asset, &revision, seconds, cover))
+    let key = serde_json::to_string(&(catalog.db_path(), &library, &asset, &revision, seconds, cover))
         .map_err(|_| "native-video-cache-key-invalid")?;
     if let Some(value) = cached(&key) {
         return Ok(value);
@@ -287,7 +313,22 @@ pub(super) fn request(
             .resource_dir()
             .map_err(|_| "native-video-resources-unavailable")?,
     )?;
-    let value = decode_sized(&tools, &path, &revision, seconds, &flag, cover)?;
+    let source_key = serde_json::to_string(&(catalog.db_path(), &library, &asset, &revision, Option::<f64>::None, false))
+        .map_err(|_| "native-video-cache-key-invalid")?;
+    let metadata = cached(&source_key);
+    let hardware = TIMELINE_HARDWARE_ENABLED && seconds.is_some() && timeline_hardware_candidate(metadata.as_ref(), cover) && hardware_allowed(&source_key);
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let value = match decode_sized(&tools, &path, &revision, seconds, &flag, cover, hardware, deadline) {
+        Ok(value) => value,
+        Err(error) if hardware && !flag.load(Ordering::Acquire) => {
+            // Hardware availability varies with codec, driver and GPU. A failed
+            // attempt falls back to the original software route within the same budget.
+            remember_software_only(&source_key);
+            if Instant::now() >= deadline { return Err(error); }
+            decode_sized(&tools, &path, &revision, seconds, &flag, cover, false, deadline)?
+        }
+        Err(error) => return Err(error),
+    };
     if flag.load(Ordering::Acquire) {
         return Err("native-video-preview-cancelled".into());
     }
@@ -299,7 +340,7 @@ pub(super) fn request(
 }
 #[cfg(test)]
 fn decode(tools: &Path, path: &Path, revision: &str, seconds: Option<f64>, flag: &AtomicBool) -> Result<Value, String> {
-    decode_sized(tools, path, revision, seconds, flag, false)
+    decode_sized(tools, path, revision, seconds, flag, false, false, Instant::now() + Duration::from_secs(8))
 }
 fn decode_sized(
     tools: &Path,
@@ -308,9 +349,11 @@ fn decode_sized(
     seconds: Option<f64>,
     flag: &AtomicBool,
     cover: bool,
+    hardware: bool,
+    deadline: Instant,
 ) -> Result<Value, String> {
     Ok(if let Some(seconds) = seconds {
-        let args = [
+        let mut args = [
             "-hide_banner",
             "-loglevel",
             "error",
@@ -342,8 +385,14 @@ fn decode_sized(
             "mjpeg",
             "pipe:1",
         ]
-        .map(str::to_owned);
-        let bytes = run(&tools.join("ffmpeg.exe"), &args, flag)?;
+        .map(str::to_owned).to_vec();
+        if hardware {
+            // Input option before -i. Auto uses only devices supported by the
+            // pinned FFmpeg build; CPU decode remains the fallback.
+            let input = args.iter().position(|arg| arg == "-i").unwrap();
+            args.splice(input..input, ["-hwaccel".to_owned(), "auto".to_owned()]);
+        }
+        let bytes = run_before(&tools.join("ffmpeg.exe"), &args, flag, deadline)?;
         if !bytes.starts_with(&[0xff, 0xd8]) {
             return Err("native-video-thumbnail-invalid".into());
         }
@@ -356,6 +405,18 @@ fn decode_sized(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn timeline_acceleration_is_scoped_to_large_supported_video() {
+        assert!(!TIMELINE_HARDWARE_ENABLED, "slower local hardware readback must not become the default");
+        assert!(!timeline_hardware_candidate(None, false));
+        assert!(!timeline_hardware_candidate(Some(&json!({"width":1920,"height":1080,"codec":"h264"})), false));
+        let large = json!({"width":3840,"height":2160,"codec":"hevc"});
+        assert!(timeline_hardware_candidate(Some(&large), false));
+        assert!(!timeline_hardware_candidate(Some(&large), true));
+        assert!(!timeline_hardware_candidate(Some(&json!({"width":3840,"height":2160,"codec":"prores"})), false));
+        remember_software_only("test-failed-device");
+        assert!(!hardware_allowed("test-failed-device"));
+    }
     #[test]
     fn metadata_rejects_audio_only_and_invalid_dimensions() {
         assert!(parse_metadata(
@@ -387,7 +448,7 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("data:image/jpeg;base64,"));
-        let cover = decode_sized(&tools, &source, "fixture-revision", Some(2.), &flag, true).unwrap();
+        let cover = decode_sized(&tools, &source, "fixture-revision", Some(2.), &flag, true, false, Instant::now() + Duration::from_secs(8)).unwrap();
         let dimensions = |value: &Value| {
             let bytes = base64::engine::general_purpose::STANDARD.decode(value["src"].as_str().unwrap().split(',').nth(1).unwrap()).unwrap();
             let image = image::load_from_memory(&bytes).unwrap();

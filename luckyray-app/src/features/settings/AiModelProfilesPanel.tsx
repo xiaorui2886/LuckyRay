@@ -47,6 +47,8 @@ const COPY = defineMessages({
   "status.syncNotReady": { "zh-CN": "LightSeek 尚未准备好同步模型配置", "en-US": "LightSeek is not ready to sync model connections." },
   "header.title": { "zh-CN": "API 连接", "en-US": "API Connections" },
   "header.description": { "zh-CN": "一个连接可读取并使用多个模型。非敏感参数保存在本地配置文件；密钥只由后端托管。", "en-US": "One connection can expose multiple models. Non-sensitive settings stay in local configuration; secrets are owned by the backend." },
+  "header.summary": { "zh-CN": "选择连接管理模型，也可从 LightSeek 同步。", "en-US": "Select a connection to manage its models, or sync from LightSeek." },
+  "note.help": { "zh-CN": "连接说明", "en-US": "About model connections" },
   "action.syncing": { "zh-CN": "正在同步", "en-US": "Syncing" },
   "action.sync": { "zh-CN": "从 LightSeek 同步", "en-US": "Sync from LightSeek" },
   "action.add": { "zh-CN": "添加 API 连接", "en-US": "Add API connection" },
@@ -327,20 +329,23 @@ export default function AiModelProfilesPanel({ onActiveProfileChanged, onStatus 
       <div className="ai-profile-manager-head">
         <div>
           <strong>{t("header.title")}</strong>
-          <span>{t("header.description")}</span>
+          <span>{t("header.summary")}</span>
         </div>
+        <div className="ai-profile-manager-actions">
         <button className="settings-btn" type="button" disabled={Boolean(busy)} onClick={() => void syncFromLightSeek()}>
           {t(busy === "lightseek-sync" ? "action.syncing" : "action.sync")}
         </button>
         <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy)} onClick={() => { setDraft(emptyDraft()); setKeyVisible(false); }}>
           {t("action.add")}
         </button>
+        </div>
       </div>
 
-      <div className="ai-profile-unified-note">
-        <span className="ai-profile-unified-icon">↗</span>
-        <div><b>{t("note.title")}</b><span>{t("note.description")}</span></div>
-      </div>
+      <details className="ai-profile-help">
+        <summary>{t("note.help")}</summary>
+        <p>{t("header.description")}</p>
+        <p><b>{t("note.title")}</b>。{t("note.description")}</p>
+      </details>
 
       {syncResult && syncResult.items.length > 0 && (
         <div className="ai-profile-unified-note" aria-live="polite">
@@ -368,8 +373,6 @@ export default function AiModelProfilesPanel({ onActiveProfileChanged, onStatus 
             <span className="ai-profile-card-badges">
               {profile.id === snapshot.activeProfileId && <em>{t("profile.current")}</em>}
               <i className={profile.apiKeyConfigured ? "ready" : ""}>{t(profile.apiKeyConfigured ? "profile.connected" : "profile.pending")}</i>
-              <i>{t("profile.connection")}</i>
-              {profile.sourceIdentity && <i>{t("profile.fromLightSeek")}</i>}
             </span>
           </button>
         ))}

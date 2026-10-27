@@ -18,10 +18,10 @@ const fixture = {
   node: { ...authority.nodeRuntime, archiveBytes: 35424607 }, packageManager: { ...authority.packageManager, archiveBytes: 4590455 },
   lockSha256: hash(lockfile), hostFiles: Object.entries(hostFiles).map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: hash(bytes) })),
   packages: frozenPackageInputs(lockfile.toString("utf8"), dependencyAudit).map((pkg) => ({ ...pkg, bytes: 1, sha256: "a".repeat(64) })),
-  packageCount: 516, packageBytes: 516, finalLayout: authority.dependencyClosure.releaseLayout,
+  packageCount: 561, packageBytes: 561, finalLayout: authority.dependencyClosure.releaseLayout,
   authorization: "UNSIGNED_MAINTAINER_INPUT_RECORD_NOT_INSTALL_AUTHORITY",
   releaseTimes: frozenLockedInputs(lockfile.toString("utf8")).map((pkg) => ({ ...pkg, publishedAt: "2026-09-01T00:00:00.000Z" })),
-  releaseTimePolicy: { minimumAgeMinutes: 1440, strict: true, ignoreMissingTime: false, lockedVersionCount: 591,
+  releaseTimePolicy: { minimumAgeMinutes: 1440, strict: true, ignoreMissingTime: false, lockedVersionCount: 633,
     source: "https://registry.npmjs.org/", acquiredAt: "2026-09-29T00:00:00.000Z" },
 };
 function verify(value, overrides = {}) {
@@ -30,7 +30,7 @@ function verify(value, overrides = {}) {
     authority, dependencyAudit, lockfile, hostFiles, ...overrides });
 }
 test("bounded description is data only, and binds the entire frozen input set", () => {
-  assert.equal(verify(fixture).packages.length, 516); assert.equal(verify(fixture).releaseTimes.length, 591);
+  assert.equal(verify(fixture).packages.length, 561); assert.equal(verify(fixture).releaseTimes.length, 633);
 });
 test("changed bytes or pointer size/hash are rejected before use", () => {
   assert.throws(() => verify(fixture, { expectedHash: "b".repeat(64) }));
@@ -54,7 +54,7 @@ test("commands, arbitrary sources, missing/extra/duplicate packages, budgets and
 test("genuine acquired record validates when explicitly supplied, without network or installation", { skip: !process.env.DSH_OFFICIAL_INPUTS_RECORD }, async () => {
   const bytes = await readFile(process.env.DSH_OFFICIAL_INPUTS_RECORD);
   assert.equal(validateFrozenAssemblyDescription({ bytes, expectedHash: hash(bytes), expectedBytes: bytes.length,
-    authority, dependencyAudit, lockfile, hostFiles }).packageBytes, 143912662);
+    authority, dependencyAudit, lockfile, hostFiles }).packageBytes, 149412102);
 });
 
 const dynamic = { ...structuredClone(fixture), schema: 2, kind: "official-npm-qualified-win-x64-v2",
@@ -71,7 +71,7 @@ function verifyDynamic(value, overrides = {}) {
 }
 test("signed qualification projection retains baseline seal and generates fixed policy, never imports config", () => {
   const result = verifyDynamic(dynamic);
-  assert.equal(result.authority.runtimePackage.version, "0.1.7-rc.2");
+  assert.equal(result.authority.runtimePackage.version, "0.2.1-rc.2");
   assert.equal(result.records.dependencyAudit.entryPoint.fileSha256, dependencyAudit.entryPoint.fileSha256);
   assert.deepEqual(result.hostFiles, qualifiedHostFiles(authority, lockfile));
   assert.throws(() => { result.authority.policy.allowInstallScripts = true; }, TypeError);

@@ -39,8 +39,8 @@ if (-not $cargoVersion -or [string]$package.version -cne [string]$tauri.version 
 }
 
 $expectedResources = [ordered]@{
-  'dsh/' = 'deepseek-harness/'
-  'dsh-host/' = 'dsh-host/'
+  'dsh/' = 'lr-lsh/199-1/deepseek-harness/'
+  'dsh-host/' = 'lr-lsh/199-1/dsh-host/'
   'media-engine/' = 'media-engine/'
   '../third-party-notices/' = 'third-party-notices/'
 }

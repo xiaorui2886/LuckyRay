@@ -338,6 +338,11 @@ impl MaterialCatalog {
         }
     }
 
+    // Gateway transactional mutations and favorites use the SAME scoped TEMP
+    // views as all native catalog operations; never open an unscoped database.
+    pub(crate) fn companion_open_read(&self) -> MaterialResult<Connection> { self.open_read() }
+    pub(crate) fn companion_open_write(&self) -> MaterialResult<Connection> { self.open_write() }
+
     pub(super) fn open_read(&self) -> MaterialResult<Connection> {
         if !self.db_path.exists() {
             return Err(MaterialError::new(
@@ -929,6 +934,11 @@ impl MaterialCatalog {
                 format!("目录不存在: {}", root.to_string_lossy()),
             ));
         }
+        let files = collect_import_files(root, options.recursive);
+        self.import_folder_files(root, options, files)
+    }
+
+    pub(super) fn import_folder_files(&self, root: &Path, options: &MaterialImportOptions, files: Vec<PathBuf>) -> MaterialResult<CatalogOutcome<MaterialImportResult>> {
         let storage_mode = normalize_storage_mode(&options.storage_mode)?;
         let library_dir = self.import_library_root(options.managed_library_dir.as_deref())?;
         if storage_mode == "managed" {
@@ -937,7 +947,6 @@ impl MaterialCatalog {
             })?;
             self.register_managed_root(&library_dir)?;
         }
-        let files = collect_import_files(root, options.recursive);
         let conn = self.open_write()?;
         validate_material_folder(&conn, options.folder_id.as_deref())?;
         let mut result = MaterialImportResult::default();

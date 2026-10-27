@@ -1,0 +1,74 @@
+.canvas-focus-status {
+  position: absolute;
+  left: 50%;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  padding: 6px 10px;
+  border: 1px solid var(--theme-border-strong, rgba(255, 255, 255, 0.2));
+  border-radius: 10px;
+  background: var(--theme-glass-bg, #252528);
+  color: var(--text-primary, #ededf0);
+  box-shadow: var(--theme-shadow-md, 0 8px 24px rgba(0, 0, 0, 0.22));
+  backdrop-filter: var(--theme-glass-filter, blur(18px));
+  transform: translateX(-50%);
+  font-size: 12px;
+}
+
+.canvas-focus-status > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: var(--accent, #a69bff);
+}
+
+.canvas-focus-status > strong {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.canvas-focus-status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary, #a6a6b0);
+}
+
+.canvas-focus-status > button {
+  flex: 0 0 auto;
+  margin-left: 5px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--theme-hover, rgba(255, 255, 255, 0.09));
+  color: inherit;
+  cursor: pointer;
+}
+
+.canvas-focus-status > button:hover,
+.canvas-focus-status > button:focus-visible {
+  background: var(--theme-selected, rgba(255, 255, 255, 0.17));
+}
+
+.is-focus-mode .react-flow__node.canvas-focus-target {
+  opacity: 0.38;
+}
+
+.is-focus-mode .react-flow__node.canvas-focus-muted {
+  opacity: 0.28;
+}
+
+.is-focus-mode .react-flow__node.canvas-focus-source img,
+.is-focus-mode .react-flow__node.canvas-focus-source .canvas-node-drag-handle {
+  cursor: crosshair;
+}
+
+.is-focus-mode .react-flow__node .react-flow__handle,
+.is-focus-mode .react-flow__node .react-flow__resize-control {
+  pointer-events: none;
+  opacity: 0;
+}

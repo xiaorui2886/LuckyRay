@@ -47,10 +47,11 @@ test('navigation effect does not read a note again when typing replaces its call
 });
 
 function fixture() {
-  const state = { source: { vaultId: 'A' }, reads: [], applied: [], conflicts: [], timers: [] };
+  const state = { source: { vaultId: 'A' }, reads: [], applied: [], conflicts: [], timers: [], status: '', conflict: null };
   const ref = (current) => ({ current });
   const noop = () => {};
   const context = {
+    notesNativeViews: { hasFrozenViews: () => false },
     knowledgeStorageMode: 'real-vault', selectedNoteId: 'n.md', notes: [],
     isRealVaultNoteId: (id) => id === 'n.md', realVaultRelativePathFromNoteId: (id) => id,
     normalizeVaultRelativePath: (id) => id, realVaultNoteId: (id) => id,
@@ -65,6 +66,7 @@ function fixture() {
     realVaultSavedContentRef: ref(new Map([['n.md', 'heading']])),
     realVaultLatestContentRef: ref(new Map([['n.md', 'heading']])),
     realVaultUserDirtyRef: ref(new Set()), realVaultSaveInFlightRef: ref(new Set()),
+    realVaultSaveCompletionRef: ref(new Map()), realVaultSaveEpochRef: ref(new Map()),
     realVaultKeepEditingAfterConflictRef: ref(new Set()),
     pendingPatchNoteIdRef: ref(null), pendingPatchRef: ref({}),
     notesPaneDocumentCacheRef: ref(new Map()),
@@ -73,8 +75,8 @@ function fixture() {
     setNotes: noop, setSelectedNoteId: noop, setSelectedNote: noop, setEditTitle: noop,
     setEditContent: (value) => state.applied.push(value), setSourceContentDraft: noop,
     setAutocomplete: noop, setAiPanelOpen: noop, setAiSuggestion: noop, setActiveEmptyTabId: noop,
-    setStatus: noop, recheckAttachments: noop, syncNotesPaneDocumentAcrossPanes: noop,
-    setRealVaultExternalConflict: (value) => { if (typeof value !== 'function') state.conflicts.push(value); },
+    setStatus: value => { state.status = typeof value === 'function' ? value(state.status) : value; }, recheckAttachments: noop, syncNotesPaneDocumentAcrossPanes: noop,
+    setRealVaultExternalConflict: (value) => { state.conflict = typeof value === 'function' ? value(state.conflict) : value; if (typeof value !== 'function') state.conflicts.push(value); },
     window: { dispatchEvent: noop, requestAnimationFrame: (run) => state.timers.push(run), setTimeout: (run) => state.timers.push(run) },
     CustomEvent: class {},
   };
@@ -224,4 +226,156 @@ test('detaching a source drops its waiting observation and frees hydration for t
   current();
   await reads.requestExternalCheck(async () => { calls.push('new source'); });
   assert.deepEqual(calls, ['new source']);
+});
+
+test('own write starting during a watcher read waits for ACK and rereads instead of reporting conflict', async () => {
+  const f = fixture();
+  f.context.realVaultUserDirtyRef.current.add('n.md');
+  const checking = f.check({ force: true });
+  await tick();
+  let acknowledge;
+  f.context.realVaultSaveEpochRef.current.set('n.md', 1);
+  f.context.realVaultSaveCompletionRef.current.set('n.md', new Promise(resolve => { acknowledge = resolve; }));
+  f.settleRead(0, 'own saved content');
+  await tick();
+  assert.equal(f.state.reads.length, 1);
+  assert.deepEqual(f.state.conflicts, []);
+  f.context.realVaultSavedContentRef.current.set('n.md', 'own saved content');
+  f.context.realVaultSaveCompletionRef.current.delete('n.md');
+  acknowledge();
+  await tick();
+  f.settleRead(1, 'own saved content');
+  await checking;
+  assert.deepEqual(f.state.conflicts, []);
+  assert.deepEqual(f.state.applied, []);
+});
+
+test('a complete own write during a watcher read still invalidates that read; genuine later external edit is retained', async () => {
+  const f = fixture();
+  f.context.realVaultUserDirtyRef.current.add('n.md');
+  const checking = f.check({ force: true });
+  await tick();
+  f.context.realVaultSaveEpochRef.current.set('n.md', 1);
+  f.context.realVaultSavedContentRef.current.set('n.md', 'own saved content');
+  f.settleRead(0, 'heading');
+  await tick();
+  assert.equal(f.state.reads.length, 2);
+  f.settleRead(1, 'genuine external content');
+  await checking;
+  assert.equal(f.state.conflicts[0].noteId, 'n.md');
+  assert.deepEqual(f.state.applied, []);
+});
+
+test('disk returning to baseline clears only the stale conflict message, preserving unrelated errors', async () => {
+  for (const status of ['editor.notes.status.diskChanged', 'editor.notes.status.saveFailed']) {
+    const f = fixture();
+    f.state.status = status;
+    f.state.conflict = { noteId: 'n.md' };
+    const checking = f.check({ force: true });
+    await tick();
+    f.settleRead(0, 'heading');
+    await checking;
+    assert.equal(f.state.conflict, null);
+    assert.equal(f.state.status, status.endsWith('diskChanged') ? '' : status);
+  }
+});
+
+test('IME composition defers observed changes until commit without polling or losing the dirty conflict', async () => {
+  const f = fixture();
+  const reads = f.context.realVaultDocumentReadsRef.current;
+  reads.setComposing('n.md', true);
+  await f.check({ force: true });
+  assert.equal(f.state.reads.length, 0);
+  assert.equal(reads.setComposing('n.md', false), true);
+  f.context.realVaultUserDirtyRef.current.add('n.md');
+  const checking = f.check({ force: true });
+  await tick();
+  f.settleRead(0, 'external content');
+  await checking;
+  assert.equal(f.state.conflicts[0].noteId, 'n.md');
+  assert.deepEqual(f.state.applied, []);
+  reads.setComposing('n.md', true);
+  assert.equal(reads.setComposing('n.md', false), false, 'ordinary IME commits do not add disk reads');
+});
+
+test('composition starting during either disk read cannot replace the editor value', async () => {
+  for (const phase of ['watcher', 'reload']) {
+    const f = fixture();
+    const reads = f.context.realVaultDocumentReadsRef.current;
+    const checking = f.check({ force: true });
+    await tick();
+    if (phase === 'reload') {
+      f.settleRead(0, 'external content');
+      await tick();
+    }
+    reads.setComposing('n.md', true);
+    f.settleRead(phase === 'watcher' ? 0 : 1, 'external content');
+    await checking;
+    assert.deepEqual(f.state.applied, []);
+    assert.equal(reads.setComposing('n.md', false), true);
+    assert.equal(f.context.realVaultSavedContentRef.current.get('n.md'), 'heading');
+  }
+});
+
+test('source teardown cancels a deferred IME read', () => {
+  const reads = new NoteDocumentReadCoordinator();
+  reads.setComposing('n.md', true);
+  reads.deferIfComposing('n.md');
+  reads.cancelPending();
+  assert.equal(reads.setComposing('n.md', false), false);
+});
+
+test('TSF commit releases one deferred read after the editor publishes input, not on ordinary commits', async () => {
+  const f = fixture();
+  const reads = f.context.realVaultDocumentReadsRef.current;
+  const observed = [];
+  f.context.checkCurrentRealVaultExternalChange = async () => observed.push(f.context.realVaultLatestContentRef.current.get('n.md'));
+  const finish = productionCallback('finishRealVaultComposition', f.context);
+  reads.setComposing('n.md', true);
+  reads.deferIfComposing('n.md');
+  finish('n.md');
+  assert.deepEqual(observed, []);
+  f.context.realVaultLatestContentRef.current.set('n.md', 'committed Chinese');
+  await tick();
+  assert.deepEqual(observed, ['committed Chinese']);
+  finish('n.md');
+  await tick();
+  assert.equal(observed.length, 1);
+});
+
+test('focused clean editor defers external replacement until blur even without composition events', async () => {
+  const f = fixture();
+  const reads = f.context.realVaultDocumentReadsRef.current;
+  reads.setFocused('n.md', true);
+  const checking = f.check({force:true});
+  await tick();
+  f.settleRead(0, 'external content');
+  await checking;
+  assert.deepEqual(f.state.applied, []);
+  assert.equal(reads.setFocused('n.md', false), true);
+  const blurred = f.check({force:true});
+  await tick();
+  f.settleRead(1, 'external content');
+  await tick();
+  f.settleRead(2, 'external content');
+  await blurred;
+  assert.deepEqual(f.state.applied, ['external content']);
+});
+
+test('focus arriving during reload protects the editor and dirty focused notes still report genuine conflict', async () => {
+  const f = fixture();
+  const checking = f.check({force:true});
+  await tick();
+  f.settleRead(0, 'external content');
+  await tick();
+  f.context.realVaultDocumentReadsRef.current.setFocused('n.md', true);
+  f.settleRead(1, 'external content');
+  await checking;
+  assert.deepEqual(f.state.applied, []);
+  f.context.realVaultUserDirtyRef.current.add('n.md');
+  const dirty = f.check({force:true});
+  await tick();
+  f.settleRead(2, 'external content');
+  await dirty;
+  assert.equal(f.state.conflicts[0].noteId, 'n.md');
 });

@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { FeatureFlagKey } from "../featureFlags";
 import { installLuckyRayBridge } from "../luckyrayBridge";
 import { startMaterialWatchService } from "../features/materials/materialWatch";
+import { readKnownNotesVaults } from "../features/notes/knownVaults";
 import { applyGlobalSettings, getShellAccentTheme, readSavedSettings, useSavedLocale } from "../features/settings/useSettings";
 import { PluginEntryMenu, useScriptPackages, openPlugin } from "../features/community/ScriptPlugins";
 import { PluginPageHost } from "../features/community/PluginPageHost";
@@ -18,7 +19,7 @@ import { resolveScopedShortcut, type ShortcutCommandId, type ShortcutScope } fro
 import { registerLuckyRayGlobalShortcuts } from "./globalShortcuts";
 import { getCommandIdForShortcut, listPaletteCommands, runAppCommand, type LuckyRayCommand } from "../core/commands/appCommands";
 import { focusEntity } from "../core/services/context";
-import { canvasEditorHash } from "../features/canvas/canvasNavigation";
+import { canvasEditorHash, rememberCanvasEditor, rememberedCanvasRoute, clearRememberedCanvasEditor } from "../features/canvas/canvasNavigation";
 import LegacyRoute from "./LegacyRoute";
 import { AppSidebar, AppTitlebar } from "./AppSidebar";
 import type { ShellRoute } from "./AppSidebar";
@@ -32,6 +33,11 @@ import { normalizeRetiredWorkspaceRoute, selectShellRouteMode } from "./shellRou
 import { selectCompactShellForViewport } from "./shellViewport";
 import { syncWindowSurfaceBackground } from "./windowSurfaceBackground";
 import { canApplyCompanionPresentation } from "./companionPresentationLease";
+import { canApplyCompanionPresentationScope, type PresentationScopeSnapshot } from "./companionPresentationScope";
+import { materialLibrarySession } from "../core/services/materialLibraryContext";
+import { knowledgeStore } from "../core/services/knowledgeStore";
+import { readActiveKnowledgeWriteSource } from "../core/services/knowledgeSource";
+import { readKnowledgeScopeTransition } from "../core/services/knowledgeScopeTransition";
 import { ExperienceOverlayProvider } from "../components/ExperienceOverlay";
 import { CompanionPresentationProvider } from "../features/settings/CompanionPresentation";
 import PhoneConnectionDialog from "../features/settings/PhoneConnectionDialog";
@@ -41,6 +47,26 @@ import {newlyHiddenNavigationFallback,resolveNavigationPresentation,type Navigat
 import {readSidebarPrefs} from "../features/community/pluginPages";
 import "./appShell.css";
 import "../components/experienceLayer.css";
+
+function readCompanionPresentationScope(): PresentationScopeSnapshot {
+  const material = materialLibrarySession.getSnapshot();
+  const knowledge = knowledgeStore.getSnapshot();
+  const source = readActiveKnowledgeWriteSource();
+  const transition = readKnowledgeScopeTransition();
+  return {
+    material: { libraryId: material.libraryId, status: material.status, generation: material.generation },
+    knowledge: {
+      vaultId: knowledge.mode === "real-vault" && source?.vaultId === knowledge.vault?.id
+        ? source?.vaultId ?? null : null,
+      status: knowledge.status,
+      loaded: knowledge.loaded,
+      source,
+      transitionGeneration: transition.generation,
+      transitioning: transition.pending > 0 || transition.uncertain,
+      confirmedVaultId: transition.confirmedVaultId,
+    },
+  };
+}
 
 type SidebarMotionIntent = "automatic" | "manual";
 
@@ -302,6 +328,9 @@ function LocalizedAppShell() {
       .then((bridge) => {
         if (cancelled) return;
         stopWatchService = startMaterialWatchService(bridge);
+        // Import the saved list even when Notes has never mounted this session.
+        // This only registers known locations; it does not switch desktop scope.
+        if (isTauri()) readKnownNotesVaults();
         setBridgeReady(true);
       })
       .catch((error) => {
@@ -394,7 +423,7 @@ function ReactNavShell({
   const [lightSeekRestarting, setLightSeekRestarting] = useState(false);
   const lightSeekRestartRequestRef = useRef(0);
   const lightSeekRestartingRef = useRef(false);
-  const [navState, setNavState] = useState<{ stack: string[]; index: number }>({ stack: [route === "plugins" && getHashPath() ? getHashPath() : route], index: 0 });
+  const [navState, setNavState] = useState<{ stack: string[]; index: number }>({ stack: [(route === "plugins" || route === "canvas") && getHashPath() ? getHashPath() : route], index: 0 });
   const navStateRef = useRef(navState);
   const pendingHistoryRouteRef = useRef<string | null>(null);
   const compactShellRef = useRef(compactShell);
@@ -427,6 +456,19 @@ function ReactNavShell({
   const closeAiContentBrowser = useCallback(() => {
     setAiContentBrowserOpen(false);
   }, []);
+
+  useEffect(() => {
+    if (!aiContentBrowserOpen || route !== "ai") return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.isComposing) closeAiContentBrowser();
+    };
+    // Keep the drawer open while the user edits/removes composer attachments.
+    // Dismiss explicitly, not on Main pointer input or native LSH focus.
+    document.addEventListener("keydown", escape, true);
+    return () => {
+      document.removeEventListener("keydown", escape, true);
+    };
+  }, [aiContentBrowserOpen, closeAiContentBrowser, route]);
 
   const closeAiDrawers = useCallback(() => {
     closeAiPersonalBrowser();
@@ -511,7 +553,7 @@ function ReactNavShell({
 
   // Plugin pages carry their full path in the stack so A/page1, B/page1 and A/page2
   // stay distinct history entries; built-in routes keep using their top-level name.
-  const activeNavKey = route === "plugins" ? hashPath : route;
+  const activeNavKey = route === "plugins" || route === "canvas" ? hashPath : route;
   useEffect(() => {
     const current = navStateRef.current;
     if (current.stack[current.index] === activeNavKey) return;
@@ -524,11 +566,11 @@ function ReactNavShell({
   }, [commitNavState, activeNavKey]);
 
   const navigateKey = useCallback((key: string) => {
+    if (key === "canvas") key = rememberedCanvasRoute();
     const current = navStateRef.current;
     if (current.stack[current.index] === key) {
-      // Same as the parent behaviour for canvas: re-clicking the current entry resets
-      // its sub-path; other built-ins keep their sub-path (tags/smart children).
-      const resetsSubPath = key === "canvas" || key.startsWith("plugins/");
+      // Re-clicking canvas keeps the editor; only its explicit Home command resets it.
+      const resetsSubPath = key.startsWith("plugins/");
       if (resetsSubPath && getHashPath() !== key) window.location.hash = `#${key}`;
       return;
     }
@@ -596,9 +638,12 @@ function ReactNavShell({
       if (applicationModalActiveRef.current) return;
       // Measure from before IPC using the renderer's monotonic clock; a
       // stalled/reloaded callback cannot use an expired native claim.
+      const scopeBeforeClaim = readCompanionPresentationScope();
       const claimStartedAt = performance.now();
       void invoke<number>("companion_gateway_presentation_claim", { requestId }).then((remainingMs) => {
-        if (!canApplyCompanionPresentation(remainingMs, performance.now() - claimStartedAt, disposed)) {
+        if (!canApplyCompanionPresentation(remainingMs, performance.now() - claimStartedAt, disposed)
+            || applicationModalActiveRef.current
+            || !canApplyCompanionPresentationScope(domain, offer, scopeBeforeClaim, readCompanionPresentationScope())) {
           acknowledge(false);
           return;
         }
@@ -827,6 +872,13 @@ function RetainedShellContent({
     setRetainedRoutes((current) => current.includes(route) ? current : [...current, route]);
   }, [route]);
 
+  const editorPath = route === "canvas" && /^canvas\/main(?:\/|$)/.test(hashPath) ? hashPath : "";
+  const [retainedCanvasPath, setRetainedCanvasPath] = useState(editorPath);
+  useEffect(() => {
+    if (editorPath) { setRetainedCanvasPath(editorPath); rememberCanvasEditor(editorPath); }
+    else if (route === "canvas") { setRetainedCanvasPath(""); clearRememberedCanvasEditor(); }
+  }, [editorPath, route]);
+  const canvasPath = editorPath || (route !== "canvas" ? retainedCanvasPath : "");
   if (!bridgeReady) return <LoadingFallback />;
   const activeIsRetained = RETAINED_WORKSPACE_ROUTES.has(route);
   return (
@@ -844,7 +896,14 @@ function RetainedShellContent({
           </Activity>
         );
       })}
-      {!activeIsRetained && renderShellContent(
+      {canvasPath && <div key="retained-canvas" aria-hidden={route !== "canvas"} inert={route !== "canvas"} style={{display: route === "canvas" ? "contents" : "none"}}>
+        <CanvasRouteBoundary resetKey={canvasPath}>
+          <Suspense fallback={route === "canvas" ? <LoadingFallback /> : null}>
+            <CanvasSpike key={canvasPath} visible={route === "canvas"} />
+          </Suspense>
+        </CanvasRouteBoundary>
+      </div>}
+      {!activeIsRetained && !editorPath && renderShellContent(
         route,
         bridgeReady,
         hashPath,

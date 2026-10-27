@@ -17,6 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const MAX_ENVELOPE_BYTES: usize = 96 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
+// The exact 0.2.1-rc.2 Windows closure has 35,173 files. Keep this bounded
+// metadata/tree limit aligned with MAX_DSH_CLOSURE_FILE_COUNT in the verifier.
+const MAX_CLOSURE_FILE_COUNT: u32 = 40_000;
 const PLATFORM: &str = "windows-x86_64";
 const CHANNEL: &str = "preview";
 
@@ -69,9 +72,13 @@ fn switch_error_category(error: &transaction::StoreError) -> &'static str {
 /// again. The category alone lets the settings surface name the failing
 /// stage without persisting any user path or content.
 pub(crate) fn record_switch_error(app_data: &Path, error: &transaction::StoreError) {
+    record_switch_error_at_stage(app_data, error, "complete-pending-switch");
+}
+
+pub(crate) fn record_switch_error_at_stage(app_data: &Path, error: &transaction::StoreError, stage: &'static str) {
     let record = SwitchErrorRecord {
         schema: 1,
-        stage: "complete-pending-switch".to_owned(),
+        stage: stage.to_owned(),
         error_category: switch_error_category(error).to_owned(),
         recorded_at_unix: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -90,6 +97,10 @@ pub(crate) fn record_switch_error(app_data: &Path, error: &transaction::StoreErr
     {
         let _ = fs::remove_file(&temp);
     }
+}
+
+pub(crate) fn record_invalid_resource_at_stage(app_data: &Path, stage: &'static str) {
+    record_switch_error_at_stage(app_data, &transaction::StoreError::Invalid, stage);
 }
 
 pub(crate) fn read_switch_error(app_data: &Path) -> Option<SwitchErrorRecord> {
@@ -740,13 +751,44 @@ fn scan_runtime_closure(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<Vec<(PathBuf, String)>, ArtifactError> {
+    let files = scan_runtime_closure_identity(
+        root, &runtime_launch_identity(candidate), &candidate.closure_sha256,
+        candidate.closure_file_count as u64, cancel, progress,
+    )?;
+    verify_package_identity(root, candidate)?;
+    Ok(files)
+}
+
+/// Same complete-tree admission for an embedded desktop bundle. All expected
+/// values come from the compiled record seal; this is not an unsigned catalog.
+pub(crate) fn verify_bundled_runtime_closure(
+    identity: &crate::dsh_runtime_seal::BundledRuntimeIdentity,
+    root: &Path,
+) -> Result<(), ArtifactError> {
+    scan_runtime_closure_identity(root, &identity.launch, &identity.native_closure_sha256,
+        identity.closure_file_count, &AtomicBool::new(false), &mut |_, _| {})?;
+    let cancelled = AtomicBool::new(false);
+    let _lease = crate::dsh_runtime_seal::RuntimeIdentityLease::acquire_identity(
+        root, &identity.launch, &crate::dsh_runtime_seal::RuntimeSealControl::new(&cancelled),
+    ).map_err(|_| ArtifactError::Invalid)?;
+    Ok(())
+}
+
+fn scan_runtime_closure_identity(
+    root: &Path,
+    identity: &crate::dsh_runtime_seal::RuntimeIdentity,
+    closure_sha256: &str,
+    closure_file_count: u64,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<Vec<(PathBuf, String)>, ArtifactError> {
     if !safe_runtime_entry(root)?.is_dir() {
         return Err(ArtifactError::Invalid);
     }
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
     let mut total = 0u64;
-    progress(0, candidate.closure_file_count as u64);
+    progress(0, closure_file_count);
     while let Some(directory) = pending.pop() {
         if cancel.load(Ordering::Acquire) { return Err(ArtifactError::Io); }
         for item in fs::read_dir(&directory).map_err(|_| ArtifactError::Io)? {
@@ -766,7 +808,7 @@ fn scan_runtime_closure(
                 total = total
                     .checked_add(metadata.len())
                     .ok_or(ArtifactError::Invalid)?;
-                if total > MAX_ARTIFACT_BYTES || files.len() >= 30_000 {
+                if total > MAX_ARTIFACT_BYTES || files.len() >= MAX_CLOSURE_FILE_COUNT as usize {
                     return Err(ArtifactError::Invalid);
                 }
                 let relative = path
@@ -778,13 +820,13 @@ fn scan_runtime_closure(
                     .replace('\\', "/");
                 artifact_path(root, &name)?;
                 files.push((name, path, metadata.len(), digest_file(&item.path())?));
-                progress(files.len() as u64, candidate.closure_file_count as u64);
+                progress(files.len() as u64, closure_file_count);
             } else {
                 return Err(ArtifactError::Invalid);
             }
         }
     }
-    if files.len() != candidate.closure_file_count as usize {
+    if files.len() as u64 != closure_file_count {
         return Err(ArtifactError::Invalid);
     }
     files.sort_unstable_by(|left, right| left.0.cmp(&right.0));
@@ -797,21 +839,20 @@ fn scan_runtime_closure(
         digest.update(sha.as_bytes());
         digest.update(b"\n");
     }
-    if format!("{:x}", digest.finalize()) != candidate.closure_sha256
+    if format!("{:x}", digest.finalize()) != closure_sha256
         || files
             .iter()
             .find(|(name, _, _, _)| name == "node/node.exe")
             .map(|(_, _, _, sha)| sha.as_str())
-            != Some(candidate.node_sha256.as_str())
+            != Some(identity.node_exe_sha256.as_str())
         || files
             .iter()
             .find(|(name, _, _, _)| name == "host/node_modules/@deepseek-ai/dsh/lib/bin.js")
             .map(|(_, _, _, sha)| sha.as_str())
-            != Some(candidate.entry_sha256.as_str())
+            != Some(identity.entry_sha256.as_str())
     {
         return Err(ArtifactError::Invalid);
     }
-    verify_package_identity(root, candidate)?;
     Ok(files
         .into_iter()
         .map(|(_, path, _, sha)| (path, sha))
@@ -831,7 +872,7 @@ fn validate_candidate(candidate: &Candidate) -> Result<(), AdmissionError> {
         || candidate.from_versions.is_empty()
         || candidate.from_versions.len() > 16
         || candidate.closure_file_count == 0
-        || candidate.closure_file_count > 30_000
+        || candidate.closure_file_count > MAX_CLOSURE_FILE_COUNT
         || candidate.artifact_bytes == 0
         || candidate.artifact_bytes > MAX_ARTIFACT_BYTES
         || !hex64(&candidate.adapter_fingerprint)
@@ -928,11 +969,17 @@ fn verify_installed_with_contract(
         adapter_fingerprint,
         resource_gate_sha256,
     )?;
-    // Equality is safe: the signed installed closure remains the exact code
-    // that may already have written this profile. A newer bundled engine
-    // cannot silently replace it without a separately admitted migration.
+    // This path reopens an already activated engine, not a new candidate.
+    // A schema2 signature explicitly admits the current host/interfaces and
+    // no-migration data contract (checked above). Raising bundled must not
+    // strand that same runtime/profile. UpdateStore still binds its active
+    // pointer to the transaction/layout; critical launch bytes remain sealed.
+    // Legacy schema1 has no semantic contract: keep its bundled-version floor.
+    // New admission's expiry, upgrade path and monotonic version checks are
+    // intentionally separate and unchanged in admit_with_contract.
     if Version::parse(&candidate.version).map_err(|_| AdmissionError::InvalidManifest)?
         < Version::parse(bundled_version).map_err(|_| AdmissionError::InvalidManifest)?
+        && candidate.compatibility.is_none()
     {
         return Err(AdmissionError::NotAnUpgrade);
     }
@@ -1111,10 +1158,12 @@ mod tests {
     #[test]
     fn manifest_transition_never_reinterprets_legacy_constraints() {
         let (legacy, key) = fixture();
+        let mut later_host = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        later_host.patch += 1;
         assert!(verify_signed_candidate(&legacy, Some(&key), Some("https://updates.example.test/feed.json"),
             env!("CARGO_PKG_VERSION"), true, &"a".repeat(64), &"f".repeat(64)).is_ok());
         assert_eq!(verify_signed_candidate(&legacy, Some(&key), Some("https://updates.example.test/feed.json"),
-            "1.9.9", true, &"a".repeat(64), &"f".repeat(64)), Err(AdmissionError::LegacyContract));
+            &later_host.to_string(), true, &"a".repeat(64), &"f".repeat(64)), Err(AdmissionError::LegacyContract));
         assert_eq!(verify_signed_candidate(&legacy, Some(&key), Some("https://updates.example.test/feed.json"),
             env!("CARGO_PKG_VERSION"), true, &"0".repeat(64), &"f".repeat(64)), Err(AdmissionError::LegacyContract));
         for change in ["missing", "legacy-extra", "duplicate"] {
@@ -1153,6 +1202,48 @@ mod tests {
         assert_eq!(catalog_admission_error(AdmissionError::NotFromCurrent), CatalogError::UpgradePath);
         assert_eq!(catalog_admission_error(AdmissionError::LegacyContract), CatalogError::LegacyContract);
         assert_eq!(catalog_admission_error(AdmissionError::InvalidSignature), CatalogError::Untrusted);
+    }
+
+    #[test]
+    #[cfg(all(windows, target_arch = "x86_64", feature = "browser-host-runtime"))]
+    fn semantic_installed_reopen_below_equal_above_bundled_keeps_admission_guards() {
+        let feed = "https://updates.example.test/feed.json";
+        for installed in ["0.2.0-rc.2", "0.2.1-rc.2", "0.2.2-rc.2"] {
+            let (bytes, key) = fixture_with(|candidate| {
+                candidate.schema = 2;
+                candidate.compatibility = Some(compatibility::fixture());
+                candidate.host_version = "1.9.4".into();
+                candidate.version = installed.into();
+                candidate.from_versions = vec!["0.1.7-rc.2".into()];
+            });
+            assert_eq!(verify_installed_with_contract(&bytes, &key, feed, "1.9.9",
+                "0.2.1-rc.2", &"0".repeat(64), &"9".repeat(64)).unwrap().version, installed,
+                "reopening an authenticated installed engine is not new upgrade admission");
+            assert_eq!(admit_with_contract(&bytes, Some(&key), Some(feed), installed,
+                &"0".repeat(64), &"9".repeat(64), 500), Err(AdmissionError::NotAnUpgrade));
+            assert_eq!(verify_installed_with_contract(&bytes, &key, feed, "2.0.0",
+                "0.2.1-rc.2", &"0".repeat(64), &"9".repeat(64)), Err(AdmissionError::RequiresHost));
+        }
+        let (bytes, key) = fixture_with(|candidate| {
+            candidate.schema = 2;
+            candidate.compatibility = Some(compatibility::fixture());
+            candidate.version = "0.2.0-rc.2".into();
+            candidate.data_compatibility = "rewrite-profile".into();
+        });
+        assert_eq!(verify_installed_with_contract(&bytes, &key, feed, "1.9.9",
+            "0.2.1-rc.2", &"0".repeat(64), &"9".repeat(64)), Err(AdmissionError::InvalidManifest));
+    }
+
+    #[test]
+    #[ignore = "requires the archived public signed 0.2.0 candidate, never a user profile"]
+    fn archived_public_installed_020_reopens_under_021_bundle() {
+        let path = std::path::PathBuf::from(std::env::var_os("LUCKYRAY_PUBLIC_INSTALLED_REOPEN_FIXTURE").unwrap());
+        let bytes = fs::read(path).unwrap();
+        assert_eq!(format!("{:x}", Sha256::digest(&bytes)),
+            "feece42710c44ffa85169d1dd44bc26bd766b0b7246963851729828d36027cf5",
+            "the input must be the exact historical public candidate, not editable user metadata");
+        assert_eq!(crate::dsh_runtime_seal::bundled_runtime_version().as_deref(), Some("0.2.1-rc.3"));
+        assert_eq!(verify_installed_for_this_build(&bytes).unwrap().version, "0.2.0-rc.2");
     }
 
     #[test]
@@ -1257,6 +1348,23 @@ mod tests {
             serde_json::to_vec(&envelope).unwrap(),
             pair.public_key().as_ref().to_vec(),
         )
+    }
+
+    #[test]
+    fn closure_file_budget_accepts_new_windows_tree_and_rejects_overflow() {
+        assert_eq!(MAX_CLOSURE_FILE_COUNT, 40_000);
+        for count in [35_173, MAX_CLOSURE_FILE_COUNT] {
+            fixture_with(|candidate| {
+                candidate.closure_file_count = count;
+                assert!(validate_candidate(candidate).is_ok());
+            });
+        }
+        for count in [0, MAX_CLOSURE_FILE_COUNT + 1, u32::MAX] {
+            fixture_with(|candidate| {
+                candidate.closure_file_count = count;
+                assert_eq!(validate_candidate(candidate), Err(AdmissionError::InvalidManifest));
+            });
+        }
     }
 
     fn frozen_assembly_fixture(candidate: &mut Candidate) {

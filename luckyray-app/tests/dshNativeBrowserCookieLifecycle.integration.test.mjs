@@ -1,3 +1,4 @@
+import { cleanupLinuxSyntheticChildren } from './fixtures/dshLinuxSyntheticCleanup.mjs';
 import assert from 'node:assert/strict';
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
@@ -38,14 +39,15 @@ test('native browser uses two bounded authentication slots across warm bindings 
     await cp(join(appRoot, 'src-tauri', 'dsh-host', `luckyray-${name}`), destination, { recursive: true });
   }
   await writeFile(patch, await readFile(join(appRoot, 'src-tauri/dsh-host/luckyray-dsh-native-surface.patch.yml')));
-  const makeOwner = () => createNativeSurfaceOwner({ runtimeRoot, stateRoot: root, surfaceHome: root, surfacePatch: patch });
+  const children = [];
+  const makeOwner = () => createNativeSurfaceOwner({ runtimeRoot, stateRoot: root, surfaceHome: root, surfacePatch: patch, onChildStarted: child => children.push(child) });
   let owner = makeOwner();
   const jar = new Map();
   let previousOfficial;
   let previousPort;
   try {
     for (let cycle = 0; cycle < 4; cycle++) {
-      if (cycle === 2) { await owner.shutdown(); owner = makeOwner(); }
+      if (cycle === 2) { await owner.shutdown(); await cleanupLinuxSyntheticChildren(children); owner = makeOwner(); }
       const ready = await owner.open();
       const base = `http://127.0.0.1:${ready.port}`;
       const bootstrap = await rawFetch(`${base}${ready.bootstrapPath}?ref=${ready.bootstrapRef}`, { cookie: cookieHeader(jar) });
@@ -74,7 +76,7 @@ test('native browser uses two bounded authentication slots across warm bindings 
     }
     t.diagnostic(JSON.stringify({ root, authenticationSlots: jar.size, headerBytes: Buffer.byteLength(cookieHeader(jar)), cycles: 4 }));
   } finally {
-    await owner.shutdown();
+    await owner.shutdown(); await cleanupLinuxSyntheticChildren(children);
     // Preserve synthetic failure roots; never remove real profile data.
   }
 });

@@ -3,7 +3,7 @@ import test from "node:test";
 import { resolveMaterialLightSeekAttachmentsWithTransport } from "../src/core/services/materials.ts";
 import { resolveKnowledgeDocumentAbsolutePath } from "../src/core/services/knowledgeStore.ts";
 
-test("material handoff uploads supported images while videos and unsupported image formats stay path-only", async () => {
+test("material handoff uses image drafts for supported images and file drafts for other formats", async () => {
   const assets = [
     { id: "image-png", kind: "image", mimeType: "image/png", name: "reference.png" },
     { id: "image-png-no-mime", kind: "image", mimeType: "", name: "legacy-reference.png" },
@@ -22,8 +22,8 @@ test("material handoff uploads supported images while videos and unsupported ima
   assert.deepEqual(resources.map((resource) => [resource.assetId, resource.delivery]), [
     ["image-png", "image-attachment"],
     ["image-png-no-mime", "image-attachment"],
-    ["video-mp4", "path-reference"],
-    ["image-svg", "path-reference"],
+    ["video-mp4", "file-attachment"],
+    ["image-svg", "file-attachment"],
   ]);
 });
 

@@ -75,6 +75,7 @@ FunctionEnd
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro LR_UPDATE_ACQUIRE
   SetOverwrite on
+  !insertmacro LR_LSH_PREPARE_SLOT
 !macroend
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro LR_UPDATE_ACQUIRE

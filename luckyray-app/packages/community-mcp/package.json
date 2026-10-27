@@ -1,8 +1,7 @@
 {
   "name": "@luckyray/community-web-mcp",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "private": true,
-  "license": "MIT",
   "type": "module",
   "description": "Optional official LuckyRay community package for private web MCP",
   "scripts": {
@@ -10,5 +9,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "license": "MIT"
 }

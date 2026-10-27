@@ -14,6 +14,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+mod bundled;
+
 const STORE_DIRECTORY: &str = "dsh-engine-updates";
 const ACTIVE_FILE: &str = "active.json";
 const JOURNAL_FILE: &str = "transaction.json";
@@ -291,6 +293,7 @@ impl UpdateStore {
                 pending_health_for(&journal, &active.artifact_sha256, &selected.version).ok()
             }
             None => {
+                if self.has_verified_bundled_active().ok()? { return Some(false); }
                 if active_path.exists() { return None; }
                 match self.read_journal().ok()? {
                     None => Some(false),
@@ -337,6 +340,7 @@ impl UpdateStore {
         if !safe_runtime_entry(&pending).is_ok_and(|metadata| metadata.is_file()) {
             return false;
         }
+        if self.has_verified_bundled_active().unwrap_or(false) { return true; }
         let journal = match self.read_journal() {
             Ok(journal) => journal,
             Err(_) => return false,
@@ -384,19 +388,25 @@ impl UpdateStore {
         if !self.can_abandon_pre_activation() {
             return Err(StoreError::RecoveryRequired);
         }
+        let bundled = self.has_verified_bundled_active()?;
         // Preserve transaction evidence. A healthy active journal is never
         // moved: doing so would strand an already installed engine.
         let suffix = format!("{:032x}", rand::random::<u128>());
         let journal = self.root.join(JOURNAL_FILE);
         let current = self.read_journal()?;
         if matches!(current, Some(Journal { phase: Phase::Prepared, .. })) {
-            fs::rename(
-                &journal,
-                self.root.join(format!("abandoned-{suffix}-journal.json")),
-            )
-            .map_err(|_| StoreError::Io)?;
+            let archived = self.root.join(format!("abandoned-{suffix}-journal.json"));
+            if bundled {
+                // Keep Prepared valid until its atomic replacement with the
+                // archived predecessor; interruption must not leave a hole.
+                atomic_write_bytes(&archived, &fs::read(&journal).map_err(|_| StoreError::Io)?)?;
+            } else {
+                fs::rename(&journal, archived).map_err(|_| StoreError::Io)?;
+            }
         }
-        if self.root.join(ACTIVE_FILE).exists()
+        if bundled {
+            self.restore_bundled_journal_after_abandon()?;
+        } else if self.root.join(ACTIVE_FILE).exists()
             && !matches!(current, Some(Journal { phase: Phase::Healthy, .. })) {
             let previous = self.read_previous_healthy()?.ok_or(StoreError::RecoveryRequired)?;
             self.write_journal(&previous.journal)?;
@@ -781,6 +791,7 @@ impl UpdateStore {
 
     fn load_active_with_verifier(&self, verify: impl Fn(&[u8]) -> Result<Candidate, super::AdmissionError>) -> Result<Option<InstalledRuntime>, StoreError> {
         let _timing = super::StageTiming::new("select-installed-runtime");
+        if self.has_verified_bundled_active()? { return Ok(None); }
         let active_path = self.root.join(ACTIVE_FILE);
         if !active_path.exists() {
             // Once a switch journal exists, absence of the active pointer is
@@ -867,6 +878,10 @@ impl UpdateStore {
 
 fn atomic_write_json<T: Serialize>(target: &Path, value: &T) -> Result<(), StoreError> {
     let bytes = serde_json::to_vec(value).map_err(|_| StoreError::Invalid)?;
+    atomic_write_bytes(target, &bytes)
+}
+
+fn atomic_write_bytes(target: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     let parent = target.parent().ok_or(StoreError::Invalid)?;
     let temp = parent.join(format!(".update-{:032x}.tmp", rand::random::<u128>()));
     let mut file = OpenOptions::new()
@@ -875,7 +890,7 @@ fn atomic_write_json<T: Serialize>(target: &Path, value: &T) -> Result<(), Store
         .open(&temp)
         .map_err(|_| StoreError::Io)?;
     let result = (|| {
-        file.write_all(&bytes).map_err(|_| StoreError::Io)?;
+        file.write_all(bytes).map_err(|_| StoreError::Io)?;
         file.sync_all().map_err(|_| StoreError::Io)?;
         drop(file);
         replace_file(&temp, target)

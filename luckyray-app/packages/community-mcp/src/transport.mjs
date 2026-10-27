@@ -328,6 +328,7 @@ export class LibraryTransport {
         "import-outcome-unknown",
         "note-name-exists",
         "imported-note-changed",
+        "knowledge-parent-missing",
         "markdown-file-required",
         "markdown-download-failed",
         "markdown-utf8-required",

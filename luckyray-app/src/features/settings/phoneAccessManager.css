@@ -19,3 +19,48 @@
 .phone-access-manager .settings-btn:hover:not(:disabled), .phone-access-dialog .settings-btn:hover:not(:disabled) { filter: brightness(1.08); }
 .phone-access-saved summary { cursor: pointer; }
 .phone-access-saved .phone-link { border: 0; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; padding: 4px; }
+
+/* Permission review is a portal: scope its surface here, not to all dialogs. */
+.phone-access-dialog { border: 1px solid var(--theme-border-strong); background: var(--theme-surface-panel); overflow-wrap: anywhere; }
+.phone-access-dialog h3 { font-size: 16px; line-height: 1.5; }
+.phone-access-dialog h4 { padding-top: 16px; border-top: 1px solid var(--border-subtle); color: var(--text-primary); }
+.phone-access-dialog p { color: var(--text-secondary); }
+.phone-access-choice { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--theme-surface-raised); }
+.phone-access-choice input { accent-color: var(--accent); }
+.phone-access-dialog :is(button, input):focus-visible,
+.phone-access-manager :is(button, summary):focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 3px; }
+.phone-access-manager .phone-access-saved > div { flex-wrap: wrap; line-height: 1.6; overflow-wrap: anywhere; }
+.phone-access-dialog .settings-btn { white-space: normal; line-height: 1.5; min-height: 34px; }
+.phone-access-dialog .settings-btn:hover:not(:disabled),
+.phone-access-manager .settings-btn:hover:not(:disabled) { filter: none; border-color: var(--text-secondary); }
+@media (max-width: 520px) { .phone-access-backdrop { padding: 12px; } .phone-access-dialog { padding: 20px 16px; max-height: calc(100dvh - 24px); } }
+.phone-authorization-choice { border: 0; padding: 0; margin: 12px 0; text-align: start; min-width: 0; width: 100%; }
+.phone-authorization-choice legend { font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
+.phone-authorization-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+/* Scoped above generic pairing labels: radios must not become full-width rows. */
+.phone-authorization-choice .phone-authorization-option { display: flex; align-items: center; gap: 8px; width: auto; min-width: 0; padding: 10px; margin: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); cursor: pointer; font-size: 12px; line-height: 1.5; }
+.phone-authorization-choice .phone-authorization-option[data-selected="true"] { border-color: var(--accent); background: var(--accent-muted); }
+.phone-authorization-choice .phone-authorization-option input { appearance: auto; width: 14px; height: 14px; min-height: 0; padding: 0; margin: 0; flex: 0 0 14px; accent-color: var(--accent); box-shadow: none; }
+.phone-authorization-option:has(input:focus-visible) { outline: 2px solid var(--experience-focus-ring, var(--accent)); outline-offset: 2px; }
+.phone-authorization-choice:disabled .phone-authorization-option { opacity: .5; cursor: default; }
+.phone-authorization-description { margin-top: 10px; display: grid; gap: 6px; }
+.phone-authorization-description p { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.phone-access-mode { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.phone-access-mode > span { color: var(--text-primary); font-weight: 550; }
+.phone-access-manager .phone-access-mode .settings-btn { padding: 5px 8px; font-size: 11px; flex-shrink: 0; }
+.phone-access-manager .phone-access-hint { margin: 0 0 12px; }
+.phone-access-library-select { display: grid; gap: 8px; margin-top: 16px; }
+.phone-access-library-select select { width: 100%; min-width: 0; max-width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); background: var(--bg-elevated); color-scheme: inherit; }
+.phone-access-services h4 { margin: 16px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+.phone-access-service { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 36px; font-size: 12px; line-height: 1.5; }
+.phone-access-service > span { min-width: 0; overflow-wrap: anywhere; }
+.phone-access-manager .phone-access-switch { flex: 0 0 40px; width: 40px; height: 23px; min-height: 0; padding: 2px; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 99px; background: var(--bg-hover); cursor: pointer; }
+.phone-access-switch i { width: 17px; height: 17px; border-radius: 50%; background: var(--text-muted); transition: transform 120ms ease; }
+.phone-access-manager .phone-access-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.phone-access-switch[aria-checked="true"] i { background: white; transform: translateX(16px); }
+.phone-access-manager .phone-access-switch:hover:not(:disabled) { box-shadow: 0 0 0 2px var(--border); }
+.phone-access-manager .phone-access-switch[aria-checked="true"]:hover:not(:disabled) { background: var(--accent); box-shadow: 0 0 0 2px var(--accent-muted); }
+.phone-access-manager .phone-access-switch:disabled { opacity: .5; cursor: default; }
+@media (max-width: 420px) { .phone-authorization-options { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .phone-access-switch i { transition: none; } }
+:root[data-animations="off"] .phone-access-switch i { transition: none; }

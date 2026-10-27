@@ -1,4 +1,13 @@
+export type ImageAdjustments = { brightness: number; contrast: number; saturation: number };
+export const NEUTRAL_IMAGE_ADJUSTMENTS: ImageAdjustments = { brightness: 0, contrast: 0, saturation: 0 };
+/** Identical color pipeline for the downsampled preview and saved PNG. */
+export function imageAdjustmentFilter(value?: ImageAdjustments): string {
+  if (!value) return "none";
+  if (![value.brightness, value.contrast, value.saturation].every(n => Number.isFinite(n) && n >= -100 && n <= 100)) throw Error("invalid-image-adjustments");
+  return `brightness(${1 + value.brightness / 100}) contrast(${1 + value.contrast / 100}) saturate(${1 + value.saturation / 100})`;
+}
 export type ImageEdit = {
+  adjustments?: ImageAdjustments;
   turns: number;
   flipX: boolean;
   flipY: boolean;
@@ -32,6 +41,7 @@ export function validateImageEdit(
     typeof edit.flipY !== "boolean"
   )
     throw Error("invalid-edit");
+  imageAdjustmentFilter(edit.adjustments);
   const c = edit.crop;
   if (
     ![c.x, c.y, c.width, c.height].every(Number.isFinite) ||
@@ -82,6 +92,7 @@ export function renderImageEdit(
   const oriented = makeCanvas(geometry.width, geometry.height),
     context = oriented.getContext("2d");
   if (!context) throw Error("canvas-unavailable");
+  context.filter = imageAdjustmentFilter(edit.adjustments);
   context.translate(geometry.width / 2, geometry.height / 2);
   context.scale(edit.flipX ? -1 : 1, edit.flipY ? -1 : 1);
   context.rotate((edit.turns * Math.PI) / 2);

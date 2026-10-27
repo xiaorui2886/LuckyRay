@@ -11,13 +11,15 @@ pub(super) fn open(
     if object.len() != 2 || !object.contains_key("opId") || !object.contains_key("target") {
         return Err((400, "INPUT_INVALID"));
     }
+    let domain = payload["target"]["domain"].as_str().ok_or((400,"INPUT_INVALID"))?;
+    if !gateway.presentation_scope_active(domain) { return Err((503,"PRESENTATION_SCOPE_NOT_ACTIVE")); }
     let op_id = payload["opId"].as_str().filter(|id| valid_id(id)).ok_or((400, "INPUT_INVALID"))?;
     let target = payload["target"].as_object().ok_or((400, "INPUT_INVALID"))?;
     let (scope_kind, scope_id, target_key) = match payload["target"]["domain"].as_str() {
         Some("materials") if target.len() == 2 => {
             let asset_id = payload["target"]["assetId"].as_str().filter(|id| valid_id(id))
                 .ok_or((400, "INPUT_INVALID"))?;
-            ("catalog", "", format!("materials:{asset_id}"))
+            ("catalog", "", gateway.material_scope_id().map(|scope|format!("materials:{scope}:{asset_id}")).unwrap_or_else(||format!("materials:{asset_id}")))
         }
         Some("knowledge") if target.len() == 3 => {
             let vault = payload["target"]["vaultId"].as_str().filter(|id| valid_id(id))
@@ -36,7 +38,7 @@ pub(super) fn open(
     let mut navigation_id = None;
     if scope_kind == "catalog" {
         let asset_id = payload["target"]["assetId"].as_str().unwrap_or("");
-        gateway.backend.material_catalog().get_assets(&[asset_id.to_owned()])
+        gateway.material_catalog().get_assets(&[asset_id.to_owned()])
             .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?
             .into_iter().next().ok_or((404, "ENTITY_NOT_FOUND"))?;
     } else {
@@ -51,7 +53,7 @@ pub(super) fn open(
             .map_err(|(status, _)| if status == 404 { (404, "ENTITY_NOT_FOUND") }
                 else { (503, "SERVICE_UNAVAILABLE") })?;
         let relative_path = detail["relativePath"].as_str().ok_or((503, "SERVICE_UNAVAILABLE"))?;
-        let registration_id = gateway.backend.knowledge().current_vault_id()
+        let registration_id = gateway.knowledge().current_vault_id()
             .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
         navigation_id = Some(crate::knowledge::KnowledgeService::document_id(
             &crate::knowledge::KnowledgeDocumentRef {
@@ -62,7 +64,7 @@ pub(super) fn open(
     let connection = database(gateway)?;
     if let Some(receipt) = replay_operation(&connection, &instance, &device.device_id,
         "presentation.open", op_id, &target_key, &hash)? { return Ok(receipt); }
-    if gateway.backend.knowledge().companion_has_unsaved_draft()
+    if gateway.knowledge().companion_has_unsaved_draft()
         .map_err(|_| (503, "SERVICE_UNAVAILABLE"))? {
         return Err((503, "DESKTOP_DRAFT_BUSY"));
     }
@@ -87,7 +89,9 @@ pub(super) fn open(
             deadline: claim_deadline,
         });
     let offered = sink(json!({"requestId": request_id, "target": payload["target"],
-        "navigationId": navigation_id}));
+        "navigationId": navigation_id,
+        "expectedMaterialLibraryId": if domain == "materials" { gateway.material_catalog().library_scope_key().ok() } else { None },
+        "expectedKnowledgeVaultId": if domain == "knowledge" { gateway.knowledge().current_vault_id().ok() } else { None }}));
     let mut handoff_started = false;
     let mut explicitly_rejected = false;
     let accepted = if offered { loop {

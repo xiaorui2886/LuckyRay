@@ -4,9 +4,9 @@ import {reviewImages,comparisonParameters,type ReviewImage} from '../../core/can
 import {CanvasCreativeDialog} from './CanvasCreativeDialog';
 import './canvasCreative.css';
 
-export function CanvasVersionReview({history,initialId,resolveUrl,onPick,onRestore,onClose,english=false}:{
+export function CanvasVersionReview({history,initialId,resolveUrl,onPick,onRestore,onContinue,onSave,savingIds,saveNotice,onClose,english=false}:{
  history:readonly CanvasGenerationHistoryEntry[];initialId?:string;resolveUrl:(url:string)=>string;
- onPick:(entryId:string,index:number)=>void;onRestore:(entry:CanvasGenerationHistoryEntry)=>void;onClose:()=>void;english?:boolean;
+ onPick:(entryId:string,index:number)=>void;onRestore:(entry:CanvasGenerationHistoryEntry)=>void;onContinue?:(entry:CanvasGenerationHistoryEntry,index:number)=>void;onSave?:(entry:CanvasGenerationHistoryEntry,index:number)=>void;savingIds?:ReadonlySet<string>;saveNotice?:{entryId:string;message:string};onClose:()=>void;english?:boolean;
 }) {
  const choices=useMemo(()=>reviewImages(history),[history]);
  const [leftKey,setLeft]=useState(()=>choices.find(item=>item.entry.id===initialId)?.key||choices[0]?.key||'');
@@ -27,7 +27,7 @@ export function CanvasVersionReview({history,initialId,resolveUrl,onPick,onResto
   const limit=50*(zoom-1);setPan({x:Math.max(-limit,Math.min(limit,d.px+(e.clientX-d.x)/Math.max(1,d.width)*100)),y:Math.max(-limit,Math.min(limit,d.py+(e.clientY-d.y)/Math.max(1,d.height)*100))});
  },onPointerUp:()=>{drag.current=null;},onPointerCancel:()=>{drag.current=null;}};
  const select=(item:ReviewImage|undefined,change:(v:string)=>void,side:string)=><label className="canvas-review-select"><span>{side}</span><select aria-label={side} value={item?.key||''} onChange={e=>change(e.target.value)}>{options.map(choice=><option key={choice.key} value={choice.key}>{label(choice)}</option>)}</select></label>;
- const actions=(item:ReviewImage|undefined)=>item?<div className="canvas-review-actions"><button type="button" aria-pressed={!!item.entry.preferredImageIndexes?.includes(item.index)} onClick={()=>onPick(item.entry.id,item.index)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L2 9.6l6.2-.9Z"/></svg>{english?'Keep':'优选'}</button><button type="button" onClick={()=>onRestore({...item.entry,outputMediaUrl:item.url,outputMediaItems:[{url:item.url}]})}>{english?'Add this image to canvas':'这张放回画布'}</button></div>:null;
+ const actions=(item:ReviewImage|undefined)=>item?<div className="canvas-review-actions"><button type="button" aria-pressed={!!item.entry.preferredImageIndexes?.includes(item.index)} onClick={()=>onPick(item.entry.id,item.index)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L2 9.6l6.2-.9Z"/></svg>{english?'Keep':'优选'}</button><button type="button" onClick={()=>onRestore({...item.entry,outputMediaUrl:item.url,outputMediaItems:[{url:item.url}]})}>{english?'Add this image to canvas':'这张放回画布'}</button>{onContinue&&<button type="button" onClick={()=>onContinue(item.entry,item.index)}>{english?'Continue in new card':'新卡继续修改'}</button>}{onSave&&<button type="button" disabled={savingIds?.has(item.entry.id)} onClick={()=>onSave(item.entry,item.index)}>{savingIds?.has(item.entry.id)?(english?'Saving…':'保存中…'):(english?'Save this image':'保存这张图')}</button>}</div>:null;
  return <CanvasCreativeDialog title={english?'Version comparison':'版本对比'} onClose={onClose} english={english}>
   <div className="canvas-creative-tools"><div className="canvas-creative-segments"><button type="button" aria-pressed={mode==='side'} onClick={()=>setMode('side')}>{english?'Side by side':'并排'}</button><button type="button" aria-pressed={mode==='slider'} disabled={!right} onClick={()=>setMode('slider')}>{english?'Wipe':'滑杆'}</button></div>
    <label><input type="checkbox" checked={onlyPicks} onChange={e=>setOnlyPicks(e.target.checked)}/>{english?'Picks only':'只看优选'}</label>
@@ -43,6 +43,7 @@ export function CanvasVersionReview({history,initialId,resolveUrl,onPick,onResto
    </div>
    {mode==='slider'&&right?<label className="canvas-review-range">{english?'Reveal B':'显示 B'}<input aria-label={english?'Comparison divider':'对比分隔位置'} type="range" min="0" max="100" value={split} onChange={e=>setSplit(Number(e.target.value))}/></label>:null}
    <div className="canvas-review-action-grid">{actions(left)}{actions(right)}</div>
+   {saveNotice&&(saveNotice.entryId===left?.entry.id||saveNotice.entryId===right?.entry.id)?<p className="canvas-creative-hint" role="status">{saveNotice.message}</p>:null}
    <p className="canvas-creative-hint">{english?'Images are fitted without stretching. Different aspect ratios may have margins; drag after zooming to inspect both views.':'按原比例适应画面，不拉伸；不同尺寸可能留白。放大后拖动可同步查看细节。'}</p>
    <div className="canvas-review-parameters">{[left,right].map((item,i)=>item?<section key={i} aria-label={i?'B parameters':'A parameters'}>{comparisonParameters(item.entry).map(([key,value])=><div key={key}><small>{({prompt:english?'Prompt':'提示词',model:english?'Model':'模型',aspect:english?'Aspect':'比例',quality:english?'Quality':'画质／分辨率',resolution:english?'Resolution':'分辨率',count:english?'Batch':'批次数量',references:english?'References':'参考数量'} as Record<string,string>)[key]}</small><span data-changed={!!right&&comparisonParameters(left.entry).find(([k])=>k===key)?.[1]!==comparisonParameters(right.entry).find(([k])=>k===key)?.[1]}>{value||'—'}</span></div>)}</section>:<section key={i}/>)}</div>
   </>}

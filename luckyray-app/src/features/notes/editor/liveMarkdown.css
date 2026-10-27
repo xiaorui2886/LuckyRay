@@ -1040,6 +1040,10 @@
   background: #15161b;
 }
 
+/* Match CodeMirror's focused-layer specificity so its light default cannot
+   replace the readable selection color while dragging or retaining focus. */
+.lr-live-markdown-editor .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
+.lr-live-editor .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
 .lr-live-markdown-editor .cm-selectionLayer .cm-selectionBackground,
 .lr-live-markdown-editor .cm-selectionBackground,
 .lr-live-markdown-editor .cm-editor.cm-focused .cm-selectionBackground,
