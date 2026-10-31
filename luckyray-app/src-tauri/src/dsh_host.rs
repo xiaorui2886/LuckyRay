@@ -450,6 +450,11 @@ struct RuntimeUseLease {
 
 impl RuntimeDescriptor {
     fn resolve(resource_dir: &Path, app_data_dir: &Path) -> Result<Self, ()> {
+        // Linux cannot yet hold the runtime/host files stable or contain the
+        // complete child tree. Refuse before creating state or update stores.
+        #[cfg(target_os = "linux")]
+        return Err(());
+
         // Tauri may surface the development resource directory using a
         // Windows verbatim prefix (`\\?\C:\...`). The runtime seal opens the
         // same trusted files through Win32 APIs that reject that spelling in
@@ -532,6 +537,9 @@ impl RuntimeDescriptor {
         surface_state_root: PathBuf,
         surface_assets: [PathBuf; 16],
     ) -> Result<Self, ()> {
+        #[cfg(target_os = "linux")]
+        return Err(());
+
         if !root.is_absolute()
             || !state_root.is_absolute()
             || !surface_state_root.is_absolute()
@@ -1538,6 +1546,7 @@ fn encode_hex(bytes: &[u8]) -> String {
     output
 }
 
+#[cfg(all(windows, feature = "browser-host-runtime"))]
 fn strict_line_reader(
     stdout: File,
     challenge: [u8; 32],
@@ -1851,6 +1860,9 @@ struct HostHandle {
 #[cfg(all(windows, feature = "browser-host-runtime"))]
 impl HostHandle {
     fn process_id(&self) -> Option<u32> { Some(self.process.process_id()).filter(|pid| *pid != 0) }
+    fn matches_surface_binding(&self, generation: u64) -> bool {
+        self.surface_binding_generation == generation
+    }
     fn diagnostic_only(&self, generation: u64) -> bool {
         self.generation == generation && self.probe_index > 0
             && self.surface_index == 0 && self.model_sync_index == 0
@@ -2407,12 +2419,13 @@ fn bounded_reader_join(join: JoinHandle<()>) -> bool {
     join.is_finished() && join.join().is_ok()
 }
 
-#[cfg(not(all(windows, feature = "browser-host-runtime")))]
+#[cfg(all(not(target_os = "linux"), not(all(windows, feature = "browser-host-runtime"))))]
 struct HostHandle;
 
-#[cfg(not(all(windows, feature = "browser-host-runtime")))]
+#[cfg(all(not(target_os = "linux"), not(all(windows, feature = "browser-host-runtime"))))]
 impl HostHandle {
     fn process_id(&self) -> Option<u32> { None }
+    fn matches_surface_binding(&self, _generation: u64) -> bool { false }
     fn update_request(&mut self, _kind: &str, _id: &str) -> Result<serde_json::Value, &'static str> {
         Err("update-lsh-control-unavailable")
     }
@@ -2429,6 +2442,27 @@ impl HostHandle {
     fn shutdown(self) -> bool {
         true
     }
+}
+
+// No Linux host handle can be manufactured in safe code until its process
+// ownership and stable-file contracts have real platform implementations.
+#[cfg(target_os = "linux")]
+enum HostHandle {}
+
+#[cfg(target_os = "linux")]
+impl HostHandle {
+    fn process_id(&self) -> Option<u32> { match *self {} }
+    fn matches_surface_binding(&self, _generation: u64) -> bool { match *self {} }
+    fn update_request(&mut self, _kind: &str, _id: &str) -> Result<serde_json::Value, &'static str> { match *self {} }
+    fn diagnostic_only(&self, _generation: u64) -> bool { match *self {} }
+    fn is_running(&self) -> bool { match *self {} }
+    fn generation(&self) -> u64 { match *self {} }
+    fn shutdown(self) -> bool { match self {} }
+    fn validate_host(&mut self) -> bool { match *self {} }
+    fn open_surface(&mut self) -> Result<DshNativeSurfaceBootstrap, String> { match *self {} }
+    fn compat_request(&mut self, _kind: &str, _payload: Option<&serde_json::Value>) -> Result<serde_json::Value, String> { match *self {} }
+    fn remote_request(&mut self, _kind: &str, _payload: &serde_json::Value, _expected: &str, _timeout: Duration) -> Result<serde_json::Value, String> { match *self {} }
+    fn close_surface(&mut self) -> Result<(), ()> { match *self {} }
 }
 
 pub(crate) struct DshHostService {
@@ -2527,6 +2561,9 @@ impl DshHostService {
     /// update still admits the full closure off Tauri's setup/UI thread; commands that need
     /// the result wait on their own blocking workers instead.
     pub(crate) fn production_background(resource_dir: &Path, app_data_dir: &Path) -> Arc<Self> {
+        #[cfg(target_os = "linux")]
+        return Self::new(None, true);
+
         let service = Self::new(None, false);
         let owned = Arc::clone(&service);
         let resource_dir = resource_dir.to_path_buf();
@@ -2985,7 +3022,7 @@ impl DshHostService {
         let push = {
             let mut host_guard = self.host.lock().unwrap();
             match host_guard.as_mut() {
-                Some(host) if host.surface_binding_generation == carrier_generation => host
+                Some(host) if host.matches_surface_binding(carrier_generation) => host
                     .remote_request(
                         "remote-authority-set",
                         &payload,
@@ -3091,7 +3128,7 @@ impl DshHostService {
         let result = {
             let mut host_guard = self.host.lock().unwrap();
             match host_guard.as_mut() {
-                Some(host) if host.surface_binding_generation == binding => host.remote_request(
+                Some(host) if host.matches_surface_binding(binding) => host.remote_request(
                     "remote-session-mint",
                     &payload,
                     "remote-session-mint-result",
@@ -3979,6 +4016,16 @@ impl DshHostService {
         Ok(self.status())
     }
 
+    #[cfg(target_os = "linux")]
+    fn run_probe_on_host(
+        &self,
+        host: &mut HostHandle,
+        _retry_attempt: u8,
+        _started: Instant,
+    ) -> Result<DshHostStatusView, ()> {
+        match *host {}
+    }
+
     #[cfg(all(windows, feature = "browser-host-runtime"))]
     fn launch_and_probe(
         self: &Arc<Self>,
@@ -4431,6 +4478,21 @@ fn minimal_environment(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn production_linux_dsh_is_unavailable_before_creating_state() {
+        let root = tempfile::tempdir().unwrap();
+        let resources = root.path().join("resources");
+        let app_data = root.path().join("app-data");
+        assert!(RuntimeDescriptor::resolve(&resources, &app_data).is_err());
+        let service = DshHostService::production(&resources, &app_data);
+        assert_eq!(service.status().stage, DshHostStage::Unavailable);
+        let background = DshHostService::production_background(&resources, &app_data);
+        assert_eq!(background.status().stage, DshHostStage::Unavailable);
+        assert!(!app_data.exists());
+        assert!(!resources.exists());
+    }
 
     #[test]
     fn desktop_update_reservation_is_single_flight_and_failure_restores_admission() {

@@ -13,9 +13,54 @@ read-only interfaces. The workflow did contain a definite context error:
 [context-availability table](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability)
 does not allow `runner`. This is a likely cause, not a service-provided
 diagnosis. The local fix moves that value to the applicable step environments;
-it has not yet been run on GitHub.
+the following run did allocate a runner and execute the corrected workflow.
 
-## Work implemented but not yet tested on Linux
+## Latest Linux diagnostic evidence
+
+The fourth public run, [41240465355](https://github.com/xiaorui2886/LuckyRay/actions/runs/41240465355),
+finished **failure** on the standard Ubuntu 22.04 runner. Its remote commit was
+`d7624f0dfa2c7aca359c447d0a9d51ae893a8f5c`; its tree
+`11379ebdb9df459a70cd3986b7ca555b5ddd4ca5` matched the reviewed local commit
+`2679dc49cc690eacad2b8ffdda0791b9d992e0ad`. The following results apply only to
+that tree, not to later local changes:
+
+- The GTK fixture passed 16 tests with one helper ignored. This includes the
+  bounded FIFO autostart regression and registration primitive tests. The focus
+  module compiled in the fixture; its graphical behavior was not exercised.
+- Package-configuration checks, Deno input tests and verification of the pinned
+  official Linux Deno archive passed. The Deno check establishes an input, not
+  a redistributable runtime closure or an application package.
+- The actual Linux main-library `cargo check` failed with 33 compiler errors.
+  The reported errors include Windows-only owned-process interfaces, note file
+  operations, host methods and conditionally compiled seal helpers. The
+  credential production-entry tests were skipped because that check failed.
+  The diagnostic temporarily excluded bundle inputs; resource, sidecar identity
+  and release checks were not validated.
+
+No native application was launched and no `.deb` or AppImage was produced.
+The subsequent local changes and their new regression tests have not yet been
+run on Linux. The stable-file lease and Linux credential admission remain
+fail-closed.
+
+The local follow-up addresses the specific missing interfaces without claiming
+that the Linux contracts exist. The Linux owned-process and DSH host types have
+no constructible values in safe Rust, and the production spawn and DSH
+descriptor paths reject before creating a process, gateway, profile or state
+directory. Linux knowledge service initialization rejects before creating or
+migrating app data; its transaction helpers and the shared atomic-write entry
+also reject. This currently disables all Linux knowledge service operations and
+workspace recovery writes. Attachment publication, export and recovery paths
+have additional early refusals. These are temporary restrictions pending an
+approved, verified security design, not functional Linux implementations.
+
+The revised workflow is prepared locally for a later single Ubuntu 22.04 run:
+compile the actual main library, compile its test binary if that succeeds, and
+run the named production admission tests if test compilation succeeds. It does
+not repeat the already-passed GTK, Deno and package-configuration checks. The
+workflow has not been run and requires independent Actions-aware lint review;
+its YAML and Bash syntax checks alone do not validate GitHub expressions.
+
+## Prepared platform work and limits
 
 - The Linux-only Tauri configuration selects deb and AppImage, asks Tauri to
   include the GStreamer media framework in the AppImage, and preserves all
@@ -26,8 +71,9 @@ it has not yet been run on GitHub.
   different bundling command directly.
 - The LSH child webview gets a GTK focus notification wired to the existing
   fixed drawer-dismissal event. This does not start LSH or grant content any
-  new IPC authority, and real GTK compilation, focus and window behavior remain
-  untested. Creating the child is still behind the existing LSH host gates.
+  new IPC authority. The module compiled in the fixture; focus and window
+  behavior remain untested. Creating the child is still behind the existing
+  LSH host gates.
 - An explicitly invoked `luckyray-native-host --install-linux-manifest` path
   is prepared for a per-user manifest for `chrome`, `chromium`, `edge`, or
   `chrome-for-testing`. If the admission gate is eventually opened, it uses the
@@ -44,8 +90,9 @@ it has not yet been run on GitHub.
   credential persistence have an approved, verified Linux contract.
 
   This is a partial implementation, not an end-to-end registration result:
-  it has not been compiled or run on Linux, a browser has not launched the
-  host, and a held descriptor does not prove that an adversary cannot move or
+  registration primitives compiled and passed fixture tests, but the production
+  host has not been compiled or launched by a browser. A held descriptor does
+  not prove that an adversary cannot move or
   change a name before or after publication. It does not provide a lasting
   stable-file lease for the host executable. Browser-specific command-line
   profile overrides, Snap/Flatpak, Chrome channels other than those named
@@ -56,14 +103,15 @@ it has not yet been run on GitHub.
   former named temporary file could be replaced before linking or cleanup, and
   the former pathname unlink could remove a replacement after inspection. A
   synthetic FIFO regression has a bounded child and cleans only its test root;
-  Linux execution remains unverified. Idempotent requests need no write.
+  it passed in the Linux fixture. Idempotent requests need no write.
 
 ## Actual blockers and call chains
 
 1. `dsh_host::DshHostService::open_native_surface` requires a sealed host
    closure and launches the host via `owned_process::spawn_in_owned_job`.
    `dsh_runtime_seal::acquire_stable_file` and the non-Windows
-   `dsh_host::is_reparse` fail closed on this platform. Those guarantees and
+   `dsh_host::is_reparse` fail closed on this platform. Linux descriptor
+   resolution now stops before its state and update setup. Those guarantees and
    the associated process/notes choices are documented separately in
    [linux-security-design-notes.md](linux-security-design-notes.md).
 2. `browser_host_poc::open_production_webview` rejects non-Windows platforms.
@@ -76,7 +124,8 @@ it has not yet been run on GitHub.
 3. `agent_browser::runtime` depends on `owned_process` for its owned job.
    Independently, the embedded personal-browser viewport is Windows-only in
    `lib.rs::browser_personal_open`. These are not fixed by the GTK LSH focus
-   hook.
+   hook. Linux agent-browser initialization and host spawn currently reject
+   before creating a profile or gateway.
 4. `local_transport::revoke_extension_origin` revokes an approved credential;
    deleting a browser manifest alone would only affect future host launches.
    Safe, identity-bound manifest replacement/removal and its integration with
@@ -112,10 +161,17 @@ dependencies on Linux. Its bytes are an input to the CLI contract fingerprint
 in `build.rs`, however, so Windows sidecar identity must be regenerated and
 verified if this change is ever merged. `src-tauri/src/lib.rs` also contributes
 to the DSH adapter fingerprint even though its new calls are Linux-gated. The
-native-messaging CLI additions are Linux-gated; the existing Windows manifest
+same fingerprint includes `src-tauri/src/dsh_host.rs`, whose reader function
+now carries the same Windows/feature gate as its only caller. Its Windows
+behavior remains unchanged, but its changed bytes require identity coordination.
+The native-messaging CLI additions are Linux-gated; the existing Windows manifest
 writer and NSIS hooks are unchanged. These shared-file effects require parent
 review before cross-platform integration. The Linux-only CLI admission guard
 also changes the bytes of `src/tool_cli.rs`, another CLI fingerprint input.
+The follow-up also changes `src/owned_process.rs`, `src/agent_browser/runtime.rs`,
+`src/dsh_runtime_seal.rs`, and several `src/knowledge/` files. Their new paths
+are Linux-gated, and the Windows branches must still be reviewed and tested when
+integrating with the separate macOS and Windows work.
 
 References: [Tauri platform configuration](https://v2.tauri.app/develop/configuration-files/),
 [Tauri AppImage media](https://v2.tauri.app/distribute/appimage/),

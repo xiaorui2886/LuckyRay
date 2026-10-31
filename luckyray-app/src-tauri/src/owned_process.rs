@@ -204,10 +204,10 @@ impl OwnedProcess {
     }
 }
 
-#[cfg(not(all(windows, feature = "browser-host-runtime")))]
+#[cfg(all(not(target_os = "linux"), not(all(windows, feature = "browser-host-runtime"))))]
 pub(crate) struct OwnedProcess;
 
-#[cfg(not(all(windows, feature = "browser-host-runtime")))]
+#[cfg(all(not(target_os = "linux"), not(all(windows, feature = "browser-host-runtime"))))]
 impl OwnedProcess {
     pub(crate) fn is_running(&self) -> bool {
         false
@@ -218,6 +218,73 @@ impl OwnedProcess {
     }
 
     pub(crate) fn terminate(&self) {}
+}
+
+// Linux has no equivalent of the Windows whole-tree Job contract yet. These
+// empty types cannot represent a successfully owned process or job in safe
+// Rust. The actual spawn entry below always rejects before creating a child.
+#[cfg(target_os = "linux")]
+pub(crate) enum OwnedProcess {}
+
+#[cfg(target_os = "linux")]
+impl OwnedProcess {
+    pub(crate) fn is_running(&self) -> bool { match *self {} }
+    pub(crate) fn wait_for(&self, _timeout: Duration) -> bool { match *self {} }
+    pub(crate) fn terminate(&self) { match *self {} }
+    pub(crate) fn process_id(&self) -> u32 { match *self {} }
+    pub(crate) fn succeeded(&self) -> bool { match *self {} }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) enum OwnedJob {}
+
+#[cfg(target_os = "linux")]
+impl OwnedJob {
+    pub(crate) fn terminate(&self) { match *self {} }
+    pub(crate) fn settled(&self) -> bool { match *self {} }
+    pub(crate) fn terminate_and_wait(&self, _timeout: Duration) -> bool { match *self {} }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) struct AtomicSpawn {
+    pub(crate) process: OwnedProcess,
+    pub(crate) stdin: std::fs::File,
+    pub(crate) stdout: std::fs::File,
+    pub(crate) stderr: std::fs::File,
+    pub(crate) job: OwnedJob,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn spawn_in_owned_job(
+    _executable: &std::path::Path,
+    _arguments: &[std::ffi::OsString],
+    _current_dir: &std::path::Path,
+    _environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    _force_prelaunch_job_failure: bool,
+) -> Result<AtomicSpawn, OwnedProcessError> {
+    Err(OwnedProcessError)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_admission_tests {
+    use super::*;
+
+    #[test]
+    fn owned_spawn_rejects_before_child_can_write() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("child-was-started");
+        let args = vec![
+            "-c".into(),
+            "printf created > \"$1\"".into(),
+            "synthetic-test".into(),
+            marker.as_os_str().to_owned(),
+        ];
+        let result = spawn_in_owned_job(
+            std::path::Path::new("/bin/sh"), &args, root.path(), Vec::new(), false,
+        );
+        assert!(result.is_err());
+        assert!(!marker.exists());
+    }
 }
 
 #[cfg(all(windows, feature = "browser-host-runtime"))]

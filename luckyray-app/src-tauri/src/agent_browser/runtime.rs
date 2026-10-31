@@ -173,6 +173,9 @@ struct AgentHost {
 
 impl AgentBrowserRuntime {
     pub(crate) fn initialize() -> Result<Self, AgentBrowserError> {
+        #[cfg(target_os = "linux")]
+        return Err(AgentBrowserError::new("agent-browser-unavailable"));
+
         let host_path = crate::browser_broker::exact_browser_host_path()
             .map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
         Ok(Self {
@@ -730,6 +733,9 @@ impl AgentHost {
         gateway_mode: GatewayMode,
         surface: Option<&AgentBrowserSurface>,
     ) -> Result<Self, AgentBrowserError> {
+        #[cfg(target_os = "linux")]
+        return Err(AgentBrowserError::new("agent-browser-unavailable"));
+
         if !host_path.is_absolute() || !host_path.is_file() {
             return Err(AgentBrowserError::new("agent-browser-unavailable"));
         }
@@ -1083,6 +1089,19 @@ fn valid_token(value: &str, max: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn production_agent_host_is_rejected_before_profile_or_gateway() {
+        let root = tempfile::tempdir().unwrap();
+        let host = root.path().join("synthetic-host");
+        fs::write(&host, b"synthetic").unwrap();
+        assert!(AgentBrowserRuntime::initialize().is_err());
+        let result = AgentHost::spawn(&host, GatewayMode::Production, None);
+        assert!(result.is_err());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+        assert_eq!(fs::read(host).unwrap(), b"synthetic");
+    }
 
     #[test]
     fn navigation_and_browser_refs_are_scope_bound_and_fail_before_host_start() {

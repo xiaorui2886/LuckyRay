@@ -339,6 +339,9 @@ pub(super) fn publish_bytes(
 }
 
 fn publish_bytes_with_reuse(root: &Path, inventory: &[String], note: &str, name: &str, bytes: &[u8], reuse_content: bool) -> Result<AttachmentPublication, KnowledgeError> {
+    #[cfg(target_os = "linux")]
+    return Err(linux_knowledge_write_unavailable());
+
     if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
         return Err(error(
             "knowledge-attachment-size-limit",
@@ -423,6 +426,9 @@ impl KnowledgeService {
     /// copy and compare in bounded buffers instead of materializing a video.
     pub(crate) fn publish_companion_attachment(&self, expected: &KnowledgeTargetIdentity, document_ref: &KnowledgeDocumentRef,
         expected_revision: &str, name: &str, staged: &Path, size: u64, digest: &str) -> Result<AttachmentPublication, KnowledgeError> {
+        #[cfg(target_os = "linux")]
+        return Err(linux_knowledge_write_unavailable());
+
         if size > MAX_ATTACHMENT_BYTES { return Err(error("knowledge-attachment-size-limit", "Attachment exceeds 64 MiB")); }
         let _inventory_mutation=self.attachment_inventory.mutation();
         let _mutation=self.mutation_lock.lock().map_err(|_|error("knowledge-lock-poisoned","Knowledge mutation lock failed"))?;

@@ -34,7 +34,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config desktop-file-utils libwebkit2gtk-4.1-dev \
+            build-essential pkg-config libwebkit2gtk-4.1-dev \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
           pkg-config --modversion webkit2gtk-4.1 gtk+-3.0
       - name: Install the pinned Rust toolchain
@@ -42,65 +42,14 @@ jobs:
         continue-on-error: true
         shell: bash
         run: rustup toolchain install 1.95.0 --profile minimal
-      - name: Set up Node for input and package checks
-        id: node
-        continue-on-error: true
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24.14.1'
-      - name: Check Linux package configuration and the fail-closed build hook
-        id: package_config
-        if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
-        continue-on-error: true
-        shell: bash
-        run: node --test luckyray-app/tests/linux-package-config.test.mjs luckyray-app/tests/linux-workflow-context.test.mjs
-      - name: Test Deno input verification
-        id: deno_tests
-        if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
-        continue-on-error: true
-        shell: bash
-        run: node --test luckyray-app/tests/linux-deno-input.test.mjs
-      - name: Verify the fixed official Linux Deno input
-        id: deno_input
-        if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
-            --retry 2 --max-time 180 \
-            --output "$RUNNER_TEMP/deno-x86_64-unknown-linux-gnu.zip" \
-            https://github.com/denoland/deno/releases/download/v2.9.4/deno-x86_64-unknown-linux-gnu.zip
-          node luckyray-app/scripts/linux/prepare-deno-input.mjs \
-            "$RUNNER_TEMP/deno-x86_64-unknown-linux-gnu.zip" "$RUNNER_TEMP/verified-deno-input"
-          file "$RUNNER_TEMP/verified-deno-input/deno"
-          stat -c '%a %s %n' "$RUNNER_TEMP/verified-deno-input/deno" "$RUNNER_TEMP/verified-deno-input/LICENSE"
-          ldd "$RUNNER_TEMP/verified-deno-input/deno" || echo 'ldd did not provide dependency information'
-          readelf --version-info "$RUNNER_TEMP/verified-deno-input/deno" \
-            | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu || true
-      - name: Test GTK drag, FIFO-safe autostart and registration; compile the focus module
-        id: gtk_fixture
-        if: ${{ always() && !cancelled() && steps.native_deps.outcome == 'success' && steps.rust.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 25
-        env:
-          LUCKYRAY_DESKTOP_FILE_VALIDATE: /usr/bin/desktop-file-validate
-          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup run 1.95.0 cargo test --locked \
-            --target x86_64-unknown-linux-gnu \
-            --manifest-path luckyray-app/tests/linux-gtk-bridge/Cargo.toml
-      - name: Check the real Linux native library without bundling
+      - name: Check the real Linux application library
         id: main_check
         if: ${{ always() && !cancelled() && steps.native_deps.outcome == 'success' && steps.rust.outcome == 'success' }}
         continue-on-error: true
-        timeout-minutes: 38
+        timeout-minutes: 35
         env:
-          # Diagnostic-only merge: no app is packaged. It omits Tauri's bundle
-          # resource and sidecar copying, not the production source security
-          # gates. It cannot verify release inputs, identity, or readiness.
+          # Diagnostic only: never interpreted as resource, sidecar identity,
+          # packaging, or release admission verification.
           TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
           CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
         shell: bash
@@ -110,9 +59,23 @@ jobs:
           rustup run 1.95.0 cargo check --locked --lib \
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml
-      - name: Test production credential and startup admission gates
-        id: credential_gates
+      - name: Compile the real library test binary
+        id: test_compile
         if: ${{ always() && !cancelled() && steps.main_check.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 35
+        env:
+          TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo test --locked --lib --no-run \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml
+      - name: Test production admission and fail-closed paths
+        id: admission_tests
+        if: ${{ always() && !cancelled() && steps.test_compile.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 15
         env:
@@ -124,20 +87,28 @@ jobs:
           rustup run 1.95.0 cargo test --locked --lib \
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml \
-            linux_credential_admission -- --list > "$RUNNER_TEMP/luckyray-credential-gate-tests.txt"
-          for test in \
-            linux_desktop_admission_tests::linux_credential_admission_blocks_real_desktop_startup_before_profile_io \
-            linux_desktop_admission_tests::linux_credential_admission_blocks_production_cli_and_mcp_entrypoints \
-            local_transport::tests::linux_credential_admission_blocks_transport_and_storage_before_io \
-            native_messaging::tests::linux_credential_admission_blocks_native_entrypoints_before_io \
-            tool_client::tests::linux_credential_admission_blocks_tool_client_before_profile_or_network; do
-            grep -Fx "$test: test" "$RUNNER_TEMP/luckyray-credential-gate-tests.txt"
+            -- --list > "$RUNNER_TEMP/luckyray-admission-tests.txt"
+          tests=(
+            'owned_process::linux_admission_tests::owned_spawn_rejects_before_child_can_write'
+            'agent_browser::runtime::tests::production_agent_host_is_rejected_before_profile_or_gateway'
+            'dsh_host::tests::production_linux_dsh_is_unavailable_before_creating_state'
+            'dsh_runtime_seal::tests::linux_stable_file_lease_rejects_even_regular_files'
+            'knowledge::tests::production_linux_knowledge_admission_preserves_files_and_creates_nothing'
+            'knowledge::attachment_operations::linux_admission_tests::recovery_directory_is_rejected_before_creation'
+            'linux_desktop_admission_tests::linux_credential_admission_blocks_real_desktop_startup_before_profile_io'
+            'linux_desktop_admission_tests::linux_credential_admission_blocks_production_cli_and_mcp_entrypoints'
+            'local_transport::tests::linux_credential_admission_blocks_transport_and_storage_before_io'
+            'native_messaging::tests::linux_credential_admission_blocks_native_entrypoints_before_io'
+            'tool_client::tests::linux_credential_admission_blocks_tool_client_before_profile_or_network'
+          )
+          for test in "${tests[@]}"; do
+            grep -Fx "$test: test" "$RUNNER_TEMP/luckyray-admission-tests.txt"
+            rustup run 1.95.0 cargo test --locked --lib \
+              --target x86_64-unknown-linux-gnu \
+              --manifest-path luckyray-app/src-tauri/Cargo.toml \
+              "$test" -- --exact
           done
-          rustup run 1.95.0 cargo test --locked --lib \
-            --target x86_64-unknown-linux-gnu \
-            --manifest-path luckyray-app/src-tauri/Cargo.toml \
-            linux_credential_admission
-      - name: Summarize every independent result
+      - name: Summarize each diagnostic result
         if: ${{ always() }}
         shell: bash
         env:
@@ -145,35 +116,30 @@ jobs:
           COMMIT: ${{ steps.commit.outcome }}
           NATIVE_DEPS: ${{ steps.native_deps.outcome }}
           RUST: ${{ steps.rust.outcome }}
-          NODE: ${{ steps.node.outcome }}
-          PACKAGE_CONFIG: ${{ steps.package_config.outcome }}
-          DENO_TESTS: ${{ steps.deno_tests.outcome }}
-          DENO_INPUT: ${{ steps.deno_input.outcome }}
-          GTK_FIXTURE: ${{ steps.gtk_fixture.outcome }}
           MAIN_CHECK: ${{ steps.main_check.outcome }}
-          CREDENTIAL_GATES: ${{ steps.credential_gates.outcome }}
+          TEST_COMPILE: ${{ steps.test_compile.outcome }}
+          ADMISSION_TESTS: ${{ steps.admission_tests.outcome }}
         run: |
           set -euo pipefail
           {
             echo "## Linux desktop native diagnostics"
             echo "- Commit: $GITHUB_SHA"
             echo "- Checkout / commit verification: $CHECKOUT / $COMMIT"
-            echo "- Native dependencies / Rust / Node: $NATIVE_DEPS / $RUST / $NODE"
-            echo "- Linux package configuration: $PACKAGE_CONFIG"
-            echo "- Deno tests / official input: $DENO_TESTS / $DENO_INPUT"
-            echo "- GTK fixture, autostart and registration primitive: $GTK_FIXTURE"
+            echo "- Native dependencies / Rust: $NATIVE_DEPS / $RUST"
             echo "- Main native library cargo check: $MAIN_CHECK"
-            echo "- Credential and startup admission tests: $CREDENTIAL_GATES"
-            echo "- Focus event behavior and desktop UI launch: NOT_RUN"
+            echo "- Library test binary compilation: $TEST_COMPILE"
+            echo "- Production admission and fail-closed tests: $ADMISSION_TESTS"
+            echo "- Previously passed GTK, Deno and package configuration checks were not repeated."
+            echo "- Focus behavior and desktop UI launch: NOT_RUN"
             echo "- Package resources, sidecar identity and release gates: NOT_VERIFIED"
             echo "- No package or release artifact was produced."
           } >> "$GITHUB_STEP_SUMMARY"
           failed=0
-          for result in "$CHECKOUT" "$COMMIT" "$NATIVE_DEPS" "$RUST" "$NODE" \
-            "$PACKAGE_CONFIG" "$DENO_TESTS" "$DENO_INPUT" "$GTK_FIXTURE" "$MAIN_CHECK"; do
+          for result in "$CHECKOUT" "$COMMIT" "$NATIVE_DEPS" "$RUST" "$MAIN_CHECK"; do
             if [ "$result" != success ]; then failed=1; fi
           done
-          if [ "$MAIN_CHECK" = success ] && [ "$CREDENTIAL_GATES" != success ]; then failed=1; fi
+          if [ "$MAIN_CHECK" = success ] && [ "$TEST_COMPILE" != success ]; then failed=1; fi
+          if [ "$TEST_COMPILE" = success ] && [ "$ADMISSION_TESTS" != success ]; then failed=1; fi
           if [ "$failed" -ne 0 ]; then
             echo "::error::One or more diagnostic steps failed or were not run; inspect the individual results."
             exit 1

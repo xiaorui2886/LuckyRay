@@ -480,6 +480,11 @@ impl KnowledgeService {
     }
 
     pub(crate) fn initialize(app_data_dir: impl AsRef<Path>) -> Result<Self, KnowledgeError> {
+        // Until Linux has the required identity-bound file transactions, even
+        // service initialization must not create or migrate user state.
+        #[cfg(target_os = "linux")]
+        return Err(linux_knowledge_write_unavailable());
+
         std::fs::create_dir_all(app_data_dir.as_ref()).map_err(|_| {
             error(
                 "knowledge-app-data-unavailable",
@@ -3225,6 +3230,14 @@ fn error(code: &'static str, message: impl Into<String>) -> KnowledgeError {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_knowledge_write_unavailable() -> KnowledgeError {
+    error(
+        "knowledge-exclusive-write-unsupported",
+        "Knowledge transactions are unavailable until Linux file identity protection is implemented",
+    )
+}
+
 fn trusted_vault(vault: &KnowledgeVaultRegistration) -> Result<TrustedVault, KnowledgeError> {
     if vault.id.trim().is_empty()
         || vault.mode != "vault-bound"
@@ -3725,6 +3738,11 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), KnowledgeError> {
         })
 }
 
+#[cfg(target_os = "linux")]
+fn write_new_synced(_path: &Path, _bytes: &[u8]) -> Result<(), KnowledgeError> {
+    Err(linux_knowledge_write_unavailable())
+}
+
 #[cfg(windows)]
 fn commit_prepared_document(
     target: &Path,
@@ -4077,6 +4095,11 @@ fn move_file_no_replace(source: &Path, destination: &Path) -> Result<(), Knowled
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn move_file_no_replace(_source: &Path, _destination: &Path) -> Result<(), KnowledgeError> {
+    Err(linux_knowledge_write_unavailable())
+}
+
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8], replace: bool) -> Result<(), KnowledgeError> {
     atomic_write_with_fault(path, bytes, replace, false)
 }
@@ -4087,6 +4110,9 @@ fn atomic_write_with_fault(
     replace: bool,
     fail_before_commit: bool,
 ) -> Result<(), KnowledgeError> {
+    #[cfg(target_os = "linux")]
+    return Err(linux_knowledge_write_unavailable());
+
     let parent = path.parent().ok_or_else(|| {
         error(
             "knowledge-write-failed",
@@ -4209,6 +4235,34 @@ mod tests {
     #[cfg(windows)]
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn production_linux_knowledge_admission_preserves_files_and_creates_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let app_data = root.path().join("app-data");
+        let error = match KnowledgeService::initialize(&app_data) {
+            Err(error) => error,
+            Ok(_) => panic!("Linux knowledge initialization unexpectedly succeeded"),
+        };
+        assert_eq!(error.code, "knowledge-exclusive-write-unsupported");
+        assert!(!app_data.exists());
+
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        let new_file = root.path().join("new-file");
+        std::fs::write(&source, b"source").unwrap();
+        std::fs::write(&destination, b"destination").unwrap();
+        assert!(write_new_synced(&new_file, b"new").is_err());
+        assert!(move_file_no_replace(&source, &destination).is_err());
+        assert!(atomic_write(&destination, b"replacement", true).is_err());
+        assert!(attachments::publish_bytes(root.path(), &[], "note.md", "a.png", b"synthetic").is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"source");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"destination");
+        assert!(!new_file.exists());
+        assert!(!root.path().join("attachments").exists());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+    }
 
     fn temp_path(label: &str) -> PathBuf {
         let nonce = SystemTime::now()

@@ -294,7 +294,7 @@ pub(crate) fn acquire_stable_file(path: &Path) -> Result<StableFileLease, ()> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn verify_record_seal(control: &RuntimeSealControl<'_>) -> Result<(), ()> {
     for (bytes, expected) in [
         (AUTHORITY_BYTES, AUTHORITY_SHA256),
@@ -582,7 +582,7 @@ fn regular_file_has_one_link(_path: &Path) -> bool {
     false
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
     if metadata.file_type().is_symlink() {
         return true;
@@ -630,6 +630,18 @@ fn hash_bytes(bytes: &[u8], control: &RuntimeSealControl<'_>) -> Result<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_stable_file_lease_rejects_even_regular_files() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("regular-file");
+        fs::write(&file, b"synthetic runtime file").unwrap();
+        let metadata = fs::symlink_metadata(&file).unwrap();
+        assert!(metadata.is_file());
+        assert!(is_link_or_reparse(&metadata));
+        assert!(acquire_stable_file(&file).is_err());
+    }
 
     #[test]
     fn frozen_dsh0_record_seal_is_exact() {

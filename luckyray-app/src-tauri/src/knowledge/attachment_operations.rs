@@ -841,6 +841,9 @@ impl KnowledgeService {
         existing_guard: Option<&FilesystemDirectoryIdentityGuard>,
         cancelled: &AtomicBool,
     ) -> Result<AttachmentOperationResult, KnowledgeError> {
+        #[cfg(target_os = "linux")]
+        return Err(linux_knowledge_write_unavailable());
+
         let owned_guard = if existing_guard.is_none() {
             Some(
                 filesystem_directory_identity_guard(&vault.root)
@@ -1504,6 +1507,9 @@ fn ensure_operation_parent(root: &Path, relative: &Path) -> Result<Vec<File>, Kn
 }
 
 fn recovery_directory(root: &Path) -> Result<PathBuf, KnowledgeError> {
+    #[cfg(target_os = "linux")]
+    return Err(linux_knowledge_write_unavailable());
+
     let relative = Path::new(".luckyray/attachment-operations");
     assert_safe_components(root, relative)?;
     let metadata = safe_existing_directory(root, Path::new(".luckyray"))?;
@@ -1517,4 +1523,16 @@ fn recovery_directory(root: &Path) -> Result<PathBuf, KnowledgeError> {
         })?;
     }
     safe_existing_directory(root, relative)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_admission_tests {
+    use super::*;
+
+    #[test]
+    fn recovery_directory_is_rejected_before_creation() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(recovery_directory(root.path()).is_err());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
 }
