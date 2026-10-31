@@ -1,0 +1,50 @@
+name: macOS native dependency diagnostic
+
+# This is intentionally a branch-only compile diagnostic, not a package or a
+# feature acceptance run. Each push to this branch starts one standard runner.
+on:
+  push:
+    branches: [port/macos-desktop-20261101]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-library-check:
+    if: github.repository == 'xiaorui2886/LuckyRay'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+    defaults:
+      run:
+        working-directory: luckyray-app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Record and require the native Apple Silicon runner
+        run: |
+          echo "ImageOS=${ImageOS:-unknown} ImageVersion=${ImageVersion:-unknown}"
+          sw_vers
+          uname -m
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+      - name: Set the pinned Rust toolchain and target
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin
+          rustup override set 1.95.0
+          rustc -vV
+          test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
+      - name: Check the native library only, without generating an app
+        # This scoped override is used only for cargo check. It does not create
+        # runtime resources, register sidecars, or compile a deliverable; it
+        # does not relax release gates.
+        # The disabled default feature omits Windows-only browser host support.
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
+        run: cargo check --locked --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml --lib --no-default-features
