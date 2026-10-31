@@ -163,6 +163,8 @@ pub fn run_extension_community_fixture() {
 
 mod attachment_file_moves;
 mod local_transport;
+#[cfg(target_os = "linux")]
+mod auto_launch_linux;
 mod material_drag;
 mod material_native_video;
 mod material_shell;
@@ -4148,7 +4150,11 @@ fn get_auto_launch_enabled_sync() -> Result<bool, String> {
         let expected = auto_launch_command_value()?.trim_matches('"').to_string();
         Ok(stdout.contains(AUTO_LAUNCH_NAME) && stdout.contains(&expected))
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        auto_launch_linux::get()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         Ok(false)
     }
@@ -4195,7 +4201,11 @@ fn set_auto_launch_enabled_sync(enabled: bool) -> Result<(), String> {
         }
         Err("关闭开机自启动失败".to_string())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        auto_launch_linux::set(enabled)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = enabled;
         Err("当前平台暂未支持开机自启动".to_string())

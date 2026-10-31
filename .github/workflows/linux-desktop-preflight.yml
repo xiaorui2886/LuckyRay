@@ -1,0 +1,71 @@
+name: Linux desktop port preflight
+on:
+  push:
+    branches: [port/linux-desktop-20261101]
+permissions:
+  contents: read
+jobs:
+  toolchain-and-autostart:
+    if: github.repository == 'xiaorui2886/LuckyRay'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install native development dependencies in the disposable runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config desktop-file-utils libwebkit2gtk-4.1-dev \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Check native WebKitGTK compile and link
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg-config --modversion webkit2gtk-4.1 gtk+-3.0
+          cat > "$RUNNER_TEMP/webkit-probe.c" <<'EOF'
+          #include <stdio.h>
+          #include <gtk/gtk.h>
+          #include <webkit2/webkit2.h>
+          int main(void) {
+            printf("GTK %u.%u, WebKitGTK %u.%u\n",
+              gtk_get_major_version(), gtk_get_minor_version(),
+              webkit_get_major_version(), webkit_get_minor_version());
+            return 0;
+          }
+          EOF
+          cc -Wall -Wextra -Werror "$RUNNER_TEMP/webkit-probe.c" \
+            -o "$RUNNER_TEMP/webkit-probe" \
+            $(pkg-config --cflags --libs webkit2gtk-4.1 gtk+-3.0)
+          "$RUNNER_TEMP/webkit-probe"
+          file "$RUNNER_TEMP/webkit-probe"
+          ldd "$RUNNER_TEMP/webkit-probe"
+      - name: Check application manifest without building or packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo metadata --locked --no-deps --format-version 1 \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml > "$RUNNER_TEMP/metadata.json"
+          python3 - "$RUNNER_TEMP/metadata.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              metadata = json.load(handle)
+          package = next(item for item in metadata["packages"] if item["name"] == "luckyray-app")
+          print("application:", package["name"], package["version"])
+          for feature in ("default", "sidecar-binaries", "browser-host-runtime"):
+              print(feature, package["features"][feature])
+          PY
+      - name: Run isolated Linux autostart module tests
+        shell: bash
+        env:
+          LUCKYRAY_DESKTOP_FILE_VALIDATE: /usr/bin/desktop-file-validate
+        run: |
+          set -euo pipefail
+          printf '#[path = "%s"]\nmod auto_launch_linux;\n' \
+            "$GITHUB_WORKSPACE/luckyray-app/src-tauri/src/auto_launch_linux.rs" \
+            > "$RUNNER_TEMP/autolaunch-harness.rs"
+          rustup run 1.95.0 rustc --edition 2021 --test "$RUNNER_TEMP/autolaunch-harness.rs" \
+            -o "$RUNNER_TEMP/autolaunch-tests"
+          "$RUNNER_TEMP/autolaunch-tests"
