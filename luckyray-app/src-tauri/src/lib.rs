@@ -58,6 +58,8 @@ mod dsh_host;
 mod dsh_login_browser;
 #[cfg(all(windows, feature = "lsh-background-surface-preload"))]
 mod dsh_native_container;
+#[cfg(target_os = "linux")]
+mod dsh_native_surface_linux;
 mod dsh_engine_update;
 mod dsh_resource_broker;
 mod dsh_runtime_seal;
@@ -167,12 +169,16 @@ mod local_transport;
 mod auto_launch_linux;
 #[cfg(target_os = "linux")]
 mod linux_app_data;
+#[cfg(target_os = "linux")]
+mod linux_credential_admission;
 mod material_drag;
 mod material_native_video;
 mod material_shell;
 mod materials;
 mod media_transfer;
 pub mod native_messaging;
+#[cfg(target_os = "linux")]
+mod native_messaging_linux;
 mod notes_inline;
 mod owned_process;
 mod runtime_profile;
@@ -627,8 +633,79 @@ fn notes_drop_diagnostic(caller: tauri::Webview, stage: String, count: usize, hi
     Ok(())
 }
 
+/// Linux desktop startup stays closed before Tauri or profile initialization
+/// until the credential storage contract is implemented and reviewed.
+#[cfg(target_os = "linux")]
+pub fn linux_desktop_startup_admission() -> Result<(), String> {
+    linux_credential_admission::require().map_err(str::to_owned)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_desktop_admission_tests {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "invoked only by the bounded startup admission test"]
+    fn linux_credential_admission_application_child() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("LUCKYRAY_DESKTOP_ADMISSION_FIXTURE").unwrap(),
+        );
+        crate::run();
+        std::fs::write(root.join("startup-returned"), b"closed").unwrap();
+    }
+
+    #[test]
+    fn linux_credential_admission_blocks_real_desktop_startup_before_profile_io() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("profile");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "linux_credential_admission_application_child"])
+            .env("LUCKYRAY_DESKTOP_ADMISSION_FIXTURE", root.path())
+            .env("HOME", &profile)
+            .env("XDG_CONFIG_HOME", profile.join("config"))
+            .env("XDG_DATA_HOME", profile.join("data"))
+            .env("XDG_CACHE_HOME", profile.join("cache"))
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    assert!(status.success(), "desktop admission child failed: {status}");
+                    break;
+                }
+                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                Ok(None) | Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("desktop admission child did not settle within the deadline");
+                }
+            }
+        }
+        assert_eq!(std::fs::read(root.path().join("startup-returned")).unwrap(), b"closed");
+        assert!(!profile.exists());
+    }
+
+    #[test]
+    fn linux_credential_admission_blocks_production_cli_and_mcp_entrypoints() {
+        assert_eq!(crate::tool_cli::run(), 3);
+        assert_eq!(crate::tool_mcp::run(std::iter::empty::<std::ffi::OsString>()), 1);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    if let Err(error) = linux_desktop_startup_admission() {
+        eprintln!("luckyray-desktop-unavailable: {error}");
+        return;
+    }
     // R3a: LocalTransport starts after Tauri plugins and exposes only the Native Messaging bootstrap control plane.
     tauri::Builder::default()
         .on_webview_event(|webview, event| {
@@ -1803,6 +1880,13 @@ fn create_dsh_native_surface_child(
             }
             // The controller owns the handler until this child is destroyed.
         }).map_err(|_| "dsh-native-surface-unavailable".to_owned())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let child = caller.app_handle().get_webview(DSH_NATIVE_SURFACE_WEBVIEW_LABEL)
+            .ok_or_else(|| "dsh-native-surface-unavailable".to_owned())?;
+        dsh_native_surface_linux::install_focus_dismissal(&child, caller.app_handle().clone())
+            .map_err(str::to_owned)?;
     }
     Ok(())
 }

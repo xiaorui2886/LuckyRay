@@ -1,143 +1,178 @@
-name: Linux desktop port preflight
+name: Linux desktop native diagnostics
 on:
   push:
     branches: [port/linux-desktop-20261101]
 permissions:
   contents: read
 jobs:
-  toolchain-and-autostart:
+  linux-native-diagnostics:
     if: github.repository == 'xiaorui2886/LuckyRay'
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check out the public candidate
+        id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Install native development dependencies in the disposable runner
+      - name: Verify the candidate commit
+        id: commit
+        shell: bash
         run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          printf 'Commit: %s\n' "$actual"
+          test "$actual" = "$GITHUB_SHA"
+          git diff --exit-code
+      - name: Install native development dependencies on the disposable runner
+        id: native_deps
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config desktop-file-utils libwebkit2gtk-4.1-dev \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-          rustup toolchain install 1.95.0 --profile minimal
-      - name: Check native WebKitGTK compile and link
-        shell: bash
-        run: |
-          set -euo pipefail
           pkg-config --modversion webkit2gtk-4.1 gtk+-3.0
-          cat > "$RUNNER_TEMP/webkit-probe.c" <<'EOF'
-          #include <stdio.h>
-          #include <gtk/gtk.h>
-          #include <webkit2/webkit2.h>
-          int main(void) {
-            printf("GTK %u.%u, WebKitGTK %u.%u\n",
-              gtk_get_major_version(), gtk_get_minor_version(),
-              webkit_get_major_version(), webkit_get_minor_version());
-            return 0;
-          }
-          EOF
-          cc -Wall -Wextra -Werror "$RUNNER_TEMP/webkit-probe.c" \
-            -o "$RUNNER_TEMP/webkit-probe" \
-            $(pkg-config --cflags --libs webkit2gtk-4.1 gtk+-3.0)
-          "$RUNNER_TEMP/webkit-probe"
-          file "$RUNNER_TEMP/webkit-probe"
-          ldd "$RUNNER_TEMP/webkit-probe"
-      - name: Check application manifest without building or packaging
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup run 1.95.0 cargo metadata --locked --no-deps --format-version 1 \
-            --manifest-path luckyray-app/src-tauri/Cargo.toml > "$RUNNER_TEMP/metadata.json"
-          python3 - "$RUNNER_TEMP/metadata.json" <<'PY'
-          import json, sys
-          with open(sys.argv[1], encoding="utf-8") as handle:
-              metadata = json.load(handle)
-          package = next(item for item in metadata["packages"] if item["name"] == "luckyray-app")
-          print("application:", package["name"], package["version"])
-          for feature in ("default", "sidecar-binaries", "browser-host-runtime"):
-              print(feature, package["features"][feature])
-          PY
-      - name: Run isolated Linux autostart and sidecar naming tests
-        shell: bash
-        env:
-          LUCKYRAY_DESKTOP_FILE_VALIDATE: /usr/bin/desktop-file-validate
-        run: |
-          set -euo pipefail
-          printf '#[path = "%s"]\nmod auto_launch_linux;\n' \
-            "$GITHUB_WORKSPACE/luckyray-app/src-tauri/src/auto_launch_linux.rs" \
-            > "$RUNNER_TEMP/autolaunch-harness.rs"
-          rustup run 1.95.0 rustc --edition 2021 --test "$RUNNER_TEMP/autolaunch-harness.rs" \
-            -o "$RUNNER_TEMP/autolaunch-tests"
-          "$RUNNER_TEMP/autolaunch-tests"
-          rustup run 1.95.0 rustc --edition 2021 --test \
-            luckyray-app/src-tauri/build_support/sidecar_names.rs \
-            -o "$RUNNER_TEMP/sidecar-name-tests"
-          "$RUNNER_TEMP/sidecar-name-tests"
-          rustup run 1.95.0 rustc --edition 2021 --test \
-            luckyray-app/src-tauri/src/linux_app_data.rs \
-            -o "$RUNNER_TEMP/linux-app-data-tests"
-          "$RUNNER_TEMP/linux-app-data-tests"
-      - name: Probe Linux security primitives using synthetic processes and files
-        id: security_probe
+      - name: Install the pinned Rust toolchain
+        id: rust
         continue-on-error: true
         shell: bash
-        run: |
-          set -euo pipefail
-          probe_parent="$RUNNER_TEMP"
-          probe_root="$(mktemp -d -- "$probe_parent/luckyray-security-XXXXXXXX")"
-          case "$probe_root" in
-            "$probe_parent"/luckyray-security-*) ;;
-            *) echo "::error::Unexpected synthetic probe directory"; exit 1 ;;
-          esac
-          trap 'rm -rf -- "$probe_root"' EXIT
-          export RUNNER_TEMP="$probe_root"
-          for probe in atomic_create_probe pid_namespace_probe; do
-            cc -std=c11 -O2 -Wall -Wextra -Werror \
-              "luckyray-app/tests/linux-security/$probe.c" -o "$RUNNER_TEMP/$probe"
-            status=0
-            timeout --signal=TERM --kill-after=5s 150s "$RUNNER_TEMP/$probe" || status=$?
-            if [ "$status" -eq 77 ]; then
-              echo "::warning::$probe BLOCKED on this runner; this is not a pass"
-              echo "- $probe: BLOCKED on this runner" >> "$GITHUB_STEP_SUMMARY"
-            elif [ "$status" -ne 0 ]; then
-              echo "::error::$probe failed with status $status"
-              exit "$status"
-            else
-              echo "- $probe: passed its limited synthetic experiment" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Set up Node for input and package checks
+        id: node
+        continue-on-error: true
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.14.1'
-      - name: Verify the official Linux Node input
-        id: node_input
+      - name: Check Linux package configuration and the fail-closed build hook
+        id: package_config
+        if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: node --test luckyray-app/tests/linux-package-config.test.mjs
+      - name: Test Deno input verification
+        id: deno_tests
+        if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: node --test luckyray-app/tests/linux-deno-input.test.mjs
+      - name: Verify the fixed official Linux Deno input
+        id: deno_input
+        if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
-          node --test luckyray-app/tests/linux-node-input.test.mjs
-          curl --fail --location --proto '=https' --tlsv1.2 --retry 2 --max-time 180 \
-            --output "$RUNNER_TEMP/node-v22.19.0-linux-x64.tar.gz" \
-            https://nodejs.org/dist/v22.19.0/node-v22.19.0-linux-x64.tar.gz
-          node luckyray-app/scripts/linux/prepare-node-input.mjs \
-            "$RUNNER_TEMP/node-v22.19.0-linux-x64.tar.gz" "$RUNNER_TEMP/verified-node-input"
-          file "$RUNNER_TEMP/verified-node-input/node"
-          stat -c '%a %s %n' "$RUNNER_TEMP/verified-node-input/node" "$RUNNER_TEMP/verified-node-input/LICENSE"
-          ldd "$RUNNER_TEMP/verified-node-input/node"
-          readelf --version-info "$RUNNER_TEMP/verified-node-input/node" \
-            | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu
-      - name: Compile and test the isolated GTK drag module
-        shell: bash
+          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --retry 2 --max-time 180 \
+            --output "$RUNNER_TEMP/deno-x86_64-unknown-linux-gnu.zip" \
+            https://github.com/denoland/deno/releases/download/v2.9.4/deno-x86_64-unknown-linux-gnu.zip
+          node luckyray-app/scripts/linux/prepare-deno-input.mjs \
+            "$RUNNER_TEMP/deno-x86_64-unknown-linux-gnu.zip" "$RUNNER_TEMP/verified-deno-input"
+          file "$RUNNER_TEMP/verified-deno-input/deno"
+          stat -c '%a %s %n' "$RUNNER_TEMP/verified-deno-input/deno" "$RUNNER_TEMP/verified-deno-input/LICENSE"
+          ldd "$RUNNER_TEMP/verified-deno-input/deno" || echo 'ldd did not provide dependency information'
+          readelf --version-info "$RUNNER_TEMP/verified-deno-input/deno" \
+            | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu || true
+      - name: Test GTK drag, FIFO-safe autostart and registration; compile the focus module
+        id: gtk_fixture
+        if: ${{ always() && !cancelled() && steps.native_deps.outcome == 'success' && steps.rust.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 25
         env:
-          CARGO_BUILD_JOBS: '2'
-          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-gtk-target
+          LUCKYRAY_DESKTOP_FILE_VALIDATE: /usr/bin/desktop-file-validate
+        shell: bash
         run: |
           set -euo pipefail
           rustup run 1.95.0 cargo test --locked \
+            --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/tests/linux-gtk-bridge/Cargo.toml
-      - name: Report independent probe failures
-        if: ${{ always() && (steps.security_probe.outcome == 'failure' || steps.node_input.outcome == 'failure') }}
+      - name: Check the real Linux native library without bundling
+        id: main_check
+        if: ${{ always() && !cancelled() && steps.native_deps.outcome == 'success' && steps.rust.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 38
+        env:
+          # Diagnostic-only merge: no app is packaged. It omits Tauri's bundle
+          # resource and sidecar copying, not the production source security
+          # gates. It cannot verify release inputs, identity, or readiness.
+          TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
         shell: bash
         run: |
-          echo "::error::A Linux security probe or official Node input check failed; inspect the earlier step."
-          exit 1
+          set -euo pipefail
+          echo "::notice::Source compilation diagnostic only; package resources, sidecar identity, and release gates are NOT verified."
+          rustup run 1.95.0 cargo check --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml
+      - name: Test production credential and startup admission gates
+        id: credential_gates
+        if: ${{ always() && !cancelled() && steps.main_check.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            linux_credential_admission -- --list > "$RUNNER_TEMP/luckyray-credential-gate-tests.txt"
+          for test in \
+            linux_desktop_admission_tests::linux_credential_admission_blocks_real_desktop_startup_before_profile_io \
+            linux_desktop_admission_tests::linux_credential_admission_blocks_production_cli_and_mcp_entrypoints \
+            local_transport::tests::linux_credential_admission_blocks_transport_and_storage_before_io \
+            native_messaging::tests::linux_credential_admission_blocks_native_entrypoints_before_io \
+            tool_client::tests::linux_credential_admission_blocks_tool_client_before_profile_or_network; do
+            grep -Fx "$test: test" "$RUNNER_TEMP/luckyray-credential-gate-tests.txt"
+          done
+          rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            linux_credential_admission
+      - name: Summarize every independent result
+        if: ${{ always() }}
+        shell: bash
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          COMMIT: ${{ steps.commit.outcome }}
+          NATIVE_DEPS: ${{ steps.native_deps.outcome }}
+          RUST: ${{ steps.rust.outcome }}
+          NODE: ${{ steps.node.outcome }}
+          PACKAGE_CONFIG: ${{ steps.package_config.outcome }}
+          DENO_TESTS: ${{ steps.deno_tests.outcome }}
+          DENO_INPUT: ${{ steps.deno_input.outcome }}
+          GTK_FIXTURE: ${{ steps.gtk_fixture.outcome }}
+          MAIN_CHECK: ${{ steps.main_check.outcome }}
+          CREDENTIAL_GATES: ${{ steps.credential_gates.outcome }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Linux desktop native diagnostics"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Checkout / commit verification: $CHECKOUT / $COMMIT"
+            echo "- Native dependencies / Rust / Node: $NATIVE_DEPS / $RUST / $NODE"
+            echo "- Linux package configuration: $PACKAGE_CONFIG"
+            echo "- Deno tests / official input: $DENO_TESTS / $DENO_INPUT"
+            echo "- GTK fixture, autostart and registration primitive: $GTK_FIXTURE"
+            echo "- Main native library cargo check: $MAIN_CHECK"
+            echo "- Credential and startup admission tests: $CREDENTIAL_GATES"
+            echo "- Focus event behavior and desktop UI launch: NOT_RUN"
+            echo "- Package resources, sidecar identity and release gates: NOT_VERIFIED"
+            echo "- No package or release artifact was produced."
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          for result in "$CHECKOUT" "$COMMIT" "$NATIVE_DEPS" "$RUST" "$NODE" \
+            "$PACKAGE_CONFIG" "$DENO_TESTS" "$DENO_INPUT" "$GTK_FIXTURE" "$MAIN_CHECK"; do
+            if [ "$result" != success ]; then failed=1; fi
+          done
+          if [ "$MAIN_CHECK" = success ] && [ "$CREDENTIAL_GATES" != success ]; then failed=1; fi
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more diagnostic steps failed or were not run; inspect the individual results."
+            exit 1
+          fi

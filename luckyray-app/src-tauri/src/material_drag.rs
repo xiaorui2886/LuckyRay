@@ -3,10 +3,11 @@ use std::path::PathBuf;
 #[cfg(any(windows, target_os = "linux"))]
 use std::io::Cursor;
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(windows)]
 use tauri::Emitter;
 
 #[cfg(target_os = "linux")]
+#[path = "material_drag/linux.rs"]
 mod linux;
 
 #[cfg(any(windows, target_os = "linux"))]

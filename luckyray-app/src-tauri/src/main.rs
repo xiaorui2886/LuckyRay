@@ -49,5 +49,10 @@ fn main() {
         eprintln!("luckyray-extension-fixture-unavailable: fixture entry points exist only in debug builds compiled with the extension-runtime-fixture feature; refusing to start the normal application");
         std::process::exit(2);
     }
+    #[cfg(target_os = "linux")]
+    if let Err(error) = luckyray_app_lib::linux_desktop_startup_admission() {
+        eprintln!("luckyray-desktop-unavailable: {error}");
+        std::process::exit(1);
+    }
     luckyray_app_lib::run()
 }

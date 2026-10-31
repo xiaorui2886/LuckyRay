@@ -1762,6 +1762,7 @@ dependencies = [
  "base64 0.22.1",
  "gtk",
  "image",
+ "libc",
  "tauri",
 ]
 

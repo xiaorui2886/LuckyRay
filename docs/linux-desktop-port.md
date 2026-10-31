@@ -11,6 +11,20 @@ autostart tests passed, including desktop-file validation and symlink refusal.
 It did not build or launch the app. Run:
 https://github.com/xiaorui2886/LuckyRay/actions/runs/41232407784
 
+The second preflight ran on the same baseline at public commit
+`6def3aa8c9687cf166e3469aa71a98723687af0a`:
+https://github.com/xiaorui2886/LuckyRay/actions/runs/41235425979
+The two synthetic security experiments passed their limited scenarios, as did
+the independent XDG, sidecar naming and autostart tests. The GTK fixture did
+not compile because the test crate resolved the module path incorrectly. The
+path fix is local and has not yet run on Linux. The overall workflow failed;
+it did not build or start LuckyRay.
+
+Those historical autostart results predate the later security review. The
+current candidate keeps reads but refuses any autostart creation or deletion
+until an identity-bound mutation is available; its new FIFO and no-write
+regressions have not yet run on Linux.
+
 ## Runtime input candidates
 
 - The existing LSH authority remains `@deepseek-ai/dsh` **0.2.1-rc.3**. Its
@@ -23,13 +37,24 @@ https://github.com/xiaorui2886/LuckyRay/actions/runs/41232407784
   `scripts/linux/prepare-node-input.mjs` accepts only that archive, checks the
   ELF header and executable version, and stages its LICENSE. Its output is only
   an input for subsequent review, not a sealed LSH installation or authority.
-  Actual archive extraction and binary hash remain unverified until CI runs.
+  The second preflight verified the official archive and executed its exact
+  extracted binary as Node 22.19.0. The x86-64 ELF was 121,674,800 bytes,
+  SHA-256 `596b5144ff242737f1c1be6a5f0ccb3907dbba2482344143cb1a6898633402a9`;
+  the staged license SHA-256 was
+  `e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49`.
+  The observed highest GLIBC symbol version was `2.28`. This checks only the
+  Node input, not the LSH closure or the desktop's minimum system version. The
+  original symlink test did not distinguish a no-follow rejection from a later
+  hash rejection; its stricter `ELOOP` assertion is local and awaits Linux.
 - Deno **2.9.4**: the official GitHub release asset
   `deno-x86_64-unknown-linux-gnu.zip` has SHA-256
   `c24f955d9fbfe0ea5ae2b501c8e71ae76e31e4c9782390a54a284b3364fda725`
   according to the [release metadata](https://api.github.com/repos/denoland/deno/releases/tags/v2.9.4).
-  Linux staging, extracted binary verification, and redistribution review
-  remain outstanding. In particular, the upstream project's
+  `scripts/linux/prepare-deno-input.mjs` is a new input-only staging tool that
+  pins this archive and the upstream MIT notice; real archive extraction, the
+  resulting Linux executable, and redistribution review remain unverified.
+  Its report explicitly says that the third-party notice inventory is unaudited.
+  In particular, the upstream project's
   [binary-license inventory issue](https://github.com/denoland/deno/issues/13515)
   discusses third-party notices beyond Deno's own MIT license; the version- and
   platform-specific inventory must be established before redistribution. The
@@ -64,7 +89,8 @@ https://github.com/xiaorui2886/LuckyRay/actions/runs/41232407784
 ## Partial implementation and security limits
 
 - Linux XDG application-data lookup and a GTK external-drag implementation are
-  present but have not been compiled or exercised on Linux. The GTK fixture
+  present. The GTK implementation has not been compiled or exercised on Linux.
+  The GTK fixture
   compiles the actual module and checks URI escaping and image validation; it
   does not demonstrate a desktop drag or launch the application.
 - Linux knowledge-index opens now refuse a final-component symlink. Parent

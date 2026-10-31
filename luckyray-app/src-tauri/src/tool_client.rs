@@ -65,6 +65,10 @@ pub struct ToolClient {
 
 impl ToolClient {
     pub fn connect() -> Result<Self, ToolClientError> {
+        #[cfg(target_os = "linux")]
+        crate::linux_credential_admission::require().map_err(|_| {
+            ToolClientError::new("authentication-unavailable", "LuckyRay authentication is unavailable")
+        })?;
         let app_data = production_app_data_dir()?;
         Self::connect_to_ports(&app_data, LOCAL_PORT_START..=LOCAL_PORT_END)
     }
@@ -81,6 +85,10 @@ impl ToolClient {
         app_data: &Path,
         ports: impl IntoIterator<Item = u16>,
     ) -> Result<Self, ToolClientError> {
+        #[cfg(target_os = "linux")]
+        crate::linux_credential_admission::require().map_err(|_| {
+            ToolClientError::new("authentication-unavailable", "LuckyRay authentication is unavailable")
+        })?;
         let credential = load_native_credential(app_data).map_err(|code| match code.as_str() {
             "app-unavailable" => ToolClientError::new("app-unavailable", "Open LuckyRay"),
             _ => ToolClientError::new(
@@ -361,6 +369,21 @@ mod tests {
     use std::sync::{Arc, Barrier, Mutex};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_credential_admission_blocks_tool_client_before_profile_or_network() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("must-not-be-created");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert_eq!(ToolClient::connect().err().unwrap().code(), "authentication-unavailable");
+        let error = ToolClient::connect_to_ports(&missing, [port]).err().unwrap();
+        assert_eq!(error.code(), "authentication-unavailable");
+        assert!(!missing.exists());
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+    }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let nonce = SystemTime::now()

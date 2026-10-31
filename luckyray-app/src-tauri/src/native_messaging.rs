@@ -265,6 +265,8 @@ fn set_binary_stdio() -> Result<(), String> {
 }
 
 pub fn run() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    crate::linux_credential_admission::require().map_err(str::to_owned)?;
     set_binary_stdio()?;
     let caller = env::args()
         .nth(1)
@@ -286,7 +288,63 @@ pub fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// Explicit per-user registration for installed Linux packages. This does not
+/// approve an extension origin or remove an existing registration. It remains
+/// unavailable until Linux credential storage has been admitted.
+#[cfg(target_os = "linux")]
+pub fn install_linux_host(browser: &str) -> Result<&'static str, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    crate::linux_credential_admission::require().map_err(str::to_owned)?;
+    // AppImage's mounted executable path ceases to exist when the image exits.
+    if std::env::var_os("APPIMAGE").is_some() {
+        return Err("linux-native-host-appimage-unsupported".into());
+    }
+    let browser = crate::native_messaging_linux::Browser::parse(browser).map_err(str::to_owned)?;
+    let binary = std::env::current_exe().map_err(|_| "linux-native-host-binary-invalid")?;
+    if !binary.is_absolute()
+        || binary.file_name().and_then(|name| name.to_str()) != Some("luckyray-native-host")
+    {
+        return Err("linux-native-host-binary-invalid".into());
+    }
+    let opened = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&binary)
+        .map_err(|_| "linux-native-host-binary-invalid")?;
+    let expected = opened.metadata().map_err(|_| "linux-native-host-binary-invalid")?;
+    let running = std::fs::metadata("/proc/self/exe")
+        .map_err(|_| "linux-native-host-binary-invalid")?;
+    if !expected.is_file() || expected.permissions().mode() & 0o111 == 0
+        || expected.mode() & 0o022 != 0
+        || expected.dev() != running.dev() || expected.ino() != running.ino()
+    {
+        return Err("linux-native-host-binary-invalid".into());
+    }
+    let allowed_origins: Vec<String> = configured_extension_origins()?
+        .into_iter()
+        .map(|origin| format!("{origin}/"))
+        .collect();
+    let manifest = json!({
+        "name": crate::local_transport::NATIVE_HOST_NAME,
+        "description": "LuckyRay browser bridge",
+        "path": binary,
+        "type": "stdio",
+        "allowed_origins": allowed_origins,
+    });
+    let bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|_| "native host manifest serialization failed")?;
+    match crate::native_messaging_linux::install_for_current_user(browser, &bytes)
+        .map_err(str::to_owned)?
+    {
+        crate::native_messaging_linux::InstallOutcome::Installed => Ok("installed"),
+        crate::native_messaging_linux::InstallOutcome::AlreadyInstalled => Ok("already-installed"),
+    }
+}
+
 pub fn write_host_manifest(path: &Path, binary_path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    crate::linux_credential_admission::require().map_err(str::to_owned)?;
     let allowed_origins: Vec<String> = configured_extension_origins()?
         .into_iter()
         .map(|origin| format!("{origin}/"))
@@ -397,6 +455,7 @@ mod tests {
         assert_eq!(&framed[4..], payload);
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn host_manifest_has_exact_origin_stdio_type_and_absolute_binary_path() {
         let dir = test_dir("manifest");
@@ -414,6 +473,25 @@ mod tests {
         );
         assert!(!manifest.to_string().contains('*'));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_credential_admission_blocks_native_entrypoints_before_io() {
+        let root = tempfile::tempdir().unwrap();
+        let foreign = root.path().join("foreign-manifest.json");
+        std::fs::write(&foreign, b"unchanged").unwrap();
+        let expected = crate::linux_credential_admission::UNAVAILABLE.to_owned();
+        assert_eq!(
+            install_linux_host("chromium"),
+            Err(expected.clone())
+        );
+        assert_eq!(run(), Err(expected.clone()));
+        assert_eq!(write_host_manifest(&foreign, root.path()), Err(expected.clone()));
+        assert_eq!(std::fs::read(&foreign).unwrap(), b"unchanged");
+        let missing = root.path().join("missing").join("manifest.json");
+        assert_eq!(write_host_manifest(&missing, root.path()), Err(expected));
+        assert!(!root.path().join("missing").exists());
     }
 
     #[test]

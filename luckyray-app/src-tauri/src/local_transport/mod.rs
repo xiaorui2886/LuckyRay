@@ -296,6 +296,8 @@ struct AuthState {
 
 impl AuthState {
     fn load_or_create(app_data_dir: &Path) -> Result<Self, String> {
+        #[cfg(target_os = "linux")]
+        crate::linux_credential_admission::require().map_err(str::to_owned)?;
         fs::create_dir_all(app_data_dir)
             .map_err(|_| "local transport credential directory is unavailable".to_string())?;
         let path = app_data_dir.join(AUTH_FILE_NAME);
@@ -393,6 +395,8 @@ impl AuthState {
 }
 
 fn persist_auth_record(path: &Path, record: &impl Serialize) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        crate::linux_credential_admission::require().map_err(str::to_owned)?;
         let parent = path
             .parent()
             .ok_or_else(|| "local transport credential path is invalid".to_string())?;
@@ -427,6 +431,8 @@ fn persist_auth_record(path: &Path, record: &impl Serialize) -> Result<(), Strin
 }
 
 pub(crate) fn load_native_credential(app_data_dir: &Path) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    crate::linux_credential_admission::require().map_err(str::to_owned)?;
     let path = app_data_dir.join(AUTH_FILE_NAME);
     if !path.is_file() {
         return Err("app-unavailable".to_string());
@@ -617,6 +623,8 @@ pub fn start_server(
     config: ServerConfig,
     adapter: Arc<dyn TransportAdapter>,
 ) -> Result<LocalTransportHandle, String> {
+    #[cfg(target_os = "linux")]
+    crate::linux_credential_admission::require().map_err(str::to_owned)?;
     let auth = Arc::new(Mutex::new(AuthState::load_or_create(&config.app_data_dir)?));
     let mut listener = None;
     let mut last_error = None;
@@ -2340,6 +2348,37 @@ mod tests {
     use crate::{backend::BackendServices, LegacyLocalTransportAdapter};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Barrier, Condvar};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_credential_admission_blocks_transport_and_storage_before_io() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("must-not-be-created");
+        let expected = crate::linux_credential_admission::UNAVAILABLE;
+        assert_eq!(AuthState::load_or_create(&missing).err().as_deref(), Some(expected));
+        assert!(!missing.exists());
+
+        let foreign = root.path().join("foreign");
+        fs::write(&foreign, b"unchanged").unwrap();
+        assert_eq!(persist_auth_record(&foreign, &json!({"synthetic": true})).err().as_deref(), Some(expected));
+        assert_eq!(fs::read(&foreign).unwrap(), b"unchanged");
+        let absent_parent = root.path().join("absent").join("auth.json");
+        assert_eq!(persist_auth_record(&absent_parent, &json!({"synthetic": true})).err().as_deref(), Some(expected));
+        assert!(!root.path().join("absent").exists());
+
+        symlink(&foreign, root.path().join(AUTH_FILE_NAME)).unwrap();
+        assert_eq!(load_native_credential(root.path()).err().as_deref(), Some(expected));
+        assert_eq!(fs::read(&foreign).unwrap(), b"unchanged");
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let mut config = ServerConfig::production(missing.clone());
+        config.ports = vec![listener.local_addr().unwrap().port()];
+        let error = start_server(config, Arc::new(MockAdapter::default())).err().unwrap();
+        assert_eq!(error, expected);
+        assert!(!missing.exists());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    }
 
     #[test]
     fn media_transfer_routes_are_method_scoped_and_require_the_expected_capability_tier() {

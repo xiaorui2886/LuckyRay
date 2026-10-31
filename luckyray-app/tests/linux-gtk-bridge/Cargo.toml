@@ -8,6 +8,7 @@ publish = false
 base64 = "=0.22.1"
 gtk = "=0.18.2"
 image = { version = "=0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+libc = "=0.2.186"
 tauri = { version = "=2.11.2", features = ["protocol-asset", "tray-icon", "unstable"] }
 
 [patch.crates-io]

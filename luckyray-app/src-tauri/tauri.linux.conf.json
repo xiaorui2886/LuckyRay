@@ -1,0 +1,13 @@
+{
+  "build": {
+    "beforeBuildCommand": "node scripts/linux/prepare-tauri-build.mjs"
+  },
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    }
+  }
+}

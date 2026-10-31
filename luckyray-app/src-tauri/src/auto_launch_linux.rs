@@ -1,16 +1,19 @@
 //! Per-user Linux desktop autostart. This never executes a shell or searches PATH.
 //!
-//! An existing entry is only removed when it exactly matches the one generated
-//! for the current executable. Foreign, edited, or stale entries are preserved
-//! and reported as a conflict rather than silently overwritten or removed.
+//! Reading is supported, but changes fail closed until file identity and
+//! concurrent replacement can be protected throughout the operation.
 
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Read, Write};
+#[cfg(test)]
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const ENTRY_NAME: &str = "com.luckyray.desktop.desktop";
+#[cfg(test)]
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 fn config_root(xdg: Option<OsString>, home: Option<OsString>) -> Result<PathBuf, String> {
@@ -80,9 +83,9 @@ fn read_entry(path: &Path) -> Result<Option<Vec<u8>>, String> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        // Linux O_NOFOLLOW: refuse even a symlink swapped in at open time.
-        const O_NOFOLLOW: i32 = 0x20000;
-        options.custom_flags(O_NOFOLLOW);
+        // Reject a symlink even if it is swapped in at open time, and never
+        // wait for a FIFO writer before checking the opened object's type.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     match options.open(path) {
         Ok(file) => {
@@ -123,54 +126,13 @@ fn set_at(root: &Path, executable: &Path, enabled: bool) -> Result<(), String> {
             return Err("auto-launch-entry-conflict".to_string())
         }
         Some(_) if enabled => return Ok(()),
-        Some(_) => {
-            return fs::remove_file(&destination)
-                .map_err(|_| "auto-launch-remove-failed".to_string())
-        }
+        // Path-based unlink after an inspection can remove a replacement.
+        Some(_) => return Err("auto-launch-write-safety-unavailable".to_string()),
         None if !enabled => return Ok(()),
-        None => {}
+        // A named staging file can be replaced before linking or cleanup.
+        // Do not create any name until identity-bound mutation is available.
+        None => return Err("auto-launch-write-safety-unavailable".to_string()),
     }
-    let directory = destination
-        .parent()
-        .ok_or_else(|| "auto-launch-config-unavailable".to_string())?;
-    fs::create_dir_all(directory).map_err(|_| "auto-launch-directory-failed".to_string())?;
-    let temporary = directory.join(format!(
-        ".{ENTRY_NAME}.{}.{}.tmp",
-        std::process::id(),
-        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut created = false;
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary)
-            .map_err(|_| "auto-launch-write-failed".to_string())?;
-        created = true;
-        file.write_all(expected.as_bytes())
-            .and_then(|_| file.sync_all())
-            .map_err(|_| "auto-launch-write-failed".to_string())?;
-        drop(file);
-        // A hard link fails if another entry appeared; it never replaces it.
-        fs::hard_link(&temporary, &destination).map_err(|error| {
-            if error.kind() == io::ErrorKind::AlreadyExists {
-                "auto-launch-entry-conflict"
-            } else {
-                "auto-launch-write-failed"
-            }
-            .to_string()
-        })?;
-        Ok(())
-    })();
-    if created {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
 }
 
 fn environment() -> Result<(PathBuf, PathBuf), String> {
@@ -215,24 +177,43 @@ mod tests {
         }
     }
 
+    fn install_synthetic_entry(root: &Path, app: &Path) {
+        fs::create_dir(root.join("autostart")).unwrap();
+        fs::write(entry_path(root), entry_for(app).unwrap()).unwrap();
+    }
+
     #[test]
-    fn creates_queries_and_removes_only_the_matching_entry() {
+    fn rejects_writes_and_deletes_before_any_filesystem_changes() {
         let scratch = Scratch::new();
         let app = scratch.0.join("中文 app %name");
         assert!(!enabled_at(&scratch.0, &app).unwrap());
-        set_at(&scratch.0, &app, true).unwrap();
+        assert_eq!(
+            set_at(&scratch.0, &app, true),
+            Err("auto-launch-write-safety-unavailable".into())
+        );
+        assert!(!scratch.0.join("autostart").exists());
+        set_at(&scratch.0, &app, false).unwrap();
+        assert!(!scratch.0.join("autostart").exists());
+        install_synthetic_entry(&scratch.0, &app);
         assert!(enabled_at(&scratch.0, &app).unwrap());
         set_at(&scratch.0, &app, true).unwrap();
-        set_at(&scratch.0, &app, false).unwrap();
-        assert!(!enabled_at(&scratch.0, &app).unwrap());
-        set_at(&scratch.0, &app, false).unwrap();
+        let before = fs::read(entry_path(&scratch.0)).unwrap();
+        assert_eq!(
+            set_at(&scratch.0, &app, false),
+            Err("auto-launch-write-safety-unavailable".into())
+        );
+        assert_eq!(fs::read(entry_path(&scratch.0)).unwrap(), before);
+        assert_eq!(
+            fs::read_dir(scratch.0.join("autostart")).unwrap().count(),
+            1
+        );
     }
 
     #[test]
     fn rejects_conflicting_and_stale_entries_without_changing_them() {
         let scratch = Scratch::new();
         let app = scratch.0.join("app");
-        set_at(&scratch.0, &app, true).unwrap();
+        install_synthetic_entry(&scratch.0, &app);
         let before = fs::read(entry_path(&scratch.0)).unwrap();
         let other = scratch.0.join("other app");
         assert_eq!(
@@ -286,7 +267,7 @@ mod tests {
         };
         let scratch = Scratch::new();
         let app = scratch.0.join("中文 app % $");
-        set_at(&scratch.0, &app, true).unwrap();
+        install_synthetic_entry(&scratch.0, &app);
         let result = std::process::Command::new(validator)
             .arg(entry_path(&scratch.0))
             .output()
@@ -316,5 +297,80 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    // Runs only as the bounded synthetic child of the test below. Keeping the
+    // potentially blocking operation in a child lets the parent kill and reap
+    // it if a regression reintroduces a blocking FIFO open.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "invoked only by the bounded FIFO regression"]
+    fn fifo_no_writer_child() {
+        use std::os::unix::fs::FileTypeExt;
+        let root = PathBuf::from(std::env::var_os("LUCKYRAY_AUTOSTART_FIFO_FIXTURE").unwrap());
+        let app = root.join("app");
+        assert!(fs::symlink_metadata(entry_path(&root))
+            .unwrap()
+            .file_type()
+            .is_fifo());
+        for result in [
+            enabled_at(&root, &app).map(|_| ()),
+            set_at(&root, &app, true),
+            set_at(&root, &app, false),
+        ] {
+            assert_eq!(result, Err("auto-launch-entry-conflict".to_string()));
+        }
+        assert!(fs::symlink_metadata(entry_path(&root))
+            .unwrap()
+            .file_type()
+            .is_fifo());
+        fs::write(root.join("fifo-test-complete"), b"verified").unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fifo_without_writer_is_rejected_within_deadline() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::FileTypeExt;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        let scratch = Scratch::new();
+        fs::create_dir(scratch.0.join("autostart")).unwrap();
+        let fifo = entry_path(&scratch.0);
+        let name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(fs::symlink_metadata(&fifo).unwrap().file_type().is_fifo());
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "fifo_no_writer_child"])
+            .env("LUCKYRAY_AUTOSTART_FIFO_FIXTURE", &scratch.0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    assert!(status.success(), "FIFO child failed: {status}");
+                    break;
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Ok(None) | Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("FIFO child did not settle within the five-second deadline");
+                }
+            }
+        }
+        assert_eq!(
+            fs::read(scratch.0.join("fifo-test-complete")).unwrap(),
+            b"verified"
+        );
+        assert!(fs::symlink_metadata(&fifo).unwrap().file_type().is_fifo());
     }
 }

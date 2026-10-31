@@ -37,7 +37,7 @@ test("a tampered or symlinked archive creates no staged runtime", { skip: proces
     assert.equal(existsSync(output), false);
     const link = path.join(root, "archive-link");
     symlinkSync(archive, link);
-    assert.throws(() => prepareNodeInput(link, output));
+    assert.throws(() => prepareNodeInput(link, output), error => error?.code === "ELOOP");
     assert.equal(existsSync(output), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
