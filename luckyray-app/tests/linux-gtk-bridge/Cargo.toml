@@ -1,0 +1,14 @@
+[package]
+name = "luckyray-linux-gtk-bridge-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+base64 = "=0.22.1"
+gtk = "=0.18.2"
+image = { version = "=0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+tauri = { version = "=2.11.2", features = ["protocol-asset", "tray-icon", "unstable"] }
+
+[patch.crates-io]
+tao = { path = "../../src-tauri/vendor/tao-0.35.3" }

@@ -140,6 +140,7 @@ struct LockedRuntimeObject {
 /// Backend-only proof that the accepted DSH-0 tree is still the exact set of
 /// filesystem objects opened by Node/DSH. Handles are non-inheritable and deny
 /// write/delete sharing for the entire outer-host + native-probe use window.
+#[cfg(windows)]
 fn lock_runtime_object(
     path: &Path,
     regular_file: bool,

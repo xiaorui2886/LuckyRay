@@ -1,12 +1,15 @@
 use std::path::PathBuf;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::io::Cursor;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use tauri::Emitter;
 
-#[cfg(windows)]
+#[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(any(windows, target_os = "linux"))]
 fn validated_cover(value: Option<&str>) -> Option<Vec<u8>> {
     use base64::Engine;
     let encoded = value?.strip_prefix("data:image/png;base64,")?;
@@ -99,9 +102,32 @@ pub(crate) fn begin_file_drag(window: tauri::Window, paths: Vec<PathBuf>, previe
         .map_err(|_| "material-external-drag-unavailable".to_owned())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub(crate) fn begin_file_drag(window: tauri::Window, paths: Vec<PathBuf>, preview_png: Option<String>) -> Result<(), String> {
+    linux::begin_file_drag(window, paths, preview_png)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn begin_file_drag(_window: tauri::Window, _paths: Vec<PathBuf>, _preview_png: Option<String>) -> Result<(), String> {
     Err("material-external-drag-unsupported".to_owned())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::validated_cover;
+    use base64::Engine;
+
+    #[test]
+    fn drag_cover_accepts_only_bounded_png_data() {
+        assert!(validated_cover(Some("file:///tmp/not-an-image")).is_none());
+        assert!(validated_cover(Some("data:image/png;base64,%%%")).is_none());
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(192, 144)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(png.into_inner());
+        assert!(validated_cover(Some(&format!("data:image/png;base64,{encoded}"))).is_some());
+    }
 }
 
 #[cfg(all(test, windows))]

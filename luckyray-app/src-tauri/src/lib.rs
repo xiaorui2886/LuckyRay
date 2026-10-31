@@ -165,6 +165,8 @@ mod attachment_file_moves;
 mod local_transport;
 #[cfg(target_os = "linux")]
 mod auto_launch_linux;
+#[cfg(target_os = "linux")]
+mod linux_app_data;
 mod material_drag;
 mod material_native_video;
 mod material_shell;
@@ -10565,7 +10567,14 @@ fn app_data_dir() -> std::path::PathBuf {
     } else {
         runtime_profile::PRODUCTION_IDENTIFIER
     };
-    std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join(identifier)
+    #[cfg(target_os = "linux")]
+    {
+        linux_app_data::app_data_dir(identifier).expect("Linux app data directory unavailable")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join(identifier)
+    }
 }
 
 fn db_path() -> std::path::PathBuf {

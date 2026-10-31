@@ -273,10 +273,18 @@ impl ToolClient {
 }
 
 fn production_app_data_dir() -> Result<PathBuf, ToolClientError> {
-    let root = env::var_os("APPDATA")
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ToolClientError::new("app-unavailable", "Open LuckyRay"))?;
-    Ok(PathBuf::from(root).join("com.luckyray.desktop"))
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux_app_data::app_data_dir("com.luckyray.desktop")
+            .ok_or_else(|| ToolClientError::new("app-unavailable", "Open LuckyRay"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let root = env::var_os("APPDATA")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| ToolClientError::new("app-unavailable", "Open LuckyRay"))?;
+        Ok(PathBuf::from(root).join("com.luckyray.desktop"))
+    }
 }
 
 fn random_nonce() -> String {

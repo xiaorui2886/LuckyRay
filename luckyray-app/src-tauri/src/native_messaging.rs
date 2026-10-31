@@ -50,8 +50,16 @@ struct NativeEnvelope<T: Serialize> {
     error: Option<NativeError>,
 }
 
-fn app_data_dir() -> PathBuf {
-    PathBuf::from(env::var("APPDATA").unwrap_or_default()).join("com.luckyray.desktop")
+fn app_data_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux_app_data::app_data_dir("com.luckyray.desktop")
+            .ok_or_else(|| "app-unavailable".to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(PathBuf::from(env::var("APPDATA").unwrap_or_default()).join("com.luckyray.desktop"))
+    }
 }
 
 fn random_nonce() -> String {
@@ -265,7 +273,7 @@ pub fn run() -> Result<(), String> {
     if !configured_extension_origins()?.contains(&origin) {
         return Err("host-forbidden".to_string());
     }
-    let app_data = app_data_dir();
+    let app_data = app_data_dir()?;
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     // The browser control plane uses sendNativeMessage: one process, one request,

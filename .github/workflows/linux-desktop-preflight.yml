@@ -8,7 +8,7 @@ jobs:
   toolchain-and-autostart:
     if: github.repository == 'xiaorui2886/LuckyRay'
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -57,7 +57,7 @@ jobs:
           for feature in ("default", "sidecar-binaries", "browser-host-runtime"):
               print(feature, package["features"][feature])
           PY
-      - name: Run isolated Linux autostart module tests
+      - name: Run isolated Linux autostart and sidecar naming tests
         shell: bash
         env:
           LUCKYRAY_DESKTOP_FILE_VALIDATE: /usr/bin/desktop-file-validate
@@ -69,3 +69,75 @@ jobs:
           rustup run 1.95.0 rustc --edition 2021 --test "$RUNNER_TEMP/autolaunch-harness.rs" \
             -o "$RUNNER_TEMP/autolaunch-tests"
           "$RUNNER_TEMP/autolaunch-tests"
+          rustup run 1.95.0 rustc --edition 2021 --test \
+            luckyray-app/src-tauri/build_support/sidecar_names.rs \
+            -o "$RUNNER_TEMP/sidecar-name-tests"
+          "$RUNNER_TEMP/sidecar-name-tests"
+          rustup run 1.95.0 rustc --edition 2021 --test \
+            luckyray-app/src-tauri/src/linux_app_data.rs \
+            -o "$RUNNER_TEMP/linux-app-data-tests"
+          "$RUNNER_TEMP/linux-app-data-tests"
+      - name: Probe Linux security primitives using synthetic processes and files
+        id: security_probe
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_parent="$RUNNER_TEMP"
+          probe_root="$(mktemp -d -- "$probe_parent/luckyray-security-XXXXXXXX")"
+          case "$probe_root" in
+            "$probe_parent"/luckyray-security-*) ;;
+            *) echo "::error::Unexpected synthetic probe directory"; exit 1 ;;
+          esac
+          trap 'rm -rf -- "$probe_root"' EXIT
+          export RUNNER_TEMP="$probe_root"
+          for probe in atomic_create_probe pid_namespace_probe; do
+            cc -std=c11 -O2 -Wall -Wextra -Werror \
+              "luckyray-app/tests/linux-security/$probe.c" -o "$RUNNER_TEMP/$probe"
+            status=0
+            timeout --signal=TERM --kill-after=5s 150s "$RUNNER_TEMP/$probe" || status=$?
+            if [ "$status" -eq 77 ]; then
+              echo "::warning::$probe BLOCKED on this runner; this is not a pass"
+              echo "- $probe: BLOCKED on this runner" >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$status" -ne 0 ]; then
+              echo "::error::$probe failed with status $status"
+              exit "$status"
+            else
+              echo "- $probe: passed its limited synthetic experiment" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Verify the official Linux Node input
+        id: node_input
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test luckyray-app/tests/linux-node-input.test.mjs
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 2 --max-time 180 \
+            --output "$RUNNER_TEMP/node-v22.19.0-linux-x64.tar.gz" \
+            https://nodejs.org/dist/v22.19.0/node-v22.19.0-linux-x64.tar.gz
+          node luckyray-app/scripts/linux/prepare-node-input.mjs \
+            "$RUNNER_TEMP/node-v22.19.0-linux-x64.tar.gz" "$RUNNER_TEMP/verified-node-input"
+          file "$RUNNER_TEMP/verified-node-input/node"
+          stat -c '%a %s %n' "$RUNNER_TEMP/verified-node-input/node" "$RUNNER_TEMP/verified-node-input/LICENSE"
+          ldd "$RUNNER_TEMP/verified-node-input/node"
+          readelf --version-info "$RUNNER_TEMP/verified-node-input/node" \
+            | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu
+      - name: Compile and test the isolated GTK drag module
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: '2'
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-gtk-target
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo test --locked \
+            --manifest-path luckyray-app/tests/linux-gtk-bridge/Cargo.toml
+      - name: Report independent probe failures
+        if: ${{ always() && (steps.security_probe.outcome == 'failure' || steps.node_input.outcome == 'failure') }}
+        shell: bash
+        run: |
+          echo "::error::A Linux security probe or official Node input check failed; inspect the earlier step."
+          exit 1

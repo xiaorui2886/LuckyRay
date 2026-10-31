@@ -132,6 +132,11 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 drag = "=2.1.1"
 image = { version = "=0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "=0.18.2"
+image = { version = "=0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+libc = "=0.2.186"
+
 [dev-dependencies]
 rmcp = { version = "=2.0.0", default-features = false, features = ["client", "transport-child-process"] }
 tempfile = "3"

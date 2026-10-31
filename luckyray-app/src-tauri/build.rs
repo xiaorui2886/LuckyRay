@@ -4,6 +4,8 @@ mod release_extension_origins;
 #[path = "src/dsh_update_metadata_policy.rs"]
 mod dsh_update_metadata_policy;
 mod native_video_build;
+#[path = "build_support/sidecar_names.rs"]
+mod sidecar_names;
 
 const PRODUCT_SIDECARS: [&str; 4] = [
     "luckyray-native-host",
@@ -183,7 +185,7 @@ fn validate_registered_cli_contract(
     target: &str,
     expected_identity: &str,
 ) {
-    let binary_name = format!("luckyray-cli-{target}.exe");
+    let binary_name = sidecar_names::sidecar_name("luckyray-cli", target);
     let binary = manifest_dir.join("binaries").join(&binary_name);
     let record = manifest_dir
         .join("binaries")
@@ -298,7 +300,7 @@ fn validate_registered_sidecar_origin_contract(
                     if !PRODUCT_SIDECARS.contains(&name) || !names.insert(name) {
                         return false;
                     }
-                    let binary = binaries_dir.join(format!("{name}-{target}.exe"));
+                    let binary = binaries_dir.join(sidecar_names::sidecar_name(name, target));
                     binary.is_file() && sha256_file(&binary) == expected_sha
                 })
         })
@@ -518,29 +520,32 @@ fn main() {
     println!("cargo:rerun-if-changed=Cargo.lock");
     println!("cargo:rustc-env=LUCKYRAY_CLI_CONTRACT_SHA256={cli_contract_identity}");
     println!("cargo:rustc-env=LUCKYRAY_BUILD_TARGET={target}");
-    println!("cargo:rerun-if-changed=binaries/luckyray-cli-{target}.exe.identity.json");
-    println!("cargo:rerun-if-changed=binaries/luckyray-cli-{target}.exe");
+    let cli_binary_name = sidecar_names::sidecar_name("luckyray-cli", &target);
+    println!("cargo:rerun-if-changed=build_support/sidecar_names.rs");
+    println!("cargo:rerun-if-changed=binaries/{cli_binary_name}.identity.json");
+    println!("cargo:rerun-if-changed=binaries/{cli_binary_name}");
     println!("cargo:rerun-if-changed=binaries/luckyray-sidecars.origin.identity.json");
     let sidecar_paths = PRODUCT_SIDECARS.map(|name| {
         manifest_dir
             .join("binaries")
-            .join(format!("{name}-{target}.exe"))
+            .join(sidecar_names::sidecar_name(name, &target))
     });
 
     // Tauri validates every externalBin during ordinary debug checks/tests,
-    // before the product sidecars can be built. Ignored MZ placeholders keep
-    // those developer commands reproducible. Only the debug profile may create
-    // or accept them; packaging must supply real binaries through the sidecar
-    // preparation script.
+    // before the product sidecars can be built. Windows keeps its existing debug
+    // placeholder behavior. Linux never creates PE placeholders or empty media
+    // resources; its builds must provide their actual platform inputs.
     if profile == "debug" {
-        std::fs::create_dir_all(manifest_dir.join("media-engine"))
-            .expect("create debug media engine resource root");
-        std::fs::create_dir_all(manifest_dir.join("binaries"))
-            .expect("create debug sidecar directory");
-        for sidecar in sidecar_paths {
-            if !sidecar.exists() {
-                std::fs::write(&sidecar, DEV_SIDECAR_PLACEHOLDER)
-                    .expect("write debug sidecar placeholder");
+        if !sidecar_names::is_linux_target(&target) {
+            std::fs::create_dir_all(manifest_dir.join("media-engine"))
+                .expect("create debug media engine resource root");
+            std::fs::create_dir_all(manifest_dir.join("binaries"))
+                .expect("create debug sidecar directory");
+            for sidecar in sidecar_paths {
+                if !sidecar.exists() {
+                    std::fs::write(&sidecar, DEV_SIDECAR_PLACEHOLDER)
+                        .expect("write debug sidecar placeholder");
+                }
             }
         }
     } else {

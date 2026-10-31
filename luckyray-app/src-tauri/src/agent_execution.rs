@@ -1072,22 +1072,24 @@ struct WorkerEnvelope {
 }
 
 fn resolve_app_owned_cli(resource_dir: &Path) -> Option<PathBuf> {
-    let registered_name =
-        option_env!("LUCKYRAY_BUILD_TARGET").map(|target| format!("luckyray-cli-{target}.exe"));
+    let suffix = if cfg!(target_os = "linux") { "" } else { ".exe" };
+    let bundled_name = format!("luckyray-cli{suffix}");
+    let registered_name = option_env!("LUCKYRAY_BUILD_TARGET")
+        .map(|target| format!("luckyray-cli-{target}{suffix}"));
     let mut candidates = Vec::new();
     for root in [resource_dir.to_path_buf(), resource_dir.join("binaries")] {
         // Tauri bundle resources use the normalized sidecar name. Tauri dev
         // may point at the registered source externalBin, which keeps its
         // target-triple suffix. Both are fixed app resource locations; never
         // search PATH or any workspace/project directory.
-        candidates.push(root.join("luckyray-cli.exe"));
+        candidates.push(root.join(&bundled_name));
         if let Some(name) = &registered_name {
             candidates.push(root.join(name));
         }
     }
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {
-            candidates.push(parent.join("luckyray-cli.exe"));
+            candidates.push(parent.join(&bundled_name));
             if let Some(name) = &registered_name {
                 candidates.push(parent.join(name));
             }
@@ -1346,16 +1348,17 @@ mod tests {
         let resources = temp_dir("registered-external-bin");
         let target = option_env!("LUCKYRAY_BUILD_TARGET")
             .expect("build script always provides the target triple");
-        let registered = resources.path().join(format!("luckyray-cli-{target}.exe"));
-        fs::write(&registered, b"MZ-test").unwrap();
+        let suffix = if cfg!(target_os = "linux") { "" } else { ".exe" };
+        let registered = resources.path().join(format!("luckyray-cli-{target}{suffix}"));
+        fs::write(&registered, b"synthetic-test-file").unwrap();
 
         let catalog = ExecutionRecipeCatalog::app_owned(resources.path());
         assert_eq!(catalog.executable_for_test(), Some(registered.as_path()));
 
         let bundled_resources = resources.path().join("Tauri resource dir with spaces");
         fs::create_dir_all(&bundled_resources).unwrap();
-        let bundled = bundled_resources.join("luckyray-cli.exe");
-        fs::write(&bundled, b"MZ-bundle-test").unwrap();
+        let bundled = bundled_resources.join(format!("luckyray-cli{suffix}"));
+        fs::write(&bundled, b"synthetic-test-file").unwrap();
         let bundled_catalog = ExecutionRecipeCatalog::app_owned(&bundled_resources);
         assert_eq!(
             bundled_catalog.executable_for_test(),
