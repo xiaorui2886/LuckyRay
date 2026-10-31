@@ -11,7 +11,6 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: '2'
-      CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
     steps:
       - name: Check out the public candidate
         id: checkout
@@ -54,7 +53,7 @@ jobs:
         if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
         continue-on-error: true
         shell: bash
-        run: node --test luckyray-app/tests/linux-package-config.test.mjs
+        run: node --test luckyray-app/tests/linux-package-config.test.mjs luckyray-app/tests/linux-workflow-context.test.mjs
       - name: Test Deno input verification
         id: deno_tests
         if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
@@ -86,6 +85,7 @@ jobs:
         timeout-minutes: 25
         env:
           LUCKYRAY_DESKTOP_FILE_VALIDATE: /usr/bin/desktop-file-validate
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
         shell: bash
         run: |
           set -euo pipefail
@@ -102,6 +102,7 @@ jobs:
           # resource and sidecar copying, not the production source security
           # gates. It cannot verify release inputs, identity, or readiness.
           TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
         shell: bash
         run: |
           set -euo pipefail
@@ -116,6 +117,7 @@ jobs:
         timeout-minutes: 15
         env:
           TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
         shell: bash
         run: |
           set -euo pipefail

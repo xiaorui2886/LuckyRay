@@ -5,6 +5,16 @@ investigation is `x86_64-unknown-linux-gnu`, using Ubuntu 22.04 as the build
 baseline and Ubuntu 24.04 as a separate future compatibility check. Neither a
 deb nor an AppImage has been produced or tested.
 
+The third public workflow run [41239895080](https://github.com/xiaorui2886/LuckyRay/actions/runs/41239895080)
+completed in zero seconds with no jobs, so no runner compiled or tested the
+candidate. The service did not return detailed annotations to the available
+read-only interfaces. The workflow did contain a definite context error:
+`runner.temp` was used in a job-level `env`, where GitHub's
+[context-availability table](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability)
+does not allow `runner`. This is a likely cause, not a service-provided
+diagnosis. The local fix moves that value to the applicable step environments;
+it has not yet been run on GitHub.
+
 ## Work implemented but not yet tested on Linux
 
 - The Linux-only Tauri configuration selects deb and AppImage, asks Tauri to
