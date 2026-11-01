@@ -8,12 +8,55 @@ export const FIXTURE = Object.freeze({ name: "macos-material-flow.png", width: 3
   sha256: "a4307dbf28c24f349374a7d97bcb4e3856b1cf505f9d8f203c490b60200a976d",
   base64: "iVBORw0KGgoAAAANSUhEUgAAACAAAAAYCAYAAACbU/80AAAAPklEQVR42mP4EOX2nxKsO+0DRZhh1AGjDhh1wKgDRh0w4A6w2dL0nxL8dZ8NRXjUAaMOGHXAqANGHTDgDgAAuIv4agXNJmAAAAAASUVORK5CYII=" });
 const PHASES = ["import", "reopen"];
-const STEPS = ["not-started", "choose-mode", "import", "preview", "reopen-mode", "reopen-preview", "backend-check", "observation", "window-capture", "normal-quit", "source-check"];
+const STEPS = ["not-started", "choose-mode", "import", "import-card", "thumbnail", "preview", "reopen-mode", "reopen-card", "reopen-thumbnail", "reopen-preview", "backend-check", "observation", "window-capture", "normal-quit", "source-check"];
 const FLAGS = ["modeSaved", "previewDecoded", "backendRecordVerified", "managedCopyVerified", "sourceUnchanged", "normalExit"];
 const FAILURES = ["none", "app-exited", "spawn-failed", "context-invalid", "driver-unavailable", "report-invalid", "timeout", "scenario-step", "backend-check", "window-capture", "normal-quit", "source-changed"];
-const blank = () => ({ status: "not-run", step: "not-started", failure: "none", ...Object.fromEntries(FLAGS.map(key => [key, false])) });
+const IMPORT_ERROR_CODES = [
+  "database-error", "database-missing", "invalid-storage-mode", "invalid-folder",
+  "create-library-failed", "copy-failed", "source-missing", "source-read-failed",
+  "source-changed", "managed-destination-conflict", "managed-path-reparse",
+  "managed-path-unavailable", "managed-path-untrusted", "managed-root-record-invalid",
+  "managed-root-register-conflict", "managed-root-register-failed", "managed-root-unavailable",
+  "managed-root-untrusted", "material-library-scope", "physical-path-owned",
+  "physical-path-reparse", "physical-path-unavailable", "physical-path-untrusted",
+  "physical-content-mismatch", "physical-content-unverified", "physical-identity-mismatch",
+  "material-hash-invalid", "staged-file-changed", "staged-file-missing",
+  "staged-file-read-failed", "staged-file-too-large", "staged-file-untrusted",
+  "staging-unavailable", "change-not-published", "other-code",
+];
+const blank = () => ({ status: "not-run", step: "not-started", failure: "none", ...Object.fromEntries(FLAGS.map(key => [key, false])), dom: null, nativeImport: null });
 const fresh = () => ({ schemaVersion: 1, interaction: "application-dom-automation", status: "not-run", fixtureSha256: FIXTURE.sha256,
   import: blank(), reopen: blank(), persistedAsset: false, systemPointerInput: "not-run", nativeFilePicker: "not-run" });
+
+const invalid = () => { throw new Error("macos-material-flow-result-invalid"); };
+const bounded = (value, maximum) => Number.isSafeInteger(value) && value >= 0 && value <= maximum;
+function safeImage(value) {
+  if (!value || ["present", "complete", "visible"].some(key => typeof value[key] !== "boolean")
+      || !bounded(value.width, 32768) || !bounded(value.height, 32768)
+      || !["missing", "asset", "asset-localhost", "other"].includes(value.uriKind)
+      || !value.present && (value.complete || value.visible || value.width || value.height || value.uriKind !== "missing")) invalid();
+  return { present: value.present, complete: value.complete, width: value.width, height: value.height, visible: value.visible, uriKind: value.uriKind };
+}
+function safeDom(value) {
+  if (!value || ["importDispatched", "bridgeInstalled", "dialogPresent"].some(key => typeof value[key] !== "boolean")
+      || !["scoped", "unscoped"].includes(value.workspaceTarget) || !bounded(value.cardCount, 2)
+      || !["unknown", "pending", "ready", "failed"].includes(value.databaseState)) invalid();
+  return { importDispatched: value.importDispatched, workspaceTarget: value.workspaceTarget,
+    bridgeInstalled: value.bridgeInstalled, databaseState: value.databaseState, cardCount: value.cardCount,
+    dialogPresent: value.dialogPresent, thumbnail: safeImage(value.thumbnail), preview: safeImage(value.preview) };
+}
+function safeNativeImport(value) {
+  if (!value || !["not-observed", "running", "returned", "error", "multiple-calls", "unavailable"].includes(value.status)
+      || ["calls", "importedCount", "failedCount", "skippedDuplicateCount"].some(key => !bounded(value[key], 2))
+      || !Array.isArray(value.errorCodes) || value.errorCodes.length > 1
+      || value.errorCodes.some(code => !IMPORT_ERROR_CODES.includes(code))
+      || value.osError !== null && !bounded(value.osError, 255)
+      || ["not-observed", "unavailable"].includes(value.status) && (value.calls || value.importedCount || value.failedCount || value.skippedDuplicateCount || value.errorCodes.length || value.osError !== null)
+      || ["running", "returned", "error"].includes(value.status) && value.calls !== 1
+      || value.status === "multiple-calls" && value.calls !== 2) invalid();
+  return { status: value.status, calls: value.calls, importedCount: value.importedCount, failedCount: value.failedCount,
+    skippedDuplicateCount: value.skippedDuplicateCount, errorCodes: [...value.errorCodes], osError: value.osError };
+}
 
 export function safeMaterialFlow(value) {
   const fail = () => { throw new Error("macos-material-flow-result-invalid"); };
@@ -24,15 +67,17 @@ export function safeMaterialFlow(value) {
     const row = value[phase];
     if (!row || !["not-run", "failed", "passed"].includes(row.status) || !STEPS.includes(row.step)
         || !FAILURES.includes(row.failure) || FLAGS.some(key => typeof row[key] !== "boolean")) fail();
-    result[phase] = { status: row.status, step: row.step, failure: row.failure, ...Object.fromEntries(FLAGS.map(key => [key, row[key]])) };
+    result[phase] = { status: row.status, step: row.step, failure: row.failure, ...Object.fromEntries(FLAGS.map(key => [key, row[key]])),
+      dom: row.dom == null ? null : safeDom(row.dom), nativeImport: row.nativeImport == null ? null : safeNativeImport(row.nativeImport) };
+    if (row.status === "passed" && (!result[phase].dom || !result[phase].nativeImport)) fail();
     if (row.status === "passed" && (row.failure !== "none" || FLAGS.some(key => !row[key]))) fail();
     if (row.status === "failed" && row.failure === "none") fail();
-    if (row.status === "not-run" && (row.failure !== "none" || row.step !== "not-started" || FLAGS.some(key => row[key]))) fail();
+    if (row.status === "not-run" && (row.failure !== "none" || row.step !== "not-started" || FLAGS.some(key => row[key]) || result[phase].dom || result[phase].nativeImport)) fail();
   }
   const passed = PHASES.every(phase => result[phase].status === "passed") && result.persistedAsset;
   if (result.reopen.status !== "not-run" && result.import.status !== "passed") fail();
   if ((result.status === "passed") !== passed) fail();
-  return result; // Never publish paths, IDs, arbitrary strings or app stderr.
+  return result; // Only fixed enum strings, booleans/counts; no paths/IDs/stderr.
 }
 
 export function scenarioRecord(value, phase) {
@@ -44,7 +89,8 @@ export function scenarioRecord(value, phase) {
         || FLAGS.filter(key => key !== "normalExit").some(key => !value[key])))
     throw new Error("macos-material-flow-result-invalid");
   return { schema: 1, phase, status: value.status, step: value.step, assetId: value.assetId, fixtureSha256: FIXTURE.sha256,
-    ...Object.fromEntries(FLAGS.filter(key => key !== "normalExit").map(key => [key, value[key]])) };
+    ...Object.fromEntries(FLAGS.filter(key => key !== "normalExit").map(key => [key, value[key]])),
+    dom: safeDom(value.dom), nativeImport: safeNativeImport(value.nativeImport) };
 }
 
 function appEnvironment(home, temp) {
@@ -123,7 +169,8 @@ export async function checkMaterialFlow({ onFlow = () => {} } = {}) {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       if (!record) throw new Error("macos-material-flow-observation-timeout");
-      Object.assign(row, Object.fromEntries(FLAGS.filter(key => key !== "normalExit").map(key => [key, record[key]])), { step: record.step });
+      Object.assign(row, Object.fromEntries(FLAGS.filter(key => key !== "normalExit").map(key => [key, record[key]])),
+        { step: record.step, dom: record.dom, nativeImport: record.nativeImport });
       if (record.status !== "passed") { row.failure = record.step === "backend-check" ? "backend-check" : "scenario-step"; throw new Error("macos-material-flow-scenario-failed"); }
       if (phase === "import") importedId = record.assetId;
       else {

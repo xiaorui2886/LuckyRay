@@ -862,6 +862,24 @@ impl MaterialCatalog {
         options: &MaterialImportOptions,
         progress: &mut dyn FnMut(serde_json::Value),
     ) -> MaterialResult<CatalogOutcome<MaterialImportResult>> {
+        #[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
+        {
+            crate::macos_material_flow::observe_import(paths, || {
+                self.import_paths_inner(paths, options, progress)
+            })
+        }
+        #[cfg(not(all(target_os = "macos", feature = "macos-material-flow")))]
+        {
+            self.import_paths_inner(paths, options, progress)
+        }
+    }
+
+    fn import_paths_inner(
+        &self,
+        paths: &[PathBuf],
+        options: &MaterialImportOptions,
+        progress: &mut dyn FnMut(serde_json::Value),
+    ) -> MaterialResult<CatalogOutcome<MaterialImportResult>> {
         let storage_mode = normalize_storage_mode(&options.storage_mode)?;
         let library_dir = self.import_library_root(options.managed_library_dir.as_deref())?;
         if storage_mode == "managed" {
