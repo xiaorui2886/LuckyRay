@@ -63,17 +63,25 @@ async function prepareDsh(scratch, node, home) {
   await extractVerifiedPnpmPackage({ authorityPath, pnpmTarballPath: pnpmArchive, outputRoot: bootstrap });
   const pnpm = join(bootstrap, "package/bin/pnpm.mjs");
   const dsh = join(scratch, "dsh"); const host = join(dsh, "host");
-  await mkdir(host, { recursive: true, mode: 0o700 });
-  await writeNew(join(host, "package.json"), hostPackage); await writeNew(join(host, "pnpm-lock.yaml"), lockfile);
-  await writeNew(join(host, ".npmrc"), npmrc); await writeNew(join(host, "pnpm-workspace.yaml"), workspacePolicy);
+  const fetchHost = join(scratch, "dsh-fetch");
+  // Fetch creates an isolated virtual store in its cwd. Keep that store out
+  // of the clean hoisted product tree, as the existing Windows builder does.
+  for (const root of [host, fetchHost]) {
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    await writeNew(join(root, "package.json"), hostPackage); await writeNew(join(root, "pnpm-lock.yaml"), lockfile);
+    await writeNew(join(root, ".npmrc"), npmrc); await writeNew(join(root, "pnpm-workspace.yaml"), workspacePolicy);
+  }
   const emptyConfig = join(home, "empty.npmrc"); await writeNew(emptyConfig, "");
   const env = isolatedEnvironment(home, { PATH: `${resolve(node, "..")}:${process.env.PATH ?? "/usr/bin:/bin"}`,
     NPM_CONFIG_USERCONFIG: emptyConfig, NPM_CONFIG_GLOBALCONFIG: emptyConfig,
     npm_config_userconfig: emptyConfig, npm_config_globalconfig: emptyConfig });
   const store = await directory(join(BUILD, "pnpm-store"));
   const flags = ["--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile", "--prod", "--strict-peer-dependencies=true", "--verify-store-integrity=true", "--store-dir", store];
-  await run(node, [pnpm, "fetch", ...flags], { cwd: host, env });
-  await run(node, [pnpm, "install", ...flags, "--offline", "--node-linker=hoisted", "--package-import-method=copy"], { cwd: host, env });
+  await run(node, [pnpm, "fetch", ...flags], { cwd: fetchHost, env });
+  // pnpm otherwise prefers POSIX .bin symlinks. Request its normal portable
+  // shims without absolute NODE_PATH; retain the strict no-link projection.
+  await run(node, [pnpm, "install", ...flags, "--offline", "--node-linker=hoisted", "--package-import-method=copy",
+    "--config.prefer-symlinked-executables=false", "--config.extend-node-path=false"], { cwd: host, env });
   // The existing projection removes only pinned development metadata and
   // generated install paths. It must succeed; there is no symlink fallback.
   await projectPortableDshReleaseLayout({ stageRoot: dsh });

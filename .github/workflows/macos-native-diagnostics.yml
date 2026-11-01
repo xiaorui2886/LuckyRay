@@ -60,4 +60,5 @@ jobs:
             luckyray-app/src-tauri/.macos-build/actual-app-startup-*/LuckyRay-real-app.png
             luckyray-app/src-tauri/.macos-build/actual-app-startup-*/startup-result.json
           if-no-files-found: ignore
+          include-hidden-files: true
           retention-days: 2
