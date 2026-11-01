@@ -1,8 +1,9 @@
 // One fixed rendered-UI scenario, not a generic browser or application driver.
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { realpath } from "node:fs/promises";
-import { APP, TAURI, TARGET, stage, directory, readRegular, writeNew, jsonNew, sha256, run, requireNative } from "./macos-build-common.mjs";
+import { randomUUID } from "node:crypto";
+import { mkdir, realpath } from "node:fs/promises";
+import { APP, TAURI, TARGET, directory, readRegular, writeNew, jsonNew, sha256, run, requireNative } from "./macos-build-common.mjs";
 
 export const FIXTURE = Object.freeze({ name: "macos-material-flow.png", width: 32, height: 24, bytes: 119,
   sha256: "a4307dbf28c24f349374a7d97bcb4e3856b1cf505f9d8f203c490b60200a976d",
@@ -125,7 +126,11 @@ export async function checkMaterialFlow({ onFlow = () => {} } = {}) {
   try { temp = await realpath(process.env.RUNNER_TEMP ?? "/missing-runner-temp"); }
   catch { throw new Error("macos-material-flow-context-invalid"); }
   if (APP !== join(temp, "luckyray-macos-internal/luckyray-app")) throw new Error("macos-material-flow-context-invalid");
-  const root = await stage("materials-flow");
+  // Unix asset scope deliberately excludes hidden components. Keep this
+  // disposable HOME under the existing ignored, visible target directory;
+  // never relax protocol scope just to serve a test profile in .macos-build.
+  const root = join(await directory(join(TAURI, "target")), `materials-flow-${randomUUID()}`);
+  await mkdir(root, { mode: 0o700 });
   const home = await directory(join(root, "profile"));
   const fixture = Buffer.from(FIXTURE.base64, "base64");
   if (fixture.length !== FIXTURE.bytes || sha256(fixture) !== FIXTURE.sha256) throw new Error("macos-material-flow-result-invalid");

@@ -306,7 +306,7 @@ fn active_state() -> Result<Option<FlowState>, &'static str> {
         .and_then(|p| p.strip_prefix("materials-flow-"))
         .ok_or(reject)?;
     if !temp.is_absolute()
-        || root.parent() != Some(app.join("src-tauri/.macos-build").as_path())
+        || root.parent() != Some(app.join("src-tauri/target").as_path())
         || prefix.len() != 36
         || !prefix
             .bytes()
