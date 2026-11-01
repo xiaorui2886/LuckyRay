@@ -7,3 +7,6 @@
 /dsh/
 /.macos-node-input/
 /.macos-deno-input/
+/.macos-build/
+/dsh.macos-backup-*/
+/media-engine.macos-backup-*/

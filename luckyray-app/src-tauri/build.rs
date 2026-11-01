@@ -12,6 +12,15 @@ const PRODUCT_SIDECARS: [&str; 4] = [
     "luckyray-mcp",
     "luckyray-browser-host",
 ];
+fn product_sidecars(target: &str) -> &'static [&'static str] {
+    if target.ends_with("-apple-darwin") {
+        // The Win32/WebView2 browser host is not a functional macOS sidecar.
+        // Native messaging, CLI and MCP retain their real shared entrypoints.
+        &["luckyray-native-host", "luckyray-cli", "luckyray-mcp"]
+    } else {
+        &PRODUCT_SIDECARS
+    }
+}
 const CLI_PROTOCOL: &str = "luckyray-cli-contract-v1";
 const CLI_RELEASE_HARDENING: &str = "release-path-remap-v1";
 const DEV_SIDECAR_PLACEHOLDER: &[u8] =
@@ -234,6 +243,7 @@ fn validate_registered_sidecar_origin_contract(
     effective: &release_extension_origins::EffectiveReleaseOrigins,
 ) {
     use std::collections::BTreeSet;
+    let product_sidecars = product_sidecars(target);
 
     let binaries_dir = manifest_dir.join("binaries");
     let record = binaries_dir.join("luckyray-sidecars.origin.identity.json");
@@ -280,7 +290,7 @@ fn validate_registered_sidecar_origin_contract(
         .get("binaries")
         .and_then(serde_json::Value::as_array)
         .is_some_and(|items| {
-            items.len() == PRODUCT_SIDECARS.len()
+            items.len() == product_sidecars.len()
                 && items.iter().all(|item| {
                     let Some(entry) = item.as_object() else {
                         return false;
@@ -296,14 +306,14 @@ fn validate_registered_sidecar_origin_contract(
                     else {
                         return false;
                     };
-                    if !PRODUCT_SIDECARS.contains(&name) || !names.insert(name) {
+                    if !product_sidecars.contains(&name) || !names.insert(name) {
                         return false;
                     }
                     let binary = binaries_dir.join(sidecar_filename::registered_sidecar_filename(name, target));
                     binary.is_file() && sha256_file(&binary) == expected_sha
                 })
         })
-        && names.len() == PRODUCT_SIDECARS.len();
+        && names.len() == product_sidecars.len();
     let valid = object
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
@@ -524,11 +534,11 @@ fn main() {
     println!("cargo:rerun-if-changed=binaries/{cli_binary_name}.identity.json");
     println!("cargo:rerun-if-changed=binaries/{cli_binary_name}");
     println!("cargo:rerun-if-changed=binaries/luckyray-sidecars.origin.identity.json");
-    let sidecar_paths = PRODUCT_SIDECARS.map(|name| {
+    let sidecar_paths = product_sidecars(&target).iter().map(|name| {
         manifest_dir
             .join("binaries")
             .join(sidecar_filename::registered_sidecar_filename(name, &target))
-    });
+    }).collect::<Vec<_>>();
 
     // Keep the existing Windows developer placeholders unchanged. macOS must
     // supply real native resources for a package; a library-only diagnostic can

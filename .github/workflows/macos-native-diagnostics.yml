@@ -1,7 +1,8 @@
-name: macOS native dependency diagnostic
+name: macOS native product build
 
-# This is intentionally a branch-only compile diagnostic, not a package or a
-# feature acceptance run. Each push to this branch starts one standard runner.
+# One native product build per reviewed push. The lower-level native checks
+# already passed on 6d227334; this phase exercises full app/resources/sidecars
+# and startup, without repeating those diagnostics or requesting real accounts.
 on:
   push:
     branches: [port/macos-desktop-20261101]
@@ -10,14 +11,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-diagnostic-${{ github.ref }}
+  group: macos-product-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  native-library-check:
+  native-product-build:
     if: github.repository == 'xiaorui2886/LuckyRay'
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: '2'
     defaults:
@@ -35,132 +36,28 @@ jobs:
           test "$(uname -m)" = arm64
           xcodebuild -version
       - name: Set the pinned Rust toolchain and target
-        id: rust_setup
         run: |
           rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin
           rustup override set 1.95.0
           rustc -vV
-          test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
-      - name: Test the native messaging data path
-        run: |
-          rustc --edition=2021 --test src-tauri/src/macos_native_messaging_path.rs -o "$RUNNER_TEMP/macos-native-path-tests"
-          "$RUNNER_TEMP/macos-native-path-tests"
-      - name: Prepare macOS module test wrappers
-        run: |
-          node --input-type=module <<'NODE'
-          import fs from "node:fs";
-          import path from "node:path";
-          const temp = process.env.RUNNER_TEMP;
-          if (!temp || !path.isAbsolute(temp)) throw new Error("runner-temp-not-absolute");
-          function rustRawPath(value) {
-            let hashes = "";
-            while (value.includes(`"${hashes}`)) {
-              hashes += "#";
-              if (hashes.length > 255) throw new Error("rust-path-delimiter-unavailable");
-            }
-            return `r${hashes}"${value}"${hashes}`;
-          }
-          for (const name of ["macos_no_clobber", "macos_path_identity"]) {
-            const source = fs.realpathSync(path.resolve("src-tauri", "src", "knowledge", `${name}.rs`));
-            const wrapper = path.join(temp, `${name}_wrapper.rs`);
-            const code = [
-              '#[cfg(not(target_os = "macos"))]',
-              'compile_error!("macOS target required");',
-              `#[path = ${rustRawPath(source)}]`,
-              `mod ${name};`,
-              "",
-            ].join("\n");
-            fs.writeFileSync(wrapper, code, { encoding: "utf8", flag: "wx" });
-          }
-          NODE
-      - name: Test the macOS file primitives on synthetic data
-        run: |
-          rustc --edition=2021 --target aarch64-apple-darwin --test "$RUNNER_TEMP/macos_no_clobber_wrapper.rs" -o "$RUNNER_TEMP/macos-no-clobber-tests"
-          "$RUNNER_TEMP/macos-no-clobber-tests"
-      - name: Test macOS native path distinctions
-        run: |
-          rustc --edition=2021 --target aarch64-apple-darwin --test "$RUNNER_TEMP/macos_path_identity_wrapper.rs" -o "$RUNNER_TEMP/macos-path-identity-tests"
-          "$RUNNER_TEMP/macos-path-identity-tests"
-      - name: Test the Node input validators with synthetic bytes
-        run: node --test tests/macosNodeInput.test.mjs
-      - name: Test the Deno input validators with synthetic bytes
-        run: node --test tests/macosDenoInput.test.mjs
-      - name: Test Python and FFmpeg source validators with synthetic bytes
-        run: node --test tests/macosMediaSources.test.mjs
-      - name: Test the macOS media tool paths with synthetic files
-        run: LUCKYRAY_MACOS_TEST_TMP="$RUNNER_TEMP" python3 -B tests/macosMediaPaths.test.py
-      - name: Test macOS paths and shortcut presentation
-        run: node --experimental-strip-types --test tests/macosPresentation.test.ts
-      - name: Test macOS saved-vault path distinctions
-        run: node --experimental-strip-types --import ./tests/ts-extension-loader.mjs --test tests/macosVaultPaths.test.ts
-      - name: Test macOS dropped-file paths
-        run: node --experimental-strip-types --import ./tests/ts-extension-loader.mjs --test tests/macosDropPaths.test.ts
-      - name: Check native WKWebView embedding with a synthetic document
-        id: wkwebview_smoke
-        # Keep the library diagnosis even if the graphical runner cannot show
-        # a window. A later step still fails the job if this smoke failed.
-        continue-on-error: true
-        run: |
-          swiftc tests/macos/wkwebview_embed_smoke.swift -framework AppKit -framework WebKit -o "$RUNNER_TEMP/luckyray-wkwebview-smoke"
-          LUCKYRAY_MACOS_SMOKE_PNG="$RUNNER_TEMP/luckyray-wkwebview-smoke.png" "$RUNNER_TEMP/luckyray-wkwebview-smoke"
-          shasum -a 256 "$RUNNER_TEMP/luckyray-wkwebview-smoke.png"
-      - name: Check the native library only, without generating an app
-        id: native_library_check
-        if: always() && steps.rust_setup.outcome == 'success'
-        # This scoped override is used only for diagnostics. It does not create
-        # runtime resources, register sidecars, or compile a deliverable; it
-        # does not relax release gates.
-        # The disabled default feature omits Windows-only browser host support.
-        env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
-        run: cargo check --locked --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml --lib --no-default-features
-      - name: Test macOS credential files and authenticated transport
-        if: always() && steps.native_library_check.outcome == 'success'
-        env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
-          CARGO_TERM_COLOR: never
-        run: |
-          set -e -o pipefail
-          cargo test --locked --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml --lib --no-default-features macos_credential_boundary -- --color never 2>&1 | tee "$RUNNER_TEMP/macos-credential-boundary-tests.log"
-          grep -Fx 'running 2 tests' "$RUNNER_TEMP/macos-credential-boundary-tests.log"
-          grep -Fx 'test local_transport::tests::macos_credential_boundary_rejects_unsafe_files_and_starts_transport ... ok' "$RUNNER_TEMP/macos-credential-boundary-tests.log"
-          grep -Fx 'test native_messaging::tests::macos_credential_boundary_bootstraps_only_proved_server ... ok' "$RUNNER_TEMP/macos-credential-boundary-tests.log"
-          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored; 0 measured; [[:digit:]]+ filtered out; finished in [[:digit:].]+s$' "$RUNNER_TEMP/macos-credential-boundary-tests.log"
-      - name: Test macOS process groups and note transactions
-        if: always() && steps.native_library_check.outcome == 'success'
-        env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
-          CARGO_TERM_COLOR: never
-        run: |
-          set -e -o pipefail
-          cargo test --locked --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml --lib --no-default-features macos_platform_ -- --color never 2>&1 | tee "$RUNNER_TEMP/macos-platform-tests.log"
-          grep -Fx 'running 4 tests' "$RUNNER_TEMP/macos-platform-tests.log"
-          grep -Fx 'test owned_process::macos_owned_process::tests::macos_platform_process_group_lifecycle ... ok' "$RUNNER_TEMP/macos-platform-tests.log"
-          grep -Fx 'test owned_process::macos_owned_process::tests::macos_platform_process_exit_status_keeps_pid_anchor ... ok' "$RUNNER_TEMP/macos-platform-tests.log"
-          grep -Fx 'test knowledge::macos_transactions::tests::macos_platform_note_write_conflict_and_recovery ... ok' "$RUNNER_TEMP/macos-platform-tests.log"
-          grep -Fx 'test knowledge::tests::macos_platform_atomic_write_preserves_targets_on_conflict ... ok' "$RUNNER_TEMP/macos-platform-tests.log"
-          grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored; 0 measured; [[:digit:]]+ filtered out; finished in [[:digit:].]+s$' "$RUNNER_TEMP/macos-platform-tests.log"
-      - name: Test macOS user browser manifest registration
-        if: always() && steps.native_library_check.outcome == 'success'
-        env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
-          CARGO_TERM_COLOR: never
-        run: |
-          set -e -o pipefail
-          cargo test --locked --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml --lib --no-default-features macos_manifest_registration -- --color never 2>&1 | tee "$RUNNER_TEMP/macos-manifest-tests.log"
-          grep -Fx 'running 3 tests' "$RUNNER_TEMP/macos-manifest-tests.log"
-          grep -Fx 'test macos_fs::registration_policy_tests::macos_manifest_registration_system_applications_identity ... ok' "$RUNNER_TEMP/macos-manifest-tests.log"
-          grep -Fx 'test native_messaging::macos_native_manifest::tests::macos_manifest_registration_is_private_and_preserves_conflicts ... ok' "$RUNNER_TEMP/macos-manifest-tests.log"
-          grep -Fx 'test native_messaging::tests::macos_manifest_registration_rejects_unselected_paths ... ok' "$RUNNER_TEMP/macos-manifest-tests.log"
-          grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored; 0 measured; [[:digit:]]+ filtered out; finished in [[:digit:].]+s$' "$RUNNER_TEMP/macos-manifest-tests.log"
-      - name: Retain synthetic WKWebView screenshot
+      - name: Install the frozen frontend dependencies without lifecycle scripts
+        run: npm exec --yes --package=pnpm@11.25.0 -- pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build the complete native app with real runtimes and sidecars
+        id: full_app
+        run: npm exec --yes --package=pnpm@11.25.0 -- node scripts/build-macos.mjs
+      - name: Start the actual LuckyRay app and capture its own window
+        if: steps.full_app.outcome == 'success'
+        run: node scripts/check-macos-app-startup.mjs
+      - name: Retain the native app, disk image and actual window evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: macos-synthetic-wkwebview
-          path: ${{ runner.temp }}/luckyray-wkwebview-smoke.png
+          name: macos-native-product
+          path: |
+            luckyray-app/src-tauri/target/aarch64-apple-darwin/release/bundle/*.app.tar.gz
+            luckyray-app/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            luckyray-app/src-tauri/target/aarch64-apple-darwin/release/bundle/macos-artifacts-*.json
+            luckyray-app/src-tauri/.macos-build/actual-app-startup-*/LuckyRay-real-app.png
+            luckyray-app/src-tauri/.macos-build/actual-app-startup-*/startup-result.json
           if-no-files-found: ignore
           retention-days: 2
-      - name: Require a successful synthetic native embedding check
-        if: always()
-        run: test "${{ steps.wkwebview_smoke.outcome }}" = success

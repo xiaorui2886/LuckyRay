@@ -1047,7 +1047,10 @@ export async function auditInstalledClosure({ nodeModulesRoot, expectedPackageCo
   };
 }
 
-export async function auditPortableInstalledClosure({ nodeModulesRoot, expectedPackageCount, entryPoint = null }) {
+export async function auditPortableInstalledClosure({ nodeModulesRoot, expectedPackageCount, entryPoint = null, platform = "win32", architecture = "x64" }) {
+  if (!((platform === "win32" && architecture === "x64") || (platform === "darwin" && architecture === "arm64"))) {
+    throw new DshSupplyChainError("dsh-audit-target-invalid");
+  }
   const canonicalNodeModulesRoot = await realpath(nodeModulesRoot);
   const tree = await auditPortableTree(canonicalNodeModulesRoot);
   const packageRoots = await portablePackageRoots(canonicalNodeModulesRoot);
@@ -1094,8 +1097,8 @@ export async function auditPortableInstalledClosure({ nodeModulesRoot, expectedP
   }
   return {
     schemaVersion: 1,
-    platform: "win32",
-    architecture: "x64",
+    platform,
+    architecture,
     packageCount: packages.length,
     physicalPackageRootCount: packageRoots.length,
     installScriptsExecuted: false,
@@ -1973,7 +1976,10 @@ function targetMatches(values, target) {
   return positive.length === 0 || positive.includes(target);
 }
 
-export function reconcileLockedClosure({ lockfile, stagedPackages }) {
+export function reconcileLockedClosure({ lockfile, stagedPackages, platform = "win32", architecture = "x64" }) {
+  if (!((platform === "win32" && architecture === "x64") || (platform === "darwin" && architecture === "arm64"))) {
+    throw new DshSupplyChainError("dsh-lock-target-invalid");
+  }
   const lockfileText = Buffer.isBuffer(lockfile) ? lockfile.toString("utf8") : String(lockfile);
   const locked = lockedPackageEntries(lockfileText);
   const reachability = deriveLockReachability(lockfileText, locked);
@@ -1988,16 +1994,16 @@ export function reconcileLockedClosure({ lockfile, stagedPackages }) {
       reachability: packageReachability,
     };
     if (stagedIdentities.has(entry.packageIdentity)) {
-      if (!targetMatches(entry.os, "win32") || !targetMatches(entry.cpu, "x64")) {
+      if (!targetMatches(entry.os, platform) || !targetMatches(entry.cpu, architecture)) {
         throw new DshSupplyChainError("dsh-lock-reconciliation-invalid");
       }
       staged.push(record);
       continue;
     }
-    const reason = !targetMatches(entry.os, "win32")
-      ? "platform-not-win32"
-      : !targetMatches(entry.cpu, "x64")
-        ? "architecture-not-x64"
+    const reason = !targetMatches(entry.os, platform)
+      ? `platform-not-${platform}`
+      : !targetMatches(entry.cpu, architecture)
+        ? `architecture-not-${architecture}`
         : packageReachability === "optional-only"
           ? "optional-transitive-not-selected"
           : null;
@@ -2013,8 +2019,8 @@ export function reconcileLockedClosure({ lockfile, stagedPackages }) {
   }
   return {
     schemaVersion: 2,
-    platform: "win32",
-    architecture: "x64",
+    platform,
+    architecture,
     lockedCount: locked.length,
     stagedCount: staged.length,
     prunedCount: pruned.length,

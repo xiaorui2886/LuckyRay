@@ -1,0 +1,17 @@
+{
+  "build": {
+    "beforeBuildCommand": "node scripts/prepare-macos-build.mjs"
+  },
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "externalBin": [
+      "binaries/luckyray-native-host",
+      "binaries/luckyray-cli",
+      "binaries/luckyray-mcp"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": null
+    }
+  }
+}
