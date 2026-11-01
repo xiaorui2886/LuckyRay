@@ -145,6 +145,33 @@ pub(crate) fn write(
 }
 
 pub(crate) fn recover(dir: &Directory, private: bool) -> io::Result<()> {
+    recover_inner(dir, private, None)
+}
+
+/// Managed startup/registration records never recover another target or an
+/// executable/configuration payload outside their caller's fixed family.
+pub(crate) fn recover_managed(dir: &Directory, name: &OsStr, family: &[&[u8]]) -> io::Result<()> {
+    let target = name.to_str().ok_or_else(conflict)?;
+    let digests: Vec<_> = family.iter().map(|bytes| digest(bytes)).collect();
+    recover_inner(dir, false, Some((target, &digests)))
+}
+
+pub(crate) fn recovery_pending(dir: &Directory) -> io::Result<bool> {
+    dir.verify()?;
+    let entries = std::fs::read_dir(format!("/proc/self/fd/{}", std::os::fd::AsRawFd::as_raw_fd(&dir.file)))?;
+    let mut pending = false;
+    for (count, item) in entries.enumerate() {
+        if count > 100_000 { return Err(conflict()); }
+        let item = item?;
+        if item.file_name().to_str().is_some_and(|name| name.starts_with(".lrk-") && name.ends_with(".journal")) {
+            pending = true;
+        }
+    }
+    dir.verify()?;
+    Ok(pending)
+}
+
+fn recover_inner(dir: &Directory, private: bool, scope: Option<(&str, &[String])>) -> io::Result<()> {
     let _lock = dir.lock()?;
     let entries = std::fs::read_dir(format!(
         "/proc/self/fd/{}",
@@ -179,8 +206,19 @@ pub(crate) fn recover(dir: &Directory, private: bool) -> io::Result<()> {
         {
             return Err(conflict());
         }
+        if let Some((target, allowed)) = scope {
+            if record.target != target || !allowed.contains(&record.after)
+                || record.before.as_ref().is_some_and(|hash| !allowed.contains(hash)) {
+                return Err(conflict());
+            }
+        }
         // Directory::read validates that target is one normal name, with no links.
         let target = dir.read(OsStr::new(&record.target), private, MAX_RECORD_BYTES)?;
+        if scope.is_some() {
+            if let Some(target) = target.as_ref() {
+                crate::linux_managed_record::validate_metadata(&target.file)?;
+            }
+        }
         match target.as_ref().map(|value| digest(&value.bytes)) {
             Some(hash) if hash == record.after || record.before.as_ref() == Some(&hash) => {}
             None => {
@@ -199,6 +237,11 @@ pub(crate) fn recover(dir: &Directory, private: bool) -> io::Result<()> {
                         .ok_or_else(conflict)?;
                     if digest(&displaced.bytes) != *expected {
                         return Err(conflict());
+                    }
+                    // Apply the normal managed-record policy before restoring
+                    // an active pathname or acknowledging its journal.
+                    if scope.is_some() {
+                        crate::linux_managed_record::validate_metadata(&displaced.file)?;
                     }
                     dir.rename_new(
                         OsStr::new(&record.displaced),

@@ -10,8 +10,8 @@ test('runner context is scoped to steps, not the job environment', () => {
   assert.doesNotMatch(jobEnv, /\$\{\{\s*(?:runner|steps|job)\./);
 
   const stepTargetDirs = [...workflow.matchAll(/^          CARGO_TARGET_DIR: (.+)$/gm)];
-  assert.equal(stepTargetDirs.length, 4);
+  assert.equal(stepTargetDirs.length, 1);
   for (const [, value] of stepTargetDirs) {
-    assert.equal(value, '${{ runner.temp }}/luckyray-linux-diagnostic-target');
+    assert.equal(value, '${{ runner.temp }}/luckyray-linux-runtime-work/target');
   }
 });

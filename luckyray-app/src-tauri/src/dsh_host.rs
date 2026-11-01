@@ -35,9 +35,9 @@ const MAX_OPEN_INTENT_IMAGE_ATTACHMENTS: usize = 20;
 const MAX_OPEN_INTENT_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_OPEN_INTENT_FILE_BYTES: u64 = 200 * 1024 * 1024;
 const RESOURCE_RESULT_CHUNK_BYTES: usize = 180 * 1024;
-const MAX_HOST_SCRIPT_BYTES: usize = 128 * 1024;
+const MAX_HOST_SCRIPT_BYTES: usize = 160 * 1024;
 const HOST_SCRIPT_SHA256: &str =
-    "ff1f65ad0cf81c24630c4d0c37f7266bafd90dd402c016c5daf1128431a4d08d";
+    "82481a71654525a01431adb6088d6cbebea40a62c2929db5d369b60bb09d8813";
 const HOST_COMPAT_SCRIPT: &str = "luckyray-dsh-plugin-compat.mjs";
 const HOST_COMPAT_SCRIPT_SHA256: &str =
     "667322ba0a798db057bcf5152a5fcf0b7664b57d0041045beaa011fd296e40d1";
@@ -104,7 +104,7 @@ fn monitor_restart_allowed(teardown_settled: bool, launched_with_probe: bool) ->
     teardown_settled && launched_with_probe
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 fn take_mutex_value<T>(slot: &Mutex<Option<T>>) -> Option<T> {
     slot.lock().unwrap().take()
 }
@@ -450,10 +450,25 @@ struct RuntimeUseLease {
 
 impl RuntimeDescriptor {
     fn resolve(resource_dir: &Path, app_data_dir: &Path) -> Result<Self, ()> {
-        // Linux cannot yet hold the runtime/host files stable or contain the
-        // complete child tree. Refuse before creating state or update stores.
         #[cfg(target_os = "linux")]
-        return Err(());
+        {
+            let resource_dir = normalize_windows_verbatim_path(resource_dir)?;
+            // Linux admits its own compiled closure. Windows update envelopes
+            // cannot authorize this platform. Check installation before making
+            // any writable profile or launching an upstream writer.
+            installation::verify_installation(&resource_dir).map_err(|reason| {
+                eprintln!("dsh-stage installed-resource-check reason={reason}");
+            })?;
+            let (root, host) = installation::resource_roots(&resource_dir)?;
+            let (state_root, surface_state_root) = prepare_dsh_state_roots(app_data_dir).map_err(|_| {
+                eprintln!("dsh-stage state-roots reason=invalid");
+            })?;
+            return Self::from_verified_root(root, host.join("luckyray-dsh-host.mjs"),
+                state_root, surface_state_root, installation::surface_assets(&host));
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
 
         // Tauri may surface the development resource directory using a
         // Windows verbatim prefix (`\\?\C:\...`). The runtime seal opens the
@@ -513,6 +528,7 @@ impl RuntimeDescriptor {
             surface_state_root,
             installation::surface_assets(&host_dir),
         )
+        }
     }
 
     fn from_verified_root(
@@ -537,9 +553,6 @@ impl RuntimeDescriptor {
         surface_state_root: PathBuf,
         surface_assets: [PathBuf; 16],
     ) -> Result<Self, ()> {
-        #[cfg(target_os = "linux")]
-        return Err(());
-
         if !root.is_absolute()
             || !state_root.is_absolute()
             || !surface_state_root.is_absolute()
@@ -742,6 +755,17 @@ fn acquire_verified_exact_file(
     Ok(lease)
 }
 
+fn create_generated_surface_file(path: &Path) -> Result<File, ()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).map_err(|_| ())
+}
+
 fn materialize_surface_patch(root: &Path, assets: &[PathBuf; 16]) -> Result<(PathBuf, String), ()> {
     let template = std::fs::read_to_string(&assets[3])
         .map_err(|_| ())?
@@ -760,17 +784,16 @@ fn materialize_surface_patch(root: &Path, assets: &[PathBuf; 16]) -> Result<(Pat
     let temporary = root.join(".luckyray-dsh-native-surface.generated.patch.tmp");
     let _ = std::fs::remove_file(&temporary);
     {
-        let mut file = std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|_| ())?;
+        let mut file = create_generated_surface_file(&temporary)?;
         file.write_all(rendered.as_bytes()).map_err(|_| ())?;
         file.sync_all().map_err(|_| ())?;
     }
     if target.exists() {
         let existing = std::fs::read(&target).map_err(|_| ())?;
-        if existing == rendered.as_bytes() {
+        let matches = existing == rendered.as_bytes();
+        #[cfg(target_os = "linux")]
+        let matches = matches && safe_regular_file(&target);
+        if matches {
             std::fs::remove_file(&temporary).map_err(|_| ())?;
             return Ok((target, expected_digest));
         }
@@ -844,11 +867,7 @@ fn materialize_surface_modules(
         let temporary = target.with_extension(format!("luckyray-tmp-{}", std::process::id()));
         let _ = std::fs::remove_file(&temporary);
         {
-            let mut file = std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&temporary)
-                .map_err(|_| ())?;
+            let mut file = create_generated_surface_file(&temporary)?;
             file.write_all(&source).map_err(|_| ())?;
             file.sync_all().map_err(|_| ())?;
         }
@@ -880,8 +899,17 @@ fn prepare_dsh_state_roots(app_data_dir: &Path) -> Result<(PathBuf, PathBuf), ()
     // Keep it across runtime upgrades; official DSH owns format migration.
     let root = native_state.join("rc8-v1");
     let surface_root = native_state.join("rc8-native-surface-v1");
-    std::fs::create_dir_all(&root).map_err(|_| ())?;
-    std::fs::create_dir_all(&surface_root).map_err(|_| ())?;
+    #[cfg(target_os = "linux")]
+    {
+        for path in [app_data_dir, &harness_root, &native_state, &root, &surface_root] {
+            crate::linux_fs::Directory::private(path, true).map_err(|_| ())?;
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::fs::create_dir_all(&root).map_err(|_| ())?;
+        std::fs::create_dir_all(&surface_root).map_err(|_| ())?;
+    }
     // Packaged Windows processes may transparently virtualize descendants of
     // AppData\Roaming into the package LocalCache. In that case the logical
     // app-data anchor and its freshly opened children canonicalize to
@@ -920,6 +948,17 @@ fn prepare_dsh_state_roots(app_data_dir: &Path) -> Result<(PathBuf, PathBuf), ()
     ))
 }
 
+#[cfg(target_os = "linux")]
+fn safe_directory(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(directory) = crate::linux_fs::Directory::open(path) else { return false; };
+    let Ok(metadata) = directory.file.metadata() else { return false; };
+    metadata.mode() & 0o7022 == 0 && metadata.mode() & 0o500 == 0o500
+        && [0, unsafe { libc::geteuid() }].contains(&metadata.uid())
+        && crate::linux_fs::no_attributes(&directory.file).is_ok()
+}
+
+#[cfg(not(target_os = "linux"))]
 fn safe_directory(path: &Path) -> bool {
     std::fs::symlink_metadata(path)
         .map(|metadata| {
@@ -945,7 +984,10 @@ fn is_reparse(metadata: &std::fs::Metadata) -> bool {
     metadata.file_attributes() & 0x400 != 0
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn is_reparse(_metadata: &std::fs::Metadata) -> bool { false }
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn is_reparse(_metadata: &std::fs::Metadata) -> bool {
     true
 }
@@ -1546,13 +1588,13 @@ fn encode_hex(bytes: &[u8]) -> String {
     output
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 fn strict_line_reader(
     stdout: File,
     challenge: [u8; 32],
     generation: u64,
     service: Weak<DshHostService>,
-    #[cfg(all(windows, feature = "browser-host-runtime"))] parent: Arc<Mutex<ParentChannel>>,
+    #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))] parent: Arc<Mutex<ParentChannel>>,
 ) -> (mpsc::Receiver<Result<ChildFrame, ()>>, JoinHandle<()>) {
     let (sender, receiver) = mpsc::sync_channel(16);
     let join = thread::spawn(move || {
@@ -1754,7 +1796,7 @@ fn stderr_drain(mut stderr: File) -> JoinHandle<()> {
     })
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 struct ParentChannel {
     stdin: File,
     challenge: [u8; 32],
@@ -1762,7 +1804,7 @@ struct ParentChannel {
     outbound_seq: u64,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 impl ParentChannel {
     fn write(
         &mut self,
@@ -1838,7 +1880,7 @@ impl ParentChannel {
     }
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 struct HostHandle {
     process: Arc<crate::owned_process::OwnedProcess>,
     job: Arc<crate::owned_process::OwnedJob>,
@@ -1857,7 +1899,7 @@ struct HostHandle {
     surface_binding_generation: u64,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 impl HostHandle {
     fn process_id(&self) -> Option<u32> { Some(self.process.process_id()).filter(|pid| *pid != 0) }
     fn matches_surface_binding(&self, generation: u64) -> bool {
@@ -2398,7 +2440,7 @@ impl HostHandle {
     }
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 impl Drop for HostHandle {
     fn drop(&mut self) {
         self.job.terminate();
@@ -2410,7 +2452,7 @@ impl Drop for HostHandle {
     }
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 fn bounded_reader_join(join: JoinHandle<()>) -> bool {
     let deadline = Instant::now() + Duration::from_secs(1);
     while !join.is_finished() && Instant::now() < deadline {
@@ -2444,34 +2486,13 @@ impl HostHandle {
     }
 }
 
-// No Linux host handle can be manufactured in safe code until its process
-// ownership and stable-file contracts have real platform implementations.
-#[cfg(target_os = "linux")]
-enum HostHandle {}
-
-#[cfg(target_os = "linux")]
-impl HostHandle {
-    fn process_id(&self) -> Option<u32> { match *self {} }
-    fn matches_surface_binding(&self, _generation: u64) -> bool { match *self {} }
-    fn update_request(&mut self, _kind: &str, _id: &str) -> Result<serde_json::Value, &'static str> { match *self {} }
-    fn diagnostic_only(&self, _generation: u64) -> bool { match *self {} }
-    fn is_running(&self) -> bool { match *self {} }
-    fn generation(&self) -> u64 { match *self {} }
-    fn shutdown(self) -> bool { match self {} }
-    fn validate_host(&mut self) -> bool { match *self {} }
-    fn open_surface(&mut self) -> Result<DshNativeSurfaceBootstrap, String> { match *self {} }
-    fn compat_request(&mut self, _kind: &str, _payload: Option<&serde_json::Value>) -> Result<serde_json::Value, String> { match *self {} }
-    fn remote_request(&mut self, _kind: &str, _payload: &serde_json::Value, _expected: &str, _timeout: Duration) -> Result<serde_json::Value, String> { match *self {} }
-    fn close_surface(&mut self) -> Result<(), ()> { match *self {} }
-}
-
 pub(crate) struct DshHostService {
     initialization_finished: AtomicBool,
     initialization_gate: Mutex<()>,
     initialization_ready: Condvar,
     status: Mutex<DshHostStatusView>,
     host: Mutex<Option<HostHandle>>,
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
     active_job: Mutex<Option<Arc<crate::owned_process::OwnedJob>>>,
     compat_auto_attempted: AtomicBool,
     surface_compat_mode: AtomicBool,
@@ -2561,9 +2582,6 @@ impl DshHostService {
     /// update still admits the full closure off Tauri's setup/UI thread; commands that need
     /// the result wait on their own blocking workers instead.
     pub(crate) fn production_background(resource_dir: &Path, app_data_dir: &Path) -> Arc<Self> {
-        #[cfg(target_os = "linux")]
-        return Self::new(None, true);
-
         let service = Self::new(None, false);
         let owned = Arc::clone(&service);
         let resource_dir = resource_dir.to_path_buf();
@@ -2616,7 +2634,7 @@ impl DshHostService {
             initialization_ready: Condvar::new(),
             status: Mutex::new(status),
             host: Mutex::new(None),
-            #[cfg(all(windows, feature = "browser-host-runtime"))]
+            #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
             active_job: Mutex::new(None),
             compat_auto_attempted: AtomicBool::new(false),
             surface_compat_mode: AtomicBool::new(false),
@@ -3365,7 +3383,7 @@ impl DshHostService {
         ) {
             return Err("lightseek-model-sync-not-ready".to_owned());
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
         let result = {
             let mut host = self.host.lock().unwrap();
             match host.as_mut() {
@@ -3379,7 +3397,7 @@ impl DshHostService {
                 _ => Err(()),
             }
         };
-        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        #[cfg(not(any(target_os = "linux", all(windows, feature = "browser-host-runtime"))))]
         let result: Result<DshModelSyncProjection, ()> = Err(());
         result.or_else(|_| self.fail_surface_generation("lightseek-model-sync-unavailable"))
     }
@@ -3399,7 +3417,7 @@ impl DshHostService {
         ) {
             return Err("dsh-open-intent-not-ready".to_owned());
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
         let result = {
             let mut host = self.host.lock().unwrap();
             match host.as_mut() {
@@ -3413,7 +3431,7 @@ impl DshHostService {
                 _ => Err(()),
             }
         };
-        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        #[cfg(not(any(target_os = "linux", all(windows, feature = "browser-host-runtime"))))]
         let result: Result<(), ()> = Err(());
         result.or_else(|_| self.fail_surface_generation("dsh-open-intent-unavailable"))
     }
@@ -3428,7 +3446,7 @@ impl DshHostService {
         if !matches!(self.surface_status().stage,
             DshNativeSurfaceStage::ClientReady | DshNativeSurfaceStage::SessionOpen)
         { return Err("canvas-agent-not-ready".to_owned()); }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
         {
             let canvas_id = request.get("canvasId").and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "canvas-agent-invalid-request".to_owned())?;
@@ -3439,7 +3457,7 @@ impl DshHostService {
             // fail_surface_generation (which would kill unrelated LSH work).
             host.canvas_agent_dispatch(&payload, canvas_id)
         }
-        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        #[cfg(not(any(target_os = "linux", all(windows, feature = "browser-host-runtime"))))]
         { let _ = payload; Err("canvas-agent-unavailable".to_owned()) }
     }
 
@@ -3451,7 +3469,7 @@ impl DshHostService {
         if self.shutting_down.load(Ordering::Acquire) {
             return Err("dsh-host-shutting-down".to_owned());
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
         let result = {
             let mut host = self.host.lock().unwrap();
             match host.as_mut() {
@@ -3465,7 +3483,7 @@ impl DshHostService {
                 _ => Err(()),
             }
         };
-        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        #[cfg(not(any(target_os = "linux", all(windows, feature = "browser-host-runtime"))))]
         let result: Result<String, ()> = Err(());
         result.or_else(|_| self.fail_surface_generation("dsh-open-intent-status-unavailable"))
     }
@@ -3650,7 +3668,7 @@ impl DshHostService {
         if host_alive {
             return true;
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
         {
             if let Some(job) = self.active_job.lock().unwrap().as_ref() {
                 // A still-present job is settled only when it verifiably
@@ -3982,13 +4000,13 @@ impl DshHostService {
     /// each stage exactly once: session-ready -> turn-accepted, followed by
     /// the single probe-completed result. Waiting for any stage twice would
     /// consume the next producer frame and block ProbeCompleted.
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
     const PROBE_STAGE_SEQUENCE: &[(&str, Duration)] = &[
         ("session-ready", PROBE_TIMEOUT),
         ("turn-accepted", Duration::from_secs(5)),
     ];
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
     fn run_probe_on_host(
         &self,
         host: &mut HostHandle,
@@ -4016,17 +4034,7 @@ impl DshHostService {
         Ok(self.status())
     }
 
-    #[cfg(target_os = "linux")]
-    fn run_probe_on_host(
-        &self,
-        host: &mut HostHandle,
-        _retry_attempt: u8,
-        _started: Instant,
-    ) -> Result<DshHostStatusView, ()> {
-        match *host {}
-    }
-
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
     fn launch_and_probe(
         self: &Arc<Self>,
         descriptor: &RuntimeDescriptor,
@@ -4035,7 +4043,7 @@ impl DshHostService {
         self.launch_authenticated_host(descriptor, retry_attempt, true)
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
     fn launch_authenticated_host(
         self: &Arc<Self>,
         descriptor: &RuntimeDescriptor,
@@ -4073,7 +4081,7 @@ impl DshHostService {
         .map_err(|_| LaunchFailure::HostFailed)?;
         #[cfg(test)]
         self.spawn_attempts.fetch_add(1, Ordering::AcqRel);
-        let node_path = descriptor.root.join("node").join("node.exe");
+        let node_path = descriptor.root.join(if cfg!(target_os = "linux") { "node/node" } else { "node/node.exe" });
         let spawned = crate::owned_process::spawn_in_owned_job(
             &node_path,
             &[script_name],
@@ -4164,7 +4172,7 @@ impl DshHostService {
         Ok(status)
     }
 
-    #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+    #[cfg(not(any(target_os = "linux", all(windows, feature = "browser-host-runtime"))))]
     fn launch_and_probe(
         self: &Arc<Self>,
         _descriptor: &RuntimeDescriptor,
@@ -4173,7 +4181,7 @@ impl DshHostService {
         Err(LaunchFailure::HostFailed)
     }
 
-    #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+    #[cfg(not(any(target_os = "linux", all(windows, feature = "browser-host-runtime"))))]
     fn launch_authenticated_host(
         self: &Arc<Self>,
         _descriptor: &RuntimeDescriptor,
@@ -4215,7 +4223,7 @@ impl DshHostService {
             }
             settled = host.shutdown();
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
         // Take through a helper so the MutexGuard is guaranteed to be dropped
         // before the body may re-lock the slot to retain an unsettled Job.
         if let Some(job) = take_mutex_value(&self.active_job) {
@@ -4241,7 +4249,7 @@ impl DshHostService {
         let _ = self.terminate_current_checked();
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
     fn monitor_generation(
         self: &Arc<Self>,
         generation: u64,
@@ -4418,7 +4426,7 @@ fn current_process_handle_count() -> Option<u32> {
     None
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "browser-host-runtime")))]
 fn project_deepseek_search_credential(
     environment: &mut Vec<(OsString, OsString)>,
     value: Option<OsString>,
@@ -4475,13 +4483,49 @@ fn minimal_environment(
     Ok(environment)
 }
 
+#[cfg(target_os = "linux")]
+fn minimal_environment(
+    runtime_root: &Path,
+    state_root: &Path,
+    surface_state_root: &Path,
+    surface_patch: &Path,
+) -> Result<Vec<(OsString, OsString)>, ()> {
+    // A Linux host gets a private profile and explicit tool search path.
+    // Inherited loaders, proxy credentials and unrelated account state never
+    // become implicit authority for the sealed Node carrier.
+    for path in [runtime_root, state_root, surface_state_root, surface_patch] {
+        if !path.is_absolute() { return Err(()); }
+    }
+    let home = state_root.join("home");
+    for relative in ["", ".config", ".local", ".local/share", ".cache", ".tmp"] {
+        crate::linux_fs::Directory::private(&home.join(relative), true).map_err(|_| ())?;
+    }
+    let path = std::env::join_paths([runtime_root.join("node"), PathBuf::from("/usr/bin"), PathBuf::from("/bin")])
+        .map_err(|_| ())?;
+    let mut environment = vec![
+        (OsString::from("PATH"), path),
+        (OsString::from("LANG"), OsString::from("C.UTF-8")),
+        (OsString::from("HOME"), home.as_os_str().to_owned()),
+        (OsString::from("XDG_CONFIG_HOME"), home.join(".config").into_os_string()),
+        (OsString::from("XDG_DATA_HOME"), home.join(".local/share").into_os_string()),
+        (OsString::from("XDG_CACHE_HOME"), home.join(".cache").into_os_string()),
+        (OsString::from("TMPDIR"), home.join(".tmp").into_os_string()),
+        (OsString::from("LUCKYRAY_DSH_RUNTIME_ROOT"), runtime_root.as_os_str().to_owned()),
+        (OsString::from("LUCKYRAY_DSH_STATE_ROOT"), state_root.as_os_str().to_owned()),
+        (OsString::from("LUCKYRAY_DSH_NATIVE_SURFACE_HOME"), surface_state_root.as_os_str().to_owned()),
+        (OsString::from("LUCKYRAY_DSH_NATIVE_SURFACE_PATCH"), surface_patch.as_os_str().to_owned()),
+    ];
+    project_deepseek_search_credential(&mut environment, std::env::var_os("DEEPSEEK_API_KEY"));
+    Ok(environment)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn production_linux_dsh_is_unavailable_before_creating_state() {
+    fn production_linux_dsh_missing_resources_creates_no_state() {
         let root = tempfile::tempdir().unwrap();
         let resources = root.path().join("resources");
         let app_data = root.path().join("app-data");
@@ -4489,9 +4533,71 @@ pub(crate) mod tests {
         let service = DshHostService::production(&resources, &app_data);
         assert_eq!(service.status().stage, DshHostStage::Unavailable);
         let background = DshHostService::production_background(&resources, &app_data);
+        background.wait_initialized();
         assert_eq!(background.status().stage, DshHostStage::Unavailable);
         assert!(!app_data.exists());
         assert!(!resources.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_dsh_profiles_reject_links_and_shared_permissions() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        symlink(outside.path(), &data).unwrap();
+        assert!(prepare_dsh_state_roots(&data).is_err());
+        assert!(!outside.path().join("deepseek-harness").exists());
+        std::fs::remove_file(&data).unwrap();
+        std::fs::create_dir(&data).unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o750)).unwrap();
+        assert!(prepare_dsh_state_roots(&data).is_err());
+        assert!(!data.join("deepseek-harness").exists());
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let (state, surface) = prepare_dsh_state_roots(&data).unwrap();
+        let env: std::collections::BTreeMap<_, _> = minimal_environment(
+            outside.path(), &state, &surface, &surface.join("patch.yml")).unwrap().into_iter().collect();
+        assert_eq!(env.get(std::ffi::OsStr::new("HOME")), Some(&state.join("home").into_os_string()));
+        for key in ["NODE_OPTIONS", "LD_PRELOAD", "SystemRoot", "USERPROFILE", "HTTP_PROXY"] {
+            assert!(!env.contains_key(std::ffi::OsStr::new(key)));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires genuine staged Linux resources in LUCKYRAY_LINUX_LSH_TEST_RESOURCES"]
+    fn linux_lsh_real_host_probe_and_surface_lifecycle() {
+        let resources = PathBuf::from(std::env::var_os("LUCKYRAY_LINUX_LSH_TEST_RESOURCES")
+            .expect("explicit real-resource fixture is required"));
+        let profile = tempfile::tempdir().unwrap();
+        // tempfile's parent uses the process umask. Let production create its
+        // own private leaf instead of authorizing a shared existing profile.
+        let service = DshHostService::production(&resources, &profile.path().join("app-data"));
+        assert_eq!(service.status().stage, DshHostStage::BundledVerified);
+        let first = service.probe(DshHostAction::Probe).expect("real native probe");
+        assert_eq!(first.stage, DshHostStage::ProbeCompleted);
+        assert!(first.latest_probe_passed);
+        let generation = service.generation.load(Ordering::Acquire);
+        let process = service.host.lock().unwrap().as_ref().unwrap().process.clone();
+        assert_eq!(service.probe(DshHostAction::Probe).unwrap().stage, DshHostStage::ProbeCompleted);
+        assert_eq!(service.generation.load(Ordering::Acquire), generation);
+        let (status, bootstrap) = service.open_native_surface().expect("real authenticated surface carrier");
+        assert_eq!(status.stage, DshNativeSurfaceStage::CarrierReady);
+        assert!(bootstrap.port > 0);
+        assert_eq!(bootstrap.host_generation, generation);
+        assert!(service.native_surface_binding_matches(generation, bootstrap.carrier_generation));
+        let closed = service.close_native_surface().expect("surface authority revocation");
+        assert_eq!(closed.stage, DshNativeSurfaceStage::Closed);
+        assert!(service.native_surface_binding().is_none());
+        assert!(process.is_running(), "closing one surface preserves its host");
+        let (_, reopened) = service.open_native_surface().expect("reuse official carrier");
+        assert_eq!(reopened.host_generation, generation);
+        assert_ne!(reopened.carrier_generation, bootstrap.carrier_generation);
+        assert!(service.shutdown(), "original owned process group settles");
+        assert!(!process.is_running());
+        assert!(service.active_job.lock().unwrap().is_none());
+        assert!(service.probe(DshHostAction::Probe).is_err());
     }
 
     #[test]

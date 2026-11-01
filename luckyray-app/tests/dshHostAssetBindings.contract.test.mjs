@@ -33,7 +33,7 @@ test("Windows checkout keeps the host authority LF within the unchanged native b
   assert.match(attributes, /^luckyray-app\/src-tauri\/dsh-host\/luckyray-dsh-host\.mjs text eol=lf$/m);
   const bytes = readFileSync(new URL("luckyray-dsh-host.mjs", assetRoot));
   assert.equal(bytes.includes(Buffer.from("\r\n")), false, "CRLF expansion must not exceed the fail-closed host byte bound on Windows");
-  assert.ok(bytes.length <= 128 * 1024);
+  assert.ok(bytes.length <= 160 * 1024);
 });
 
 test("R11 carrier reuses the separately pinned creation validator without widening asset admission", () => {
@@ -52,7 +52,7 @@ function pin(name) {
 // contract. It checks tracked package inputs, not installed-runtime admission,
 // stable Win32 handles, native process startup or signatures.
 function normalizedDigest(bytes) {
-  assert.ok(bytes.length <= 128 * 1024, "native host asset exceeds the Rust size bound");
+  assert.ok(bytes.length <= 160 * 1024, "native host asset exceeds the Rust size bound");
   const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   const normalized = text.replaceAll("\r\n", "\n");
   assert.equal(normalized.includes("\r"), false, "bare carriage return is rejected by Rust");
@@ -99,7 +99,7 @@ test("the packaged dsh-host directory is the asset authority and build checks ev
   assert.ok(pkg.scripts.build.startsWith("npm run test:dsh-host-assets && "));
   const nativePins = [...nativeHost.matchAll(/^const ([A-Z_]+_SHA256): &str =/gm)].map(match => match[1]).sort();
   assert.deepEqual(bindings.map(([name]) => name).sort(), nativePins);
-  assert.match(nativeHost, /const MAX_HOST_SCRIPT_BYTES: usize = 128 \* 1024;/);
+  assert.match(nativeHost, /const MAX_HOST_SCRIPT_BYTES: usize = 160 \* 1024;/);
   assert.match(nativeHost, /let normalized = source\.replace\("\\r\\n", "\\n"\);/);
   assert.match(nativeHost, /if normalized\.contains\('\\r'\) \{/);
 });
@@ -113,5 +113,5 @@ test("resource plugin CRLF is accepted but changed bytes and the previous pin ar
   assert.notEqual(normalizedDigest(bytes), "9a63a89b68856d5510ce515e1f3a4f450d26c392f6272a1f5f892526dd2436e7");
   assert.throws(() => normalizedDigest(Buffer.from("bare\rcarriage return")), /bare carriage return/);
   assert.throws(() => normalizedDigest(Buffer.from([0xff])), /encoded data was not valid/);
-  assert.throws(() => normalizedDigest(Buffer.alloc(128 * 1024 + 1)), /size bound/);
+  assert.throws(() => normalizedDigest(Buffer.alloc(160 * 1024 + 1)), /size bound/);
 });

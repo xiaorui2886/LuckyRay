@@ -21,9 +21,11 @@ path fix was exercised in the later fourth run described below. The overall
 workflow failed; it did not build or start LuckyRay.
 
 Those historical autostart results predate the later security review. The
-current candidate keeps reads but refuses any autostart creation or deletion
-until an identity-bound mutation is available. Its FIFO and no-write
-regressions passed in the fourth-run fixture.
+fourth-run candidate kept reads and refused mutations. The current source
+implements checked enable/disable transactions bound to the running executable,
+retaining backups and using `Hidden=true` for disabling. See
+[per-user integration](linux-user-integration.md) for its supported layout and
+recovery boundaries; the historical workflow did not test this implementation.
 
 The fourth preflight compiled and ran the corrected GTK fixture (16 passed;
 one helper was invoked by its parent test). Its main-library check failed with
@@ -36,12 +38,24 @@ admission tests executed and passed. The full suite was not run. Its temporary
 diagnostic configuration excluded bundle inputs, so it did not verify release
 resources, sidecar identities or packaging. It did not launch the application.
 
+The sixth preflight,
+[run 41261321782](https://github.com/xiaorui2886/LuckyRay/actions/runs/41261321782),
+used public commit `5e991c15595c37f26328ce8d2af54a548cb8f558` and tree
+`5c38741d1e6c4d8edab8967e03f30d38100b308b`. The main-library check, 12 named
+production-module tests, three GIO tests, frontend and native diagnostic build
+passed. The real Tauri window started and note creation/save executed. The
+overall run failed because the smoke adapter mistook the expected stale-write
+business error for a WebDriver protocol error. Material import, reopening and
+quit checks were not reached in that run. The adapter now preserves command
+results separately from HTTP protocol failures, with two focused HTTP tests.
+
 ## Runtime input candidates
 
-- The existing LSH authority remains `@deepseek-ai/dsh` **0.2.1-rc.3**. Its
-  published lockfile includes Linux native dependencies, but the checked-in
-  audited release closure and execution controls are Windows-specific. A
-  Linux-specific, sealed and audited closure has not been produced.
+- The existing LSH authority remains `@deepseek-ai/dsh` **0.2.1-rc.3**. A
+  separate [Linux closure](linux-lsh-runtime.md) now pins its Linux Node and
+  native dependencies, package inventory and notices, with offline assembly
+  and production admission checks. Integrating those resources and complete
+  redistribution materials into an installer remains outstanding.
 - Node.js **22.19.0**: the official `linux-x64` gzip archive has SHA-256
   `d36e56998220085782c0ca965f9d51b7726335aed2f5fc7321c6c0ad233aa96d`,
   as published in the [Node.js release announcement](https://nodejs.org/en/blog/release/v22.19.0).
@@ -83,16 +97,22 @@ resources, sidecar identities or packaging. It did not launch the application.
 
 ## Required before a candidate package
 
-1. Prepare and seal the complete Linux LSH closure, including the Linux Node
-   binary, native addons, the node-pty spawn helper and executable permissions.
-   Preserve offline installation, ownership and hash checks.
-2. Verify the Linux process-group lifecycle and its documented escape and
-   abrupt-exit limitations. Build-script naming now recognizes Linux sidecars, but the
-   provenance-producing preparation and remaining build steps are still needed.
-3. Implement and verify a real Linux browser host and embedded LSH surface.
-   The present browser host reports unsupported on non-Windows.
-4. Complete Linux media, browser Native Messaging registration and revocation,
-   external drag and application build/packaging integration.
+1. Integrate the actual [Linux LSH resources](linux-lsh-runtime.md) into package
+   preparation and complete corresponding-source, license and relinking
+   materials. The closure already has its own Linux Node/native-addon pins,
+   offline assembly and permission checks. Linux node-pty uses `pty.node`;
+   its Darwin spawn helper is not a missing Linux executable.
+2. Complete source-bound Linux sidecar preparation while retaining the
+   implemented process-group owner and its documented escape/abrupt-exit
+   limits. Build-script naming alone does not establish provenance.
+3. Implement and verify the request-mediated Linux personal-browser host.
+   Embedded LSH uses its own real host and GTK child; the personal-browser
+   host still reports unsupported on non-Windows.
+4. Complete Linux media, real-browser Native Messaging connection testing,
+   external drag and application build/packaging integration. Scoped
+   [registration, revocation and autostart transactions](linux-user-integration.md)
+   are implemented for unpacked or installed executables; AppImage carrier
+   binding remains outstanding.
 5. Build real `.deb` and AppImage candidates on the older baseline and validate
    installation, startup, exit and the requested product flows on Linux. X11
    tests do not establish Wayland, hardware audio, GPU or multi-display support.
@@ -107,15 +127,15 @@ resources, sidecar identities or packaging. It did not launch the application.
   registered GIO directory handler after checking an absolute existing
   directory and encoding a file URI. This removes that command's direct
   `xdg-open` lookup from `PATH`; GIO still uses the desktop's configured
-  handler. Only the path-validation portion has run locally, on Windows. The
-  Linux GIO call, URI test and synthetic-handler test have not yet run, and
-  application startup remains blocked. This does not change the other
+  handler. The sixth preflight passed the Linux path-validation, URI and
+  synthetic registered-handler tests. This does not change the other
   file-opening commands or establish an identity-bound file lease.
 - Linux note writes now prepare descriptor-relative optimistic transactions,
   independent backups and interruption recovery. Filesystem object, content and
   parent identities are checked at operation boundaries. Same-user mandatory
-  exclusion is not provided. The new production paths still require native
-  validation; see [Linux integration](linux-desktop-port-notes.md).
+  exclusion is not provided. The sixth preflight passed the focused native
+  note and file-store tests; see [Linux integration](linux-desktop-port-notes.md)
+  for their boundaries and remaining runtime requirements.
 - `tests/linux-security/atomic_create_probe.c` explores an unnamed inode and a
   previously opened directory descriptor, with no-overwrite tests after a
   synthetic directory rename. It does not establish how to acquire a trusted
@@ -131,18 +151,18 @@ resources, sidecar identities or packaging. It did not launch the application.
   generation boundary. No product supervisor uses the probe. The preflight
   bounds both synthetic probes with an outer timeout and removes only their
   dedicated runner-temporary directory; it does not relax host restrictions.
-- Ordinary process groups, advisory `flock`, `O_NOFOLLOW`, and no-replace
-  rename alone do not enforce the Windows security contract. Linux file leases
-  can be broken and do not in themselves pin the whole runtime's directory and
-  filename identity throughout use. A same-user external process may modify
-  ordinary user-owned files despite mode bits the owner can change. A solution
-  needs a documented architecture and a proof that matches the required threat
-  model, potentially involving separately protected storage or privilege
-  separation; no such system requirement is silently introduced here.
-- Linux runtime file leases now revalidate held objects and content digests at
-  use boundaries. The sealed Linux runtime, browser host, embedded LSH surface
-  and native-messaging revocation are not complete. The generic cross-platform
-  runtime identity still requires a genuine platform-specific sealed closure.
+- Linux uses process-group cleanup and optimistic file transactions. Process
+  groups do not contain escaped descendants or guarantee cleanup after abrupt
+  desktop death. File checks detect observed changes at operation boundaries;
+  a same-user external process may still modify user-owned files between those
+  checks. Conflicts preserve independent backups and the displaced inode for
+  recovery. Ownership, permissions, path and object-identity checks remain
+  required within this model; mandatory exclusion or a privileged supervisor
+  is not a Linux package prerequisite.
+- Linux runtime file leases revalidate held objects and content digests at use
+  boundaries. The LSH runtime now authenticates its separate Linux closure.
+  Personal-browser hosting, real-browser Native Messaging testing, complete runtime
+  redistribution materials and installer integration remain outstanding.
 
 ## Shared-file merge coordination
 

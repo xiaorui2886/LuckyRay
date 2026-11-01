@@ -47,8 +47,8 @@ const LAUNCH_SHA256: &str = "dc6ca459f37fa52f7182b2648af68c7c210c2b5cb536f3bbd4a
 #[cfg(feature = "issue189-frozen-old-fixture")]
 const RUNTIME_SHA256: &str = "33837de4104030095abba18b6c86c4ddd3c52cf562b8a992689b826f00e70fba";
 
-// Ordinary launch verifies signed critical identity only. Full dependency
-// closure admission belongs to package preparation and activation.
+// Windows launch verifies signed critical identity. Linux additionally checks
+// its complete compiled closure at generation/use boundaries.
 const MAX_UNCHECKED_HASH_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -269,6 +269,10 @@ pub(crate) struct StableFileLease {
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod linux_runtime;
+#[cfg(target_os = "linux")]
+pub(crate) use linux_runtime::verify_closure as verify_linux_runtime_closure;
 
 impl StableFileLease {
     pub(crate) fn revalidate(&self) -> Result<(), ()> {
@@ -305,6 +309,10 @@ pub(crate) fn acquire_stable_file(path: &Path) -> Result<StableFileLease, ()> {
 
 #[cfg(any(windows, target_os = "linux"))]
 fn verify_record_seal(control: &RuntimeSealControl<'_>) -> Result<(), ()> {
+    #[cfg(target_os = "linux")]
+    { return linux_runtime::verify_embedded(control); }
+    #[cfg(windows)]
+    {
     for (bytes, expected) in [
         (AUTHORITY_BYTES, AUTHORITY_SHA256),
         (AUDIT_BYTES, AUDIT_SHA256),
@@ -318,6 +326,7 @@ fn verify_record_seal(control: &RuntimeSealControl<'_>) -> Result<(), ()> {
         }
     }
     Ok(())
+    }
 }
 
 fn normalize_tracked_record(bytes: &[u8]) -> Result<Vec<u8>, ()> {
@@ -332,11 +341,9 @@ fn normalize_tracked_record(bytes: &[u8]) -> Result<Vec<u8>, ()> {
     Ok(normalized.into_bytes())
 }
 
-/// Runtime identity projected from the compile-time DSH-0 records. Ordinary
-/// launches verify only the two critical entries (node.exe and the dsh
-/// entrypoint); the full staged-closure verification stays on the
-/// prepare/install path (scripts/dsh-supply-chain.mjs behind
-/// prepare-dsh-runtime.ps1's double gate).
+/// Runtime identity projected from platform-specific compile-time records.
+/// Windows retains its critical-file leases; Linux also authenticates the full
+/// closure at use boundaries without claiming mandatory write exclusion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) struct RuntimeIdentity {
@@ -351,6 +358,7 @@ fn exact_hex64(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+#[cfg(not(target_os = "linux"))]
 fn runtime_identity_from_records() -> Result<RuntimeIdentity, ()> {
     let launch: serde_json::Value = serde_json::from_slice(LAUNCH_BYTES).map_err(|_| ())?;
     let runtime: serde_json::Value = serde_json::from_slice(RUNTIME_BYTES).map_err(|_| ())?;
@@ -381,6 +389,11 @@ fn runtime_identity_from_records() -> Result<RuntimeIdentity, ()> {
     })
 }
 
+#[cfg(target_os = "linux")]
+fn runtime_identity_from_records() -> Result<RuntimeIdentity, ()> {
+    linux_runtime::launch_identity()
+}
+
 #[cfg(windows)]
 pub(crate) fn bundled_runtime_version() -> Option<String> {
     let cancelled = AtomicBool::new(false);
@@ -389,8 +402,16 @@ pub(crate) fn bundled_runtime_version() -> Option<String> {
     runtime_identity_from_records().ok().map(|identity| identity.package_version)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub(crate) fn bundled_runtime_version() -> Option<String> { None }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn bundled_runtime_version() -> Option<String> {
+    let cancelled = AtomicBool::new(false);
+    let control = RuntimeSealControl::new(&cancelled);
+    verify_record_seal(&control).ok()?;
+    runtime_identity_from_records().ok().map(|identity| identity.package_version)
+}
 
 /// The desktop installer, not a locally editable update pointer, supplies this
 /// authority. Used once when a new desktop bundle adopts the existing profile.
@@ -437,15 +458,18 @@ fn identity_path(root: &Path, relative: &str) -> Result<PathBuf, ()> {
     Ok(path)
 }
 
-/// One descriptor's critical launch identity. Handles pin the fixed ancestor
-/// chain and critical files until the descriptor is dropped. Reuse checks file
-/// IDs and link counts, not timestamps. This does NOT authenticate secondary
-/// dependencies or prevent their modification after install-time admission.
+/// One descriptor's critical launch identity. Windows handles deny changes;
+/// Linux retains object identities and detects changes at use boundaries.
+/// Running Linux descendants can still observe concurrent same-user edits.
 pub(crate) struct RuntimeIdentityLease {
     directories: Vec<StableFileLease>,
     node: StableFileLease,
     entry: StableFileLease,
     package: StableFileLease,
+    #[cfg(target_os = "linux")]
+    linux_directories: Vec<linux_runtime::DirectoryLease>,
+    #[cfg(target_os = "linux")]
+    linux_root: PathBuf,
 }
 
 impl std::fmt::Debug for RuntimeIdentityLease {
@@ -464,6 +488,7 @@ impl RuntimeIdentityLease {
 
     /// The caller supplies an identity from embedded records or an already
     /// signature/compatibility-verified installed envelope, never local JSON.
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn acquire_identity(
         root: &Path,
         identity: &RuntimeIdentity,
@@ -524,6 +549,15 @@ impl RuntimeIdentityLease {
         result
     }
 
+    #[cfg(target_os = "linux")]
+    pub(crate) fn acquire_identity(
+        root: &Path,
+        identity: &RuntimeIdentity,
+        control: &RuntimeSealControl<'_>,
+    ) -> Result<Self, RuntimeSealError> {
+        linux_runtime::acquire(root, identity, control)
+    }
+
     fn revalidate_inner(&self, control: &RuntimeSealControl<'_>) -> Result<(), ()> {
         control.check()?;
         #[cfg(windows)]
@@ -536,7 +570,9 @@ impl RuntimeIdentityLease {
             revalidate_locked_object(&self.entry.object, control)?;
             control.check()
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        { linux_runtime::revalidate(self, control) }
+        #[cfg(all(not(windows), not(target_os = "linux")))]
         { Err(()) }
     }
 
@@ -545,14 +581,19 @@ impl RuntimeIdentityLease {
     }
 }
 
-/// Fast launch-time check: embedded records are intact and the two critical
-/// staged entries match the frozen DSH-0 identity. Any mismatch fails closed
-/// so callers can surface an actionable runtime-verify/reinstall state; the
-/// full closure re-verification belongs to prepare/install/upgrade only.
+/// Authenticate the platform launch identity. Linux also verifies its complete
+/// closure; Windows uses its existing critical-entry admission path here.
 pub(crate) fn verify_runtime_identity(
     root: &Path,
     control: &RuntimeSealControl<'_>,
 ) -> Result<RuntimeIdentity, RuntimeSealError> {
+    #[cfg(target_os = "linux")]
+    {
+        let _lease = RuntimeIdentityLease::acquire(root, control)?;
+        return control.finish(runtime_identity_from_records());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
     let run = || -> Result<RuntimeIdentity, ()> {
         verify_record_seal(control)?;
         let identity = runtime_identity_from_records()?;
@@ -569,6 +610,7 @@ pub(crate) fn verify_runtime_identity(
         Ok(identity)
     };
     control.finish(run())
+    }
 }
 
 fn safe_file(path: &Path) -> bool {
@@ -674,6 +716,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "linux"))]
     fn runtime_identity_from_records_matches_the_frozen_dsh0_authority() {
         let identity = runtime_identity_from_records().unwrap();
         assert_eq!(identity.executable, "node/node.exe");

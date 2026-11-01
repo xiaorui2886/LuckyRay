@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "platform": "linux",
+  "architecture": "x64",
+  "libc": "glibc",
+  "runtimePackage": {
+    "name": "@deepseek-ai/dsh",
+    "version": "0.2.1-rc.3",
+    "archiveSha256": "9a8f9493bfab8218215a8ca38ab8821e76dff63dc4fcb65841ef87c0aa277141"
+  },
+  "nodeRuntime": {
+    "version": "22.19.0",
+    "executable": "node/node",
+    "sha256": "596b5144ff242737f1c1be6a5f0ccb3907dbba2482344143cb1a6898633402a9",
+    "archiveSha256": "d36e56998220085782c0ca965f9d51b7726335aed2f5fc7321c6c0ad233aa96d",
+    "licenseSha256": "e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49"
+  },
+  "entryPoint": {
+    "path": "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
+    "sha256": "80112efe368efb1a39720c7ada0af00442e5131fb2744edaaff8a3e8bb499e6f"
+  },
+  "inputsSha256": "1087d42e5fe738a1da06cefc0c7956af60f7b40afd7a7e9a2e822f963c0eb9c3",
+  "manifestSha256": "3003363bf2f03a7c241dac8c15dc083b6a16f1fcb06662c176a19ce35bfc364e",
+  "packageAuditSha256": "6bdae5278832f87befaf343d2735c6d19118362933d16c4ee23b498ccde205f0",
+  "noticesSha256": "aaf953ce1bab3c5de84d3fc9363754d787093dfae26003390635852fae077880",
+  "closure": {
+    "fileCount": 34491,
+    "byteCount": 651381242,
+    "sha256": "b5fe4c01567d650a1b2e21b36310b8127dd0df55afabe3041b8f5d529a9a27b5"
+  }
+}

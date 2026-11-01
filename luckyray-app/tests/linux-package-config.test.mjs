@@ -24,7 +24,7 @@ test('Linux build preparation refuses unresolved release inputs', () => {
   const script = fileURLToPath(new URL('../scripts/linux/prepare-tauri-build.mjs', import.meta.url));
   assert.throws(() => execFileSync(process.execPath, [script], { stdio: 'pipe' }), error => {
     assert.equal(error.status, 1);
-    assert.match(error.stderr.toString(), /sealed LSH runtime/);
+    assert.match(error.stderr.toString(), /separately sealed Linux LSH resources/);
     assert.match(error.stderr.toString(), /browser-host request mediation/);
     return true;
   });

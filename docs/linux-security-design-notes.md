@@ -62,9 +62,9 @@ Potential directions need separate threat-model and compatibility review:
   but the Node closure and native modules currently resolve many paths and
   dependencies. A descriptor-based redesign must prove the entire launch and
   module-loading chain; sealing a single executable is insufficient.
-- Optimistic conflict detection for notes can improve interoperability but is
-  not the existing mandatory exclusion guarantee. It requires an explicit
-  decision to change the contract and must not be described as equivalent.
+- Optimistic conflict detection is the Linux note-write contract. External
+  edits are handled through conflict detection and retained recovery material;
+  this does not provide mandatory exclusion for the whole edit window.
 
 The current Linux implementation uses process groups and descriptor-relative,
 optimistic file transactions with independent backups and recovery journals.

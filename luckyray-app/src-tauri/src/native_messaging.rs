@@ -287,37 +287,46 @@ pub fn run() -> Result<(), String> {
 }
 
 /// Explicit per-user registration for installed Linux packages. This does not
-/// approve an extension origin or remove an existing registration. It remains
-/// unavailable until Linux credential storage has been admitted.
+/// approve an extension origin or revoke an existing data-access grant.
 #[cfg(target_os = "linux")]
 pub fn install_linux_host(browser: &str) -> Result<&'static str, String> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let browser = crate::native_messaging_linux::Browser::parse(browser).map_err(str::to_owned)?;
+    let (bytes, source) = linux_host_manifest_bytes()?;
+    match crate::native_messaging_linux::install_for_current_user(browser, &bytes, &source).map_err(str::to_owned)? {
+        crate::native_messaging_linux::InstallOutcome::Installed => Ok("installed"),
+        crate::native_messaging_linux::InstallOutcome::AlreadyInstalled => Ok("already-installed"),
+        crate::native_messaging_linux::InstallOutcome::Reenabled => Ok("re-enabled"),
+    }
+}
+
+/// Stop future Native Messaging connections for this browser. Existing local
+/// transport grants have their own explicit main-window revocation action.
+#[cfg(target_os = "linux")]
+pub fn revoke_linux_registration(browser: &str) -> Result<&'static str, String> {
+    let browser = crate::native_messaging_linux::Browser::parse(browser).map_err(str::to_owned)?;
+    let (bytes, source) = linux_host_manifest_bytes()?;
+    match crate::native_messaging_linux::revoke_for_current_user(browser, &bytes, &source).map_err(str::to_owned)? {
+        crate::native_messaging_linux::RevokeOutcome::Revoked => Ok("registration-revoked"),
+        crate::native_messaging_linux::RevokeOutcome::AlreadyRevoked => Ok("registration-already-revoked"),
+        crate::native_messaging_linux::RevokeOutcome::Absent => Ok("registration-absent"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_host_manifest_bytes() -> Result<(Vec<u8>, crate::linux_fs::RunningExecutable), String> {
 
     // AppImage's mounted executable path ceases to exist when the image exits.
     if std::env::var_os("APPIMAGE").is_some() {
         return Err("linux-native-host-appimage-unsupported".into());
     }
-    let browser = crate::native_messaging_linux::Browser::parse(browser).map_err(str::to_owned)?;
     let binary = std::env::current_exe().map_err(|_| "linux-native-host-binary-invalid")?;
     if !binary.is_absolute()
         || binary.file_name().and_then(|name| name.to_str()) != Some("luckyray-native-host")
     {
         return Err("linux-native-host-binary-invalid".into());
     }
-    let opened = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(&binary)
+    let source = crate::linux_fs::RunningExecutable::acquire(&binary)
         .map_err(|_| "linux-native-host-binary-invalid")?;
-    let expected = opened.metadata().map_err(|_| "linux-native-host-binary-invalid")?;
-    let running = std::fs::metadata("/proc/self/exe")
-        .map_err(|_| "linux-native-host-binary-invalid")?;
-    if !expected.is_file() || expected.permissions().mode() & 0o111 == 0
-        || expected.mode() & 0o022 != 0
-        || expected.dev() != running.dev() || expected.ino() != running.ino()
-    {
-        return Err("linux-native-host-binary-invalid".into());
-    }
     let allowed_origins: Vec<String> = configured_extension_origins()?
         .into_iter()
         .map(|origin| format!("{origin}/"))
@@ -329,14 +338,8 @@ pub fn install_linux_host(browser: &str) -> Result<&'static str, String> {
         "type": "stdio",
         "allowed_origins": allowed_origins,
     });
-    let bytes = serde_json::to_vec_pretty(&manifest)
-        .map_err(|_| "native host manifest serialization failed")?;
-    match crate::native_messaging_linux::install_for_current_user(browser, &bytes)
-        .map_err(str::to_owned)?
-    {
-        crate::native_messaging_linux::InstallOutcome::Installed => Ok("installed"),
-        crate::native_messaging_linux::InstallOutcome::AlreadyInstalled => Ok("already-installed"),
-    }
+    let bytes = serde_json::to_vec_pretty(&manifest).map_err(|_| "native host manifest serialization failed")?;
+    Ok((bytes, source))
 }
 
 pub fn write_host_manifest(path: &Path, binary_path: &Path) -> Result<(), String> {

@@ -69,7 +69,12 @@ Credential derivation rechecks the loaded credential/grant records, so an
 instance with an observed stale rotation or grant change refuses authentication
 until it reloads. A native host's read does not create a missing profile or
 credential. Generic arbitrary-path manifest writing remains rejected on Linux;
-the scoped installer uses its separate no-replace registration path.
+the scoped installer uses its separate no-replace registration path. Existing
+managed registrations can be revoked and re-enabled through transactions that
+retain independent backups and displaced inodes. Autostart uses the same
+checked record layer and an explicit `Hidden=true` disabled state. See
+[per-user integration](linux-user-integration.md) for CLI usage and recovery
+boundaries.
 
 ## Runtime and graphical coverage
 
@@ -77,20 +82,26 @@ Linux runtime file leases retain descriptors, metadata and content digests and
 revalidate them at use boundaries. They detect changes and do not provide
 Windows mandatory exclusion for the whole use window.
 
-The sealed Linux LSH closure, host lifecycle integration, request-mediated
-browser host, Python, FFmpeg and redistribution inventories are still required.
-The existing Windows records are not accepted as Linux runtime identities.
-The current LSH descriptor/host paths remain unavailable until that actual
-platform integration is implemented; directory and credential support alone
-does not establish AI availability.
+The Linux x86-64/glibc LSH closure and authenticated native host now have their
+own compiled records and preparation path. They use the real Node 22.19.0 and
+`@deepseek-ai/dsh@0.2.1-rc.3`; Windows records cannot authorize Linux execution.
+See [Linux LSH runtime](linux-lsh-runtime.md) for exact inputs, offline assembly,
+use-boundary checks and the remaining redistribution materials.
+
+The GTK child uses a native overlay because the generic GTK Box path packs
+webviews vertically and ignores positioned child bounds. Main stays full-size;
+LSH placement, visibility and retirement remain within the existing lifecycle.
+Request-mediated personal-browser hosting, required media runtimes, real-browser
+Native Messaging testing and installers remain separate implementation work.
 
 The Linux directory-opening command uses the desktop's GIO handler. Its
 synthetic handler test validates the production GIO call, while the native
 smoke script drives the real Tauri executable with WebKitWebDriver under Xvfb.
 That script uses a fresh profile, synthetic notes and a PNG, and checks IPC
-flows, normal exit and reopening. Neither a synthetic handler nor an IPC smoke
-establishes every visible UI interaction, Wayland, hardware media or installer
-behavior.
+flows, catalog persistence, process disappearance after a quit request and
+reopening. It does not collect the application's exit status or decode the
+imported image. Neither a synthetic handler nor an IPC smoke establishes every
+visible UI interaction, Wayland, hardware media or installer behavior.
 
 ## Shared source coordination
 

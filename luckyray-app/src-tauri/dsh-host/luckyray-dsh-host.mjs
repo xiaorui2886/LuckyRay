@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { zstdDecompressSync } from "node:zlib";
@@ -708,6 +708,9 @@ export async function runDshHostMain({ runtimeRoot, stateRoot, input = process.s
       try {
         protocol?.publishSurfaceFailure(reason);
       } catch { /* a lost surface must never take down the host loop */ }
+      // This wrapper cannot reap a Linux child group independently. Retire
+      // the generation so its native owner reclaims the anchored outer group.
+      if (process.platform === "linux" && reason === "surface-tree-unconfirmed") process.exit(71);
     },
     onSurfaceStage: (carrierGeneration, stage) => {
       protocol?.publishSurfaceStage(carrierGeneration, stage);
@@ -836,12 +839,30 @@ export function createSurfaceControlChannel({
   });
 }
 
+export function runtimeNodeExecutable(root) {
+  return join(root, "node", process.platform === "linux" ? "node" : "node.exe");
+}
+
 export function minimalDshEnvironment(home, launchEnvironment = process.env) {
   const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
   const deepSeekSearchCredential = typeof launchEnvironment?.DEEPSEEK_API_KEY === "string"
     && launchEnvironment.DEEPSEEK_API_KEY.length > 0
     ? launchEnvironment.DEEPSEEK_API_KEY
     : undefined;
+  if (process.platform === "linux") {
+    return {
+      PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(":"),
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, ".config"),
+      XDG_DATA_HOME: join(home, ".local", "share"),
+      XDG_CACHE_HOME: join(home, ".cache"),
+      TMPDIR: join(home, ".tmp"),
+      LANG: "C.UTF-8",
+      DSH_HOME: home,
+      DSH_TELEMETRY_DISABLED: "1",
+      ...(deepSeekSearchCredential === undefined ? {} : { DEEPSEEK_API_KEY: deepSeekSearchCredential }),
+    };
+  }
   return {
     SystemRoot: systemRoot,
     WINDIR: systemRoot,
@@ -884,6 +905,13 @@ function surfaceFailure(reason, diagnostic = null) {
 async function killOwnedChildTree(child, waitMs = 8_000) {
   if (!child || child.pid === undefined || child.pid === null) {
     return { confirmed: true, sweep: "no-child" };
+  }
+  if (process.platform === "linux") {
+    // Node reaps its child automatically, so it cannot reserve that child's
+    // numeric group identity. Never signal a reaped PID or invent a settled
+    // verdict here. The native owner retains the wrapper's WNOWAIT anchor and
+    // reclaims the original group before admitting a replacement generation.
+    return { confirmed: false, sweep: "native-owned-group-required" };
   }
   const stillAlive = child.exitCode === null;
   if (stillAlive) {
@@ -1188,9 +1216,10 @@ export function createNativeSurfaceOwner({
           carrierGeneration: 0,
         });
       }
-      const node = join(root, "node", "node.exe");
+      const node = runtimeNodeExecutable(root);
       const entry = join(root, "host", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
       await mkdir(home, { recursive: true });
+      if (process.platform === "linux") await mkdir(join(home, ".tmp"), { recursive: true, mode: 0o700 });
       await mkdir(join(home, "AppData", "Roaming"), { recursive: true });
       await mkdir(join(home, "AppData", "Local"), { recursive: true });
       // Host-owned quarantine guard: applied as the LAST patch overlay on
@@ -1259,7 +1288,9 @@ export function createNativeSurfaceOwner({
           // During update stop, a pipe loss is refusal/unknown, never authority
           // to kill a possibly-saving runtime. Exact stop ACK + exit0 decide.
           if (current?.child === child && current.updateStopping) return;
-          void killOwnedChildTree(child);
+          void killOwnedChildTree(child).then((reclaim) => {
+            if (process.platform === "linux" && !reclaim.confirmed && typeof onUnexpectedExit === "function") onUnexpectedExit();
+          });
         },
       });
       const resourceRouter = createChildResourceRouter({
@@ -1272,7 +1303,9 @@ export function createNativeSurfaceOwner({
         },
         onInvalid: () => {
           if (current?.child === child && current.updateStopping) return;
-          void killOwnedChildTree(child);
+          void killOwnedChildTree(child).then((reclaim) => {
+            if (process.platform === "linux" && !reclaim.confirmed && typeof onUnexpectedExit === "function") onUnexpectedExit();
+          });
         },
       });
       router.setBinding(authority.generation);
@@ -1494,9 +1527,15 @@ export function createNativeSurfaceOwner({
  * plugin combination was exercised.
  */
 export async function runBaselineSurfaceTrial({ runtimeRoot, timeoutMs = 90_000 }) {
+  // The optional compatibility baseline runs alongside a live carrier. It
+  // needs independent native group ownership before it can run on Linux;
+  // ordinary probes and the real surface already use the outer native group.
+  if (process.platform === "linux") return {
+    outcome: "fail", evidence: "baseline-boot+http", reason: "baseline-trial-native-group-required",
+  };
   const { mkdtemp } = await import("node:fs/promises");
   const root = resolve(runtimeRoot);
-  const node = join(root, "node", "node.exe");
+  const node = runtimeNodeExecutable(root);
   const entry = join(root, "host", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
   const home = await mkdtemp(join(tmpdir(), "luckyray-compat-trial-"));
   let child = null;
@@ -2568,7 +2607,7 @@ function runChild(executable, args, options, onSpawned = null) {
 export async function runNativeDshProbe({ runtimeRoot, stateRoot, observeEvents = null }) {
   const startedAt = performance.now();
   const root = resolve(runtimeRoot);
-  const node = join(root, "node", "node.exe");
+  const node = runtimeNodeExecutable(root);
   const entry = join(root, "host", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
   const home = resolve(stateRoot);
   if (typeof stateRoot !== "string" || !isAbsolute(stateRoot) || home !== stateRoot) throw probeFailure();
@@ -2579,6 +2618,7 @@ export async function runNativeDshProbe({ runtimeRoot, stateRoot, observeEvents 
   let probeChild = null;
   try {
     await mkdir(home, { recursive: true });
+    if (process.platform === "linux") await mkdir(join(home, ".tmp"), { recursive: true, mode: 0o700 });
     await mkdir(workspace, { recursive: true });
     try {
       await writeFile(probePatch, DSH_NATIVE_PROBE_PATCH, { encoding: "utf8", flag: "wx" });
@@ -2598,7 +2638,13 @@ export async function runNativeDshProbe({ runtimeRoot, stateRoot, observeEvents 
     await mkdir(local, { recursive: true });
     const port = await listen(server);
     const priorSessionLogs = new Set(await listSessionLogs(join(home, "sessions")));
-    const environment = {
+    const environment = process.platform === "linux" ? {
+      ...minimalDshEnvironment(home, {}),
+      DSH_TOOLS_MODE: "native",
+      DSH_PERMISSION_MODE: "read-only",
+      DEEPSEEK_API_KEY: "luckyray-local-probe",
+      DEEPSEEK_BASE_URL: `http://127.0.0.1:${port}`,
+    } : {
       SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
       WINDIR: process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
       TEMP: process.env.TEMP ?? tmpdir(),

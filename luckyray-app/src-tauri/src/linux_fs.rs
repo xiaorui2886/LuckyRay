@@ -22,7 +22,7 @@ fn component(name: &OsStr) -> io::Result<CString> {
     CString::new(name.as_bytes()).map_err(|_| conflict())
 }
 
-fn owned_fd(fd: i32) -> io::Result<File> {
+pub(crate) fn owned_fd(fd: i32) -> io::Result<File> {
     if fd < 0 {
         Err(io::Error::last_os_error())
     } else if fd < 3 {
@@ -38,6 +38,44 @@ fn owned_fd(fd: i32) -> io::Result<File> {
         }
     } else {
         Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+/// A retained, named instance of this running executable. Environment strings
+/// and copied/unrelated ELFs cannot manufacture this kernel object identity.
+pub(crate) struct RunningExecutable {
+    directory: Directory,
+    file: File,
+    name: std::ffi::OsString,
+    path: PathBuf,
+    version: Version,
+}
+
+impl RunningExecutable {
+    pub(crate) fn acquire(path: &Path) -> io::Result<Self> {
+        let directory = Directory::trusted(path.parent().ok_or_else(conflict)?)?;
+        let name = path.file_name().ok_or_else(conflict)?.to_owned();
+        let file = directory.open_file(&name, false)?;
+        no_attributes(&file)?;
+        let metadata = file.metadata()?;
+        let running = std::fs::metadata("/proc/self/exe")?;
+        if metadata.mode() & 0o7022 != 0 || metadata.mode() & 0o111 == 0
+            || ![0, unsafe { libc::geteuid() }].contains(&metadata.uid())
+            || (metadata.dev(), metadata.ino()) != (running.dev(), running.ino()) { return Err(conflict()); }
+        let version = Version::of(&file)?;
+        let lease = Self { directory, file, name, path: path.to_owned(), version };
+        lease.revalidate()?;
+        Ok(lease)
+    }
+
+    pub(crate) fn path(&self) -> &Path { &self.path }
+
+    pub(crate) fn revalidate(&self) -> io::Result<()> {
+        no_attributes(&self.file)?;
+        if Version::of(&self.file)? != self.version { return Err(conflict()); }
+        self.directory.verify_named(&self.name, &self.file)?;
+        if Version::of(&self.file)? != self.version { return Err(conflict()); }
+        Ok(())
     }
 }
 
@@ -154,19 +192,33 @@ pub(crate) struct Directory {
     pub(crate) file: File,
     pub(crate) path: PathBuf,
     identity: (u64, u64),
-    private: bool,
+    policy: DirectoryPolicy,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirectoryPolicy { Read, Trusted, Owned, Private }
 
 impl Directory {
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
-        Self::walk(path, false, false)
+        Self::walk(path, false, DirectoryPolicy::Read)
     }
 
     pub(crate) fn private(path: &Path, create: bool) -> io::Result<Self> {
-        Self::walk(path, create, true)
+        Self::walk(path, create, DirectoryPolicy::Private)
     }
 
-    fn walk(path: &Path, create: bool, private: bool) -> io::Result<Self> {
+    /// Public per-user records may live in a 0755 configuration directory.
+    /// They still require a user-owned leaf, safe ancestors and no links/ACLs.
+    pub(crate) fn owned(path: &Path, create: bool) -> io::Result<Self> {
+        Self::walk(path, create, DirectoryPolicy::Owned)
+    }
+
+    pub(crate) fn trusted(path: &Path) -> io::Result<Self> {
+        Self::walk(path, false, DirectoryPolicy::Trusted)
+    }
+
+    fn walk(path: &Path, create: bool, policy: DirectoryPolicy) -> io::Result<Self> {
+        let scoped = policy != DirectoryPolicy::Read;
         if !path.is_absolute() {
             return Err(conflict());
         }
@@ -190,6 +242,7 @@ impl Directory {
                 )
             };
             if fd < 0 && create && io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
+                if scoped { no_default_acl(&file)?; }
                 if unsafe { libc::mkdirat(file.as_raw_fd(), name.as_ptr(), 0o700) } != 0
                     && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists
                 {
@@ -204,7 +257,7 @@ impl Directory {
                 };
             }
             file = owned_fd(fd)?;
-            if private {
+            if scoped {
                 let m = file.metadata()?;
                 let uid = unsafe { libc::geteuid() };
                 // Root-owned sticky /tmp is usable for isolated test profiles.
@@ -216,25 +269,29 @@ impl Directory {
             }
         }
         let m = file.metadata()?;
-        if private && (m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o077 != 0) {
+        if matches!(policy, DirectoryPolicy::Owned | DirectoryPolicy::Private)
+            && (m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o7022 != 0) {
+            return Err(conflict());
+        }
+        if policy == DirectoryPolicy::Private && m.mode() & 0o077 != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "linux-private-directory-permissions",
             ));
         }
-        if private {
+        if scoped {
             no_attributes(&file)?;
         }
         Ok(Self {
             file,
             path: path.into(),
             identity: (m.dev(), m.ino()),
-            private,
+            policy,
         })
     }
 
     pub(crate) fn verify(&self) -> io::Result<()> {
-        let current = Self::walk(&self.path, false, self.private)?;
+        let current = Self::walk(&self.path, false, self.policy)?;
         if current.identity != self.identity {
             return Err(conflict());
         }

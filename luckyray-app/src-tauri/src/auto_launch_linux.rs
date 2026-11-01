@@ -1,13 +1,13 @@
 //! Per-user Linux desktop autostart. This never executes a shell or searches PATH.
 //!
-//! Reading is supported, but changes fail closed until file identity and
-//! concurrent replacement can be protected throughout the operation.
+//! Writes use conflict detection and retained recovery copies. Disabling uses
+//! the XDG Hidden=true state; it never unlinks a pathname after an inspection.
 
 use std::ffi::OsString;
 #[cfg(test)]
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::{self, Read};
+use std::io;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,19 +27,10 @@ fn config_root(xdg: Option<OsString>, home: Option<OsString>) -> Result<PathBuf,
 }
 
 fn executable() -> Result<PathBuf, String> {
-    // AppImages run from an ephemeral mount; retain the AppImage, not that mount.
-    if let Some(value) = std::env::var_os("APPIMAGE") {
-        let path = PathBuf::from(value);
-        if !path.is_absolute()
-            || !path.is_file()
-            || !path
-                .extension()
-                .and_then(|v| v.to_str())
-                .is_some_and(|v| v.eq_ignore_ascii_case("appimage"))
-        {
-            return Err("auto-launch-appimage-invalid".to_string());
-        }
-        return Ok(path);
+    // APPIMAGE alone cannot prove which carrier contains this running binary.
+    // Never persist an ephemeral mount or an unverified environment pathname.
+    if std::env::var_os("APPIMAGE").is_some() {
+        return Err("auto-launch-appimage-source-unverified".to_string());
     }
     std::env::current_exe().map_err(|_| "auto-launch-executable-unavailable".to_string())
 }
@@ -77,65 +68,60 @@ fn entry_path(root: &Path) -> PathBuf {
     root.join("autostart").join(ENTRY_NAME)
 }
 
-fn read_entry(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // Reject a symlink even if it is swapped in at open time, and never
-        // wait for a FIFO writer before checking the opened object's type.
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    match options.open(path) {
-        Ok(file) => {
-            let metadata = file
-                .metadata()
-                .map_err(|_| "auto-launch-read-failed".to_string())?;
-            if !metadata.is_file() || metadata.len() > 16 * 1024 {
-                return Err("auto-launch-entry-conflict".to_string());
-            }
-            let mut contents = Vec::new();
-            file.take(16 * 1024 + 1)
-                .read_to_end(&mut contents)
-                .map_err(|_| "auto-launch-read-failed".to_string())?;
-            if contents.len() > 16 * 1024 {
-                return Err("auto-launch-entry-conflict".to_string());
-            }
-            Ok(Some(contents))
+fn record_error(error: io::Error) -> String {
+    match error.kind() {
+        io::ErrorKind::Interrupted => "auto-launch-recovery-required",
+        io::ErrorKind::Unsupported => "auto-launch-file-attributes-unsupported",
+        _ => "auto-launch-entry-conflict",
+    }.to_owned()
+}
+
+fn directory(root: &Path, create: bool) -> Result<Option<crate::linux_fs::Directory>, String> {
+    for path in [root.to_owned(), root.join("autostart")] {
+        match crate::linux_fs::Directory::owned(&path, create) {
+            Ok(_) => {},
+            Err(error) if !create && error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(record_error(error)),
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(_) => Err("auto-launch-read-failed".to_string()),
     }
+    crate::linux_fs::Directory::owned(&root.join("autostart"), false)
+        .map(Some).map_err(record_error)
 }
 
 fn enabled_at(root: &Path, executable: &Path) -> Result<bool, String> {
     let expected = entry_for(executable)?;
-    match read_entry(&entry_path(root))? {
-        None => Ok(false),
-        Some(actual) if actual == expected.as_bytes() => Ok(true),
-        Some(_) => Err("auto-launch-entry-conflict".to_string()),
-    }
+    let disabled = format!("{expected}Hidden=true\n");
+    let Some(dir) = directory(root, false)? else { return Ok(false); };
+    crate::linux_managed_record::read(&dir, std::ffi::OsStr::new(ENTRY_NAME),
+        &[expected.as_bytes(), disabled.as_bytes()]).map(|record| record.is_some_and(|record| record.state == 0))
+        .map_err(record_error)
 }
 
 fn set_at(root: &Path, executable: &Path, enabled: bool) -> Result<(), String> {
     let expected = entry_for(executable)?;
-    let destination = entry_path(root);
-    match read_entry(&destination)? {
-        Some(actual) if actual != expected.as_bytes() => {
-            return Err("auto-launch-entry-conflict".to_string())
+    let disabled = format!("{expected}Hidden=true\n");
+    let source = crate::linux_fs::RunningExecutable::acquire(executable).map_err(|_| "auto-launch-executable-invalid".to_owned())?;
+    let Some(dir) = directory(root, enabled)? else { return Ok(()); };
+    let family = [expected.as_bytes(), disabled.as_bytes()];
+    crate::linux_managed_record::recover(&dir, std::ffi::OsStr::new(ENTRY_NAME), &family).map_err(record_error)?;
+    if !enabled && crate::linux_managed_record::read(&dir, std::ffi::OsStr::new(ENTRY_NAME), &family)
+        .map_err(record_error)?.is_none() { return Ok(()); }
+    source.revalidate().map_err(|_| "auto-launch-executable-changed".to_owned())?;
+    crate::linux_managed_record::set(&dir, std::ffi::OsStr::new(ENTRY_NAME), &family, usize::from(!enabled))
+        .map_err(record_error)?;
+    if let Err(error) = source.revalidate() {
+        if enabled {
+            // Only our exact managed payload can be disabled in compensation.
+            // An external replacement is preserved and the outcome stays error.
+            let _ = crate::linux_managed_record::set(&dir, std::ffi::OsStr::new(ENTRY_NAME), &family, 1);
         }
-        Some(_) if enabled => return Ok(()),
-        // Path-based unlink after an inspection can remove a replacement.
-        Some(_) => return Err("auto-launch-write-safety-unavailable".to_string()),
-        None if !enabled => return Ok(()),
-        // A named staging file can be replaced before linking or cleanup.
-        // Do not create any name until identity-bound mutation is available.
-        None => return Err("auto-launch-write-safety-unavailable".to_string()),
+        return Err(format!("auto-launch-executable-changed: {error}"));
     }
+    Ok(())
 }
 
 fn environment() -> Result<(PathBuf, PathBuf), String> {
+    if unsafe { libc::geteuid() } == 0 { return Err("auto-launch-user-required".into()); }
     Ok((
         config_root(
             std::env::var_os("XDG_CONFIG_HOME"),
@@ -147,7 +133,10 @@ fn environment() -> Result<(PathBuf, PathBuf), String> {
 
 pub(super) fn get() -> Result<bool, String> {
     let (root, executable) = environment()?;
-    enabled_at(&root, &executable)
+    let source = crate::linux_fs::RunningExecutable::acquire(&executable).map_err(|_| "auto-launch-executable-invalid".to_owned())?;
+    let enabled = enabled_at(&root, &executable)?;
+    source.revalidate().map_err(|_| "auto-launch-executable-changed".to_owned())?;
+    Ok(enabled)
 }
 
 pub(super) fn set(enabled: bool) -> Result<(), String> {
@@ -183,36 +172,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_writes_and_deletes_before_any_filesystem_changes() {
+    fn linux_autostart_enable_disable_reenable_keeps_prior_inodes_and_bytes() {
         let scratch = Scratch::new();
-        let app = scratch.0.join("中文 app %name");
+        let app = std::env::current_exe().unwrap();
         assert!(!enabled_at(&scratch.0, &app).unwrap());
-        assert_eq!(
-            set_at(&scratch.0, &app, true),
-            Err("auto-launch-write-safety-unavailable".into())
-        );
-        assert!(!scratch.0.join("autostart").exists());
         set_at(&scratch.0, &app, false).unwrap();
         assert!(!scratch.0.join("autostart").exists());
-        install_synthetic_entry(&scratch.0, &app);
-        assert!(enabled_at(&scratch.0, &app).unwrap());
         set_at(&scratch.0, &app, true).unwrap();
+        assert!(enabled_at(&scratch.0, &app).unwrap());
         let before = fs::read(entry_path(&scratch.0)).unwrap();
-        assert_eq!(
-            set_at(&scratch.0, &app, false),
-            Err("auto-launch-write-safety-unavailable".into())
-        );
+        let inode = fs::metadata(entry_path(&scratch.0)).unwrap().ino();
+        set_at(&scratch.0, &app, false).unwrap();
+        assert!(!enabled_at(&scratch.0, &app).unwrap());
+        assert!(fs::read_to_string(entry_path(&scratch.0)).unwrap().ends_with("Hidden=true\n"));
+        let files: Vec<_> = fs::read_dir(scratch.0.join("autostart")).unwrap().map(|item| item.unwrap().path()).collect();
+        let displaced = files.iter().find(|path| path.extension().is_some_and(|ext| ext == "displaced")).unwrap();
+        assert_eq!(fs::metadata(displaced).unwrap().ino(), inode);
+        assert_eq!(fs::read(displaced).unwrap(), before);
+        let backup = files.iter().find(|path| path.extension().is_some_and(|ext| ext == "backup")).unwrap();
+        assert_ne!(fs::metadata(backup).unwrap().ino(), inode);
+        assert_eq!(fs::read(backup).unwrap(), before);
+        set_at(&scratch.0, &app, true).unwrap();
+        assert!(enabled_at(&scratch.0, &app).unwrap());
         assert_eq!(fs::read(entry_path(&scratch.0)).unwrap(), before);
-        assert_eq!(
-            fs::read_dir(scratch.0.join("autostart")).unwrap().count(),
-            1
-        );
     }
 
     #[test]
     fn rejects_conflicting_and_stale_entries_without_changing_them() {
         let scratch = Scratch::new();
-        let app = scratch.0.join("app");
+        let app = std::env::current_exe().unwrap();
         install_synthetic_entry(&scratch.0, &app);
         let before = fs::read(entry_path(&scratch.0)).unwrap();
         let other = scratch.0.join("other app");
@@ -224,6 +212,7 @@ mod tests {
         assert!(set_at(&scratch.0, &other, false).is_err());
         assert_eq!(fs::read(entry_path(&scratch.0)).unwrap(), before);
         fs::write(entry_path(&scratch.0), b"foreign data").unwrap();
+        assert!(set_at(&scratch.0, &app, true).is_err());
         assert!(set_at(&scratch.0, &app, false).is_err());
         assert_eq!(fs::read(entry_path(&scratch.0)).unwrap(), b"foreign data");
     }
@@ -259,12 +248,80 @@ mod tests {
         assert!(config_root(None, Some("relative".into())).is_err());
     }
 
+    #[test]
+    fn linux_autostart_rejects_unrelated_and_linked_executables_before_creating_state() {
+        use std::os::unix::fs::symlink;
+        let scratch = Scratch::new();
+        let actual = std::env::current_exe().unwrap();
+        let alias = scratch.0.join("alias");
+        symlink(&actual, &alias).unwrap();
+        assert!(set_at(&scratch.0, &alias, true).is_err());
+        let unrelated = Path::new("/usr/bin/true");
+        assert!(set_at(&scratch.0, unrelated, true).is_err());
+        assert!(!scratch.0.join("autostart").exists());
+    }
+
+    #[test]
+    fn linux_autostart_rejects_ancestor_links_and_shared_config_permissions() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let scratch = Scratch::new();
+        let outside = Scratch::new();
+        let alias = scratch.0.join("alias");
+        symlink(&outside.0, &alias).unwrap();
+        let actual = std::env::current_exe().unwrap();
+        assert!(set_at(&alias, &actual, true).is_err());
+        assert!(!outside.0.join("autostart").exists());
+        fs::set_permissions(&scratch.0, fs::Permissions::from_mode(0o775)).unwrap();
+        assert!(set_at(&scratch.0, &actual, true).is_err());
+        assert!(!scratch.0.join("autostart").exists());
+    }
+
+    #[test]
+    fn linux_autostart_interruption_recovery_is_explicit_and_preserves_permissions() {
+        use std::ffi::OsStr;
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new();
+        let actual = std::env::current_exe().unwrap();
+        set_at(&scratch.0, &actual, true).unwrap();
+        fs::set_permissions(entry_path(&scratch.0), fs::Permissions::from_mode(0o640)).unwrap();
+        let dir = directory(&scratch.0, false).unwrap().unwrap();
+        let before = dir.read(OsStr::new(ENTRY_NAME), false, 64 * 1024).unwrap().unwrap();
+        let disabled = format!("{}Hidden=true\n", entry_for(&actual).unwrap());
+        assert!(crate::linux_file_store::write(&dir, OsStr::new(ENTRY_NAME), Some(&before),
+            disabled.as_bytes(), false, false, true).is_err());
+        let names = || { let mut names: Vec<_> = fs::read_dir(&dir.path).unwrap().map(|item| item.unwrap().file_name()).collect(); names.sort(); names };
+        let pending = names();
+        assert_eq!(enabled_at(&scratch.0, &actual), Err("auto-launch-recovery-required".into()));
+        assert_eq!(names(), pending, "status queries do not perform recovery writes");
+        set_at(&scratch.0, &actual, false).unwrap();
+        assert!(!enabled_at(&scratch.0, &actual).unwrap());
+        let after = fs::metadata(entry_path(&scratch.0)).unwrap();
+        assert_eq!(after.mode() & 0o777, 0o640);
+        assert_eq!(after.gid(), before.file.metadata().unwrap().gid());
+    }
+
+    #[test]
+    fn linux_autostart_interrupted_recovery_preserves_an_external_replacement() {
+        use std::ffi::OsStr;
+        let scratch = Scratch::new();
+        let actual = std::env::current_exe().unwrap();
+        set_at(&scratch.0, &actual, true).unwrap();
+        let dir = directory(&scratch.0, false).unwrap().unwrap();
+        let before = dir.read(OsStr::new(ENTRY_NAME), false, 64 * 1024).unwrap().unwrap();
+        let disabled = format!("{}Hidden=true\n", entry_for(&actual).unwrap());
+        assert!(crate::linux_file_store::write(&dir, OsStr::new(ENTRY_NAME), Some(&before),
+            disabled.as_bytes(), false, false, true).is_err());
+        fs::write(entry_path(&scratch.0), b"foreign replacement").unwrap();
+        assert!(set_at(&scratch.0, &actual, false).is_err());
+        assert_eq!(fs::read(entry_path(&scratch.0)).unwrap(), b"foreign replacement");
+        assert!(crate::linux_file_store::recovery_pending(&dir).unwrap());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
+    #[ignore = "requires desktop-file-validate in LUCKYRAY_DESKTOP_FILE_VALIDATE"]
     fn generated_entry_passes_desktop_file_validate_when_supplied() {
-        let Some(validator) = std::env::var_os("LUCKYRAY_DESKTOP_FILE_VALIDATE") else {
-            return;
-        };
+        let validator = std::env::var_os("LUCKYRAY_DESKTOP_FILE_VALIDATE").expect("actual validator is required");
         let scratch = Scratch::new();
         let app = scratch.0.join("中文 app % $");
         install_synthetic_entry(&scratch.0, &app);
@@ -284,7 +341,7 @@ mod tests {
     fn refuses_to_follow_or_remove_a_symlink_entry() {
         use std::os::unix::fs::symlink;
         let scratch = Scratch::new();
-        let app = scratch.0.join("app");
+        let app = std::env::current_exe().unwrap();
         let target = scratch.0.join("unrelated");
         fs::write(&target, b"preserve").unwrap();
         fs::create_dir_all(scratch.0.join("autostart")).unwrap();
@@ -308,7 +365,7 @@ mod tests {
     fn fifo_no_writer_child() {
         use std::os::unix::fs::FileTypeExt;
         let root = PathBuf::from(std::env::var_os("LUCKYRAY_AUTOSTART_FIFO_FIXTURE").unwrap());
-        let app = root.join("app");
+        let app = std::env::current_exe().unwrap();
         assert!(fs::symlink_metadata(entry_path(&root))
             .unwrap()
             .file_type()

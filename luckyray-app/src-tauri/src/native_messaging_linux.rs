@@ -1,16 +1,13 @@
 //! Per-user Linux native-messaging manifest installation.
 //!
-//! Only a new name is installed. An existing different entry is never
-//! replaced. Publication uses an unnamed inode and a held directory fd; no
-//! shell, system-wide browser configuration or PATH lookup is involved.
-//! Removal of an existing entry is intentionally not implemented until the
-//! requested file-concurrency contract has been decided and proved.
+//! New registration uses an unnamed inode; revocation empties allowed_origins
+//! through a checked transaction retaining backups and prior inodes. No shell,
+//! system-wide browser configuration, pathname deletion or implicit grant change.
 
 use std::ffi::{CString, OsString};
-use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::io::{self, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 const MANIFEST: &str = "com.luckyray.desktop.json";
@@ -49,7 +46,11 @@ impl Browser {
 pub(crate) enum InstallOutcome {
     Installed,
     AlreadyInstalled,
+    Reenabled,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RevokeOutcome { Revoked, AlreadyRevoked, Absent }
 
 fn absolute(value: Option<OsString>) -> Option<PathBuf> {
     value.map(PathBuf::from).filter(|value| value.is_absolute())
@@ -83,7 +84,10 @@ fn location_from(
 pub(crate) fn install_for_current_user(
     browser: Browser,
     manifest: &[u8],
+    source: &crate::linux_fs::RunningExecutable,
 ) -> Result<InstallOutcome, &'static str> {
+    registration_family(manifest)?;
+    verify_source(manifest, source)?;
     // A package post-install script often runs as root. It must not install a
     // manifest in root's profile on behalf of an unknown desktop user.
     if unsafe { libc::geteuid() } == 0 {
@@ -96,204 +100,140 @@ pub(crate) fn install_for_current_user(
         std::env::var_os("XDG_CONFIG_HOME"),
         std::env::var_os("HOME"),
     )?;
-    install_at(&root, profile, manifest)
+    let result = install_at(&root, profile, manifest)?;
+    if verify_source(manifest, source).is_err() {
+        // Compensate only inside the same captured browser location, and only
+        // if its exact managed active/revoked family still matches.
+        let _ = revoke_at(&root, profile, manifest);
+        return Err("linux-native-host-install-uncertain");
+    }
+    Ok(result)
 }
 
-fn validate_directory(file: &File) -> Result<(), &'static str> {
-    let metadata = file
-        .metadata()
-        .map_err(|_| "linux-native-host-directory-invalid")?;
-    if !metadata.is_dir()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.mode() & 0o022 != 0
-    {
-        return Err("linux-native-host-directory-invalid");
-    }
-    Ok(())
+pub(crate) fn revoke_for_current_user(browser: Browser, manifest: &[u8], source: &crate::linux_fs::RunningExecutable) -> Result<RevokeOutcome, &'static str> {
+    registration_family(manifest)?;
+    verify_source(manifest, source)?;
+    if unsafe { libc::geteuid() } == 0 { return Err("linux-native-host-user-required"); }
+    let (root, profile) = location_from(browser,
+        std::env::var_os("CHROME_USER_DATA_DIR"), std::env::var_os("CHROME_CONFIG_HOME"),
+        std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))?;
+    let result = revoke_at(&root, profile, manifest)?;
+    verify_source(manifest, source).map_err(|_| "linux-native-host-revocation-uncertain")?;
+    Ok(result)
 }
 
-fn open_root(root: &Path) -> Result<File, &'static str> {
-    if !root.is_absolute() {
-        return Err("linux-native-host-config-invalid");
-    }
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW)
-        .open(root)
-        .map_err(|_| "linux-native-host-config-unavailable")?;
-    validate_directory(&file)?;
-    Ok(file)
+fn verify_source(manifest: &[u8], source: &crate::linux_fs::RunningExecutable) -> Result<(), &'static str> {
+    let value: serde_json::Value = serde_json::from_slice(manifest).map_err(|_| "linux-native-host-manifest-invalid")?;
+    if value["path"].as_str().map(Path::new) != Some(source.path()) { return Err("linux-native-host-binary-invalid"); }
+    source.revalidate().map_err(|_| "linux-native-host-binary-invalid")
 }
 
-fn open_directory_at(parent: &File, name: &str) -> io::Result<File> {
-    let name = CString::new(name).map_err(|_| io::ErrorKind::InvalidInput)?;
-    let fd = unsafe {
-        libc::openat(
-            parent.as_raw_fd(),
-            name.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(unsafe { File::from_raw_fd(fd) })
-    }
+fn registration_family(expected: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if expected.is_empty() || expected.len() > MAX_MANIFEST_BYTES { return Err("linux-native-host-manifest-invalid"); }
+    let mut value: serde_json::Value = serde_json::from_slice(expected).map_err(|_| "linux-native-host-manifest-invalid")?;
+    let valid = value.as_object().is_some_and(|object| object.len() == 5)
+        && value["name"].as_str() == Some(crate::local_transport::NATIVE_HOST_NAME)
+        && value["description"].as_str() == Some("LuckyRay browser bridge")
+        && value["type"].as_str() == Some("stdio")
+        && value["path"].as_str().is_some_and(|path| Path::new(path).is_absolute());
+    let origins = value["allowed_origins"].as_array().ok_or("linux-native-host-manifest-invalid")?;
+    if !valid || origins.is_empty() || origins.iter().any(|origin| {
+        let Some(origin) = origin.as_str() else { return true; };
+        let Some(id) = origin.strip_prefix("chrome-extension://").and_then(|value| value.strip_suffix('/')) else { return true; };
+        if id.len() != 32 || !id.bytes().all(|byte| (b'a'..=b'p').contains(&byte)) { return true; }
+        crate::local_transport::canonical_extension_origin(origin.trim_end_matches('/'))
+            .is_none_or(|canonical| format!("{canonical}/") != origin)
+    }) { return Err("linux-native-host-manifest-invalid"); }
+    value["allowed_origins"] = serde_json::json!([]);
+    serde_json::to_vec_pretty(&value).map_err(|_| "linux-native-host-manifest-invalid")
 }
 
-fn ensure_directory_at(parent: &File, name: &str) -> Result<File, &'static str> {
-    let directory = match open_directory_at(parent, name) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let name_c = CString::new(name).map_err(|_| "linux-native-host-directory-invalid")?;
-            let result = unsafe { libc::mkdirat(parent.as_raw_fd(), name_c.as_ptr(), 0o700) };
-            if result != 0 && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
-                return Err("linux-native-host-directory-unavailable");
-            }
-            open_directory_at(parent, name)
-                .map_err(|_| "linux-native-host-directory-unavailable")?
-        }
-        Err(_) => return Err("linux-native-host-directory-unavailable"),
-    };
-    validate_directory(&directory)?;
-    Ok(directory)
-}
-
-fn read_existing(directory: &File) -> Result<Option<(std::fs::Metadata, Vec<u8>)>, &'static str> {
-    let name = CString::new(MANIFEST).expect("fixed manifest name");
-    let fd = unsafe {
-        libc::openat(
-            directory.as_raw_fd(),
-            name.as_ptr(),
-            libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        if io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
-            return Ok(None);
-        }
-        return Err("linux-native-host-manifest-conflict");
-    }
-    let file = unsafe { File::from_raw_fd(fd) };
-    let metadata = file
-        .metadata()
-        .map_err(|_| "linux-native-host-manifest-conflict")?;
-    if !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.nlink() != 1
-        || metadata.mode() & 0o022 != 0
-        || metadata.len() > MAX_MANIFEST_BYTES as u64
-    {
-        return Err("linux-native-host-manifest-conflict");
-    }
-    let mut bytes = Vec::new();
-    file.take((MAX_MANIFEST_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "linux-native-host-manifest-conflict")?;
-    if bytes.len() > MAX_MANIFEST_BYTES {
-        return Err("linux-native-host-manifest-conflict");
-    }
-    Ok(Some((metadata, bytes)))
-}
-
-fn inspect_existing(
-    directory: &File,
-    expected: &[u8],
-) -> Result<Option<InstallOutcome>, &'static str> {
-    match read_existing(directory)? {
-        None => Ok(None),
-        Some((_, bytes)) if bytes == expected => Ok(Some(InstallOutcome::AlreadyInstalled)),
-        Some(_) => Err("linux-native-host-manifest-conflict"),
+fn record_error(error: io::Error) -> &'static str {
+    match error.kind() {
+        io::ErrorKind::Interrupted => "linux-native-host-recovery-required",
+        io::ErrorKind::Unsupported => "linux-native-host-file-attributes-unsupported",
+        _ => "linux-native-host-manifest-conflict",
     }
 }
 
-fn install_at(
-    root: &Path,
-    profile: Option<&str>,
-    expected: &[u8],
-) -> Result<InstallOutcome, &'static str> {
-    if expected.is_empty() || expected.len() > MAX_MANIFEST_BYTES {
-        return Err("linux-native-host-manifest-invalid");
-    }
-    let root = open_root(root)?;
-    let profile_dir;
+fn registry_directory(root: &Path, profile: Option<&str>, create: bool)
+    -> Result<Option<crate::linux_fs::Directory>, &'static str> {
+    let mut paths = vec![root.to_path_buf()];
     let parent = if let Some(name) = profile {
-        // This private function only accepts the four fixed browser names.
-        if ![
-            "google-chrome",
-            "chromium",
-            "microsoft-edge",
-            "google-chrome-for-testing",
-        ]
-        .contains(&name)
-        {
+        if !["google-chrome", "chromium", "microsoft-edge", "google-chrome-for-testing"].contains(&name) {
             return Err("linux-native-host-browser-invalid");
         }
-        profile_dir = ensure_directory_at(&root, name)?;
-        &profile_dir
-    } else {
-        &root
-    };
-    let directory = ensure_directory_at(parent, "NativeMessagingHosts")?;
-    if let Some(outcome) = inspect_existing(&directory, expected)? {
-        return Ok(outcome);
+        let parent = root.join(name);
+        paths.push(parent.clone());
+        parent
+    } else { root.to_path_buf() };
+    paths.push(parent.join("NativeMessagingHosts"));
+    let last = paths.len() - 1;
+    for (index, path) in paths.iter().enumerate() {
+        // A registration may create the chosen browser subdirectory, never an
+        // arbitrary missing configuration root or a profile during revocation.
+        match crate::linux_fs::Directory::owned(path, create && index != 0) {
+            Ok(directory) if index == last => return Ok(Some(directory)),
+            Ok(_) => {},
+            Err(error) if !create && error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(record_error(error)),
+        }
     }
+    Err("linux-native-host-directory-invalid")
+}
 
-    let dot = CString::new(".").expect("fixed name");
-    let fd = unsafe {
-        libc::openat(
-            directory.as_raw_fd(),
-            dot.as_ptr(),
-            libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
-            0o600,
-        )
-    };
-    if fd < 0 {
-        return Err("linux-native-host-atomic-install-unavailable");
+fn install_at(root: &Path, profile: Option<&str>, expected: &[u8]) -> Result<InstallOutcome, &'static str> {
+    let revoked = registration_family(expected)?;
+    let family = [expected, revoked.as_slice()];
+    let directory = registry_directory(root, profile, true)?.ok_or("linux-native-host-directory-invalid")?;
+    let target = std::ffi::OsStr::new(MANIFEST);
+    crate::linux_managed_record::recover(&directory, target, &family).map_err(record_error)?;
+    if let Some(existing) = crate::linux_managed_record::read(&directory, target, &family).map_err(record_error)? {
+        if existing.state == 0 { return Ok(InstallOutcome::AlreadyInstalled); }
+        crate::linux_managed_record::set(&directory, target, &family, 0).map_err(record_error)?;
+        return Ok(InstallOutcome::Reenabled);
     }
-    let mut temporary = unsafe { File::from_raw_fd(fd) };
-    temporary
-        .write_all(expected)
-        .and_then(|_| temporary.sync_all())
-        .map_err(|_| "linux-native-host-write-failed")?;
-    let source = CString::new(format!("/proc/self/fd/{}", temporary.as_raw_fd()))
-        .map_err(|_| "linux-native-host-write-failed")?;
-    let target = CString::new(MANIFEST).expect("fixed manifest name");
-    let result = unsafe {
-        libc::linkat(
-            libc::AT_FDCWD,
-            source.as_ptr(),
-            directory.as_raw_fd(),
-            target.as_ptr(),
-            libc::AT_SYMLINK_FOLLOW,
-        )
-    };
+    crate::linux_fs::no_default_acl(&directory.file).map_err(record_error)?;
+    let dot = c".";
+    let fd = unsafe { libc::openat(directory.file.as_raw_fd(), dot.as_ptr(),
+        libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC, 0o600) };
+    let mut temporary = crate::linux_fs::owned_fd(fd).map_err(|_| "linux-native-host-atomic-install-unavailable")?;
+    temporary.write_all(expected).and_then(|_| temporary.sync_all()).map_err(|_| "linux-native-host-write-failed")?;
+    let source = CString::new(format!("/proc/self/fd/{}", temporary.as_raw_fd())).map_err(|_| "linux-native-host-write-failed")?;
+    let name = CString::new(MANIFEST).expect("fixed manifest name");
+    directory.verify().map_err(record_error)?;
+    let result = unsafe { libc::linkat(libc::AT_FDCWD, source.as_ptr(), directory.file.as_raw_fd(), name.as_ptr(), libc::AT_SYMLINK_FOLLOW) };
     if result != 0 {
         if io::Error::last_os_error().kind() == io::ErrorKind::AlreadyExists {
-            return inspect_existing(&directory, expected)?
-                .ok_or("linux-native-host-manifest-conflict");
+            return match crate::linux_managed_record::read(&directory, target, &family).map_err(record_error)? {
+                Some(record) if record.state == 0 => Ok(InstallOutcome::AlreadyInstalled),
+                _ => Err("linux-native-host-manifest-conflict"),
+            };
         }
         return Err("linux-native-host-atomic-install-unavailable");
     }
-    let source_metadata = temporary
-        .metadata()
-        .map_err(|_| "linux-native-host-install-uncertain")?;
-    let Some((installed, bytes)) =
-        read_existing(&directory).map_err(|_| "linux-native-host-install-uncertain")?
-    else {
-        return Err("linux-native-host-install-uncertain");
-    };
-    if installed.dev() != source_metadata.dev()
-        || installed.ino() != source_metadata.ino()
-        || bytes != expected
-    {
-        return Err("linux-native-host-install-uncertain");
-    }
-    // Failure after publication is reported as uncertain, never as a rollback.
-    directory
-        .sync_all()
-        .map_err(|_| "linux-native-host-install-uncertain")?;
+    let installed = crate::linux_managed_record::read(&directory, target, &family)
+        .map_err(|_| "linux-native-host-install-uncertain")?.ok_or("linux-native-host-install-uncertain")?;
+    let source = temporary.metadata().map_err(|_| "linux-native-host-install-uncertain")?;
+    if (installed.snapshot.version.device, installed.snapshot.version.inode) != (source.dev(), source.ino())
+        || installed.state != 0 { return Err("linux-native-host-install-uncertain"); }
+    directory.file.sync_all().and_then(|_| directory.verify()).map_err(|_| "linux-native-host-install-uncertain")?;
     Ok(InstallOutcome::Installed)
+}
+
+fn revoke_at(root: &Path, profile: Option<&str>, expected: &[u8]) -> Result<RevokeOutcome, &'static str> {
+    let revoked = registration_family(expected)?;
+    let family = [expected, revoked.as_slice()];
+    let Some(directory) = registry_directory(root, profile, false)? else { return Ok(RevokeOutcome::Absent); };
+    let target = std::ffi::OsStr::new(MANIFEST);
+    crate::linux_managed_record::recover(&directory, target, &family).map_err(record_error)?;
+    match crate::linux_managed_record::read(&directory, target, &family).map_err(record_error)? {
+        None => return Ok(RevokeOutcome::Absent),
+        Some(record) if record.state == 1 => return Ok(RevokeOutcome::AlreadyRevoked),
+        Some(_) => {},
+    }
+    crate::linux_managed_record::set(&directory, target, &family, 1).map_err(record_error)?;
+    Ok(RevokeOutcome::Revoked)
 }
 
 #[cfg(test)]
@@ -321,6 +261,14 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn manifest(path: &Path) -> Vec<u8> {
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "name": crate::local_transport::NATIVE_HOST_NAME,
+            "description": "LuckyRay browser bridge", "type": "stdio", "path": path,
+            "allowed_origins": ["chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"],
+        })).unwrap()
     }
 
     #[test]
@@ -364,29 +312,30 @@ mod tests {
     }
 
     #[test]
-    fn production_registration_entry_is_closed_before_profile_access() {
+    fn malformed_registration_is_refused_before_profile_access() {
+        let source = crate::linux_fs::RunningExecutable::acquire(&std::env::current_exe().unwrap()).unwrap();
         assert_eq!(
-            install_for_current_user(Browser::Chromium, b"synthetic"),
-            Err(crate::linux_credential_admission::UNAVAILABLE)
+            install_for_current_user(Browser::Chromium, b"synthetic", &source),
+            Err("linux-native-host-manifest-invalid")
         );
     }
 
     #[test]
     fn installs_new_manifest_without_replacing_existing_content() {
         let root = Scratch::new();
-        let expected = br#"{"name":"com.luckyray.desktop","type":"stdio"}"#;
+        let expected = manifest(&std::env::current_exe().unwrap());
         assert_eq!(
-            install_at(&root.0, Some("chromium"), expected).unwrap(),
+            install_at(&root.0, Some("chromium"), &expected).unwrap(),
             InstallOutcome::Installed
         );
         assert_eq!(
-            install_at(&root.0, Some("chromium"), expected).unwrap(),
+            install_at(&root.0, Some("chromium"), &expected).unwrap(),
             InstallOutcome::AlreadyInstalled
         );
         let path = root.0.join("chromium/NativeMessagingHosts").join(MANIFEST);
         assert_eq!(fs::read(&path).unwrap(), expected);
         assert_eq!(
-            install_at(&root.0, Some("chromium"), b"foreign"),
+            install_at(&root.0, Some("chromium"), &manifest(&root.0.join("foreign"))),
             Err("linux-native-host-manifest-conflict")
         );
         assert_eq!(fs::read(path).unwrap(), expected);
@@ -395,15 +344,16 @@ mod tests {
     #[test]
     fn refuses_a_symlinked_manifest_or_browser_directory() {
         let root = Scratch::new();
+        let expected = manifest(&std::env::current_exe().unwrap());
         let outside = root.0.join("outside");
         fs::write(&outside, b"preserve").unwrap();
         let directory = root.0.join("chromium/NativeMessagingHosts");
         fs::create_dir_all(&directory).unwrap();
         symlink(&outside, directory.join(MANIFEST)).unwrap();
-        assert!(install_at(&root.0, Some("chromium"), b"expected").is_err());
+        assert!(install_at(&root.0, Some("chromium"), &expected).is_err());
         assert_eq!(fs::read(&outside).unwrap(), b"preserve");
         symlink(&directory, root.0.join("google-chrome")).unwrap();
-        assert!(install_at(&root.0, Some("google-chrome"), b"expected").is_err());
+        assert!(install_at(&root.0, Some("google-chrome"), &expected).is_err());
         assert_eq!(fs::read(outside).unwrap(), b"preserve");
     }
 
@@ -416,7 +366,7 @@ mod tests {
         fs::write(&outside, b"foreign").unwrap();
         fs::hard_link(&outside, directory.join(MANIFEST)).unwrap();
         assert_eq!(
-            install_at(&root.0, Some("chromium"), b"new"),
+            install_at(&root.0, Some("chromium"), &manifest(&std::env::current_exe().unwrap())),
             Err("linux-native-host-manifest-conflict")
         );
         assert_eq!(fs::read(outside).unwrap(), b"foreign");
@@ -427,13 +377,52 @@ mod tests {
         let root = Scratch::new();
         let config = root.0.join("\u{4e2d}\u{6587} config");
         fs::create_dir(&config).unwrap();
+        let expected = manifest(&std::env::current_exe().unwrap());
         assert_eq!(
-            install_at(&config, None, b"configured").unwrap(),
+            install_at(&config, None, &expected).unwrap(),
             InstallOutcome::Installed
         );
         assert_eq!(
             fs::read(config.join("NativeMessagingHosts").join(MANIFEST)).unwrap(),
-            b"configured"
+            expected
         );
+    }
+
+    #[test]
+    fn linux_registration_revocation_is_explicit_idempotent_and_reenable_is_checked() {
+        let root = Scratch::new();
+        let expected = manifest(&std::env::current_exe().unwrap());
+        assert_eq!(revoke_at(&root.0, Some("chromium"), &expected).unwrap(), RevokeOutcome::Absent);
+        assert!(!root.0.join("chromium").exists());
+        assert_eq!(install_at(&root.0, Some("chromium"), &expected).unwrap(), InstallOutcome::Installed);
+        let path = root.0.join("chromium/NativeMessagingHosts").join(MANIFEST);
+        let old_inode = fs::metadata(&path).unwrap().ino();
+        assert_eq!(revoke_at(&root.0, Some("chromium"), &expected).unwrap(), RevokeOutcome::Revoked);
+        let disabled: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disabled["allowed_origins"], serde_json::json!([]));
+        assert_eq!(revoke_at(&root.0, Some("chromium"), &expected).unwrap(), RevokeOutcome::AlreadyRevoked);
+        let directory = path.parent().unwrap();
+        let displaced = fs::read_dir(directory).unwrap().map(|item| item.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "displaced")).unwrap();
+        assert_eq!(fs::metadata(&displaced).unwrap().ino(), old_inode);
+        assert_eq!(fs::read(displaced).unwrap(), expected);
+        assert_eq!(install_at(&root.0, Some("chromium"), &expected).unwrap(), InstallOutcome::Reenabled);
+        assert_eq!(fs::read(path).unwrap(), expected);
+    }
+
+    #[test]
+    fn linux_registration_refuses_ancestor_links_and_foreign_revocations() {
+        let root = Scratch::new();
+        let outside = Scratch::new();
+        let expected = manifest(&std::env::current_exe().unwrap());
+        let alias = root.0.join("alias");
+        symlink(&outside.0, &alias).unwrap();
+        assert!(install_at(&alias, Some("chromium"), &expected).is_err());
+        assert!(!outside.0.join("chromium").exists());
+        install_at(&root.0, Some("chromium"), &expected).unwrap();
+        let path = root.0.join("chromium/NativeMessagingHosts").join(MANIFEST);
+        fs::write(&path, b"foreign registration").unwrap();
+        assert!(revoke_at(&root.0, Some("chromium"), &expected).is_err());
+        assert_eq!(fs::read(path).unwrap(), b"foreign registration");
     }
 }

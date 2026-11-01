@@ -42,13 +42,17 @@ fn hash(file: &File) -> Result<[u8; 32], ()> {
 }
 
 impl Lease {
+    pub(super) fn matches_sha256(&self, expected: &str) -> bool {
+        self.hash.iter().map(|byte| format!("{byte:02x}")).collect::<String>() == expected
+    }
+
     pub(super) fn acquire(path: &Path) -> Result<Self, ()> {
         let directory = Directory::open(path.parent().ok_or(())?).map_err(|_| ())?;
         let name = path.file_name().ok_or(())?.to_owned();
         let file = directory.open_file(&name, false).map_err(|_| ())?;
         crate::linux_fs::no_attributes(&file).map_err(|_| ())?;
         let metadata = file.metadata().map_err(|_| ())?;
-        if metadata.mode() & 0o022 != 0
+        if metadata.mode() & 0o7022 != 0 || metadata.mode() & 0o400 != 0o400
             || ![0, unsafe { libc::geteuid() }].contains(&metadata.uid())
         {
             return Err(());

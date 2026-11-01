@@ -174,6 +174,8 @@ mod linux_fs;
 #[cfg(target_os = "linux")]
 mod linux_file_store;
 #[cfg(target_os = "linux")]
+mod linux_managed_record;
+#[cfg(target_os = "linux")]
 mod linux_directory;
 #[cfg(target_os = "linux")]
 mod linux_credential_admission;
@@ -1872,7 +1874,7 @@ fn create_dsh_native_surface_child(
     {
         let child = caller.app_handle().get_webview(DSH_NATIVE_SURFACE_WEBVIEW_LABEL)
             .ok_or_else(|| "dsh-native-surface-unavailable".to_owned())?;
-        dsh_native_surface_linux::install_focus_dismissal(&child, caller.app_handle().clone())
+        dsh_native_surface_linux::install_focus_dismissal(&child, caller.app_handle().clone(), position, size)
             .map_err(str::to_owned)?;
     }
     Ok(())
@@ -2055,6 +2057,7 @@ async fn dsh_native_surface_restart(
     .map_err(|_| "dsh-native-surface-unavailable".to_owned())?
 }
 
+#[cfg(not(target_os = "linux"))]
 #[tauri::command]
 fn dsh_native_surface_set_bounds(
     caller: tauri::Webview,
@@ -2075,6 +2078,17 @@ fn dsh_native_surface_set_bounds(
             size: size.into(),
         })
         .map_err(|_| "dsh-native-surface-unavailable".to_owned())
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn dsh_native_surface_set_bounds(caller: tauri::Webview, bounds: DshNativeSurfaceBounds) -> Result<(), String> {
+    require_main_caller(&caller)?;
+    let (position, size) = checked_surface_bounds(bounds, main_surface_viewport(&caller)?)?;
+    let child = caller.app_handle().get_webview(DSH_NATIVE_SURFACE_WEBVIEW_LABEL)
+        .ok_or_else(|| "dsh-native-surface-not-open".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || dsh_native_surface_linux::set_bounds(&child, position, size).map_err(str::to_owned))
+        .await.map_err(|_| "dsh-native-surface-unavailable".to_owned())?
 }
 
 #[tauri::command]
@@ -2337,6 +2351,7 @@ fn dsh_native_surface_hide(caller: tauri::Webview) -> Result<(), String> {
 // Showing the same child again only refreshes validated bounds and unhides it.
 // It must never open/rebind the surface; a missing child fails with the
 // bounded not-open code so the renderer falls back to a first-time open.
+#[cfg(not(target_os = "linux"))]
 #[tauri::command]
 fn dsh_native_surface_show(
     caller: tauri::Webview,
@@ -2358,6 +2373,19 @@ fn dsh_native_surface_show(
         })
         .and_then(|_| webview.show())
         .map_err(|_| "dsh-native-surface-unavailable".to_owned())
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn dsh_native_surface_show(caller: tauri::Webview, bounds: DshNativeSurfaceBounds) -> Result<(), String> {
+    require_main_caller(&caller)?;
+    let (position, size) = checked_surface_bounds(bounds, main_surface_viewport(&caller)?)?;
+    let child = caller.app_handle().get_webview(DSH_NATIVE_SURFACE_WEBVIEW_LABEL)
+        .ok_or_else(|| "dsh-native-surface-not-open".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        dsh_native_surface_linux::set_bounds(&child, position, size).map_err(str::to_owned)?;
+        child.show().map_err(|_| "dsh-native-surface-unavailable".to_owned())
+    }).await.map_err(|_| "dsh-native-surface-unavailable".to_owned())?
 }
 
 #[tauri::command]

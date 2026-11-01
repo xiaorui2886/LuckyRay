@@ -42,9 +42,19 @@ pub(crate) fn verify_installation(resource_dir: &Path) -> Result<(), &'static st
     verify_host_compat_script(&wrapper).map_err(|_| "dsh-installation-compat-invalid")?;
     verify_surface_assets(&surface_assets(&host)).map_err(|_| "dsh-installation-surface-invalid")?;
     verify_host_tree(&host).map_err(|_| "dsh-installation-host-tree-invalid")?;
-    let identity = crate::dsh_runtime_seal::bundled_runtime_identity().map_err(|_| "dsh-installation-authority-invalid")?;
-    crate::dsh_engine_update::verify_bundled_runtime_closure(&identity, &runtime)
-        .map_err(|_| "dsh-installation-closure-invalid")
+    #[cfg(target_os = "linux")]
+    {
+        let cancelled = AtomicBool::new(false);
+        crate::dsh_runtime_seal::verify_linux_runtime_closure(&runtime,
+            &crate::dsh_runtime_seal::RuntimeSealControl::new(&cancelled))
+            .map_err(|_| "dsh-installation-closure-invalid")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let identity = crate::dsh_runtime_seal::bundled_runtime_identity().map_err(|_| "dsh-installation-authority-invalid")?;
+        crate::dsh_engine_update::verify_bundled_runtime_closure(&identity, &runtime)
+            .map_err(|_| "dsh-installation-closure-invalid")
+    }
 }
 
 pub(super) fn verify_host_tree(host: &Path) -> Result<(), ()> {
@@ -105,6 +115,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "linux"))]
     fn installed_layout_failure_keeps_the_actual_admission_phase() {
         let resources = tempfile::tempdir().unwrap();
         let profile = tempfile::tempdir().unwrap();
