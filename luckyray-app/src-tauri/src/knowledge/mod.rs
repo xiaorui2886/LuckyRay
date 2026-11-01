@@ -13,6 +13,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 mod index;
+#[cfg(target_os = "linux")]
+mod linux_transactions;
+#[cfg(target_os = "linux")]
+use linux_transactions::{open as open_exclusive_document, read as read_exclusive_document,
+    recover as recover_pending_document_writes, rename_open as rename_open_file, delete_open as delete_open_file};
 mod saved_scopes;
 pub(crate) use saved_scopes::SavedKnowledgeScope;
 #[cfg(test)]
@@ -480,11 +485,9 @@ impl KnowledgeService {
     }
 
     pub(crate) fn initialize(app_data_dir: impl AsRef<Path>) -> Result<Self, KnowledgeError> {
-        // Until Linux has the required identity-bound file transactions, even
-        // service initialization must not create or migrate user state.
         #[cfg(target_os = "linux")]
-        return Err(linux_knowledge_write_unavailable());
-
+        let linux_profile = crate::linux_fs::Directory::private(app_data_dir.as_ref(), true)
+            .map_err(linux_transactions::failure)?;
         std::fs::create_dir_all(app_data_dir.as_ref()).map_err(|_| {
             error(
                 "knowledge-app-data-unavailable",
@@ -497,6 +500,8 @@ impl KnowledgeService {
                 "Knowledge app data is unavailable",
             )
         })?;
+        #[cfg(target_os = "linux")]
+        linux_profile.verify().map_err(linux_transactions::failure)?;
         let service = Self {
             mutation_lock: shared_knowledge_mutation_lock(&app_data_dir)?,
             app_data_dir,
@@ -2671,7 +2676,40 @@ impl KnowledgeService {
         Ok(next_bytes)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    fn commit_existing_document(
+        &self, vault: &TrustedVault, target: &Path, expected_revision: Option<&str>,
+        expected_target: Option<&KnowledgeTargetIdentity>, target_guard: Option<&FilesystemDirectoryIdentityGuard>,
+        mutation: impl FnOnce(&DecodedDocument) -> Result<String, KnowledgeError>,
+    ) -> Result<Vec<u8>, KnowledgeError> {
+        let (dir, name) = linux_transactions::parent(target)?;
+        let guard = linux_transactions::open(target)?;
+        let original = dir.read(&name, false, crate::linux_file_store::MAX_RECORD_BYTES)
+            .map_err(linux_transactions::failure)?.ok_or_else(|| linux_transactions::failure(crate::linux_fs::conflict()))?;
+        if !crate::linux_fs::Version::of(&guard).map_err(linux_transactions::failure)?.same_object(&original.version) {
+            return Err(linux_transactions::failure(crate::linux_fs::conflict()));
+        }
+        if expected_revision.is_some_and(|expected| expected != sha256_hex(&original.bytes)) {
+            return Err(error("knowledge-revision-conflict", "Knowledge document changed since it was opened"));
+        }
+        let decoded = decode_document(&original.bytes)?;
+        let next_bytes = encode_document(&decoded, &mutation(&decoded)?);
+        self.assert_expected_target_unlocked(vault, expected_target, target_guard)?;
+        #[cfg(test)]
+        if let Some(hook) = self.after_final_validation.lock().expect("knowledge test hook lock").take() { hook(); }
+        self.assert_expected_target_unlocked(vault, expected_target, target_guard)?;
+        #[cfg(test)]
+        let fault = self.write_fault_before_commit.swap(false, Ordering::AcqRel);
+        #[cfg(test)]
+        let interrupt = self.interrupt_after_backup_rename.swap(false, Ordering::AcqRel);
+        #[cfg(not(test))]
+        let (fault, interrupt) = (false, false);
+        crate::linux_file_store::write(&dir, &name, Some(&original), &next_bytes, false, fault, interrupt)
+            .map_err(linux_transactions::failure)?;
+        Ok(next_bytes)
+    }
+
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     fn commit_existing_document(
         &self,
         _vault: &TrustedVault,
@@ -3623,7 +3661,7 @@ fn open_exclusive_document(path: &Path) -> Result<File, KnowledgeError> {
     Ok(file)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn open_exclusive_document(_path: &Path) -> Result<File, KnowledgeError> {
     Err(error(
         "knowledge-exclusive-write-unsupported",
@@ -3646,7 +3684,7 @@ fn read_exclusive_document(file: &mut File) -> Result<Vec<u8>, KnowledgeError> {
         })
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn read_exclusive_document(_file: &mut File) -> Result<Vec<u8>, KnowledgeError> {
     Err(error(
         "knowledge-exclusive-write-unsupported",
@@ -3739,8 +3777,9 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), KnowledgeError> {
 }
 
 #[cfg(target_os = "linux")]
-fn write_new_synced(_path: &Path, _bytes: &[u8]) -> Result<(), KnowledgeError> {
-    Err(linux_knowledge_write_unavailable())
+fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), KnowledgeError> {
+    let (dir, name) = linux_transactions::parent(path)?;
+    dir.create(&name, bytes).map(|_| ()).map_err(linux_transactions::failure)
 }
 
 #[cfg(windows)]
@@ -3826,7 +3865,7 @@ fn recover_pending_document_writes(root: &Path) -> Result<(), KnowledgeError> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn recover_pending_document_writes(_root: &Path) -> Result<(), KnowledgeError> {
     Ok(())
 }
@@ -4008,7 +4047,7 @@ fn rename_open_file(file: &File, destination: &Path) -> Result<(), KnowledgeErro
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn rename_open_file(_file: &File, _destination: &Path) -> Result<(), KnowledgeError> {
     Err(error(
         "knowledge-exclusive-write-unsupported",
@@ -4053,7 +4092,7 @@ fn delete_open_file(file: &File) -> Result<(), KnowledgeError> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn delete_open_file(_file: &File) -> Result<(), KnowledgeError> {
     Err(error(
         "knowledge-exclusive-write-unsupported",
@@ -4096,8 +4135,8 @@ fn move_file_no_replace(source: &Path, destination: &Path) -> Result<(), Knowled
 }
 
 #[cfg(target_os = "linux")]
-fn move_file_no_replace(_source: &Path, _destination: &Path) -> Result<(), KnowledgeError> {
-    Err(linux_knowledge_write_unavailable())
+fn move_file_no_replace(source: &Path, destination: &Path) -> Result<(), KnowledgeError> {
+    linux_transactions::move_new(source, destination)
 }
 
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8], replace: bool) -> Result<(), KnowledgeError> {
@@ -4111,7 +4150,7 @@ fn atomic_write_with_fault(
     fail_before_commit: bool,
 ) -> Result<(), KnowledgeError> {
     #[cfg(target_os = "linux")]
-    return Err(linux_knowledge_write_unavailable());
+    return linux_transactions::atomic_write(path, bytes, replace, fail_before_commit);
 
     let parent = path.parent().ok_or_else(|| {
         error(
@@ -4238,30 +4277,54 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn production_linux_knowledge_admission_preserves_files_and_creates_nothing() {
-        let root = tempfile::tempdir().unwrap();
-        let app_data = root.path().join("app-data");
-        let error = match KnowledgeService::initialize(&app_data) {
-            Err(error) => error,
-            Ok(_) => panic!("Linux knowledge initialization unexpectedly succeeded"),
-        };
-        assert_eq!(error.code, "knowledge-exclusive-write-unsupported");
-        assert!(!app_data.exists());
+    fn linux_production_notes_create_update_conflict_and_reopen() {
+        let (service, root, _) = registered_service("linux-production-write");
+        let created = service.create_document(&KnowledgeCreateInput {
+            title: "Unicode 目录".into(), parent_relative_path: None, content: "original".into(),
+        }).unwrap();
+        let changed = service.replace_document(&KnowledgeWriteInput {
+            document_ref: created.summary.document_ref.clone(), content: "next".into(),
+            expected_revision: Some(created.revision.clone()),
+        }).unwrap();
+        let error = service.replace_document(&KnowledgeWriteInput {
+            document_ref: created.summary.document_ref.clone(), content: "stale".into(),
+            expected_revision: Some(created.revision),
+        }).unwrap_err();
+        assert_eq!(error.code, "knowledge-revision-conflict");
+        let app_data = service.app_data_dir.clone(); drop(service);
+        let reopened = KnowledgeService::initialize(&app_data).unwrap();
+        assert_eq!(reopened.read_document(&changed.document.summary.document_ref).unwrap().content, "next");
+        assert!(std::fs::read_dir(&root).unwrap().any(|entry| entry.unwrap().path().extension() == Some(OsStr::new("backup"))));
+    }
 
-        let source = root.path().join("source");
-        let destination = root.path().join("destination");
-        let new_file = root.path().join("new-file");
-        std::fs::write(&source, b"source").unwrap();
-        std::fs::write(&destination, b"destination").unwrap();
-        assert!(write_new_synced(&new_file, b"new").is_err());
-        assert!(move_file_no_replace(&source, &destination).is_err());
-        assert!(atomic_write(&destination, b"replacement", true).is_err());
-        assert!(attachments::publish_bytes(root.path(), &[], "note.md", "a.png", b"synthetic").is_err());
-        assert_eq!(std::fs::read(&source).unwrap(), b"source");
-        assert_eq!(std::fs::read(&destination).unwrap(), b"destination");
-        assert!(!new_file.exists());
-        assert!(!root.path().join("attachments").exists());
-        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_production_notes_detect_external_edits_and_recover_interruption() {
+        let (service, root, _) = registered_service("linux-production-recovery");
+        let created = service.create_document(&KnowledgeCreateInput {
+            title: "Recover".into(), parent_relative_path: None, content: "original".into(),
+        }).unwrap();
+        let path = root.join("Recover.md");
+        let external = path.clone();
+        service.set_after_final_validation_hook(move || { std::fs::write(&external, b"external").unwrap(); });
+        let failed = service.replace_document(&KnowledgeWriteInput {
+            document_ref: created.summary.document_ref.clone(), content: "overwrite".into(),
+            expected_revision: Some(created.revision),
+        }).unwrap_err();
+        assert_eq!(failed.code, "knowledge-revision-conflict");
+        assert_eq!(std::fs::read(&path).unwrap(), b"external");
+        let current = service.read_document(&created.summary.document_ref).unwrap();
+        service.interrupt_next_write_after_backup_rename();
+        let failed = service.replace_document(&KnowledgeWriteInput {
+            document_ref: created.summary.document_ref.clone(), content: "draft".into(),
+            expected_revision: Some(current.revision),
+        }).unwrap_err();
+        assert_eq!(failed.code, "knowledge-write-interrupted");
+        assert!(!path.exists());
+        let app_data = service.app_data_dir.clone(); drop(service);
+        let reopened = KnowledgeService::initialize(app_data).unwrap();
+        assert_eq!(reopened.read_document(&created.summary.document_ref).unwrap().content, "external");
+        assert!(std::fs::read_dir(root).unwrap().any(|entry| entry.unwrap().path().extension() == Some(OsStr::new("tmp"))));
     }
 
     fn temp_path(label: &str) -> PathBuf {

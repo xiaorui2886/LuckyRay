@@ -1,179 +1,101 @@
-# Linux desktop work in progress
+# Linux desktop integration
 
-This branch is not a runnable or releasable Linux desktop. The target under
-investigation is `x86_64-unknown-linux-gnu`, using Ubuntu 22.04 as the build
-baseline and Ubuntu 24.04 as a separate future compatibility check. Neither a
-deb nor an AppImage has been produced or tested.
+The target is x86_64-unknown-linux-gnu on an Ubuntu 22.04 build baseline.
+The source is an incomplete desktop candidate. A diagnostic executable can
+exclude bundle inputs to investigate native code and UI behavior; it does not
+establish resource identity, signed-runtime or package admission.
 
-The third public workflow run [41239895080](https://github.com/xiaorui2886/LuckyRay/actions/runs/41239895080)
-completed in zero seconds with no jobs, so no runner compiled or tested the
-candidate. The service did not return detailed annotations to the available
-read-only interfaces. The workflow did contain a definite context error:
-`runner.temp` was used in a job-level `env`, where GitHub's
-[context-availability table](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability)
-does not allow `runner`. This is a likely cause, not a service-provided
-diagnosis. The local fix moves that value to the applicable step environments;
-the following run did allocate a runner and execute the corrected workflow.
+## Process lifecycle
 
-## Latest Linux diagnostic evidence
+Linux uses a separate process group created before exec. The executable is an
+absolute, no-follow, single-link ELF opened through a held directory and executed
+via its descriptor. Environment inheritance is cleared, and stdin/stdout/stderr
+are explicit pipes.
 
-The fourth public run, [41240465355](https://github.com/xiaorui2886/LuckyRay/actions/runs/41240465355),
-finished **failure** on the standard Ubuntu 22.04 runner. Its remote commit was
-`d7624f0dfa2c7aca359c447d0a9d51ae893a8f5c`; its tree
-`11379ebdb9df459a70cd3986b7ca555b5ddd4ca5` matched the reviewed local commit
-`2679dc49cc690eacad2b8ffdda0791b9d992e0ad`. The following results apply only to
-that tree, not to later local changes:
+The parent retains its unreaped group leader with waitid(WNOWAIT) while the
+authority is live. This reserves the numeric leader/group identity. Normal
+shutdown can signal the group and inspect its remaining non-zombie members;
+loss of the child wait authority is treated as unknown and disables signaling
+through that numeric ID. Closing the group authority attempts cleanup, and a
+reaper thread handles the application's own leader.
 
-- The GTK fixture passed 16 tests with one helper ignored. This includes the
-  bounded FIFO autostart regression and registration primitive tests. The focus
-  module compiled in the fixture; its graphical behavior was not exercised.
-- Package-configuration checks, Deno input tests and verification of the pinned
-  official Linux Deno archive passed. The Deno check establishes an input, not
-  a redistributable runtime closure or an application package.
-- The actual Linux main-library `cargo check` failed with 33 compiler errors.
-  The reported errors include Windows-only owned-process interfaces, note file
-  operations, host methods and conditionally compiled seal helpers. The
-  credential production-entry tests were skipped because that check failed.
-  The diagnostic temporarily excluded bundle inputs; resource, sidecar identity
-  and release checks were not validated.
+A descendant may escape with setsid/setpgid. Abrupt desktop death can leave
+tools running. A successful group-settlement sample covers that original
+group, rather than all possible descendants. No user namespace, delegated
+cgroup, service or additional privilege is required by this implementation.
 
-No native application was launched and no `.deb` or AppImage was produced.
-The subsequent local changes and their new regression tests have not yet been
-run on Linux. The stable-file lease and Linux credential admission remain
-fail-closed.
+## File commits and recovery
 
-The local follow-up addresses the specific missing interfaces without claiming
-that the Linux contracts exist. The Linux owned-process and DSH host types have
-no constructible values in safe Rust, and the production spawn and DSH
-descriptor paths reject before creating a process, gateway, profile or state
-directory. Linux knowledge service initialization rejects before creating or
-migrating app data; its transaction helpers and the shared atomic-write entry
-also reject. This currently disables all Linux knowledge service operations and
-workspace recovery writes. Attachment publication, export and recovery paths
-have additional early refusals. These are temporary restrictions pending an
-approved, verified security design, not functional Linux implementations.
+Linux path traversal opens every directory component without following links.
+Regular files are opened nonblocking and without following the final name,
+then checked for type, link count and filesystem object identity. Directory
+identity is checked again at operation boundaries. These checks detect observed
+changes; they cannot stop another process running as the same user from editing
+or renaming objects between checks.
 
-The revised workflow is prepared locally for a later single Ubuntu 22.04 run:
-compile the actual main library, compile its test binary if that succeeds, and
-run the named production admission tests if test compilation succeeds. It does
-not repeat the already-passed GTK, Deno and package-configuration checks. The
-workflow has not been run and requires independent Actions-aware lint review;
-its YAML and Bash syntax checks alone do not validate GitHub expressions.
+Writes compare the loaded object and content, create an independent durable
+backup, draft and journal, move the old object to a separate recovery name,
+and publish the new object with a no-replace rename. The moved and published
+objects are checked again. Participating writers use a nonblocking advisory
+directory lock. External edits and interrupted commits retain recovery files.
 
-## Prepared platform work and limits
+Startup recovery restores a validated prior object only into a vacant name.
+An unrelated current file is retained and requires conflict review. Completed
+writes retain backup copies and receipts. A draft retained after interrupted
+recovery can be recovered manually. Automatic backup retention/cleanup and a
+dedicated backup browser are not implemented. Note deletion retains an
+independent copy and a deletion-attempt receipt.
 
-- The Linux-only Tauri configuration selects deb and AppImage, asks Tauri to
-  include the GStreamer media framework in the AppImage, and preserves all
-  shared resource and sidecar entries through Tauri's JSON merge. The media
-  plugin inventory and licenses are not complete. Its build hook intentionally
-  fails until the listed platform blockers are resolved; it is not a substitute
-  for the existing `build.rs` admission checks or a guard against invoking a
-  different bundling command directly.
-- The LSH child webview gets a GTK focus notification wired to the existing
-  fixed drawer-dismissal event. This does not start LSH or grant content any
-  new IPC authority. The module compiled in the fixture; focus and window
-  behavior remain untested. Creating the child is still behind the existing
-  LSH host gates.
-- An explicitly invoked `luckyray-native-host --install-linux-manifest` path
-  is prepared for a per-user manifest for `chrome`, `chromium`, `edge`, or
-  `chrome-for-testing`. If the admission gate is eventually opened, it uses the
-  existing exact extension-origin allowlist, rejects AppImage, and checks the
-  executing sidecar's identity at registration time. It does not replace a
-  pre-existing manifest. A new
-  manifest is published through an unnamed file and held directory descriptor,
-  with a no-replace link; unsupported filesystems or `/proc` access fail
-  closed. The older generic command, which can overwrite an arbitrary manifest
-  path, is rejected on Linux. There is no auto-install, update or manifest
-  deletion. The CLI currently returns
-  `linux-credential-storage-unavailable` before touching the
-  filesystem. It must remain closed until the host executable's use window and
-  credential persistence have an approved, verified Linux contract.
+Replacement preserves ordinary POSIX mode and group through opened descriptors.
+Access ACLs, default directory ACLs, labels and extended file attributes are not
+yet supported by the replacement path: it refuses them before changing the
+target rather than dropping restrictions. Newly private profiles and credential
+files also reject extended attributes. Existing inode paths are retained, so
+an external editor's delayed writes remain recoverable in the displaced file.
+Recovery restores that original inode; a missing original requires review of
+the retained copy rather than guessing its original permissions.
 
-  This is a partial implementation, not an end-to-end registration result:
-  registration primitives compiled and passed fixture tests, but the production
-  host has not been compiled or launched by a browser. A held descriptor does
-  not prove that an adversary cannot move or
-  change a name before or after publication. It does not provide a lasting
-  stable-file lease for the host executable. Browser-specific command-line
-  profile overrides, Snap/Flatpak, Chrome channels other than those named
-  above, and AppImage registration remain unsupported or unverified. The
-  browser's environment must match the selected configuration directory.
-- Autostart reads use no-follow and nonblocking open followed by an opened
-  regular-file check. Creation and deletion fail closed before mutation: the
-  former named temporary file could be replaced before linking or cleanup, and
-  the former pathname unlink could remove a replacement after inspection. A
-  synthetic FIFO regression has a bounded child and cleans only its test root;
-  it passed in the Linux fixture. Idempotent requests need no write.
+## Credentials
 
-## Actual blockers and call chains
+Linux credentials use the same serialized authority and origin allowlist as
+the other desktop backends. Their app-owned profile must belong to the current
+user and have private directory permissions; credential files must be
+single-link, user-owned regular files without group/other access. Existing
+unsafe permissions or links are rejected without changing them.
 
-1. `dsh_host::DshHostService::open_native_surface` requires a sealed host
-   closure and launches the host via `owned_process::spawn_in_owned_job`.
-   `dsh_runtime_seal::acquire_stable_file` and the non-Windows
-   `dsh_host::is_reparse` fail closed on this platform. Linux descriptor
-   resolution now stops before its state and update setup. Those guarantees and
-   the associated process/notes choices are documented separately in
-   [linux-security-design-notes.md](linux-security-design-notes.md).
-2. `browser_host_poc::open_production_webview` rejects non-Windows platforms.
-   The Windows `attach_production_handlers` mediates document and subresource
-   requests; the agent browser routes its requests through an authenticated
-   gateway. A WebKitGTK web-process extension's request interception is a
-   possible building block, but worker/WebSocket coverage, process lifetime,
-   sealed extension resources and gateway integration have not been proved.
-   Linux must not open an unrestricted replacement webview.
-3. `agent_browser::runtime` depends on `owned_process` for its owned job.
-   Independently, the embedded personal-browser viewport is Windows-only in
-   `lib.rs::browser_personal_open`. These are not fixed by the GTK LSH focus
-   hook. Linux agent-browser initialization and host spawn currently reject
-   before creating a profile or gateway.
-4. `local_transport::revoke_extension_origin` revokes an approved credential;
-   deleting a browser manifest alone would only affect future host launches.
-   Safe, identity-bound manifest replacement/removal and its integration with
-   origin revocation remain unresolved. The new installer deliberately does
-   not delete or overwrite any existing name. The existing credential chain
-   `native_messaging::run` -> `load_native_credential` -> `AuthState::load_or_create`
-   and `revoke_extension_origin` -> `AuthState::persist` -> `persist_auth_record`
-   also requires review: the latter uses a random temporary name with
-   create/truncate followed by pathname rename, which does not establish the
-   requested identity-bound, exclusive Linux file-concurrency guarantee. The
-   current Linux candidate fails closed at credential load, persistence,
-   local-transport startup, native-host run and both manifest writers. It also
-   blocks normal desktop startup before Tauri/profile initialization and
-   blocks the credential-backed CLI/MCP paths before their runtime work. These
-   guards are not a replacement for the missing storage implementation.
-5. Node and Deno have fixed official Linux inputs prepared only for verification;
-   the sealed LSH closure, Python, FFmpeg, all sidecars, media plugins and
-   complete third-party notices are not assembled as a deliverable.
+Reads and writes use held directory descriptors. Persistence compares the
+version loaded by that authority instance and retains recovery evidence.
+Credential derivation rechecks the loaded credential/grant records, so an
+instance with an observed stale rotation or grant change refuses authentication
+until it reloads. A native host's read does not create a missing profile or
+credential. Generic arbitrary-path manifest writing remains rejected on Linux;
+the scoped installer uses its separate no-replace registration path.
 
-   The existing media resolver explicitly requires Python 3.11.8, whereas
-   Python.org now lists [3.11.18 as a security release](https://www.python.org/downloads/release/python-31118/).
-   FFmpeg.org lists both the existing 9.0.1 and a newer 9.0.2 source release in
-   its [release archive](https://ffmpeg.org/releases/). This is a compatibility
-   and security review item, not a version change in this branch. Source builds,
-   exact archive verification, dependent libraries and redistribution notices
-   remain unimplemented.
+## Runtime and graphical coverage
 
-## Shared files and Windows coordination
+Linux runtime file leases retain descriptors, metadata and content digests and
+revalidate them at use boundaries. They detect changes and do not provide
+Windows mandatory exclusion for the whole use window.
 
-The dependency target move in `src-tauri/Cargo.toml` leaves the exact Windows
-dependency versions, features and feature graph intact, while avoiding those
-dependencies on Linux. Its bytes are an input to the CLI contract fingerprint
-in `build.rs`, however, so Windows sidecar identity must be regenerated and
-verified if this change is ever merged. `src-tauri/src/lib.rs` also contributes
-to the DSH adapter fingerprint even though its new calls are Linux-gated. The
-same fingerprint includes `src-tauri/src/dsh_host.rs`, whose reader function
-now carries the same Windows/feature gate as its only caller. Its Windows
-behavior remains unchanged, but its changed bytes require identity coordination.
-The native-messaging CLI additions are Linux-gated; the existing Windows manifest
-writer and NSIS hooks are unchanged. These shared-file effects require parent
-review before cross-platform integration. The Linux-only CLI admission guard
-also changes the bytes of `src/tool_cli.rs`, another CLI fingerprint input.
-The follow-up also changes `src/owned_process.rs`, `src/agent_browser/runtime.rs`,
-`src/dsh_runtime_seal.rs`, and several `src/knowledge/` files. Their new paths
-are Linux-gated, and the Windows branches must still be reviewed and tested when
-integrating with the separate macOS and Windows work.
+The sealed Linux LSH closure, host lifecycle integration, request-mediated
+browser host, Python, FFmpeg and redistribution inventories are still required.
+The existing Windows records are not accepted as Linux runtime identities.
+The current LSH descriptor/host paths remain unavailable until that actual
+platform integration is implemented; directory and credential support alone
+does not establish AI availability.
 
-References: [Tauri platform configuration](https://v2.tauri.app/develop/configuration-files/),
-[Tauri AppImage media](https://v2.tauri.app/distribute/appimage/),
-[Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging),
-and [Edge native messaging](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/native-messaging).
+The Linux directory-opening command uses the desktop's GIO handler. Its
+synthetic handler test validates the production GIO call, while the native
+smoke script drives the real Tauri executable with WebKitWebDriver under Xvfb.
+That script uses a fresh profile, synthetic notes and a PNG, and checks IPC
+flows, normal exit and reopening. Neither a synthetic handler nor an IPC smoke
+establishes every visible UI interaction, Wayland, hardware media or installer
+behavior.
+
+## Shared source coordination
+
+Windows branches remain platform-gated. Shared source bytes still affect
+compiled contract/adapter fingerprints, including lib.rs and tool_cli.rs.
+Integrating a platform change requires rebuilding the corresponding sidecars
+and reviewing their identities. The Linux branch does not update another
+platform's checkout, formal publisher, version or installer.

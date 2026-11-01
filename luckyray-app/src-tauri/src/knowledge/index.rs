@@ -1070,7 +1070,7 @@ fn open_index_file(path: &Path) -> std::io::Result<File> {
 #[cfg(target_os = "linux")]
 fn open_index_file(path: &Path) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path)
+    OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]

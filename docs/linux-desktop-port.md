@@ -17,13 +17,24 @@ https://github.com/xiaorui2886/LuckyRay/actions/runs/41235425979
 The two synthetic security experiments passed their limited scenarios, as did
 the independent XDG, sidecar naming and autostart tests. The GTK fixture did
 not compile because the test crate resolved the module path incorrectly. The
-path fix is local and has not yet run on Linux. The overall workflow failed;
-it did not build or start LuckyRay.
+path fix was exercised in the later fourth run described below. The overall
+workflow failed; it did not build or start LuckyRay.
 
 Those historical autostart results predate the later security review. The
 current candidate keeps reads but refuses any autostart creation or deletion
-until an identity-bound mutation is available; its new FIFO and no-write
-regressions have not yet run on Linux.
+until an identity-bound mutation is available. Its FIFO and no-write
+regressions passed in the fourth-run fixture.
+
+The fourth preflight compiled and ran the corrected GTK fixture (16 passed;
+one helper was invoked by its parent test). Its main-library check failed with
+33 compiler errors. The fifth preflight,
+[run 41242624319](https://github.com/xiaorui2886/LuckyRay/actions/runs/41242624319),
+used public commit `461684e7449a6b07eb5dbc7934e4fbe840802e16` and tree
+`22268e76e95bbf28290bf18c2f48d40a3f321ab6`. The actual Linux main-library
+`cargo check` and test-binary compilation succeeded; 11 individually named
+admission tests executed and passed. The full suite was not run. Its temporary
+diagnostic configuration excluded bundle inputs, so it did not verify release
+resources, sidecar identities or packaging. It did not launch the application.
 
 ## Runtime input candidates
 
@@ -51,8 +62,9 @@ regressions have not yet run on Linux.
   `c24f955d9fbfe0ea5ae2b501c8e71ae76e31e4c9782390a54a284b3364fda725`
   according to the [release metadata](https://api.github.com/repos/denoland/deno/releases/tags/v2.9.4).
   `scripts/linux/prepare-deno-input.mjs` is a new input-only staging tool that
-  pins this archive and the upstream MIT notice; real archive extraction, the
-  resulting Linux executable, and redistribution review remain unverified.
+  pins this archive and the upstream MIT notice. The fourth preflight verified
+  the official archive, extraction and executable as an input; redistribution
+  review remains incomplete.
   Its report explicitly says that the third-party notice inventory is unaudited.
   In particular, the upstream project's
   [binary-license inventory issue](https://github.com/denoland/deno/issues/13515)
@@ -74,9 +86,8 @@ regressions have not yet run on Linux.
 1. Prepare and seal the complete Linux LSH closure, including the Linux Node
    binary, native addons, the node-pty spawn helper and executable permissions.
    Preserve offline installation, ownership and hash checks.
-2. Implement Linux process-tree ownership and cleanup with guarantees appropriate
-   to the current Windows Job-based lifecycle; a plain detached subprocess is
-   not equivalent. Build-script naming now recognizes Linux sidecars, but the
+2. Verify the Linux process-group lifecycle and its documented escape and
+   abrupt-exit limitations. Build-script naming now recognizes Linux sidecars, but the
    provenance-producing preparation and remaining build steps are still needed.
 3. Implement and verify a real Linux browser host and embedded LSH surface.
    The present browser host reports unsupported on non-Windows.
@@ -89,14 +100,22 @@ regressions have not yet run on Linux.
 ## Partial implementation and security limits
 
 - Linux XDG application-data lookup and a GTK external-drag implementation are
-  present. The GTK implementation has not been compiled or exercised on Linux.
-  The GTK fixture
-  compiles the actual module and checks URI escaping and image validation; it
-  does not demonstrate a desktop drag or launch the application.
-- Linux knowledge-index opens now refuse a final-component symlink. Parent
-  directory identity, existing-note exclusivity and identity-preserving
-  transactions remain unresolved; this change must not be described as a
-  completed secure write implementation.
+  present. The fourth-run GTK fixture compiled the actual module and exercised
+  its URI and image validation; it did not demonstrate a desktop drag or launch
+  the application.
+- A later local change routes the Linux `open_directory` command through the
+  registered GIO directory handler after checking an absolute existing
+  directory and encoding a file URI. This removes that command's direct
+  `xdg-open` lookup from `PATH`; GIO still uses the desktop's configured
+  handler. Only the path-validation portion has run locally, on Windows. The
+  Linux GIO call, URI test and synthetic-handler test have not yet run, and
+  application startup remains blocked. This does not change the other
+  file-opening commands or establish an identity-bound file lease.
+- Linux note writes now prepare descriptor-relative optimistic transactions,
+  independent backups and interruption recovery. Filesystem object, content and
+  parent identities are checked at operation boundaries. Same-user mandatory
+  exclusion is not provided. The new production paths still require native
+  validation; see [Linux integration](linux-desktop-port-notes.md).
 - `tests/linux-security/atomic_create_probe.c` explores an unnamed inode and a
   previously opened directory descriptor, with no-overwrite tests after a
   synthetic directory rename. It does not establish how to acquire a trusted
@@ -120,9 +139,10 @@ regressions have not yet run on Linux.
   needs a documented architecture and a proof that matches the required threat
   model, potentially involving separately protected storage or privilege
   separation; no such system requirement is silently introduced here.
-- The non-Windows runtime file lease still fails closed. The browser host,
-  embedded LSH surface and native-messaging installation/revocation are not
-  complete. Neither the probe nor the staged Node input bypasses those gates.
+- Linux runtime file leases now revalidate held objects and content digests at
+  use boundaries. The sealed Linux runtime, browser host, embedded LSH surface
+  and native-messaging revocation are not complete. The generic cross-platform
+  runtime identity still requires a genuine platform-specific sealed closure.
 
 ## Shared-file merge coordination
 

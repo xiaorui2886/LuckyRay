@@ -3689,12 +3689,17 @@ fn open_workspace_directory_identity_probe(path: &Path) -> Result<File, Workspac
     Ok(file)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn open_workspace_directory_guard(_path: &Path) -> Result<File, WorkspaceError> {
     Err(WorkspaceError::new(
         "workspace-write-failed",
         "Workspace exclusive directory guards are unavailable on this platform",
     ))
+}
+
+#[cfg(target_os = "linux")]
+fn open_workspace_directory_guard(path: &Path) -> Result<File, WorkspaceError> {
+    crate::linux_fs::Directory::open(path).map(|dir| dir.file).map_err(|_| workspace_read_error())
 }
 
 #[cfg(windows)]
@@ -3797,9 +3802,9 @@ impl FilesystemDirectoryIdentityGuard {
 
     /// Confirms that the caller's current path still resolves to the exact
     /// directory object held by this guard. Windows can prove this while the
-    /// no-delete-share handle is live. Other platforms keep the existing
-    /// identity implementation for Workspace registration, but fail closed
-    /// when a caller requires the stronger replacement fence.
+    /// no-delete-share handle is live. Linux checks an opened directory's
+    /// identity at this boundary and allows the documented external rename
+    /// race. Other platforms reject requests for this replacement check.
     pub(crate) fn verify_current_path(&self, path: &Path) -> Result<(), WorkspaceError> {
         #[cfg(windows)]
         {
@@ -3812,7 +3817,15 @@ impl FilesystemDirectoryIdentityGuard {
             }
             Ok(())
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        {
+            let current = crate::linux_fs::Directory::open(path).map_err(|_| workspace_read_error())?;
+            if workspace_file_identity(&current.file, path)? != self.identity {
+                return Err(WorkspaceError::new("workspace-grant-changed", "Workspace grant identity changed"));
+            }
+            Ok(())
+        }
+        #[cfg(all(not(windows), not(target_os = "linux")))]
         {
             let _ = path;
             Err(WorkspaceError::new(
@@ -3831,7 +3844,9 @@ pub(crate) fn filesystem_directory_identity_guard(
     // fences replacement, while independent identity readers can coexist.
     // The separate Workspace commit guard retains its existing DELETE access.
     let file = open_workspace_directory_fence(path, false)?;
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    let file = crate::linux_fs::Directory::open(path).map_err(|_| workspace_read_error())?.file;
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     let file = {
         let metadata = fs::symlink_metadata(path).map_err(|_| workspace_read_error())?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {

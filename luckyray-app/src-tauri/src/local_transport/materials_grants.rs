@@ -77,8 +77,8 @@ impl AuthState {
     pub(super) fn load_materials_grants(&mut self) -> Result<(), String> {
         let mut grants = Vec::new();
         for (file, unified) in [(GRANTS_FILE, false), (LIBRARY_GRANTS_FILE, true)] {
-            match fs::read(self.path.with_file_name(file)) {
-                Ok(bytes) => {
+            match self.read_record(&self.path.with_file_name(file)) {
+                Ok(Some(bytes)) => {
                     let record: GrantRecord = serde_json::from_slice(&bytes)
                         .map_err(|_| "materials-grants-invalid")?;
                     if record.version != 1 || record.grants.iter().any(|g| g.knowledge.is_some() != unified) {
@@ -86,7 +86,7 @@ impl AuthState {
                     }
                     grants.extend(record.grants);
                 }
-                Err(e) if e.kind() == ErrorKind::NotFound => {},
+                Ok(None) => {},
                 Err(_) => return Err("materials-grants-unreadable".into()),
             }
         }
@@ -100,7 +100,7 @@ impl AuthState {
     fn persist_grant_family(&self, unified: bool) -> Result<(), String> {
         // Existing desktop versions keep reading their original, unchanged schema.
         // Each operation changes one family in one atomic file replacement.
-        persist_auth_record(&self.path.with_file_name(if unified { LIBRARY_GRANTS_FILE } else { GRANTS_FILE }),
+        self.persist_record(&self.path.with_file_name(if unified { LIBRARY_GRANTS_FILE } else { GRANTS_FILE }),
             &GrantRecord {version: 1, grants: self.materials_grants.iter()
                 .filter(|g| g.knowledge.is_some() == unified).cloned().collect()})
     }
@@ -121,6 +121,7 @@ impl AuthState {
     }
 
     pub(super) fn materials_credential(&self, id: &str) -> Result<String, String> {
+        self.validate_current_credentials()?;
         let grant = self.grant(id)?;
         if let Some(knowledge) = &grant.knowledge {
             let identity = serde_json::to_vec(knowledge).map_err(|_| "library-grant-invalid")?;

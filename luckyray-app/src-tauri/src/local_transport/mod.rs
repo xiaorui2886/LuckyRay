@@ -292,12 +292,16 @@ struct AuthState {
     persisted: PersistedAuth,
     materials_grants: Vec<MaterialsGrant>,
     materials_grants_error: Option<String>,
+    #[cfg(target_os = "linux")]
+    credential_store: Mutex<linux_credentials::CredentialStore>,
 }
 
+#[cfg(target_os = "linux")]
+mod linux_credentials;
+
 impl AuthState {
+    #[cfg(not(target_os = "linux"))]
     fn load_or_create(app_data_dir: &Path) -> Result<Self, String> {
-        #[cfg(target_os = "linux")]
-        crate::linux_credential_admission::require().map_err(str::to_owned)?;
         fs::create_dir_all(app_data_dir)
             .map_err(|_| "local transport credential directory is unavailable".to_string())?;
         let path = app_data_dir.join(AUTH_FILE_NAME);
@@ -331,7 +335,51 @@ impl AuthState {
     }
 
     fn persist(&self) -> Result<(), String> {
-        persist_auth_record(&self.path, &self.persisted)
+        self.persist_record(&self.path, &self.persisted)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn load_or_create(app_data_dir: &Path) -> Result<Self, String> {
+        let mut store = linux_credentials::CredentialStore::open(app_data_dir, true)?;
+        let bytes = store.read(AUTH_FILE_NAME)?;
+        let existing = bytes.is_some();
+        let persisted: PersistedAuth = match bytes {
+            Some(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|_| "local transport credential file is invalid")?,
+            None => PersistedAuth { version: AUTH_FILE_VERSION, master_secret: random_hex(32),
+                approved_origins: BTreeSet::new() },
+        };
+        validate_persisted_auth(&persisted)?;
+        let mut state = Self { path: app_data_dir.join(AUTH_FILE_NAME), persisted,
+            materials_grants: Vec::new(), materials_grants_error: None,
+            credential_store: Mutex::new(store) };
+        if !existing { state.persist()?; }
+        state.initialize_materials_grants();
+        Ok(state)
+    }
+
+    fn persist_record(&self, path: &Path, record: &impl Serialize) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        {
+            if path.parent() != self.path.parent() { return Err("credential path is invalid".into()); }
+            let name = path.file_name().and_then(|n| n.to_str()).ok_or("credential name is invalid")?;
+            let bytes = serde_json::to_vec_pretty(record).map_err(|_| "credential serialization failed")?;
+            self.credential_store.lock().map_err(|_| "credential store lock failed")?.write(name, &bytes)
+        }
+        #[cfg(not(target_os = "linux"))]
+        { persist_auth_record(path, record) }
+    }
+
+    fn read_record(&self, path: &Path) -> Result<Option<Vec<u8>>, String> {
+        #[cfg(target_os = "linux")]
+        {
+            if path.parent() != self.path.parent() { return Err("credential path is invalid".into()); }
+            let name = path.file_name().and_then(|n| n.to_str()).ok_or("credential name is invalid")?;
+            self.credential_store.lock().map_err(|_| "credential store lock failed")?.read(name)
+        }
+        #[cfg(not(target_os = "linux"))]
+        { match fs::read(path) { Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None), Err(_) => Err("materials-grants-unreadable".into()) } }
     }
 
     fn approve_origin(&mut self, origin: &str) -> Result<(), String> {
@@ -364,10 +412,18 @@ impl AuthState {
     }
 
     fn native_credential(&self) -> Result<String, String> {
+        self.validate_current_credentials()?;
         derive_credential(&self.persisted.master_secret, "native\0v1")
     }
 
+    fn validate_current_credentials(&self) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        self.credential_store.lock().map_err(|_| "credential store lock failed")?.validate_current()?;
+        Ok(())
+    }
+
     fn extension_credential(&self, origin: &str) -> Result<String, String> {
+        self.validate_current_credentials()?;
         if !self.persisted.approved_origins.contains(origin) {
             return Err("extension origin is not approved".to_string());
         }
@@ -394,9 +450,8 @@ impl AuthState {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 fn persist_auth_record(path: &Path, record: &impl Serialize) -> Result<(), String> {
-        #[cfg(target_os = "linux")]
-        crate::linux_credential_admission::require().map_err(str::to_owned)?;
         let parent = path
             .parent()
             .ok_or_else(|| "local transport credential path is invalid".to_string())?;
@@ -432,12 +487,29 @@ fn persist_auth_record(path: &Path, record: &impl Serialize) -> Result<(), Strin
 
 pub(crate) fn load_native_credential(app_data_dir: &Path) -> Result<String, String> {
     #[cfg(target_os = "linux")]
-    crate::linux_credential_admission::require().map_err(str::to_owned)?;
+    {
+        let mut store = linux_credentials::CredentialStore::open(app_data_dir, false)?;
+        let bytes = store.read(AUTH_FILE_NAME)?.ok_or("app-unavailable")?;
+        let record: PersistedAuth = serde_json::from_slice(&bytes).map_err(|_| "credential file is invalid")?;
+        validate_persisted_auth(&record)?;
+        return derive_credential(&record.master_secret, "native\0v1");
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
     let path = app_data_dir.join(AUTH_FILE_NAME);
     if !path.is_file() {
         return Err("app-unavailable".to_string());
     }
     AuthState::load_or_create(app_data_dir)?.native_credential()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn validate_persisted_auth(record: &PersistedAuth) -> Result<(), String> {
+    if record.version != AUTH_FILE_VERSION || !is_strict_secret(&record.master_secret)
+        || record.approved_origins.iter().any(|origin| canonical_extension_origin(origin).as_deref() != Some(origin.as_str()))
+    { return Err("local transport credential file is invalid".into()); }
+    Ok(())
 }
 
 pub(crate) fn configured_extension_origins() -> Result<BTreeSet<String>, String> {
@@ -623,8 +695,6 @@ pub fn start_server(
     config: ServerConfig,
     adapter: Arc<dyn TransportAdapter>,
 ) -> Result<LocalTransportHandle, String> {
-    #[cfg(target_os = "linux")]
-    crate::linux_credential_admission::require().map_err(str::to_owned)?;
     let auth = Arc::new(Mutex::new(AuthState::load_or_create(&config.app_data_dir)?));
     let mut listener = None;
     let mut last_error = None;
@@ -2351,33 +2421,29 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_credential_admission_blocks_transport_and_storage_before_io() {
-        use std::os::unix::fs::symlink;
+    fn linux_credentials_round_trip_rotate_and_preserve_conflicting_state() {
         let root = tempfile::tempdir().unwrap();
-        let missing = root.path().join("must-not-be-created");
-        let expected = crate::linux_credential_admission::UNAVAILABLE;
-        assert_eq!(AuthState::load_or_create(&missing).err().as_deref(), Some(expected));
-        assert!(!missing.exists());
-
+        let profile = root.path().join("profile");
+        let mut first = AuthState::load_or_create(&profile).unwrap();
+        let initial = first.native_credential().unwrap();
+        assert_eq!(load_native_credential(&profile).unwrap(), initial);
+        let mut stale = AuthState::load_or_create(&profile).unwrap();
+        first.rotate_master().unwrap();
+        let rotated = first.native_credential().unwrap();
+        assert_ne!(initial, rotated);
+        assert!(stale.rotate_master().is_err());
+        assert!(stale.native_credential().is_err());
+        assert_eq!(load_native_credential(&profile).unwrap(), rotated);
+        let linked = root.path().join("linked");
+        std::os::unix::fs::symlink(&profile, &linked).unwrap();
+        assert!(load_native_credential(&linked).is_err());
         let foreign = root.path().join("foreign");
         fs::write(&foreign, b"unchanged").unwrap();
-        assert_eq!(persist_auth_record(&foreign, &json!({"synthetic": true})).err().as_deref(), Some(expected));
+        let alternate = root.path().join("alternate");
+        crate::linux_fs::Directory::private(&alternate, true).unwrap();
+        std::os::unix::fs::symlink(&foreign, alternate.join(AUTH_FILE_NAME)).unwrap();
+        assert!(load_native_credential(&alternate).is_err());
         assert_eq!(fs::read(&foreign).unwrap(), b"unchanged");
-        let absent_parent = root.path().join("absent").join("auth.json");
-        assert_eq!(persist_auth_record(&absent_parent, &json!({"synthetic": true})).err().as_deref(), Some(expected));
-        assert!(!root.path().join("absent").exists());
-
-        symlink(&foreign, root.path().join(AUTH_FILE_NAME)).unwrap();
-        assert_eq!(load_native_credential(root.path()).err().as_deref(), Some(expected));
-        assert_eq!(fs::read(&foreign).unwrap(), b"unchanged");
-
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let mut config = ServerConfig::production(missing.clone());
-        config.ports = vec![listener.local_addr().unwrap().port()];
-        let error = start_server(config, Arc::new(MockAdapter::default())).err().unwrap();
-        assert_eq!(error, expected);
-        assert!(!missing.exists());
-        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
     }
 
     #[test]

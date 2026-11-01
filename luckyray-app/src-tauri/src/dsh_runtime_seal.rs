@@ -263,7 +263,12 @@ fn revalidate_locked_object(
 pub(crate) struct StableFileLease {
     #[cfg(windows)]
     object: LockedRuntimeObject,
+    #[cfg(target_os = "linux")]
+    linux: linux::Lease,
 }
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 impl StableFileLease {
     pub(crate) fn revalidate(&self) -> Result<(), ()> {
@@ -273,7 +278,9 @@ impl StableFileLease {
             let control = RuntimeSealControl::new(&cancelled);
             revalidate_locked_object(&self.object, &control)
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        { self.linux.revalidate() }
+        #[cfg(all(not(windows), not(target_os = "linux")))]
         {
             Err(())
         }
@@ -287,7 +294,9 @@ pub(crate) fn acquire_stable_file(path: &Path) -> Result<StableFileLease, ()> {
             object: lock_runtime_object(path, true, false, true)?,
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    { Ok(StableFileLease { linux: linux::Lease::acquire(path)? }) }
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     {
         let _ = path;
         Err(())
@@ -577,9 +586,15 @@ fn regular_file_has_one_link(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn regular_file_has_one_link(_path: &Path) -> bool {
     false
+}
+
+#[cfg(target_os = "linux")]
+fn regular_file_has_one_link(path: &Path) -> bool {
+    path.parent().and_then(|parent| crate::linux_fs::Directory::open(parent).ok())
+        .and_then(|dir| dir.open_file(path.file_name()?, false).ok()).is_some()
 }
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -592,7 +607,9 @@ fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
         use std::os::windows::fs::MetadataExt;
         metadata.file_attributes() & 0x400 != 0
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    { false }
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     {
         true
     }
@@ -633,14 +650,20 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_stable_file_lease_rejects_even_regular_files() {
+    fn linux_runtime_file_lease_detects_edits_and_rejects_links() {
         let root = tempfile::tempdir().unwrap();
         let file = root.path().join("regular-file");
         fs::write(&file, b"synthetic runtime file").unwrap();
         let metadata = fs::symlink_metadata(&file).unwrap();
         assert!(metadata.is_file());
-        assert!(is_link_or_reparse(&metadata));
-        assert!(acquire_stable_file(&file).is_err());
+        assert!(!is_link_or_reparse(&metadata));
+        let lease = acquire_stable_file(&file).unwrap();
+        assert!(lease.revalidate().is_ok());
+        fs::write(&file, b"external edit").unwrap();
+        assert!(lease.revalidate().is_err());
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&file, &alias).unwrap();
+        assert!(acquire_stable_file(&alias).is_err());
     }
 
     #[test]

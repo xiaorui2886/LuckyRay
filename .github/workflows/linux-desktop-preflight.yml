@@ -1,14 +1,14 @@
-name: Linux desktop native diagnostics
+name: Linux desktop native candidate
 on:
   push:
     branches: [port/linux-desktop-20261101]
 permissions:
   contents: read
 jobs:
-  linux-native-diagnostics:
+  linux-native-candidate:
     if: github.repository == 'xiaorui2886/LuckyRay'
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: '2'
     steps:
@@ -26,7 +26,7 @@ jobs:
           printf 'Commit: %s\n' "$actual"
           test "$actual" = "$GITHUB_SHA"
           git diff --exit-code
-      - name: Install native development dependencies on the disposable runner
+      - name: Install dependencies on the disposable runner
         id: native_deps
         continue-on-error: true
         shell: bash
@@ -35,8 +35,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libwebkit2gtk-4.1-dev \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-          pkg-config --modversion webkit2gtk-4.1 gtk+-3.0
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+            webkit2gtk-driver xvfb xauth dbus-x11
       - name: Install the pinned Rust toolchain
         id: rust
         continue-on-error: true
@@ -48,36 +48,19 @@ jobs:
         continue-on-error: true
         timeout-minutes: 35
         env:
-          # Diagnostic only: never interpreted as resource, sidecar identity,
-          # packaging, or release admission verification.
           TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
           CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
         shell: bash
         run: |
           set -euo pipefail
-          echo "::notice::Source compilation diagnostic only; package resources, sidecar identity, and release gates are NOT verified."
+          echo "::notice::Compilation diagnostic; package resources, sidecar identity and release gates are NOT verified."
           rustup run 1.95.0 cargo check --locked --lib \
-            --target x86_64-unknown-linux-gnu \
-            --manifest-path luckyray-app/src-tauri/Cargo.toml
-      - name: Compile the real library test binary
-        id: test_compile
+            --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml
+      - name: Exercise the changed Linux production modules
+        id: core_tests
         if: ${{ always() && !cancelled() && steps.main_check.outcome == 'success' }}
         continue-on-error: true
-        timeout-minutes: 35
-        env:
-          TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
-          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup run 1.95.0 cargo test --locked --lib --no-run \
-            --target x86_64-unknown-linux-gnu \
-            --manifest-path luckyray-app/src-tauri/Cargo.toml
-      - name: Test production admission and fail-closed paths
-        id: admission_tests
-        if: ${{ always() && !cancelled() && steps.test_compile.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 40
         env:
           TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":null,"resources":null}}'
           CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
@@ -85,30 +68,112 @@ jobs:
         run: |
           set -euo pipefail
           rustup run 1.95.0 cargo test --locked --lib \
-            --target x86_64-unknown-linux-gnu \
-            --manifest-path luckyray-app/src-tauri/Cargo.toml \
-            -- --list > "$RUNNER_TEMP/luckyray-admission-tests.txt"
+            --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- --list > "$RUNNER_TEMP/luckyray-core-tests.txt"
           tests=(
-            'owned_process::linux_admission_tests::owned_spawn_rejects_before_child_can_write'
-            'agent_browser::runtime::tests::production_agent_host_is_rejected_before_profile_or_gateway'
-            'dsh_host::tests::production_linux_dsh_is_unavailable_before_creating_state'
-            'dsh_runtime_seal::tests::linux_stable_file_lease_rejects_even_regular_files'
-            'knowledge::tests::production_linux_knowledge_admission_preserves_files_and_creates_nothing'
-            'knowledge::attachment_operations::linux_admission_tests::recovery_directory_is_rejected_before_creation'
-            'linux_desktop_admission_tests::linux_credential_admission_blocks_real_desktop_startup_before_profile_io'
-            'linux_desktop_admission_tests::linux_credential_admission_blocks_production_cli_and_mcp_entrypoints'
-            'local_transport::tests::linux_credential_admission_blocks_transport_and_storage_before_io'
-            'native_messaging::tests::linux_credential_admission_blocks_native_entrypoints_before_io'
-            'tool_client::tests::linux_credential_admission_blocks_tool_client_before_profile_or_network'
+            'owned_process::linux::tests::linux_owned_process_stdio_exit_and_group_cleanup'
+            'owned_process::linux::tests::linux_prelaunch_failure_and_unsafe_sources_do_not_start'
+            'linux_file_store::tests::linux_commit_preserves_backup_and_rejects_stale_revision'
+            'linux_file_store::tests::linux_interrupted_commit_recovers_without_overwriting_external_edit'
+            'local_transport::linux_credentials::tests::linux_credentials_reject_links_permissions_and_stale_writers'
+            'local_transport::tests::linux_credentials_round_trip_rotate_and_preserve_conflicting_state'
+            'knowledge::tests::linux_production_notes_create_update_conflict_and_reopen'
+            'knowledge::tests::linux_production_notes_detect_external_edits_and_recover_interruption'
+            'dsh_runtime_seal::tests::linux_runtime_file_lease_detects_edits_and_rejects_links'
+            'linux_desktop_admission_tests::linux_private_profile_initialization_uses_isolated_xdg'
+            'native_messaging::tests::linux_generic_manifest_writer_preserves_existing_and_missing_paths'
+            'tool_client::tests::linux_missing_credentials_do_not_create_profile_or_contact_network'
           )
           for test in "${tests[@]}"; do
-            grep -Fx "$test: test" "$RUNNER_TEMP/luckyray-admission-tests.txt"
-            rustup run 1.95.0 cargo test --locked --lib \
-              --target x86_64-unknown-linux-gnu \
-              --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            grep -Fx "$test: test" "$RUNNER_TEMP/luckyray-core-tests.txt"
+            timeout --signal=TERM --kill-after=5s 60s \
+              rustup run 1.95.0 cargo test --locked --lib \
+              --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml \
               "$test" -- --exact
           done
-      - name: Summarize each diagnostic result
+      - name: Test the Linux directory opener with an isolated GIO handler
+        id: directory_tests
+        if: ${{ always() && !cancelled() && steps.native_deps.outcome == 'success' && steps.rust.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 35
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/tests/linux-gtk-bridge/Cargo.toml \
+            -- --list > "$RUNNER_TEMP/luckyray-directory-tests.txt"
+          tests=(
+            'linux_directory::tests::directory_validation_rejects_non_directories_and_relative_paths'
+            'linux_directory::tests::local_directory_uri_round_trips_unicode_and_reserved_characters'
+            'linux_directory_handler_test::production_gio_uses_isolated_registered_directory_handler'
+          )
+          for test in "${tests[@]}"; do
+            grep -Fx "$test: test" "$RUNNER_TEMP/luckyray-directory-tests.txt"
+            timeout --signal=TERM --kill-after=5s 60s \
+              rustup run 1.95.0 cargo test --locked --lib \
+              --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/tests/linux-gtk-bridge/Cargo.toml \
+              "$test" -- --exact
+          done
+      - name: Select the pinned frontend Node
+        id: node
+        if: ${{ always() && !cancelled() && steps.main_check.outcome == 'success' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.1'
+      - name: Build the actual application frontend
+        id: frontend
+        if: ${{ always() && !cancelled() && steps.node.outcome == 'success' }}
+        continue-on-error: true
+        working-directory: luckyray-app
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@11.3.0 --ignore-scripts --no-audit --no-fund
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Build a native application diagnostic executable
+        id: native_build
+        if: ${{ always() && !cancelled() && steps.frontend.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 35
+        env:
+          # This isolated debug executable is not a release or packaged runtime.
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-diagnostic-target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo build --locked --bin luckyray-app \
+            --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml
+      - name: Launch the real Tauri UI and exercise synthetic core flows
+        id: native_smoke
+        if: ${{ always() && !cancelled() && steps.native_build.outcome == 'success' && steps.core_tests.outcome == 'success' && steps.directory_tests.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo install tauri-driver --locked --version 2.1.0 \
+            --root "$RUNNER_TEMP/luckyray-webdriver"
+          timeout --signal=TERM --kill-after=10s 180s \
+            dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' \
+            /usr/bin/python3 luckyray-app/tests/linux-desktop-smoke.py \
+            --driver "$RUNNER_TEMP/luckyray-webdriver/bin/tauri-driver" \
+            --application "$RUNNER_TEMP/luckyray-linux-diagnostic-target/x86_64-unknown-linux-gnu/debug/luckyray-app" \
+            --output "$RUNNER_TEMP/luckyray-native-evidence"
+      - name: Retain only synthetic screenshots and the scoped result
+        if: ${{ always() && !cancelled() && steps.native_smoke.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-native-synthetic-evidence
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/luckyray-native-evidence/*.png
+            ${{ runner.temp }}/luckyray-native-evidence/report.json
+      - name: Summarize each actual result
         if: ${{ always() }}
         shell: bash
         env:
@@ -117,30 +182,27 @@ jobs:
           NATIVE_DEPS: ${{ steps.native_deps.outcome }}
           RUST: ${{ steps.rust.outcome }}
           MAIN_CHECK: ${{ steps.main_check.outcome }}
-          TEST_COMPILE: ${{ steps.test_compile.outcome }}
-          ADMISSION_TESTS: ${{ steps.admission_tests.outcome }}
+          CORE_TESTS: ${{ steps.core_tests.outcome }}
+          DIRECTORY_TESTS: ${{ steps.directory_tests.outcome }}
+          FRONTEND: ${{ steps.frontend.outcome }}
+          NATIVE_BUILD: ${{ steps.native_build.outcome }}
+          NATIVE_SMOKE: ${{ steps.native_smoke.outcome }}
         run: |
           set -euo pipefail
           {
-            echo "## Linux desktop native diagnostics"
+            echo "## Linux desktop candidate diagnostics"
             echo "- Commit: $GITHUB_SHA"
-            echo "- Checkout / commit verification: $CHECKOUT / $COMMIT"
-            echo "- Native dependencies / Rust: $NATIVE_DEPS / $RUST"
-            echo "- Main native library cargo check: $MAIN_CHECK"
-            echo "- Library test binary compilation: $TEST_COMPILE"
-            echo "- Production admission and fail-closed tests: $ADMISSION_TESTS"
-            echo "- Previously passed GTK, Deno and package configuration checks were not repeated."
-            echo "- Focus behavior and desktop UI launch: NOT_RUN"
-            echo "- Package resources, sidecar identity and release gates: NOT_VERIFIED"
-            echo "- No package or release artifact was produced."
+            echo "- Main library: $MAIN_CHECK"
+            echo "- Changed process, file, credential and note tests: $CORE_TESTS"
+            echo "- Directory/GIO tests: $DIRECTORY_TESTS"
+            echo "- Frontend / native executable: $FRONTEND / $NATIVE_BUILD"
+            echo "- Actual Tauri X11 startup, IPC, reopen and exit: $NATIVE_SMOKE"
+            echo "- LSH/AI, signed runtime resources, release gates and installers: NOT_VERIFIED"
+            echo "- The full test suite and hardware/Wayland matrix were not run."
           } >> "$GITHUB_STEP_SUMMARY"
-          failed=0
-          for result in "$CHECKOUT" "$COMMIT" "$NATIVE_DEPS" "$RUST" "$MAIN_CHECK"; do
-            if [ "$result" != success ]; then failed=1; fi
+          for result in "$CHECKOUT" "$COMMIT" "$NATIVE_DEPS" "$RUST" "$MAIN_CHECK" "$CORE_TESTS" "$DIRECTORY_TESTS" "$FRONTEND" "$NATIVE_BUILD" "$NATIVE_SMOKE"; do
+            if [ "$result" != success ]; then
+              echo "::error::A required candidate step failed or was not run. See its actual outcome."
+              exit 1
+            fi
           done
-          if [ "$MAIN_CHECK" = success ] && [ "$TEST_COMPILE" != success ]; then failed=1; fi
-          if [ "$TEST_COMPILE" = success ] && [ "$ADMISSION_TESTS" != success ]; then failed=1; fi
-          if [ "$failed" -ne 0 ]; then
-            echo "::error::One or more diagnostic steps failed or were not run; inspect the individual results."
-            exit 1
-          fi

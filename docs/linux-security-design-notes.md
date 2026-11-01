@@ -1,8 +1,8 @@
 # Linux ownership and file-safety design notes
 
-These are investigation notes, not an implementation or an approval to change
-LuckyRay's security contract. The Linux desktop and its sealed runtime remain
-incomplete.
+These notes compare Linux facilities and describe the platform's different
+lifecycle and optimistic file-concurrency contract. The Linux desktop and its
+sealed runtime remain incomplete.
 
 ## Process lifecycle
 
@@ -66,4 +66,11 @@ Potential directions need separate threat-model and compatibility review:
   not the existing mandatory exclusion guarantee. It requires an explicit
   decision to change the contract and must not be described as equivalent.
 
-No alternative above is silently selected by this branch.
+The current Linux implementation uses process groups and descriptor-relative,
+optimistic file transactions with independent backups and recovery journals.
+It detects observed conflicts and preserves recovery material, while accepting
+the escaped-descendant, abrupt-exit and same-user modification limitations
+described above. No privileged broker or system configuration change is used.
+See [Linux integration](linux-desktop-port-notes.md) for the implemented paths
+and remaining runtime requirements. The namespace experiments remain historical
+investigation evidence and are not product lifecycle authority.

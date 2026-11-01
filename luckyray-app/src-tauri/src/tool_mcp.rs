@@ -1119,11 +1119,6 @@ where
             return 2;
         }
     }
-    #[cfg(target_os = "linux")]
-    if let Err(error) = crate::linux_credential_admission::require() {
-        eprintln!("luckyray-mcp: {error}");
-        return 1;
-    }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

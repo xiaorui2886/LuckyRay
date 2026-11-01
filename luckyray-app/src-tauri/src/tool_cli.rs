@@ -244,11 +244,6 @@ pub fn run() -> i32 {
         };
         return run_static_manifest_check(&current, io::stdout().lock());
     }
-    #[cfg(target_os = "linux")]
-    if let Err(error) = crate::linux_credential_admission::require() {
-        eprintln!("luckyray-cli: {error}");
-        return EXIT_CONNECTION;
-    }
     run_with_connector(
         args,
         io::stdin().lock(),

@@ -84,7 +84,6 @@ pub(crate) fn install_for_current_user(
     browser: Browser,
     manifest: &[u8],
 ) -> Result<InstallOutcome, &'static str> {
-    crate::linux_credential_admission::require()?;
     // A package post-install script often runs as root. It must not install a
     // manifest in root's profile on behalf of an unknown desktop user.
     if unsafe { libc::geteuid() } == 0 {

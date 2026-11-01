@@ -170,6 +170,12 @@ mod auto_launch_linux;
 #[cfg(target_os = "linux")]
 mod linux_app_data;
 #[cfg(target_os = "linux")]
+mod linux_fs;
+#[cfg(target_os = "linux")]
+mod linux_file_store;
+#[cfg(target_os = "linux")]
+mod linux_directory;
+#[cfg(target_os = "linux")]
 mod linux_credential_admission;
 mod material_drag;
 mod material_native_video;
@@ -633,69 +639,50 @@ fn notes_drop_diagnostic(caller: tauri::Webview, stage: String, count: usize, hi
     Ok(())
 }
 
-/// Linux desktop startup stays closed before Tauri or profile initialization
-/// until the credential storage contract is implemented and reviewed.
+/// Prepare the validated desktop profile before any credential or Tauri I/O.
 #[cfg(target_os = "linux")]
 pub fn linux_desktop_startup_admission() -> Result<(), String> {
-    linux_credential_admission::require().map_err(str::to_owned)
+    let identifier = if cfg!(debug_assertions) { runtime_profile::DEVELOPMENT_IDENTIFIER }
+        else { runtime_profile::PRODUCTION_IDENTIFIER };
+    runtime_profile::RuntimeProfile::resolve_current(identifier)?;
+    linux_credential_admission::prepare(identifier).map_err(str::to_owned)
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod linux_desktop_admission_tests {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
-    #[ignore = "invoked only by the bounded startup admission test"]
-    fn linux_credential_admission_application_child() {
-        let root = std::path::PathBuf::from(
-            std::env::var_os("LUCKYRAY_DESKTOP_ADMISSION_FIXTURE").unwrap(),
-        );
-        crate::run();
-        std::fs::write(root.join("startup-returned"), b"closed").unwrap();
+    #[ignore = "invoked by the isolated profile initialization test"]
+    fn linux_private_profile_child() {
+        super::linux_desktop_startup_admission().unwrap();
     }
 
     #[test]
-    fn linux_credential_admission_blocks_real_desktop_startup_before_profile_io() {
+    fn linux_private_profile_initialization_uses_isolated_xdg() {
         let root = tempfile::tempdir().unwrap();
         let profile = root.path().join("profile");
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--ignored", "linux_credential_admission_application_child"])
-            .env("LUCKYRAY_DESKTOP_ADMISSION_FIXTURE", root.path())
+            .args(["--ignored", "--exact", "linux_desktop_admission_tests::linux_private_profile_child"])
             .env("HOME", &profile)
-            .env("XDG_CONFIG_HOME", profile.join("config"))
             .env("XDG_DATA_HOME", profile.join("data"))
-            .env("XDG_CACHE_HOME", profile.join("cache"))
-            .env_remove("DISPLAY")
-            .env_remove("WAYLAND_DISPLAY")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+            .env("LUCKYRAY_APP_PROFILE", "development")
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             match child.try_wait() {
-                Ok(Some(status)) => {
-                    assert!(status.success(), "desktop admission child failed: {status}");
-                    break;
-                }
+                Ok(Some(status)) => { assert!(status.success()); break; },
                 Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-                Ok(None) | Err(_) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    panic!("desktop admission child did not settle within the deadline");
-                }
+                _ => { let _ = child.kill(); let _ = child.wait(); panic!("profile initialization timed out"); }
             }
         }
-        assert_eq!(std::fs::read(root.path().join("startup-returned")).unwrap(), b"closed");
-        assert!(!profile.exists());
-    }
-
-    #[test]
-    fn linux_credential_admission_blocks_production_cli_and_mcp_entrypoints() {
-        assert_eq!(crate::tool_cli::run(), 3);
-        assert_eq!(crate::tool_mcp::run(std::iter::empty::<std::ffi::OsString>()), 1);
+        let app = profile.join("data/com.luckyray.desktop.dev");
+        assert!(app.is_dir());
+        assert_eq!(std::fs::metadata(&app).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::read_dir(&app).unwrap().count(), 0);
     }
 }
 
@@ -3487,6 +3474,7 @@ fn rotate_local_transport_credentials(
     transport.rotate_credentials()
 }
 
+#[cfg(not(target_os = "linux"))]
 #[tauri::command]
 fn open_directory(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -3503,14 +3491,15 @@ fn open_directory(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| e.to_string())?;
     }
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn open_directory(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || linux_directory::open(std::path::Path::new(&path)))
+        .await
+        .map_err(|error| format!("open-directory-task-failed: {error}"))?
 }
 
 #[tauri::command]

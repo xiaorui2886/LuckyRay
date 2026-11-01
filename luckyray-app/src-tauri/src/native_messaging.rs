@@ -265,8 +265,6 @@ fn set_binary_stdio() -> Result<(), String> {
 }
 
 pub fn run() -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    crate::linux_credential_admission::require().map_err(str::to_owned)?;
     set_binary_stdio()?;
     let caller = env::args()
         .nth(1)
@@ -295,7 +293,6 @@ pub fn run() -> Result<(), String> {
 pub fn install_linux_host(browser: &str) -> Result<&'static str, String> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
-    crate::linux_credential_admission::require().map_err(str::to_owned)?;
     // AppImage's mounted executable path ceases to exist when the image exits.
     if std::env::var_os("APPIMAGE").is_some() {
         return Err("linux-native-host-appimage-unsupported".into());
@@ -344,7 +341,7 @@ pub fn install_linux_host(browser: &str) -> Result<&'static str, String> {
 
 pub fn write_host_manifest(path: &Path, binary_path: &Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    crate::linux_credential_admission::require().map_err(str::to_owned)?;
+    return Err("linux-native-host-use-scoped-installer".into());
     let allowed_origins: Vec<String> = configured_extension_origins()?
         .into_iter()
         .map(|origin| format!("{origin}/"))
@@ -477,20 +474,14 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_credential_admission_blocks_native_entrypoints_before_io() {
+    fn linux_generic_manifest_writer_preserves_existing_and_missing_paths() {
         let root = tempfile::tempdir().unwrap();
         let foreign = root.path().join("foreign-manifest.json");
         std::fs::write(&foreign, b"unchanged").unwrap();
-        let expected = crate::linux_credential_admission::UNAVAILABLE.to_owned();
-        assert_eq!(
-            install_linux_host("chromium"),
-            Err(expected.clone())
-        );
-        assert_eq!(run(), Err(expected.clone()));
-        assert_eq!(write_host_manifest(&foreign, root.path()), Err(expected.clone()));
+        assert_eq!(write_host_manifest(&foreign, root.path()).unwrap_err(), "linux-native-host-use-scoped-installer");
         assert_eq!(std::fs::read(&foreign).unwrap(), b"unchanged");
-        let missing = root.path().join("missing").join("manifest.json");
-        assert_eq!(write_host_manifest(&missing, root.path()), Err(expected));
+        let missing = root.path().join("missing/manifest.json");
+        assert!(write_host_manifest(&missing, root.path()).is_err());
         assert!(!root.path().join("missing").exists());
     }
 
