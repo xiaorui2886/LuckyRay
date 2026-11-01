@@ -44,7 +44,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       await preflight();
       console.log(JSON.stringify({ target: TARGET, inputs: INPUTS, sidecars: SIDECARS,
         steps: ["build-frontend", "verify-official-inputs", "install-frozen-offline-dsh-closure", "probe-native-dsh-modules-and-version",
-          "build-static-openssl-python-ffmpeg", "stage-official-node-deno-and-wheels", "compile-real-release-sidecars",
+          "build-static-openssl-liblzma-python-ffmpeg", "stage-official-node-deno-and-wheels", "compile-real-release-sidecars",
           "verify-prepared-product-inventories"], bundleResources: "full-tauri-product-resources",
         nativeExecution: "not-run-by-plan", installerOrSystemChanges: false }, null, 2));
     } else if (process.argv.length === 2) console.log(JSON.stringify(await prepareBuild()));

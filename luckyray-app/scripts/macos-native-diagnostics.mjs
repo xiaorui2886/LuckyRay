@@ -4,6 +4,7 @@ export const DIAGNOSTIC_STAGES = Object.freeze([
   "command", "frontend-build", "frontend-install", "package-manager-version", "tauri-build",
   "dsh-fetch", "dsh-install", "dsh-project", "dsh-audit", "dsh-native-load", "dsh-version", "dsh-materials",
   "source-download", "source-extract", "openssl-configure", "openssl-build", "openssl-install",
+  "liblzma-configure", "liblzma-build", "liblzma-install",
   "python-configure", "python-build", "python-install", "python-install-probe", "python-stdlib", "python-probe",
   "ffmpeg-flags", "ffmpeg-configure", "ffmpeg-build", "ffmpeg-probe", "deno-probe", "node-version",
   "compile-sidecars", "cli-identity", "arm64-check", "code-sign", "diagnostic-self-test",

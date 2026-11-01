@@ -18,10 +18,39 @@ import { commandEvent, PYTHON_PROBE_IMPORTS } from "./macos-native-diagnostics.m
 export const OPENSSL = Object.freeze({ version: "3.5.9",
   url: "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
   sha256: "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a" });
+export const LIBLZMA = Object.freeze({ version: "5.8.4",
+  url: "https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.gz",
+  sha256: "0014c7886930454fe8bd4228665b51af55eeae560ea135c9c4cd33f55b2591d9",
+  license: "0BSD", licenses: Object.freeze({
+    COPYING: "616a3ad264ce29b8f1cb97e53037b139d406899ca8d1f799651e17bfa09830b8",
+    "COPYING.0BSD": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1",
+  }) });
 export const INPUTS = Object.freeze({ platform: "darwin", architecture: "arm64", node: NODE_INPUT,
-  deno: DENO_INPUT, python: SOURCES.python, ffmpeg: SOURCES.ffmpeg, openssl: OPENSSL });
+  deno: DENO_INPUT, python: SOURCES.python, ffmpeg: SOURCES.ffmpeg, openssl: OPENSSL, liblzma: LIBLZMA });
 const JOBS = String(Math.max(1, Math.min(cpus().length, 6)));
 const copy = async (from, to, mode = 0o644) => writeNew(to, await readRegular(from), mode);
+
+// Build only the library needed by CPython's required lzma import. The native
+// media builder verifies the archive architecture before linking it into Python.
+export async function buildStaticLzma(scratch, env) {
+  const archive = await download(LIBLZMA);
+  const output = join(scratch, "xz-source"); await mkdir(output);
+  // Keep verified release timestamps so Autotools uses its shipped generated files.
+  await extractSource(archive, LIBLZMA.sha256, output, true);
+  const source = join(output, `xz-${LIBLZMA.version}`); const prefix = join(scratch, "xz-static");
+  for (const [file, expected] of Object.entries(LIBLZMA.licenses))
+    if (sha256(await readRegular(join(source, file))) !== expected) throw new Error("macos-liblzma-license-invalid");
+  const buildEnv = { ...env, CFLAGS: `-O2 -ffile-prefix-map=${scratch}=.`, LDFLAGS: "" };
+  await run(join(source, "configure"), [`--prefix=${prefix}`, `--libdir=${join(prefix, "lib")}`,
+    "--disable-shared", "--enable-static", "--with-pic", "--disable-doc", "--disable-nls"],
+  { cwd: source, env: buildEnv, diagnosticStage: "liblzma-configure" });
+  const target = join(source, "src/liblzma");
+  await run("/usr/bin/make", [`-j${JOBS}`, "-C", target], { cwd: source, env: buildEnv, diagnosticStage: "liblzma-build" });
+  await run("/usr/bin/make", ["-C", target, "install"], { cwd: source, env: buildEnv, diagnosticStage: "liblzma-install" });
+  const library = join(prefix, "lib/liblzma.a");
+  if (!(await readRegular(library)).subarray(0, 8).equals(Buffer.from("!<arch>\n"))) throw new Error("macos-liblzma-static-archive-invalid");
+  return { archive, source, prefix, library };
+}
 
 export const PYTHON_RUNTIME_PROBE = String.raw`import sys
 results = []
@@ -171,9 +200,18 @@ async function prepareMedia(scratch, node, home) {
   await run("/usr/bin/make", [`-j${JOBS}`], { cwd: ssl, env, diagnosticStage: "openssl-build" });
   await run("/usr/bin/make", ["install_sw"], { cwd: ssl, env, diagnosticStage: "openssl-install" });
   await copy(join(ssl, "LICENSE.txt"), join(media, "licenses/OpenSSL-LICENSE.txt"));
+  const liblzma = await buildStaticLzma(scratch, env);
+  await run("/usr/bin/lipo", [liblzma.library, "-verify_arch", "arm64"], { diagnosticStage: "arm64-check" });
+  for (const file of Object.keys(LIBLZMA.licenses)) await copy(join(liblzma.source, file), join(media, "licenses", `XZ-${file}`));
+  await copy(liblzma.archive, join(media, "sources", `xz-${LIBLZMA.version}.tar.gz`));
+  await jsonNew(join(media, "sources/liblzma-build.json"), { source: LIBLZMA, target: "src/liblzma",
+    configure: ["--disable-shared", "--enable-static", "--with-pic", "--disable-doc", "--disable-nls"],
+    pythonLink: "explicit static archive via LIBLZMA_LIBS", commandLineTools: "not-built-or-installed" });
   const python = join(scratch, "python-source", `Python-${SOURCES.python.version}`);
   const pythonInstall = join(scratch, "python-install");
-  const pythonEnv = { ...env, CFLAGS: `-O2 -ffile-prefix-map=${scratch}=.`, LDFLAGS: "", ac_cv_header_readline_readline_h: "no" };
+  const pythonEnv = { ...env, CFLAGS: `-O2 -ffile-prefix-map=${scratch}=.`, LDFLAGS: "",
+    LIBLZMA_CFLAGS: `-I${join(liblzma.prefix, "include")}`, LIBLZMA_LIBS: liblzma.library,
+    ac_cv_header_readline_readline_h: "no" };
   await run(join(python, "configure"), [`--prefix=${pythonInstall}`, "--disable-shared", "--without-ensurepip", `--with-openssl=${sslPrefix}`, "--with-openssl-rpath=no"], { cwd: python, env: pythonEnv, diagnosticStage: "python-configure" });
   await run("/usr/bin/make", [`-j${JOBS}`], { cwd: python, env: pythonEnv, diagnosticStage: "python-build" });
   await run("/usr/bin/make", ["altinstall"], { cwd: python, env: pythonEnv, diagnosticStage: "python-install" });

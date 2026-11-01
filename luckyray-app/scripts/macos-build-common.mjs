@@ -120,7 +120,7 @@ export async function run(command, args, options = {}) {
     });
     child.once("close", async (code, signal) => {
       if (spawnFailed) return;
-      if (startedId && code !== 0 && ["python-configure", "ffmpeg-configure", "openssl-configure"].includes(diagnosticStage)) {
+      if (startedId && code !== 0 && ["python-configure", "ffmpeg-configure", "openssl-configure", "liblzma-configure"].includes(diagnosticStage)) {
         try {
           const name = diagnosticStage === "ffmpeg-configure" ? "ffbuild/config.log" : "config.log";
           const bytes = await readRegular(join(rest.cwd ?? APP, name), 2 * 1024 * 1024);
@@ -177,11 +177,12 @@ export function tarListing(archiveBytes) {
   if (result.error || result.status !== 0) throw new Error("macos-build-archive-list-invalid");
   return result.stdout;
 }
-export async function extractSource(archive, expectedSha, destination) {
+export async function extractSource(archive, expectedSha, destination, preserveTimes = false) {
+  if (typeof preserveTimes !== "boolean") throw new Error("macos-build-source-timestamps-invalid");
   // Extract regular source files ourselves. No archive-controlled links,
   // device nodes, duplicate files or parent traversal reach the build stage.
   const code = String.raw`import hashlib, os, pathlib, sys, tarfile
-src, digest, output = sys.argv[1:]
+src, digest, output, preserve_times = sys.argv[1:]
 fd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW)
 with os.fdopen(fd, 'rb') as source:
  before = os.fstat(source.fileno())
@@ -199,13 +200,18 @@ with os.fdopen(fd, 'rb') as source:
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open('xb') as created, archive.extractfile(member) as data:
      while block := data.read(65536): created.write(block)
-    target.chmod(0o755 if member.mode & 0o111 else 0o644)
+     created.flush()
+     os.fchmod(created.fileno(), 0o755 if member.mode & 0o111 else 0o644)
+     if preserve_times == '1':
+      assert type(member.mtime) is int and 0 <= member.mtime <= 0xffffffff
+      stamp = member.mtime * 1000000000
+      os.utime(created.fileno(), ns=(stamp, stamp))
  source.seek(0)
  assert hashlib.file_digest(source, 'sha256').hexdigest() == digest
  after = os.fstat(source.fileno())
  assert (before.st_size, before.st_mtime_ns, before.st_ctime_ns) == (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
 `;
-  await run("python3", ["-I", "-B", "-c", code, archive, expectedSha, destination], { diagnosticStage: "source-extract", diagnosticInput: expectedSha });
+  await run("python3", ["-I", "-B", "-c", code, archive, expectedSha, destination, preserveTimes ? "1" : "0"], { diagnosticStage: "source-extract", diagnosticInput: expectedSha });
 }
 export async function inventory(root) {
   const files = [];
