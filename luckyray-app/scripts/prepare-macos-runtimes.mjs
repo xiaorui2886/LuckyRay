@@ -23,6 +23,20 @@ export const INPUTS = Object.freeze({ platform: "darwin", architecture: "arm64",
 const JOBS = String(Math.max(1, Math.min(cpus().length, 6)));
 const copy = async (from, to, mode = 0o644) => writeNew(to, await readRegular(from), mode);
 
+export async function normalizeFfmpegCflags(value = "") {
+  if (typeof value !== "string" || value.length > 65536 || value.includes("\0"))
+    throw new Error("macos-ffmpeg-cflags-invalid");
+  // Cargo/Perl consume shell-quoted flags. FFmpeg's test_cc expands $CFLAGS
+  // directly; literal quoting would become part of the compiler arguments.
+  // shlex parses words without executing substitutions or environment values.
+  const words = JSON.parse(await run("python3", ["-I", "-B", "-c",
+    "import json,shlex,sys; print(json.dumps(shlex.split(sys.argv[1], posix=True)))", value],
+  { capture: true, diagnosticStage: "ffmpeg-flags" }));
+  if (!Array.isArray(words) || words.length > 512 || words.some(word => typeof word !== "string" || !word || /\s|\0/.test(word)))
+    throw new Error("macos-ffmpeg-cflags-unrepresentable");
+  return words.join(" ");
+}
+
 async function packageRoots(nodeModules, result = []) {
   for (const entry of await readdir(nodeModules, { withFileTypes: true })) {
     if (entry.name.startsWith(".")) continue;
@@ -158,11 +172,12 @@ with zipfile.ZipFile(target, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
   await run("python3", ["-I", "-B", "-c", zipCode, join(pythonInstall, "lib/python3.11"), join(media, "python/lib/python311.zip")], { env, diagnosticStage: "python-stdlib" });
   await copy(join(python, "LICENSE"), join(media, "licenses/Python-LICENSE.txt"));
   const ffmpeg = join(scratch, "ffmpeg-source", `ffmpeg-${SOURCES.ffmpeg.version}`);
+  const ffmpegEnv = { ...env, CFLAGS: await normalizeFfmpegCflags(env.CFLAGS ?? "") };
   const ffmpegFlags = ["--disable-shared", "--enable-static", "--disable-gpl", "--disable-nonfree", "--disable-autodetect",
     "--disable-doc", "--disable-debug", "--disable-network", "--enable-small", "--enable-videotoolbox", "--cc=clang",
     `--extra-cflags=-ffile-prefix-map=${scratch}=.`];
-  await run(join(ffmpeg, "configure"), ffmpegFlags, { cwd: ffmpeg, env, diagnosticStage: "ffmpeg-configure" });
-  await run("/usr/bin/make", [`-j${JOBS}`, "ffmpeg", "ffprobe"], { cwd: ffmpeg, env, diagnosticStage: "ffmpeg-build" });
+  await run(join(ffmpeg, "configure"), ffmpegFlags, { cwd: ffmpeg, env: ffmpegEnv, diagnosticStage: "ffmpeg-configure" });
+  await run("/usr/bin/make", [`-j${JOBS}`, "ffmpeg", "ffprobe"], { cwd: ffmpeg, env: ffmpegEnv, diagnosticStage: "ffmpeg-build" });
   for (const name of ["ffmpeg", "ffprobe"]) await copy(join(ffmpeg, name), join(media, "ffmpeg", name), 0o755);
   for (const name of ["LICENSE.md", "COPYING.LGPLv2.1"]) await copy(join(ffmpeg, name), join(media, "licenses", `FFmpeg-${name}`));
   await copy(archives.ffmpeg, join(media, "sources", "ffmpeg-9.0.1.tar.xz"));

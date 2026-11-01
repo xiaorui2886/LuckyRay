@@ -5,7 +5,7 @@ export const DIAGNOSTIC_STAGES = Object.freeze([
   "dsh-fetch", "dsh-install", "dsh-project", "dsh-audit", "dsh-native-load", "dsh-version", "dsh-materials",
   "source-download", "source-extract", "openssl-configure", "openssl-build", "openssl-install",
   "python-configure", "python-build", "python-install", "python-stdlib", "python-probe",
-  "ffmpeg-configure", "ffmpeg-build", "ffmpeg-probe", "deno-probe", "node-version",
+  "ffmpeg-flags", "ffmpeg-configure", "ffmpeg-build", "ffmpeg-probe", "deno-probe", "node-version",
   "compile-sidecars", "cli-identity", "arm64-check", "code-sign", "diagnostic-self-test",
 ]);
 const COMMANDS = Object.freeze(["node", "pnpm", "cargo", "make", "configure", "perl", "curl", "python3", "python3.11",
@@ -13,7 +13,12 @@ const COMMANDS = Object.freeze(["node", "pnpm", "cargo", "make", "configure", "p
 const CLASSES = Object.freeze(["rust-compiler", "typescript-compiler", "python-error", "native-compiler", "compiler-error", "header-not-found", "unresolved-name", "type-mismatch",
   "linker-failure", "library-not-found", "compiler-link-probe-failed", "unsupported-option", "invalid-config", "io-error",
   "before-build-failed", "module-not-found", "native-module-load-failed", "architecture-mismatch", "permission-denied",
-  "disk-full", "source-download-failed", "pinned-input-rejected", "runtime-minimum-rejected", "project-error", "configure-log-unavailable"]);
+  "disk-full", "source-download-failed", "pinned-input-rejected", "runtime-minimum-rejected", "project-error", "configure-log-unavailable", "configure-terminal"]);
+const ORIGINS = Object.freeze(["process-output", "configure-probe-log"]);
+const TERMINALS = Object.freeze({
+  "C compiler test failed.": "ffmpeg-c-compiler-test-failed",
+  "Host compiler lacks C11 support": "ffmpeg-host-c11-unsupported",
+});
 const HEADERS = Object.freeze(["stdio.h", "stdlib.h", "Python.h", "openssl/ssl.h", "openssl/crypto.h", "ffi.h", "zlib.h", "bzlib.h", "lzma.h", "sqlite3.h", "readline/readline.h"]);
 const NATIVE_MODULES = Object.freeze(["koffi", "node-pty", "sharp", "node-addon-require-builtin"]);
 const PYTHON_ERRORS = Object.freeze(["SyntaxError", "ModuleNotFoundError", "ImportError", "AssertionError", "FileNotFoundError", "PermissionError"]);
@@ -50,7 +55,7 @@ function location(line, files) {
   return count(row) && count(column) ? { file: match[1], line: row, column } : {};
 }
 export class DiagnosticCollector {
-  constructor(codes = new Set(), files = new Set()) { this.codes = codes; this.files = files; this.buffers = { stdout: "", stderr: "" }; this.commands = []; this.issues = []; this.nativeModules = new Map(); this.lastCheckpoint = null; this.truncated = false; }
+  constructor(codes = new Set(), files = new Set(), origin = "process-output") { this.codes = codes; this.files = files; this.origin = ORIGINS.includes(origin) ? origin : "process-output"; this.buffers = { stdout: "", stderr: "" }; this.commands = []; this.issues = []; this.nativeModules = new Map(); this.lastCheckpoint = null; this.truncated = false; }
   feed(stream, chunk) {
     if (!["stdout", "stderr"].includes(stream)) return;
     const text = this.buffers[stream] + chunk.toString();
@@ -59,6 +64,7 @@ export class DiagnosticCollector {
     for (const line of lines) this.line(line.slice(0, 8192).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""));
   }
   add(issue) {
+    if (!ORIGINS.includes(issue.origin)) issue.origin = this.origin;
     const active = this.commands.findLast(item => item.status === "started");
     if (active && !issue.stage) issue.stage = active.stage;
     const serialized = JSON.stringify(issue);
@@ -66,6 +72,7 @@ export class DiagnosticCollector {
     if (this.issues.length > 12) this.issues.splice(6, 1);
   }
   line(line) {
+    if (Object.hasOwn(TERMINALS, line.trim())) this.add({ class: "configure-terminal", code: TERMINALS[line.trim()] });
     const native = /^MACOS_NATIVE_MODULE_(START|PASS):([a-z-]+)$/.exec(line);
     if (native && NATIVE_MODULES.includes(native[2])) {
       if (native[1] === "START") this.nativeModules.set(native[2], "started");
@@ -162,11 +169,12 @@ export function safeDiagnosticSummary(input, codes = new Set(), files = new Set(
   for (const item of (Array.isArray(input?.issues) ? input.issues : []).slice(-12)) {
     if (!CLASSES.includes(item.class)) continue;
     const value = { class: item.class };
+    if (ORIGINS.includes(item.origin)) value.origin = item.origin;
     if (DIAGNOSTIC_STAGES.includes(item.stage)) value.stage = item.stage;
     if (HEADERS.includes(item.header)) value.header = item.header;
     if (PYTHON_ERRORS.includes(item.errorType)) value.errorType = item.errorType;
     if (PYTHON_MODULES.includes(item.module)) value.module = item.module;
-    if (/^(?:E\d{4}|TS\d{4,5})$/.test(item.code) || codes.has(item.code) || IO_CODES.includes(item.code)) value.code = item.code;
+    if (/^(?:E\d{4}|TS\d{4,5})$/.test(item.code) || codes.has(item.code) || IO_CODES.includes(item.code) || Object.values(TERMINALS).includes(item.code)) value.code = item.code;
     const where = location(`${item.file ?? ""}:${item.line ?? ""}:${item.column ?? ""}`, files);
     Object.assign(value, where);
     if (count(item.httpStatus) && item.httpStatus >= 400 && item.httpStatus <= 599) value.httpStatus = item.httpStatus;

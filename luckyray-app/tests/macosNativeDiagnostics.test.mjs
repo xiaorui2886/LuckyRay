@@ -26,6 +26,11 @@ test("streamed diagnostics retain command failure and source position without ra
   assert(result.issues.some(item => item.code === "TS2307")); assert(result.issues.some(item => item.module === "_ssl"));
   assert.deepEqual(result.nativeModules, [{ name: "sharp", status: "passed" }]);
   assert(!JSON.stringify(result).includes(canary));
+  const probes = new DiagnosticCollector(new Set(), new Set(), "configure-probe-log");
+  probes.feed("stderr", "fatal error: 'unlisted.h' file not found\nC compiler test failed.\n");
+  const probeSummary = safeDiagnosticSummary(probes.summary());
+  assert(probeSummary.issues.some(item => item.class === "header-not-found" && item.origin === "configure-probe-log"));
+  assert(probeSummary.issues.some(item => item.class === "configure-terminal" && item.code === "ffmpeg-c-compiler-test-failed"));
 });
 
 test("bounded history retains an outer failure and discloses truncation", async () => {

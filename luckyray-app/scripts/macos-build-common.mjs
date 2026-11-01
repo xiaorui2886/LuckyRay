@@ -124,7 +124,7 @@ export async function run(command, args, options = {}) {
         try {
           const name = diagnosticStage === "ffmpeg-configure" ? "ffbuild/config.log" : "config.log";
           const bytes = await readRegular(join(rest.cwd ?? APP, name), 2 * 1024 * 1024);
-          const details = new DiagnosticCollector(); details.feed("stderr", bytes);
+          const details = new DiagnosticCollector(new Set(), new Set(), "configure-probe-log"); details.feed("stderr", bytes);
           commandEvent("issues", diagnosticStage, command, { issues: safeDiagnosticSummary(details.summary()).issues });
         } catch {
           commandEvent("issues", diagnosticStage, command, { issues: [{ class: "configure-log-unavailable" }] });
