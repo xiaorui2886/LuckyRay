@@ -271,7 +271,7 @@ class Run(runtime.Run):
         require(re.fullmatch(r"chrome-extension://[a-p]{32}", extension["origin"]), "invalid manifest-derived origin")
         if os.environ.get("GITHUB_ENV"):
             with open(os.environ["GITHUB_ENV"], "a") as stream:
-                stream.write("LUCKYRAY_EXTENSION_ORIGINS=" + extension["origin"] + "\n")
+                stream.write("LUCKYRAY_DEV_EXTENSION_ORIGINS=" + extension["origin"] + "\n")
 
     def preflight(self):
         source = self.source()
@@ -347,7 +347,7 @@ class Run(runtime.Run):
             write_json(self.evidence / "preflight.json", report)
 
     def binaries(self):
-        require(os.environ.get("LUCKYRAY_EXTENSION_ORIGINS") == extension_identity(self.app)["origin"],
+        require(os.environ.get("LUCKYRAY_DEV_EXTENSION_ORIGINS") == extension_identity(self.app)["origin"],
                 "both real binaries must compile the public extension origin")
         messages = (self.private / "native-artifacts.jsonl").read_text()
         host = runtime.select_artifact(messages, self.app / "src-tauri/src/sidecars/luckyray-native-host.rs", False, self.target)

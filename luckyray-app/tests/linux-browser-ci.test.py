@@ -44,6 +44,31 @@ class EvidenceAdmission(unittest.TestCase):
     def test_complete_real_report_is_admitted(self):
         self.validate(self.raw)
 
+    def test_debug_build_origin_handoff_uses_dev_namespace_and_rejects_release_only(self):
+        with tempfile.TemporaryDirectory() as root:
+            run = ci.Run(SimpleNamespace(work=Path(root) / "work"))
+            environment_file = Path(root) / "github-env"
+            with patch.dict(os.environ, {"GITHUB_ENV": str(environment_file)}, clear=True), \
+                    patch.object(ci.runtime, "source_identity", return_value=self.source):
+                run.init()
+            origin = ci.extension_identity(run.app)["origin"]
+            self.assertEqual(environment_file.read_text(), "LUCKYRAY_DEV_EXTENSION_ORIGINS=" + origin + "\n")
+            with patch.dict(os.environ, {"LUCKYRAY_EXTENSION_ORIGINS": origin}, clear=True), \
+                    self.assertRaisesRegex(RuntimeError, "both real binaries must compile"):
+                run.binaries()
+            # Stop at artifact selection: this checks the actual handoff gate,
+            # without building, admitting a fake ELF or reporting native PASS.
+            (run.private / "native-artifacts.jsonl").write_text("")
+            class ArtifactSelectionReached(Exception):
+                pass
+            exported = dict(line.split("=", 1) for line in environment_file.read_text().splitlines())
+            with patch.dict(os.environ, exported, clear=True), \
+                    patch.object(ci.runtime, "select_artifact", side_effect=ArtifactSelectionReached) as select:
+                with self.assertRaises(ArtifactSelectionReached):
+                    run.binaries()
+            select.assert_called_once()
+            self.assertEqual(select.call_args.args[1], run.app / "src-tauri/src/sidecars/luckyray-native-host.rs")
+
     def test_seam_stale_identity_missing_consent_and_disabled_sandbox_are_rejected(self):
         mutations = [
             lambda r: r.update(browserApi="DECLARED_NODE_PROTOCOL_SEAM"),
