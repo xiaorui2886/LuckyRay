@@ -17,7 +17,7 @@ const options = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, i
 }, []));
 const preflight = options["--mode"] === "preflight";
 assert(preflight || options["--mode"] === undefined);
-let browser, child, diagnostics, startupInspection, startupFatal;
+let browser, child, diagnostics, startupInspection, startupFatal, preflightTemporary;
 let phase = "browser-identity", sandboxCheck, preflightEmitted = false;
 const phaseFailures = {
   "browser-identity": "browser-identity-invalid", "extension-identity": "extension-identity-invalid",
@@ -37,6 +37,43 @@ const STATIC_FATAL_REASONS = {
 function staticFatalReason(kind, text) {
   const normalized = String(text).replace(/\s+/g, " ").trim();
   return STATIC_FATAL_REASONS[kind]?.has(normalized) ? normalized : "UNKNOWN_REASON";
+}
+function chromiumSocketPathBytes(temporary) {
+  // Chromium 156.0.8078.0 appends this unbranded mkdtemp name and socket.
+  // Linux sockaddr_un.sun_path[108] also needs a terminating NUL byte.
+  assert(path.isAbsolute(temporary) && path.resolve(temporary) === temporary, "invalid Chromium temporary path");
+  const bytes = Buffer.byteLength(path.join(temporary, "org.chromium.Chromium.XXXXXX", "SingletonSocket"), "utf8");
+  assert(bytes < 108, "Chromium temporary socket path exceeds Linux sun_path");
+  return bytes;
+}
+function assertPrivateDirectory(directory) {
+  const entry = fs.lstatSync(directory);
+  assert(entry.isDirectory() && !entry.isSymbolicLink() && entry.uid === process.getuid()
+    && (entry.mode & 0o7777) === 0o700 && fs.realpathSync(directory) === directory,
+  "owned private Chromium temporary directory required");
+}
+function createPreflightDirectory() {
+  const base = "/tmp", parent = fs.lstatSync(base);
+  assert(parent.isDirectory() && !parent.isSymbolicLink() && fs.realpathSync(base) === base && parent.uid === 0
+    && (!(parent.mode & 0o022) || (parent.mode & 0o1000)), "trusted system temporary directory required");
+  const directory = fs.mkdtempSync(path.join(base, "lr-"));
+  let owned = false;
+  try {
+    assertPrivateDirectory(directory);
+    owned = true;
+    const temporary = path.join(directory, "tmp");
+    fs.mkdirSync(temporary, { mode: 0o700 });
+    assertPrivateDirectory(temporary);
+    chromiumSocketPathBytes(temporary);
+    const profile = path.join(temporary, "profile");
+    fs.mkdirSync(profile, { mode: 0o700 });
+    assertPrivateDirectory(profile);
+    return { directory, temporary };
+  } catch (error) {
+    // No browser has been created yet. Never recurse through an unverified root.
+    try { if (owned) fs.rmSync(directory, { recursive: true }); else fs.rmdirSync(directory); } catch {}
+    throw error;
+  }
 }
 function readStartupFatal() {
   if (!diagnostics) return { state: "NOT_STARTED", readBytes: 0, truncated: false, records: [] };
@@ -108,11 +145,12 @@ function inspectInstalledElf(file, identity) {
   } catch (error) { return { state: error?.code === "ENOENT" ? "MISSING" : "UNAVAILABLE", present: error?.code === "ENOENT" ? false : null, errorCode: safeIoCode(error) }; }
   finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch {} } }
 }
-function inspectSyntheticPaths(profile) {
-  const home = process.env.HOME, temporary = process.env.TMPDIR;
+function inspectSyntheticPaths(profile, environment = process.env) {
+  const home = environment.HOME, temporary = environment.TMPDIR;
   const trustedRoots = typeof home === "string" && typeof temporary === "string" && path.isAbsolute(home)
     && path.isAbsolute(temporary) && path.basename(home) === "synthetic-home" && path.basename(temporary) === "tmp"
-    && path.basename(path.dirname(home)) === "private" && path.dirname(home) === path.dirname(temporary);
+    && path.basename(path.dirname(home)) === "private"
+    && (path.dirname(home) === path.dirname(temporary) || (preflight && temporary === preflightTemporary));
   const writable = target => { try { fs.accessSync(target, fs.constants.W_OK | fs.constants.X_OK); return true; } catch { return false; } };
   function probe(target, set) {
     const result = { set };
@@ -142,10 +180,10 @@ function inspectSyntheticPaths(profile) {
   }
   const result = {};
   for (const key of ["HOME", "TMPDIR", "RUNNER_TEMP", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "CHROME_CONFIG_HOME"]) {
-    const value = process.env[key];
+    const value = environment[key];
     result[key] = probe(value, typeof value === "string" && value.length > 0);
   }
-  const config = process.env.CHROME_CONFIG_HOME || process.env.XDG_CONFIG_HOME || (typeof home === "string" ? path.join(home, ".config") : undefined);
+  const config = environment.CHROME_CONFIG_HOME || environment.XDG_CONFIG_HOME || (typeof home === "string" ? path.join(home, ".config") : undefined);
   result.defaultCrashReports = probe(config ? path.join(config, "chromium", "Crash Reports") : undefined, !!config);
   result.explicitProfile = probe(profile, !!profile);
   return result;
@@ -215,13 +253,21 @@ const port = Number(options["--port"]);
 if (!preflight) assert(Number.isInteger(port) && port >= 37418 && port <= 37467);
 const session = randomUUID();
 phase = "synthetic-profile";
-diagnostics = fs.mkdtempSync(path.join(os.tmpdir(), "luckyray-chromium-consent-"));
-fs.chmodSync(diagnostics, 0o700);
+let browserEnvironment = process.env;
+if (preflight) {
+  const temporary = createPreflightDirectory();
+  diagnostics = temporary.directory;
+  preflightTemporary = temporary.temporary;
+  browserEnvironment = { ...process.env, TMPDIR: preflightTemporary, RUNNER_TEMP: preflightTemporary };
+} else {
+  diagnostics = fs.mkdtempSync(path.join(os.tmpdir(), "luckyray-chromium-consent-"));
+  fs.chmodSync(diagnostics, 0o700);
+}
 // Chromium searches DIR_USER_DATA/NativeMessagingHosts. Use the exact default
 // directory registered by the real CLI in this fresh synthetic XDG home.
 // The two browser sessions reuse this one disposable profile; no manifest is
 // copied to an alternate lookup path and no personal profile is inspected.
-const profile = preflight ? diagnostics : path.join(process.env.XDG_CONFIG_HOME, "chromium");
+const profile = preflight ? path.join(preflightTemporary, "profile") : path.join(process.env.XDG_CONFIG_HOME, "chromium");
 if (!preflight) {
   const home = fs.realpathSync(process.env.HOME);
   assert.equal(path.basename(home), "Synthetic profile");
@@ -234,7 +280,7 @@ if (!preflight) {
 assert.equal(fs.realpathSync(profile), profile);
 const profileMetadata = fs.statSync(profile);
 assert(profileMetadata.isDirectory() && profileMetadata.uid === process.getuid() && !(profileMetadata.mode & 0o077));
-if (preflight) startupInspection.paths = inspectSyntheticPaths(profile);
+if (preflight) startupInspection.paths = inspectSyntheticPaths(profile, browserEnvironment);
 if (!preflight) {
   const registration = JSON.parse(fs.readFileSync(path.join(profile, "NativeMessagingHosts/com.luckyray.desktop.json"), "utf8"));
   assert.equal(registration.name, "com.luckyray.desktop");
@@ -265,7 +311,7 @@ async function until(fn, ms, message) {
 async function start() {
   phase = "browser-start";
   const stderr = fs.openSync(path.join(diagnostics, "browser.stderr"), "wx", 0o600);
-  try { child = spawn(browserPath, args, { stdio: ["ignore", "ignore", stderr], env: process.env }); }
+  try { child = spawn(browserPath, args, { stdio: ["ignore", "ignore", stderr], env: browserEnvironment }); }
   finally { fs.closeSync(stderr); }
   let spawnError;
   child.on("error", error => { spawnError = error; });

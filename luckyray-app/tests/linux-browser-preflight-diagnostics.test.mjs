@@ -30,11 +30,11 @@ async function simulate(scenario, fixture = {}) {
   const home = path.join(root, "private/synthetic-home"), temporary = path.join(root, "private/tmp");
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   fs.mkdirSync(temporary, { recursive: true, mode: 0o700 });
-  let stdout = "", stderr = "", fatalMonitor, clock = 0, child, spawns = 0, observedProfile;
-  const accessedPaths = [];
+  let stdout = "", stderr = "", fatalMonitor, clock = 0, child, spawns = 0, observedProfile, observedTemporary;
+  const accessedPaths = [], allocations = [];
   const processMock = {
     argv: ["node", client, "--browser", executable, "--mode", "preflight"],
-    platform: "linux", getuid: () => 1000, env: { HOME: home, TMPDIR: temporary, RUNNER_TEMP: temporary,
+    platform: "linux", getuid: () => 1000, env: { HOME: home, TMPDIR: fixture.longTemporary || temporary, RUNNER_TEMP: temporary,
       XDG_CONFIG_HOME: path.join(home, "config"), XDG_CACHE_HOME: path.join(home, "cache"),
       XDG_DATA_HOME: fixture.outsideXdg ? "/personal/" + CANARY : path.join(home, "data") },
     stdout: { write: value => { stdout += value; return true; } },
@@ -46,7 +46,10 @@ async function simulate(scenario, fixture = {}) {
       accessedPaths.push(String(args[0]));
       const metadata = target[key](...args);
       return new Proxy(metadata, { get(value, field) {
-        if (field === "uid") return 1000;
+        // Standard Ubuntu /tmp is root-owned; the cloud executor maps its owner.
+        if (field === "uid") return String(args[0]) === "/tmp" ? fixture.tmpOwner ?? 0 : 1000;
+        if (field === "mode" && String(args[0]) === "/tmp" && fixture.tmpMode !== undefined) return fixture.tmpMode;
+        if (field === "mode" && allocations.includes(String(args[0])) && fixture.allocationMode !== undefined) return fixture.allocationMode;
         return typeof value[field] === "function" ? value[field].bind(value) : value[field];
       } });
     };
@@ -55,7 +58,12 @@ async function simulate(scenario, fixture = {}) {
       if (scenario === "extension-identity" && String(args[0]).endsWith("/manifest.json")) throw new Error(CANARY);
       return target.readFileSync(...args);
     };
-    if (key === "mkdtempSync" && scenario === "synthetic-profile") return () => { throw new Error(CANARY); };
+    if (key === "mkdtempSync") return (...args) => {
+      if (scenario === "synthetic-profile") throw new Error(CANARY);
+      const directory = target.mkdtempSync(fixture.overlongAllocation ? path.join("/tmp", "lr-" + "w".repeat(70)) : args[0]);
+      allocations.push(directory);
+      return directory;
+    };
     return target[key];
   } });
   const spawn = (_binary, args, options) => {
@@ -65,6 +73,18 @@ async function simulate(scenario, fixture = {}) {
     child.exitCode = scenario === "early-exit" ? 23 : null;
     child.signalCode = scenario === "signal-exit" ? fixture.signal || "SIGTRAP" : null;
     observedProfile = args.find(value => value.startsWith("--user-data-dir=")).split("=").slice(1).join("=");
+    observedTemporary = options.env.TMPDIR;
+    assert.equal(options.env.RUNNER_TEMP, observedTemporary);
+    assert.equal(processMock.env.TMPDIR, fixture.longTemporary || temporary, "the parent environment changed");
+    for (const entry of [path.dirname(observedTemporary), observedTemporary, observedProfile]) {
+      const metadata = fs.lstatSync(entry);
+      assert(metadata.isDirectory() && metadata.uid === process.getuid() && (metadata.mode & 0o7777) === 0o700);
+      assert.equal(fs.realpathSync(entry), entry);
+    }
+    if (fixture.outsideLink) {
+      fs.writeFileSync(path.join(root, "outside-sentinel"), "KEEP");
+      fs.symlinkSync(root, path.join(observedTemporary, "outside-link"), "dir");
+    }
     if (fixture.stderr) fs.writeSync(options.stdio[2], fixture.stderr);
     child.kill = signal => {
       if (scenario !== "cleanup") { child.signalCode = signal; child.emit("exit"); }
@@ -128,11 +148,59 @@ async function simulate(scenario, fixture = {}) {
     assert(!stdout.includes(CANARY), "exported report contains private data");
     assert(stdout.length < 8192, "exported diagnostic is not bounded");
     return { report: JSON.parse(lines[0]), exitCode: processMock.exitCode ?? 0, spawns, stderr, elapsed: clock,
-      accessedPaths, profileRemoved: observedProfile ? !fs.existsSync(observedProfile) : true };
+      accessedPaths, allocations: [...allocations], observedTemporary,
+      allocationsRemoved: allocations.every(directory => !fs.existsSync(directory)),
+      outsidePreserved: !fixture.outsideLink || fs.readFileSync(path.join(root, "outside-sentinel"), "utf8") === "KEEP",
+      profileRemoved: observedProfile ? !fs.existsSync(observedProfile) : true,
+      temporaryRemoved: observedTemporary ? !fs.existsSync(path.dirname(observedTemporary)) : true };
   } finally {
+    // These are offline child mocks. Reclaim a fixture intentionally retained
+    // by the production client's "owned browser did not stop" cleanup guard.
+    for (const directory of allocations) fs.rmSync(directory, { recursive: true, force: true });
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+test("Linux socket budget counts UTF-8 bytes and rejects the first overflowing prefix", () => {
+  const helpers = body.slice(0, body.indexOf("// Observe initialization failures"));
+  const bytes = vm.runInNewContext(helpers + "\nchromiumSocketPathBytes", {
+    assert, Buffer, path, process: { argv: ["node", client] },
+  });
+  assert.equal(bytes("/" + "a".repeat(61)), 107);
+  assert.equal(bytes("/" + "é".repeat(30) + "a"), 107);
+  for (const temporary of ["/" + "a".repeat(62), "/" + "é".repeat(31), "relative", "/tmp/../outside"]) {
+    assert.throws(() => bytes(temporary), /temporary (?:socket )?path/);
+  }
+});
+test("a maximal inherited directory prefix cannot lengthen startup sockets or bypass cleanup guards", async () => {
+  const longTemporary = "/" + [...Array(15).fill("w".repeat(255)), "w".repeat(254)].join("/");
+  assert.equal(Buffer.byteLength(longTemporary), 4095);
+  const success = await simulate("success", { longTemporary, outsideLink: true });
+  assert.equal(success.report.status, "PASS");
+  assert.equal(success.spawns, 1);
+  assert.equal(success.allocations.length, 1);
+  assert.equal(path.dirname(success.allocations[0]), "/tmp");
+  assert.equal(success.observedTemporary, path.join(success.allocations[0], "tmp"));
+  assert(Buffer.byteLength(path.join(success.observedTemporary, "org.chromium.Chromium.XXXXXX", "SingletonSocket")) < 108);
+  assert.equal(success.report.startupInspection.paths.TMPDIR.writable, true);
+  assert(success.profileRemoved && success.temporaryRemoved);
+  assert(success.outsidePreserved, "cleanup followed an outward symlink");
+  const held = await simulate("cleanup");
+  assert.equal(held.report.status, "FAIL");
+  assert(!held.profileRemoved && !held.temporaryRemoved, "a live owned browser must prevent profile and temp cleanup");
+  assert.notEqual(success.allocations[0], held.allocations[0], "each attempt needs a unique directory");
+});
+test("unsafe or overflowing temporary fixtures are rejected and reclaimed before browser startup", async () => {
+  for (const fixture of [{ tmpOwner: 1234 }, { tmpMode: 0o40777 }, { allocationMode: 0o40755 }, { overlongAllocation: true }]) {
+    const result = await simulate("success", fixture);
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.report.failure.phase, "synthetic-profile");
+    assert.equal(result.report.failure.code, "synthetic-profile-invalid");
+    assert.equal(result.spawns, 0);
+    assert.equal(result.allocations.length, fixture.allocationMode || fixture.overlongAllocation ? 1 : 0);
+    assert(result.allocationsRemoved, "rejected fixture was not reclaimed");
+  }
+});
 
 const failures = [
   ["browser-identity", "browser-identity", "browser-identity-invalid"],
