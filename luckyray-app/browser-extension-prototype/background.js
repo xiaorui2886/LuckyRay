@@ -96,7 +96,12 @@ async function resolveMaterialConnection() {
       if (verified.fingerprint === stored.fingerprint) {
         return { ok: true, binding: { ...stored, serverNonce: verified.serverNonce } };
       }
-    } catch (_) { /* the selected endpoint no longer verifies */ }
+    } catch (error) {
+      if (["extension-connection-approval-required", "extension-connection-denied", "extension-connection-revoked"].includes(error?.code)) {
+        return { ok: false, code: error.code, stale: { ...stored, serverNonce: null } };
+      }
+      /* the selected endpoint no longer verifies */
+    }
     let refreshed = null;
     try { refreshed = await LuckyRayLocalTransport.discoverCandidates(); } catch (_) { /* offline */ }
     return { ok: false, code: "connection-selection-stale",

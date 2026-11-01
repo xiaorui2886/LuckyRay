@@ -285,6 +285,10 @@ struct PersistedAuth {
     version: u32,
     master_secret: String,
     approved_origins: BTreeSet<String>,
+    // Old Linux auto-bootstrap records do not constitute explicit consent.
+    #[cfg(target_os = "linux")]
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    linux_origin_grants: std::collections::BTreeMap<String, linux_browser_authorization::OriginGrant>,
 }
 
 struct AuthState {
@@ -294,10 +298,14 @@ struct AuthState {
     materials_grants_error: Option<String>,
     #[cfg(target_os = "linux")]
     credential_store: Mutex<linux_credentials::CredentialStore>,
+    #[cfg(target_os = "linux")]
+    browser_requests: linux_browser_authorization::RequestBook,
 }
 
 #[cfg(target_os = "linux")]
 mod linux_credentials;
+#[cfg(target_os = "linux")]
+pub(crate) mod linux_browser_authorization;
 
 impl AuthState {
     #[cfg(not(target_os = "linux"))]
@@ -347,12 +355,12 @@ impl AuthState {
             Some(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|_| "local transport credential file is invalid")?,
             None => PersistedAuth { version: AUTH_FILE_VERSION, master_secret: random_hex(32),
-                approved_origins: BTreeSet::new() },
+                approved_origins: BTreeSet::new(), linux_origin_grants: Default::default() },
         };
         validate_persisted_auth(&persisted)?;
         let mut state = Self { path: app_data_dir.join(AUTH_FILE_NAME), persisted,
             materials_grants: Vec::new(), materials_grants_error: None,
-            credential_store: Mutex::new(store) };
+            credential_store: Mutex::new(store), browser_requests: Default::default() };
         if !existing { state.persist()?; }
         state.initialize_materials_grants();
         Ok(state)
@@ -382,6 +390,7 @@ impl AuthState {
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None), Err(_) => Err("materials-grants-unreadable".into()) } }
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn approve_origin(&mut self, origin: &str) -> Result<(), String> {
         if self.persisted.approved_origins.insert(origin.to_string()) {
             if let Err(error) = self.persist() {
@@ -392,6 +401,7 @@ impl AuthState {
         Ok(())
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn revoke_origin(&mut self, origin: &str) -> Result<(), String> {
         if self.persisted.approved_origins.remove(origin) {
             if let Err(error) = self.persist() {
@@ -408,6 +418,8 @@ impl AuthState {
             self.persisted.master_secret = previous;
             return Err(error);
         }
+        #[cfg(target_os = "linux")]
+        self.browser_requests.clear();
         Ok(())
     }
 
@@ -427,6 +439,14 @@ impl AuthState {
         if !self.persisted.approved_origins.contains(origin) {
             return Err("extension origin is not approved".to_string());
         }
+        #[cfg(target_os = "linux")]
+        {
+            let grant = self.persisted.linux_origin_grants.get(origin)
+                .ok_or_else(|| "extension origin requires explicit consent".to_string())?;
+            return derive_credential(&self.persisted.master_secret,
+                &format!("extension\0{origin}\0{}\0v2", grant.nonce));
+        }
+        #[cfg(not(target_os = "linux"))]
         derive_credential(
             &self.persisted.master_secret,
             &format!("extension\0{origin}\0v1"),
@@ -434,8 +454,12 @@ impl AuthState {
     }
 
     fn matching_extension_origin(&self, presented: &str) -> Result<Option<String>, String> {
+        #[cfg(target_os = "linux")]
+        self.validate_current_credentials()?;
         let mut matched = None;
         for origin in &self.persisted.approved_origins {
+            #[cfg(target_os = "linux")]
+            if !self.persisted.linux_origin_grants.contains_key(origin) { continue; }
             let expected = self.extension_credential(origin)?;
             if presented.len() == expected.len()
                 && constant_time_eq(presented.as_bytes(), expected.as_bytes())
@@ -492,6 +516,7 @@ pub(crate) fn load_native_credential(app_data_dir: &Path) -> Result<String, Stri
         let bytes = store.read(AUTH_FILE_NAME)?.ok_or("app-unavailable")?;
         let record: PersistedAuth = serde_json::from_slice(&bytes).map_err(|_| "credential file is invalid")?;
         validate_persisted_auth(&record)?;
+        store.validate_current()?;
         return derive_credential(&record.master_secret, "native\0v1");
     }
     #[cfg(not(target_os = "linux"))]
@@ -509,7 +534,7 @@ fn validate_persisted_auth(record: &PersistedAuth) -> Result<(), String> {
     if record.version != AUTH_FILE_VERSION || !is_strict_secret(&record.master_secret)
         || record.approved_origins.iter().any(|origin| canonical_extension_origin(origin).as_deref() != Some(origin.as_str()))
     { return Err("local transport credential file is invalid".into()); }
-    Ok(())
+    linux_browser_authorization::validate_grants(record)
 }
 
 pub(crate) fn configured_extension_origins() -> Result<BTreeSet<String>, String> {
@@ -634,6 +659,8 @@ pub struct LocalTransportHandle {
     auth: Arc<Mutex<AuthState>>,
     shutdown: Arc<AtomicBool>,
     thread: Mutex<Option<JoinHandle<()>>>,
+    #[cfg(target_os = "linux")]
+    browser_origins: BTreeSet<String>,
     #[cfg(test)]
     resources: Arc<BodyResources>,
 }
@@ -807,6 +834,8 @@ pub fn start_server(
         auth: handle_auth,
         shutdown,
         thread: Mutex::new(Some(server_thread)),
+        #[cfg(target_os = "linux")]
+        browser_origins: config.extension_origins.clone(),
         #[cfg(test)]
         resources,
     })
@@ -1559,6 +1588,10 @@ fn process_connection(
                             "Authentication is unavailable",
                         )
                     })?;
+                    #[cfg(target_os = "linux")]
+                    state.require_browser_authorization(&requested)
+                        .map_err(linux_browser_authorization::bootstrap_failure)?;
+                    #[cfg(not(target_os = "linux"))]
                     state.approve_origin(&requested).map_err(|_| {
                         TransportFailure::new(
                             500,
@@ -1586,6 +1619,11 @@ fn process_connection(
                 )
             }
             RouteKind::ExtensionBootstrap => {
+                #[cfg(target_os = "linux")]
+                return Err(TransportFailure::new(403, "native-bootstrap-required",
+                    "Linux browser connections require the registered Native Messaging host"));
+                #[cfg(not(target_os = "linux"))]
+                {
                 let raw_origin = origin.ok_or_else(|| {
                     TransportFailure::new(
                         403,
@@ -1651,6 +1689,7 @@ fn process_connection(
                     }),
                     false,
                 )
+                }
             }
             RouteKind::Proof => {
                 let raw_origin = origin.ok_or_else(|| {
@@ -2649,6 +2688,11 @@ mod tests {
             REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&path).unwrap();
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         path
     }
 
@@ -3340,7 +3384,7 @@ mod tests {
         );
     }
 
-    fn bootstrap_extension(handle: &LocalTransportHandle, origin: &str) -> String {
+    fn native_bootstrap_once(handle: &LocalTransportHandle, origin: &str) -> String {
         let request_body = json!({"extensionOrigin": origin}).to_string();
         request(
             handle.port,
@@ -3351,6 +3395,105 @@ mod tests {
                 request_body.len()
             ),
         )
+    }
+
+    fn bootstrap_extension(handle: &LocalTransportHandle, origin: &str) -> String {
+        let response = native_bootstrap_once(handle, origin);
+        #[cfg(target_os = "linux")]
+        {
+            // Legacy transport tests use this as an authorized setup helper.
+            // Drive the same explicit Main decisions as the product; raw
+            // bootstrap refusal is tested independently below.
+            let view = handle.linux_browser_snapshot().unwrap();
+            if let Some(row) = view.extensions.iter().find(|row| row.origin == origin && matches!(row.status, "denied" | "revoked")) {
+                handle.linux_decide_browser_request(row.request_id.as_deref().unwrap(), "retry").unwrap();
+                let _ = native_bootstrap_once(handle, origin);
+            }
+            let view = handle.linux_browser_snapshot().unwrap();
+            if let Some(row) = view.extensions.iter().find(|row| row.origin == origin && row.status == "pending") {
+                handle.linux_decide_browser_request(row.request_id.as_deref().unwrap(), "approve").unwrap();
+                return native_bootstrap_once(handle, origin);
+            }
+        }
+        response
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_browser_mixed_legacy_origin_does_not_mask_nonce_granted_bearer() {
+        use std::os::unix::fs::PermissionsExt;
+        let legacy = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let origin = EDGE_DEV_EXTENSION_ORIGIN;
+        let (server, adapter, dir) = start_test_server_with("linux-browser-mixed-auth", |config| {
+            config.extension_origins.insert(legacy.into());
+        }, |_, _, _, _| true);
+        {
+            let mut state = server.auth.lock().unwrap();
+            state.persisted.approved_origins.insert(legacy.into());
+            state.persist().unwrap();
+        }
+        assert_eq!(status(&native_bootstrap_once(&server, origin)), 403);
+        let snapshot = server.linux_browser_snapshot().unwrap();
+        let pending = snapshot.extensions.iter().find(|row| row.origin == origin).unwrap();
+        server.linux_decide_browser_request(pending.request_id.as_deref().unwrap(), "approve").unwrap();
+        let response = native_bootstrap_once(&server, origin);
+        let credential = body(&response)["data"]["credential"].as_str().unwrap().to_string();
+        let response = request(server.port, &format!(
+            "GET /api/v1/folders HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {credential}\r\nConnection: close\r\n\r\n", server.port));
+        assert_eq!(status(&response), 200);
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
+        {
+            let mut state = server.auth.lock().unwrap();
+            assert!(state.extension_credential(legacy).is_err());
+            assert_eq!(state.matching_extension_origin(&credential).unwrap().as_deref(), Some(origin));
+            state.revoke_origin(origin).unwrap();
+            assert_eq!(state.matching_extension_origin(&credential).unwrap(), None);
+            std::fs::set_permissions(&state.path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(state.matching_extension_origin(&credential).is_err(), "legacy-only enumeration must still report unsafe credential storage");
+        }
+        drop(server);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_browser_consent_gates_native_bootstrap_and_rejects_anonymous_credential_issuance() {
+        let (server, adapter, dir) = start_test_server_with("linux-browser-consent", |_| {}, |_, _, _, _| true);
+        let origin = EDGE_DEV_EXTENSION_ORIGIN;
+        let direct = direct_extension_bootstrap(&server, Some(origin), None, Some("application/json"));
+        assert_eq!(status(&direct), 403);
+        assert!(!direct.contains("\"credential\""));
+        assert_eq!(server.linux_browser_snapshot().unwrap().extensions[0].status, "not-requested");
+        let pending = native_bootstrap_once(&server, origin);
+        assert_eq!(status(&pending), 403);
+        assert_eq!(body(&pending)["error"]["code"], "extension-connection-approval-required");
+        let id = server.linux_browser_snapshot().unwrap().extensions[0].request_id.clone().unwrap();
+        let approved = server.linux_decide_browser_request(&id, "approve").unwrap();
+        let grant = approved.extensions[0].grant_id.clone().unwrap();
+        let response = native_bootstrap_once(&server, origin);
+        assert_eq!(status(&response), 200);
+        let credential = body(&response)["data"]["credential"].as_str().unwrap().to_string();
+        assert_eq!(status(&direct_extension_bootstrap(&server, Some(origin), None, Some("application/json"))), 403);
+        assert_eq!(status(&extension_request(&server, origin, &credential, "/api/v1/folders")), 200);
+        assert_eq!(status(&extension_request(&server, "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &credential, "/api/v1/folders")), 403);
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
+        server.linux_revoke_browser_connection(origin, &grant).unwrap();
+        assert_eq!(status(&extension_request(&server, origin, &credential, "/api/v1/folders")), 403);
+        assert_eq!(status(&native_bootstrap_once(&server, origin)), 403);
+        let revoked = server.linux_browser_snapshot().unwrap().extensions[0].request_id.clone().unwrap();
+        server.linux_decide_browser_request(&revoked, "retry").unwrap();
+        assert_eq!(status(&native_bootstrap_once(&server, origin)), 403);
+        let fresh = server.linux_browser_snapshot().unwrap().extensions[0].request_id.clone().unwrap();
+        assert_ne!(fresh, id);
+        assert!(server.linux_decide_browser_request(&id, "approve").is_err());
+        server.linux_decide_browser_request(&fresh, "approve").unwrap();
+        let response = native_bootstrap_once(&server, origin);
+        let next = body(&response)["data"]["credential"].as_str().unwrap().to_string();
+        assert_ne!(next, credential);
+        assert_eq!(status(&extension_request(&server, origin, &credential, "/api/v1/folders")), 401);
+        assert_eq!(status(&extension_request(&server, origin, &next, "/api/v1/folders")), 200);
+        drop(server);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     fn direct_extension_bootstrap(
@@ -3429,6 +3572,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn extension_bootstrap_is_exact_origin_bound_and_unlocks_proof_and_reads() {
         let (server, adapter, dir) = start_test_server_with(

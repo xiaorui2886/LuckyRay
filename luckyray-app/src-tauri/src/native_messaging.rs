@@ -53,8 +53,16 @@ struct NativeEnvelope<T: Serialize> {
 fn app_data_dir() -> Result<PathBuf, String> {
     #[cfg(target_os = "linux")]
     {
-        crate::linux_app_data::app_data_dir("com.luckyray.desktop")
-            .ok_or_else(|| "app-unavailable".to_string())
+        // A diagnostic host must never borrow a production credential file.
+        let identifier = if cfg!(debug_assertions) {
+            crate::runtime_profile::DEVELOPMENT_IDENTIFIER
+        } else { crate::runtime_profile::PRODUCTION_IDENTIFIER };
+        let profile = crate::runtime_profile::RuntimeProfile::resolve_current(identifier)
+            .map_err(|_| "app-unavailable".to_string())?;
+        let path = crate::linux_app_data::app_data_dir(identifier)
+            .ok_or_else(|| "app-unavailable".to_string())?;
+        profile.validate_app_data_root(identifier, &path).map_err(|_| "app-unavailable".to_string())?;
+        Ok(path)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -111,9 +119,13 @@ fn bootstrap_with_ports(
         return Err("host-forbidden".to_string());
     }
     let native_credential = load_native_credential(app_data)?;
-    let client = Client::builder()
+    let builder = Client::builder()
         .connect_timeout(Duration::from_millis(180))
-        .timeout(Duration::from_millis(700))
+        .timeout(Duration::from_millis(700));
+    // Loopback bootstrap must not disclose the native credential to a proxy.
+    #[cfg(target_os = "linux")]
+    let builder = builder.no_proxy();
+    let client = builder
         .build()
         .map_err(|_| "host-failed".to_string())?;
 
@@ -202,6 +214,10 @@ fn handle_request(app_data: &Path, caller_origin: &str, bytes: &[u8]) -> String 
         .unwrap_or_else(|_| error("host-failed", "Native host failed")),
         Err(code) => {
             let message = match code.as_str() {
+                #[cfg(target_os = "linux")]
+                "extension-connection-approval-required" => "Approve the browser extension in LuckyRay Settings > General > Browser extension connection, then retry",
+                #[cfg(target_os = "linux")]
+                "extension-connection-denied" | "extension-connection-revoked" => "Allow a new request in LuckyRay browser connection settings, then retry",
                 "app-unavailable" => "Open LuckyRay and try again",
                 "host-forbidden" => "This extension is not allowed",
                 "protocol-incompatible" => "LuckyRay and the extension must be updated",
@@ -402,6 +418,11 @@ mod tests {
             random_nonce()
         ));
         std::fs::create_dir_all(&path).unwrap();
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         path
     }
 
@@ -502,6 +523,16 @@ mod tests {
             .unwrap()
             .parse::<u16>()
             .unwrap();
+
+        #[cfg(target_os = "linux")]
+        {
+            let response = Client::builder().no_proxy().build().unwrap().post(format!("http://127.0.0.1:{real_port}/api/v1/native/bootstrap"))
+                .bearer_auth(real.client_config().credential)
+                .json(&json!({"extensionOrigin": EDGE_DEV_EXTENSION_ORIGIN})).send().unwrap();
+            assert_eq!(response.status().as_u16(), 403);
+            let pending = real.linux_browser_snapshot().unwrap();
+            real.linux_decide_browser_request(pending.extensions[0].request_id.as_deref().unwrap(), "approve").unwrap();
+        }
 
         let fake = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let fake_port = fake.local_addr().unwrap().port();

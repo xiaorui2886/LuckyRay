@@ -40,6 +40,7 @@ function makeChromeStub({ transportFetch, sessionStore }) {
   const chromeStub = {
     runtime: {
       id: "kjibmbcoioanaejehhfopjhdpnbkodla",
+      getPlatformInfo(callback) { callback({ os: "win" }); },
       lastError: null,
       sendMessage: async () => ({}),
       onMessage: {

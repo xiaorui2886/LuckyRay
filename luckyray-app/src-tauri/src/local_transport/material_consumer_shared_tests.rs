@@ -19,6 +19,11 @@ impl Fixture {
     }
     fn with_media_loopback(loopback: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let backend = BackendServices::initialize(root.path()).unwrap();
         let backend = Arc::new(if loopback { backend.with_loopback_media_for_test() } else { backend });
         let catalog = backend.material_catalog();
@@ -270,13 +275,27 @@ fn node_capture_scenario(scenario: &str, stage: &str, asset_count: usize) -> Val
     }
     let handle = start_server(config,
         Arc::new(LegacyLocalTransportAdapter::new(Arc::clone(&fixture.backend)))).unwrap();
-    let input = json!({
+    let mut input = json!({
         "port": handle.port,
         "origin": EDGE_DEV_EXTENSION_ORIGIN,
         "libraryId": fixture.target,
         "pngBase64": STANDARD.encode(&png),
         "scenario": scenario,
     });
+    #[cfg(target_os = "linux")]
+    {
+        // This is a business-API fixture, not Native Messaging acceptance.
+        // The test owns this server and supplies its per-extension credential
+        // only through the browser-API seam. No master/native secret leaves Rust.
+        let origin = if scenario == "chromium" { "chrome-extension://kjibmbcoioanaejehhfopjhdpnbkodla" }
+            else { EDGE_DEV_EXTENSION_ORIGIN };
+        let mut auth = handle.auth.lock().unwrap();
+        auth.approve_origin(origin).unwrap();
+        input["nativeBootstrapFixture"] = json!({"ok":true,"data":{
+            "protocolVersion":1,"actualPort":handle.port,
+            "baseUrl":handle.base_url(),"credential":auth.extension_credential(origin).unwrap(),
+        }});
+    }
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(if scenario == "chromium" { "../tests/lib/capture-chromium-native-harness.mjs" }
             else { "../tests/lib/capture-native-host-harness.mjs" });

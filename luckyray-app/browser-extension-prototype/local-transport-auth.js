@@ -17,6 +17,27 @@
   const isolatedTransfers = new Map();
   let cachedConfig = null;
   let bootstrapPromise = null;
+  let platformPromise = null;
+
+  function requiresNativeBootstrap() {
+    // Read the browser-owned OS value. Anonymous loopback health is not an
+    // authority for choosing a weaker authentication path on Linux.
+    if (!platformPromise) platformPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(transportError("protocol-incompatible", "Browser platform is unavailable")), NATIVE_MESSAGE_TIMEOUT_MS);
+      try {
+        chrome.runtime.getPlatformInfo(info => {
+          clearTimeout(timer);
+          if (chrome.runtime.lastError || !info || !["linux", "win", "mac", "cros", "android", "openbsd", "fuchsia"].includes(info.os)) {
+            reject(transportError("protocol-incompatible", "Browser platform is unavailable"));
+          } else resolve(info.os === "linux");
+        });
+      } catch (_) {
+        clearTimeout(timer);
+        reject(transportError("protocol-incompatible", "Browser platform is unavailable"));
+      }
+    });
+    return platformPromise;
+  }
 
   // Observe only this worker's PNG POST while it is in flight. Existing
   // webRequest permission is sufficient; never request headers/requestBody,
@@ -277,6 +298,15 @@
   }
 
   async function bootstrapCandidate(port) {
+    if (await requiresNativeBootstrap()) {
+      // Native host verifies the server with its private per-user credential.
+      // No extension credential is sent to an anonymous discovery endpoint.
+      const config = validateBootstrapResponse(await nativeMessage({ type: "bootstrap", protocolVersion: 1 }));
+      if (config.actualPort !== port) return null;
+      const proof = await verifyServerProof(port, config.credential, 1000);
+      if (!proof) return null;
+      return { ...config, fingerprint: await sha256Hex(config.credential), serverNonce: proof.serverNonce };
+    }
     // A restarting desktop can interrupt the first control connection after
     // health becomes available. Bootstrap has no business payload or write;
     // retry a transport interruption once, then still require a valid proof.

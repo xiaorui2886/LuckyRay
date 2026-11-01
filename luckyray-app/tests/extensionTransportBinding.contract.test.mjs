@@ -288,7 +288,7 @@ async function startDesktop({ credential, name, listenPort = 0 }) {
 
 function installChrome() {
   globalThis.chrome = {
-    runtime: { getURL: () => `${ORIGIN}/`, lastError: null, sendNativeMessage(host, message, callback) { callback(undefined); } },
+    runtime: { getURL: () => `${ORIGIN}/`, getPlatformInfo(callback) { callback({ os: "win" }); }, lastError: null, sendNativeMessage(host, message, callback) { callback(undefined); } },
     storage: { local: { async get() { return {}; }, async set() {}, async remove() {} } },
   };
 }
@@ -327,9 +327,9 @@ bindingTest("discovery enumerates both verified instances; a bound task on the h
   await withTwoDesktops(async ({ low, high, transport }) => {
     const candidates = await transport.discoverCandidates();
     assert.equal(candidates.length, 2);
-    assert.deepEqual([...candidates.map(candidate => candidate.port)].sort((a, b) => a - b), [low.port, high.port]);
-    assert.equal(candidates[0].fingerprint, await sha256Hex(CREDENTIAL_A));
-    assert.equal(candidates[1].fingerprint, await sha256Hex(CREDENTIAL_B));
+    assert.deepEqual(candidates.map(candidate => candidate.port), [low.port, high.port].sort((a, b) => a - b));
+    assert.equal(candidates.find(candidate => candidate.port === low.port).fingerprint, await sha256Hex(CREDENTIAL_A));
+    assert.equal(candidates.find(candidate => candidate.port === high.port).fingerprint, await sha256Hex(CREDENTIAL_B));
     assert.equal(JSON.stringify(candidates).includes(CREDENTIAL_A), false);
     assert.equal(JSON.stringify(candidates).includes(CREDENTIAL_B), false);
 
@@ -569,6 +569,7 @@ async function loadBackgroundWorker({ stores, desktops, browser = {}, extensionI
     runtime: {
       id: extensionId, lastError: null,
       getURL: (suffix = "") => `${origin}/${suffix}`,
+      getPlatformInfo(callback) { callback({ os: "win" }); },
       onMessage: { addListener: listener => messageListeners.push(listener) },
       onInstalled: { addListener() {} }, onStartup: { addListener() {} }, onConnect: { addListener() {} },
       sendMessage: (message, callback) => {
@@ -1226,7 +1227,7 @@ bindingTest("two instances force an explicit choice; the pick binds every later 
       selectedPort: state.port, lowControl: low.state.control.map(call => call.path), highControl: high.state.control.map(call => call.path) }));
     assert.equal(state.code, "multiple-instances");
     assert.equal(state.candidates.length, 2);
-    assert.deepEqual([...state.candidates.map(candidate => candidate.port)].sort((a, b) => a - b), [low.port, high.port]);
+    assert.deepEqual([...state.candidates.map(candidate => candidate.port)], [low.port, high.port].sort((a, b) => a - b));
 
     // A foreign sender cannot select the connection, and neither can a
     // port-only pick: the full descriptor the user saw is required.

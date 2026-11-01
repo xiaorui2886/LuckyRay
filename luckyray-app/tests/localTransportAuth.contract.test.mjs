@@ -109,12 +109,13 @@ async function startServer(calls, options = {}) {
   return server;
 }
 
-function installChrome(nativeHandler) {
+function installChrome(nativeHandler, platform = "win") {
   const storageWrites = [];
   let nativeCalls = 0;
   globalThis.chrome = {
     runtime: {
       getURL: () => `${ORIGIN}/`,
+      getPlatformInfo(callback) { callback({ os: platform }); },
       lastError: null,
       sendNativeMessage(host, message, callback) {
         nativeCalls += 1;
@@ -148,6 +149,55 @@ async function loadHelper(tag) {
   await import(`../browser-extension-prototype/local-transport-auth.js?native=${tag}-${Date.now()}`);
   return globalThis.LuckyRayLocalTransport;
 }
+
+test("Linux Native Messaging verifies a private bootstrap before any protected request", async () => {
+  const calls = [];
+  const server = await startServer(calls);
+  const port = server.address().port;
+  const fixture = installChrome((host, message) => {
+    assert.equal(host, "com.luckyray.desktop");
+    assert.deepEqual(message, { type: "bootstrap", protocolVersion: 1 });
+    return { ok: true, data: { protocolVersion: 1, actualPort: port, baseUrl: `http://127.0.0.1:${port}`, credential: CREDENTIAL } };
+  }, "linux");
+  installBrowserFetch(); usePorts(port);
+  try {
+    const transport = await loadHelper("linux-native");
+    assert.equal((await transport.fetch(null, "/collect", { method: "POST", body: "synthetic" })).ok, true);
+    assert.equal(fixture.nativeCalls(), 1);
+    assert.equal(calls.filter(call => call.url === "/api/v1/extension/bootstrap").length, 0);
+    assert.equal(calls.filter(call => call.url === "/api/v1/proof").length, 1);
+    assert.equal(calls.filter(call => call.url === "/collect").length, 1);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test("Linux Native Messaging preserves each consent refusal without retrying or dispatching", async () => {
+  for (const code of ["extension-connection-approval-required", "extension-connection-denied", "extension-connection-revoked"]) {
+    const calls = []; const server = await startServer(calls);
+    const fixture = installChrome(() => ({ ok: false, error: { code, message: "Consent required" } }), "linux");
+    installBrowserFetch(); usePorts(server.address().port);
+    try {
+      const transport = await loadHelper(code);
+      await assert.rejects(transport.fetch(null, "/collect", { method: "POST", body: "never sent" }), error => error.code === code);
+      assert.equal(fixture.nativeCalls(), 1);
+      assert.deepEqual(calls.map(call => call.url), ["/api/v1/health"]);
+    } finally { await new Promise(resolve => server.close(resolve)); }
+  }
+});
+
+test("Linux Native Messaging never sends its issued credential to another discovery port", async () => {
+  const foreignCalls = [], trustedCalls = [];
+  const foreign = await startServer(foreignCalls), trusted = await startServer(trustedCalls);
+  const port = trusted.address().port;
+  installChrome(() => ({ ok: true, data: { protocolVersion: 1, actualPort: port, baseUrl: `http://127.0.0.1:${port}`, credential: CREDENTIAL } }), "linux");
+  installBrowserFetch(); usePorts(foreign.address().port, port);
+  try {
+    const transport = await loadHelper("linux-foreign-port");
+    const candidates = await transport.discoverCandidates();
+    assert.equal(candidates.length, 1); assert.equal(candidates[0].port, port);
+    assert.deepEqual(foreignCalls.map(call => call.url), ["/api/v1/health"]);
+    assert.equal(foreignCalls.some(call => JSON.stringify(call).includes(CREDENTIAL)), false);
+  } finally { await Promise.all([foreign, trusted].map(server => new Promise(resolve => server.close(resolve)))); }
+});
 
 test("direct exact-Origin bootstrap verifies the server before one protected collect and never calls Native Messaging", async () => {
   const calls = [];

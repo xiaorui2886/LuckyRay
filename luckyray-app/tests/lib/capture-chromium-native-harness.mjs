@@ -12,6 +12,7 @@ try {
   let raw = "";
   for await (const part of process.stdin) raw += part;
   const input = JSON.parse(raw);
+  const { nativeBootstrapFixture: _privateBootstrap, ...captureInput } = input;
   assert.equal(input.scenario, "chromium");
   assert(Number.isInteger(input.port) && input.port > 0 && input.port <= 65535);
   const manifest = JSON.parse(await fs.readFile(new URL("../../browser-extension-prototype/manifest.json", import.meta.url), "utf8"));
@@ -28,6 +29,14 @@ try {
   await fs.writeFile(path.join(extensionDir, "worker.js"), `
     globalThis.process = { versions: { node: "isolated-test" } };
     globalThis.__LUCKYRAY_TEST_PORTS__ = [${input.port}];
+    // Linux business-API fixture seam; OS Native Messaging is not asserted.
+    if (${JSON.stringify(Boolean(input.nativeBootstrapFixture))}) {
+      const fixture = ${JSON.stringify(input.nativeBootstrapFixture || null)};
+      chrome.runtime.sendNativeMessage = (name, message, callback) => {
+        if (name !== "com.luckyray.desktop" || message.type !== "bootstrap") throw new Error("fixture bootstrap only");
+        callback(fixture);
+      };
+    }
     globalThis.testCalls = []; globalThis.testErrors = [];
     const nativeFetch = globalThis.fetch.bind(globalThis);
     globalThis.fetch = (url, init) => {
@@ -66,7 +75,7 @@ try {
       return {stage:"failed", code:e.code || e.name, failure:e.transportFailure,
         network:e.transportNetwork || null, milliseconds:Math.round(performance.now()-began)};
     }
-  })(${JSON.stringify(input)})`);
+  })(${JSON.stringify(captureInput)})`);
   const events = await evaluate(connection, session, "({calls:testCalls,errors:testErrors})");
   process.stdout.write(JSON.stringify({outcome:"ISOLATED_CHROMIUM_REAL_NATIVE_CAPTURE", ...result, ...events,
     businessWrites:events.calls.filter(c=>c.path.endsWith("/import-bytes")).length,

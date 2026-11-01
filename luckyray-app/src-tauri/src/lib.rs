@@ -186,6 +186,8 @@ mod materials;
 mod media_transfer;
 pub mod native_messaging;
 #[cfg(target_os = "linux")]
+mod linux_browser_connection;
+#[cfg(target_os = "linux")]
 mod native_messaging_linux;
 mod notes_inline;
 mod owned_process;
@@ -968,6 +970,12 @@ pub fn run() {
             get_app_data_dir,
             get_collection_server_base_url,
             get_local_transport_client_config,
+            #[cfg(target_os = "linux")]
+            linux_browser_connection::linux_browser_connection_status,
+            #[cfg(target_os = "linux")]
+            linux_browser_connection::linux_browser_connection_decide,
+            #[cfg(target_os = "linux")]
+            linux_browser_connection::linux_browser_connection_revoke,
             community_mcp::community_mcp_status,
             community_mcp::community_mcp_action,
             revoke_local_transport_extension_origin,

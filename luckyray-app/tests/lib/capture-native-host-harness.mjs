@@ -1,8 +1,10 @@
 // Test-only Node VM driver for the real controller/SDK/background/auth and
 // a Rust-owned temporary HTTP host. Browser bitmap APIs are synthetic; HTTP,
 // HMAC proof, PNG decode, Catalog and durable receipt are production code.
-// Input is synthetic PNG + target/port only. Never access an ordinary browser
-// profile, discover Main's ports, or print credentials/request bodies.
+// Input is synthetic PNG + target/port and, on Linux, the temporary server's
+// per-extension Native Messaging response seam. This is business-API coverage,
+// not OS Native Messaging acceptance. Never use an ordinary profile, discover
+// Main's ports, or print credentials/request bodies.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
@@ -25,6 +27,14 @@ try {
   sandbox.btoa = btoa;
   sandbox.Uint8Array = Uint8Array;
   sandbox.chrome.runtime.getURL = path => `${input.origin}/${path || ""}`;
+  if (input.nativeBootstrapFixture) {
+    sandbox.chrome.runtime.getPlatformInfo = callback => callback({ os: "linux" });
+    sandbox.chrome.runtime.sendNativeMessage = (name, message, callback) => {
+      assert.equal(name, "com.luckyray.desktop");
+      assert.equal(message.type, "bootstrap");
+      callback(input.nativeBootstrapFixture);
+    };
+  }
   const metrics = { ok: true, documentToken: "synthetic-native-document",
     url: "https://page.test/capture", x: 0, y: 0, width: 3828, height: 1911,
     dpr: 1, visualScale: 1, pageWidth: 3828, pageHeight: 1911 };

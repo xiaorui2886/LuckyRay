@@ -1,0 +1,9 @@
+.linux-browser-connection { padding: 18px; }
+.linux-browser-connection-heading, .linux-browser-connection-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.linux-browser-connection-heading { justify-content: space-between; }
+.linux-browser-connection-heading h3 { margin: 0; }
+.linux-browser-connection p { color: var(--text-secondary); line-height: 1.5; }
+.linux-browser-connection-entry { display: grid; gap: 8px; padding: 16px 0; border-top: 1px solid var(--border-color); }
+.linux-browser-connection-entry code { overflow-wrap: anywhere; user-select: text; }
+.linux-browser-connection-entry p { margin: 0; }
+.linux-browser-connection button { min-height: 30px; padding: 4px 12px; }

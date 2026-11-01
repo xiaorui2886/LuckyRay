@@ -32,6 +32,7 @@ import { ThemePresetSelector } from "./ThemePresetSelector";
 import AiModelProfilesPanel from "./AiModelProfilesPanel";
 import CompanionGatewayPanel from "./CompanionGatewayPanel";
 import LayoutSettingsPanel from "./LayoutSettingsPanel";
+import LinuxBrowserConnectionPanel, { supportsLinuxBrowserConnection } from "./LinuxBrowserConnectionPanel";
 import { useI18n, type MessageKey } from "../../core/i18n/index";
 import { useApplicationModalSurface } from "../../app/applicationModalIsolation";
 
@@ -587,7 +588,8 @@ export default function SettingsPage() {
     if (!normalizedQuery) return new Set(TABS.map((tab) => tab.key));
     const hits = new Set<TabKey>();
     for (const tab of TABS) {
-      if (`${t(tab.labelKey)} ${panelSearchText[tab.key]}`.toLowerCase().includes(normalizedQuery)) hits.add(tab.key);
+      const linuxBrowserText = tab.key === "general" && supportsLinuxBrowserConnection() ? "浏览器 扩展 连接 授权 撤销 browser extension connection permission" : "";
+      if (`${t(tab.labelKey)} ${panelSearchText[tab.key]} ${linuxBrowserText}`.toLowerCase().includes(normalizedQuery)) hits.add(tab.key);
     }
     return hits;
   }, [normalizedQuery, t]);
@@ -831,6 +833,7 @@ export default function SettingsPage() {
                 <Toggle value={get("general.autoLaunch", false)} onChange={(value) => void handleAutoLaunchChange(value)} />
               </SettingRow>
             </Group>
+            {shouldShow("浏览器 扩展 连接 授权 撤销 browser extension connection permission") && <LinuxBrowserConnectionPanel />}
           </Panel>
 
           <Panel tab="layout" active={activeTab}>

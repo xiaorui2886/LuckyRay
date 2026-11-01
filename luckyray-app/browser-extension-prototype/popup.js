@@ -1584,6 +1584,10 @@ async function ensurePage() {
   renderConnectionChoices();
   const offlineText = connection.code === "app-unavailable"
     ? "请打开 LuckyRay"
+    : connection.code === "extension-connection-approval-required"
+      ? "请在 LuckyRay 设置 → 通用 → 浏览器扩展连接中批准请求"
+    : connection.code === "extension-connection-denied" || connection.code === "extension-connection-revoked"
+      ? "请在 LuckyRay 的浏览器扩展连接设置中允许新请求，再重新连接"
     : connection.code === "host-not-installed"
       ? "连接组件未安装"
       : connection.code === "host-unavailable"
