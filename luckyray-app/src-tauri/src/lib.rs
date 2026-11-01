@@ -10,6 +10,8 @@
 mod desktop_app_update;
 #[cfg(target_os = "macos")]
 mod macos_fs;
+#[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
+mod macos_material_flow;
 mod community_mcp_knowledge;
 mod community_mcp;
 mod community_mcp_package;
@@ -628,7 +630,10 @@ fn notes_drop_diagnostic(caller: tauri::Webview, stage: String, count: usize, hi
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // R3a: LocalTransport starts after Tauri plugins and exposes only the Native Messaging bootstrap control plane.
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
+    let builder = macos_material_flow::configure(builder);
+    builder
         .on_webview_event(|webview, event| {
             if webview.label() == "main" {
                 if let tauri::WebviewEvent::DragDrop(event) = event {
@@ -752,6 +757,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(workspace_command_policy::guard(tauri::generate_handler![
+            #[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
+            macos_material_flow::macos_material_flow_report,
             desktop_app_update::desktop_application_update,
             extension_appearance::publish_extension_appearance,
             extension_packages::manage_extension_packages,

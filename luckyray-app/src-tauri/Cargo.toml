@@ -23,6 +23,8 @@ lsh-background-surface-preload = ["browser-host-runtime"]
 sidecar-binaries = ["browser-host-runtime"]
 browser-host-poc = ["browser-host-runtime"]
 browser-host-poc-fixture = ["browser-host-poc"]
+# Fixed, disposable macOS UI scenario; never enabled by distributable builds.
+macos-material-flow = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

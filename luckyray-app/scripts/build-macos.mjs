@@ -14,6 +14,7 @@ export const APP_BUILD_ARGUMENTS = Object.freeze(["exec", "tauri", "build", "--c
 export function appBuildArguments(internalValidation = false) {
   const args = [...APP_BUILD_ARGUMENTS];
   if (internalValidation) args.splice(args.indexOf("--"), 0, "--config", '{"bundle":{"createUpdaterArtifacts":false}}');
+  if (internalValidation) args.splice(args.indexOf("--bin"), 0, "--features", "macos-material-flow");
   return args;
 }
 

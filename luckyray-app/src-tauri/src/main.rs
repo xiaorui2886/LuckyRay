@@ -2,6 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    #[cfg(all(target_os = "macos", not(feature = "macos-material-flow")))]
+    if std::env::args().nth(1).as_deref() == Some("--macos-material-flow") {
+        eprintln!("macos-material-flow-unavailable");
+        std::process::exit(2);
+    }
     if std::env::args().nth(1).as_deref() == Some("--verify-installed-lsh") {
         if std::env::args().len() != 2 { std::process::exit(2); }
         match luckyray_app_lib::verify_installed_lsh() {

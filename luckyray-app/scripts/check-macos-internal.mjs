@@ -8,6 +8,7 @@ import { APP, TAURI, BUILD, TARGET, SIDECARS, directory, readRegular, writeNew, 
   sha256, run, requireNative } from "./macos-build-common.mjs";
 import { appBuildArguments, buildMacosApp } from "./build-macos.mjs";
 import { checkStartup } from "./check-macos-app-startup.mjs";
+import { safeMaterialFlow } from "./check-macos-material-flow.mjs";
 import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary } from "./macos-native-diagnostics.mjs";
 
 export const PHASES = Object.freeze(["install-frozen-frontend", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-app-window"]);
@@ -29,6 +30,8 @@ const SAFE_CODES = Object.freeze([
   "macos-dsh-distributed-license-changed", "macos-distribution-recipe-changed",
   "macos-real-app-exited-before-window", "macos-real-app-window-timeout", "macos-real-app-exited-before-capture",
   "macos-real-app-capture-invalid", "macos-window-observation-failed", "macos-build-cache-conflict",
+  "macos-material-flow-context-invalid", "macos-material-flow-result-invalid", "macos-material-flow-launch-failed",
+  "macos-material-flow-observation-timeout", "macos-material-flow-scenario-failed", "macos-material-flow-window-failed", "macos-material-flow-quit-failed",
   "macos-build-download-hash-invalid", "macos-build-linked-output", "macos-build-output-unsafe",
 ]);
 
@@ -81,7 +84,10 @@ export async function internalPlan() {
     updaterArtifacts: false, sidecars: SIDECARS, phases: PHASES, evidenceFiles: EVIDENCE_FILES,
     distributionGate: "incomplete source remains ineligible for distribution; supplied bytes remain verified",
     binaryExport: false, dmg: false, applicationArchive: false, binaryUpload: false, release: false,
-    rawOutput: "streamed into bounded typed command/error summaries, then discarded", nativeExecution: "not-run-by-plan" };
+    rawOutput: "streamed into bounded typed command/error summaries, then discarded", nativeExecution: "not-run-by-plan",
+    materialFlow: { buildFeature: "macos-material-flow", interaction: "application-dom-automation",
+      stages: ["choose-managed-mode", "import-fixed-image", "decode-real-preview", "normal-quit", "reopen-same-profile", "verify-persistence"],
+      nativeFilePicker: "not-run", systemPointerInput: "not-run" } };
 }
 async function requireInternalContext() {
   requireNative();
@@ -124,7 +130,7 @@ async function worker() {
       onStage: phase => process.send({ type: "phase", phase }) });
     process.send({ type: "built", result });
     process.send({ type: "phase", phase: "real-app-window" });
-    const window = await checkStartup();
+    const window = await checkStartup({ onFlow: result => process.send({ type: "material-flow", result }) });
     const bytes = await readRegular(join(window.artifactDirectory, "LuckyRay-real-app.png"), 32 * 1024 * 1024);
     await writeNew(join(EVIDENCE, "own-window.pending"), bytes, 0o600);
     process.send({ type: "window", pid: window.pid, windowID: window.windowID,
@@ -146,7 +152,7 @@ export async function validateInternal() {
   // directly so the private IPC channel belongs to this worker, not npm.
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--worker"],
     { cwd: APP, env: internalWorkerEnvironment(process.env), stdio: ["ignore", "pipe", "pipe", "ipc"] });
-  let build; let window; let failure; let protocolInvalid = false;
+  let build; let window; let materialFlow; let failure; let protocolInvalid = false;
   const phases = [];
   child.stdout.on("data", bytes => diagnostics.feed("stdout", bytes));
   child.stderr.on("data", bytes => diagnostics.feed("stderr", bytes));
@@ -157,6 +163,8 @@ export async function validateInternal() {
         console.log(`macos-internal-phase:${message.phase}`);
       } else if (message?.type === "built" && phases.length === PHASES.length - 1 && !build) {
         build = summarizeBuildResult(message.result);
+      } else if (message?.type === "material-flow" && phases.length === PHASES.length && build && !window) {
+        materialFlow = safeMaterialFlow(message.result);
       } else if (message?.type === "window" && phases.length === PHASES.length && build && !window
           && count(message.pid) && message.pid > 0 && count(message.windowID) && message.windowID > 0
           && Number.isFinite(message.width) && message.width >= 1000 && message.width <= 32768
@@ -179,7 +187,7 @@ export async function validateInternal() {
     child.once("error", () => resolveExit({ code: null, signal: null }));
     child.once("close", (code, signal) => resolveExit({ code, signal }));
   });
-  let success = exited.code === 0 && !protocolInvalid && !failure && !!build && !!window && phases.length === PHASES.length;
+  let success = exited.code === 0 && !protocolInvalid && !failure && !!build && !!window && materialFlow?.status === "passed" && phases.length === PHASES.length;
   if (success) {
     const bytes = await readRegular(join(EVIDENCE, "own-window.pending"), 32 * 1024 * 1024);
     if (bytes.length < 1024 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
@@ -192,11 +200,11 @@ export async function validateInternal() {
     distributionReady: build?.distribution.readyToPackage ?? false, distributionAssessment: build ? "verified" : "not-reached",
     phases: PHASES.map((phase, index) => ({ phase,
       status: success || index < phases.length - 1 ? "passed" : index < phases.length ? "failed" : "not-run" })),
-    build: build ?? null, window: success ? window : null,
+    build: build ?? null, window: success ? window : null, materialFlow: materialFlow ?? null,
     failure: success ? null : failure ?? { code: protocolInvalid ? "invalid-worker-protocol" : "native-worker-failed" },
     workerExit: exited.code, diagnostics: safeDiagnosticSummary(diagnostics.summary(), vocabulary, files), rawOutput: "discarded-not-retained",
     artifacts: success ? EVIDENCE_FILES : [EVIDENCE_FILES[0]],
-    limitations: { frontendInteraction: "not-run", lshConnection: "not-run", notesRecovery: "not-run",
+    limitations: { frontendInteraction: success ? "application-dom-automation" : "not-completed", nativeFilePicker: "not-run", systemPointerInput: "not-run", lshConnection: "not-run", notesRecovery: "not-run",
       nativeHostBrowserSession: "not-run", mcpSession: "not-run", installIntoApplications: "not-run",
       screenshotVisualReview: "required", notarization: "not-requested", release: "not-published" } };
   await jsonNew(join(EVIDENCE, EVIDENCE_FILES[0]), report);
@@ -212,13 +220,15 @@ export function publishableReport(record, vocabulary = new Set(), files = new Se
       || record.phases.some((item, i) => item.phase !== PHASES[i] || !["passed", "failed", "not-run"].includes(item.status))
       || record.status === "passed" && (record.workerExit !== 0 || record.phases.some(item => item.status !== "passed")))
     throw new Error("macos-internal-result-invalid");
+  const materialFlow = record.materialFlow == null ? null : safeMaterialFlow(record.materialFlow);
+  if (record.status === "passed" && materialFlow?.status !== "passed") throw new Error("macos-internal-result-invalid");
   const failureCodes = [...SAFE_CODES, "native-command-failed", "native-validation-failed", "native-worker-failed", "invalid-worker-protocol"];
   const failure = failureCodes.includes(record.failure?.code) ? { code: record.failure.code } : null;
   if (failure && knownExit(record.failure.exit)) failure.exit = record.failure.exit;
   return { schemaVersion: 1, mode: "internal-native-validation", status: record.status,
     source: { repository: "xiaorui2886/LuckyRay", commit: record.source.commit, tree: record.source.tree },
     phases: record.phases.map(item => ({ phase: item.phase, status: item.status })), failure,
-    diagnostics: safeDiagnosticSummary(record.diagnostics, vocabulary, files), binaryExport: false,
+    diagnostics: safeDiagnosticSummary(record.diagnostics, vocabulary, files), materialFlow, binaryExport: false,
     distributionReady: record.distributionReady === true, rawOutput: "not-published" };
 }
 async function printReportSummary() {
