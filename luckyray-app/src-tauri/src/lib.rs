@@ -8,6 +8,8 @@
 //! ```
 
 mod desktop_app_update;
+#[cfg(target_os = "macos")]
+mod macos_fs;
 mod community_mcp_knowledge;
 mod community_mcp;
 mod community_mcp_package;
@@ -671,6 +673,9 @@ pub fn run() {
             runtime_profile
                 .validate_app_data_root(&identifier, &app_data)
                 .map_err(std::io::Error::other)?;
+            #[cfg(target_os = "macos")]
+            let _app_data_directory = macos_fs::Directory::open(&app_data, true, true)
+                .map_err(|_| std::io::Error::other("macos-app-data-directory-unsafe"))?;
             // Update bootstrap must run before any service can hold data or tasks.
             #[cfg(windows)]
             desktop_app_update::initialize(app, &app_data).map_err(std::io::Error::other)?;

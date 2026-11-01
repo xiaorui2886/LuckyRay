@@ -1,4 +1,5 @@
 import type { KnowledgeSourceMode, KnowledgeTreeNode } from "../../core/bridge/knowledgeTypes";
+import { isMacPlatform, joinMacPath } from "../../app/macosPresentation";
 import {
   readKnowledgeDocument,
   replaceKnowledgeDocument,
@@ -198,7 +199,8 @@ export function createRealVaultDocumentSource(input: {
       contentText: snapshot.content,
       source: "real-vault",
       relativePath,
-      absolutePath: `${currentVault.rootPath.replace(/[\\/]+$/, "")}${separator}${relativePath.split("/").join(separator)}`,
+      absolutePath: isMacPlatform() ? joinMacPath(currentVault.rootPath, relativePath)
+        : `${currentVault.rootPath.replace(/[\\/]+$/, "")}${separator}${relativePath.split("/").join(separator)}`,
       updatedAt: snapshot.modifiedAt || undefined,
       revision: snapshot.revision,
       workspaceSourceId,

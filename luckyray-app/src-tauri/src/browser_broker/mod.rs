@@ -298,6 +298,20 @@ impl Drop for BrowserBroker {
 }
 
 impl HostProcess {
+    #[cfg(target_os = "macos")]
+    fn spawn(
+        _executable: &Path,
+        _test_fixture_id: Option<&str>,
+        _test_fixture_port: Option<u16>,
+        _parent_window: Option<isize>,
+        _viewport: Option<PersonalBrowserViewport>,
+    ) -> Result<Self, String> {
+        // Do not launch an uncontained process while the macOS host and its
+        // lifecycle boundary are unavailable, even for standalone browsing.
+        Err("browser-host-platform-unsupported".into())
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn spawn(
         executable: &Path,
         test_fixture_id: Option<&str>,

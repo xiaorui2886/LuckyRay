@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use std::io::Cursor;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use tauri::Emitter;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn validated_cover(value: Option<&str>) -> Option<Vec<u8>> {
     use base64::Engine;
     let encoded = value?.strip_prefix("data:image/png;base64,")?;
@@ -23,7 +23,7 @@ fn validated_cover(value: Option<&str>) -> Option<Vec<u8>> {
     Some(clean.into_inner())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn drag_preview(paths: &[PathBuf], preview_png: Option<&str>) -> drag::Image {
     if let Some(bytes) = validated_cover(preview_png) { return drag::Image::Raw(bytes); }
     const MAX_PREVIEW_FILE_BYTES: u64 = 32 * 1024 * 1024;
@@ -69,7 +69,7 @@ fn drag_preview(paths: &[PathBuf], preview_png: Option<&str>) -> drag::Image {
         .unwrap_or_else(|| drag::Image::Raw(include_bytes!("../icons/128x128.png").to_vec()))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn begin_file_drag(window: tauri::Window, paths: Vec<PathBuf>, preview_png: Option<String>) -> Result<(), String> {
     if paths.is_empty() || paths.len() > 64 {
         return Err("material-external-drag-invalid-selection".to_owned());
@@ -99,12 +99,12 @@ pub(crate) fn begin_file_drag(window: tauri::Window, paths: Vec<PathBuf>, previe
         .map_err(|_| "material-external-drag-unavailable".to_owned())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn begin_file_drag(_window: tauri::Window, _paths: Vec<PathBuf>, _preview_png: Option<String>) -> Result<(), String> {
     Err("material-external-drag-unsupported".to_owned())
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod tests {
     use super::{drag_preview, validated_cover};
     use base64::Engine;

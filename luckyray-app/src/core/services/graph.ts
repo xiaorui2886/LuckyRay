@@ -1,4 +1,5 @@
 import { getLuckyRayBridgeSync, type LuckyRayBridge } from "../bridge/luckyRayBridge";
+import { isMacPlatform, macPathKey } from "../../app/macosPresentation";
 import { removeMarkdownTagReferencesInText } from "../markdown/inlineTags";
 import { isPlainMarkdownProseAt } from "../markdown/proseRanges";
 import { createRealVaultLibraryAssetResolver, decodeRealVaultEmbedTarget, isSafeRealVaultAssetRelativePath, realVaultAssetFileName, realVaultEmbedAssetLookupKey, resolveRealVaultEmbedAssetRelativePath } from "../markdown/realVaultEmbeds";
@@ -103,6 +104,7 @@ type BodyRelationPair = {
 export const GRAPH_VIEW_KEY = "luckyray-graph-view-v1";
 
 function normalizedGraphVaultRoot(rootPath: string | null | undefined) {
+  if (isMacPlatform()) return macPathKey(rootPath || "");
   return (rootPath || "").replace(/\\/g, "/").replace(/\/+$/, "").trim().toLocaleLowerCase();
 }
 

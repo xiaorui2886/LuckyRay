@@ -47,6 +47,13 @@ use windows::Win32::System::Threading::{
     PROC_THREAD_ATTRIBUTE_JOB_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
+#[cfg(target_os = "macos")]
+#[path = "macos_owned_process.rs"]
+mod macos_owned_process;
+#[cfg(target_os = "macos")]
+pub(crate) use macos_owned_process::{spawn_in_owned_job, AtomicSpawn, OwnedJob, OwnedProcess, OwnedProcessError};
+
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OwnedProcessError;
 
@@ -204,10 +211,10 @@ impl OwnedProcess {
     }
 }
 
-#[cfg(not(all(windows, feature = "browser-host-runtime")))]
+#[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
 pub(crate) struct OwnedProcess;
 
-#[cfg(not(all(windows, feature = "browser-host-runtime")))]
+#[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
 impl OwnedProcess {
     pub(crate) fn is_running(&self) -> bool {
         false

@@ -16,6 +16,14 @@ const MAX_NATIVE_RESPONSE_BYTES: usize = 1024 * 1024;
 const LOCAL_PORT_START: u16 = 37418;
 const LOCAL_PORT_END: u16 = 37467;
 
+#[cfg(target_os = "macos")]
+#[path = "macos_native_messaging_path.rs"]
+mod macos_native_messaging_path;
+
+#[cfg(target_os = "macos")]
+#[path = "macos_native_manifest.rs"]
+mod macos_native_manifest;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct NativeRequest {
@@ -50,8 +58,14 @@ struct NativeEnvelope<T: Serialize> {
     error: Option<NativeError>,
 }
 
-fn app_data_dir() -> PathBuf {
-    PathBuf::from(env::var("APPDATA").unwrap_or_default()).join("com.luckyray.desktop")
+#[cfg(target_os = "macos")]
+fn app_data_dir() -> Result<PathBuf, String> {
+    macos_native_messaging_path::app_data_dir(env::var_os("HOME").as_deref())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn app_data_dir() -> Result<PathBuf, String> {
+    Ok(PathBuf::from(env::var("APPDATA").unwrap_or_default()).join("com.luckyray.desktop"))
 }
 
 fn random_nonce() -> String {
@@ -103,7 +117,10 @@ fn bootstrap_with_ports(
         return Err("host-forbidden".to_string());
     }
     let native_credential = load_native_credential(app_data)?;
-    let client = Client::builder()
+    let builder = Client::builder();
+    #[cfg(target_os = "macos")]
+    let builder = builder.no_proxy().redirect(reqwest::redirect::Policy::none());
+    let client = builder
         .connect_timeout(Duration::from_millis(180))
         .timeout(Duration::from_millis(700))
         .build()
@@ -265,7 +282,7 @@ pub fn run() -> Result<(), String> {
     if !configured_extension_origins()?.contains(&origin) {
         return Err("host-forbidden".to_string());
     }
-    let app_data = app_data_dir();
+    let app_data = app_data_dir()?;
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     // The browser control plane uses sendNativeMessage: one process, one request,
@@ -278,6 +295,22 @@ pub fn run() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+pub fn macos_browser_manifest_paths() -> Result<[PathBuf; 2], String> {
+    macos_native_messaging_path::browser_manifest_paths(env::var_os("HOME").as_deref())
+}
+
+#[cfg(target_os = "macos")]
+pub fn write_host_manifest(path: &Path, binary_path: &Path) -> Result<(), String> {
+    if !macos_browser_manifest_paths()?.iter().any(|allowed| allowed == path) {
+        return Err("native-manifest-path-forbidden".into());
+    }
+    let origins = configured_extension_origins()?
+        .into_iter().map(|origin| format!("{origin}/")).collect::<Vec<_>>();
+    macos_native_manifest::install(path, binary_path, &origins)
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn write_host_manifest(path: &Path, binary_path: &Path) -> Result<(), String> {
     let allowed_origins: Vec<String> = configured_extension_origins()?
         .into_iter()
@@ -336,6 +369,8 @@ mod tests {
             random_nonce()
         ));
         std::fs::create_dir_all(&path).unwrap();
+        #[cfg(target_os = "macos")]
+        let path = path.canonicalize().unwrap();
         path
     }
 
@@ -359,25 +394,28 @@ mod tests {
             "native-message-incomplete"
         );
 
-        let response = handle_request(
-            Path::new("missing"),
-            EDGE_DEV_EXTENSION_ORIGIN,
-            br#"{"type":"bootstrap","protocolVersion":1,"origin":"chrome-extension://attacker"}"#,
-        );
-        assert_eq!(
-            serde_json::from_str::<Value>(&response).unwrap()["error"]["code"],
-            "invalid-request"
-        );
+        #[cfg(not(target_os = "macos"))]
+        {
+            let response = handle_request(
+                Path::new("missing"),
+                EDGE_DEV_EXTENSION_ORIGIN,
+                br#"{"type":"bootstrap","protocolVersion":1,"origin":"chrome-extension://attacker"}"#,
+            );
+            assert_eq!(
+                serde_json::from_str::<Value>(&response).unwrap()["error"]["code"],
+                "invalid-request"
+            );
 
-        let forbidden = handle_request(
-            Path::new("missing"),
-            "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            br#"{"type":"bootstrap","protocolVersion":1}"#,
-        );
-        assert_eq!(
-            serde_json::from_str::<Value>(&forbidden).unwrap()["error"]["code"],
-            "host-forbidden"
-        );
+            let forbidden = handle_request(
+                Path::new("missing"),
+                "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                br#"{"type":"bootstrap","protocolVersion":1}"#,
+            );
+            assert_eq!(
+                serde_json::from_str::<Value>(&forbidden).unwrap()["error"]["code"],
+                "host-forbidden"
+            );
+        }
     }
 
     #[test]
@@ -389,6 +427,7 @@ mod tests {
         assert_eq!(&framed[4..], payload);
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn host_manifest_has_exact_origin_stdio_type_and_absolute_binary_path() {
         let dir = test_dir("manifest");
@@ -406,6 +445,27 @@ mod tests {
         );
         assert!(!manifest.to_string().contains('*'));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_manifest_registration_rejects_unselected_paths() {
+        let dir = test_dir("macos-manifest-closed");
+        let existing = dir.join("existing.json");
+        let missing = dir.join("missing.json");
+        std::fs::write(&existing, b"synthetic-existing").unwrap();
+        assert_eq!(write_host_manifest(&existing, Path::new("/synthetic-host")).unwrap_err(), "native-manifest-path-forbidden");
+        assert_eq!(write_host_manifest(&missing, Path::new("/synthetic-host")).unwrap_err(), "native-manifest-path-forbidden");
+        assert_eq!(std::fs::read(&existing).unwrap(), b"synthetic-existing");
+        assert!(!missing.exists());
+        std::fs::remove_file(&existing).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_credential_boundary_bootstraps_only_proved_server() {
+        fake_loopback_gets_only_anonymous_proof_before_real_native_bootstrap();
     }
 
     #[test]

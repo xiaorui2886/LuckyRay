@@ -5,6 +5,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import packageMetadata from "../../../package.json";
 import aboutBrandIcon from "../../../src-tauri/icons/icon.png";
 import { getGlobalShortcutSuggestions, readGlobalShortcutStatus, subscribeGlobalShortcutStatus, type GlobalShortcutRegistrationStatus } from "../../app/globalShortcuts";
+import { appDataChildPath, formatShortcutForDisplay, isMacPlatform, sameManagedLibraryPath } from "../../app/macosPresentation";
 import {
   SHORTCUT_SCOPE_ORDER,
   findShortcutConflicts,
@@ -667,8 +668,8 @@ export default function SettingsPage() {
       const path = Array.isArray(selected) ? selected[0] : selected;
       if (!path) return;
       const currentCustomDir = String(get("materials.managedLibraryDir", ""));
-      const currentDir = currentCustomDir || (appDataDir ? `${appDataDir}\\asset-library` : "");
-      if (currentDir && normalizePathForCompare(currentDir) === normalizePathForCompare(path)) {
+      const currentDir = currentCustomDir || appDataChildPath(appDataDir, "asset-library");
+      if (currentDir && sameManagedLibraryPath(currentDir, path)) {
         setSetting("materials.managedLibraryDir", currentCustomDir ? path : "");
         showStatus(t("settings.status.managedUnchanged"));
         return;
@@ -905,7 +906,7 @@ export default function SettingsPage() {
             )}
             {globalShortcutStatus?.failures.length ? (
               <div className="settings-inline-warning settings-shortcut-warning">
-                <div>{t("settings.shortcuts.registrationFailed", { items: globalShortcutStatus.failures.map((item) => `${item.shortcut} (${localizedShortcutName(item.id, t, shortcutName(shortcuts, item.id))})`).join(", ") })}</div>
+                <div>{t("settings.shortcuts.registrationFailed", { items: globalShortcutStatus.failures.map((item) => `${formatShortcutForDisplay(item.shortcut)} (${localizedShortcutName(item.id, t, shortcutName(shortcuts, item.id))})`).join(", ") })}</div>
                 {globalShortcutSuggestions.length ? (
                   <div className="settings-shortcut-suggestions">
                     {globalShortcutSuggestions.map((item) => (
@@ -914,7 +915,7 @@ export default function SettingsPage() {
                         <div className="settings-shortcut-suggestion-keys">
                           {item.suggestions.length ? item.suggestions.map((suggestion) => (
                             <button key={suggestion} type="button" onClick={() => applyGlobalShortcutSuggestion(item.id, suggestion, item.name)}>
-                              {suggestion}
+                              {formatShortcutForDisplay(suggestion)}
                             </button>
                           )) : <span className="settings-shortcut-suggestion-empty">{t("settings.shortcuts.noSuggestion")}</span>}
                         </div>
@@ -981,7 +982,7 @@ export default function SettingsPage() {
                         </td>
                         <td>
                           <button className={`settings-shortcut-cell${recordingId === item.id ? " recording" : ""}${conflict ? " conflict" : ""}`} onClick={() => setRecordingId(item.id)}>
-                            {recordingId === item.id ? t("settings.shortcuts.record") : item.value}
+                            {recordingId === item.id ? t("settings.shortcuts.record") : formatShortcutForDisplay(item.value)}
                           </button>
                           {conflict && <div className="settings-shortcut-conflict">{t("settings.shortcuts.conflict", { items: conflict.map((id) => localizedShortcutName(id, t, id)).join(", ") })}</div>}
                         </td>
@@ -1128,7 +1129,7 @@ export default function SettingsPage() {
                 <div className="setting-control">
                   <input
                     className="settings-input settings-input-mono settings-input-path"
-                    value={String(get("materials.managedLibraryDir", "")) || (appDataDir ? `${appDataDir}\\asset-library` : t("settings.storage.managedDir.default"))}
+                    value={String(get("materials.managedLibraryDir", "")) || (appDataDir ? appDataChildPath(appDataDir, "asset-library") : t("settings.storage.managedDir.default"))}
                     readOnly
                   />
                   <button className="settings-btn" onClick={() => void chooseManagedLibraryDir()}>{t("common.action.change")}</button>
@@ -1145,13 +1146,13 @@ export default function SettingsPage() {
             </Group>
             <Group title={t("settings.storage.locations.group")} searchText="默认素材库目录 缩略图缓存目录 数据库路径 storage locations" shouldShow={shouldShow}>
               <SettingRow label={t("settings.storage.locations.library.label")} desc={t("settings.storage.locations.library.description")} searchText="默认素材库目录 asset-library" shouldShow={shouldShow}>
-                <input className="settings-input settings-input-mono settings-input-path" value={appDataDir ? `${appDataDir}\\asset-library` : t("settings.storage.notRead")} readOnly />
+                <input className="settings-input settings-input-mono settings-input-path" value={appDataDir ? appDataChildPath(appDataDir, "asset-library") : t("settings.storage.notRead")} readOnly />
               </SettingRow>
               <SettingRow label={t("settings.storage.locations.thumbnails.label")} desc={t("settings.storage.locations.thumbnails.description")} searchText="缩略图缓存目录 thumbnail cache" shouldShow={shouldShow}>
-                <input className="settings-input settings-input-mono settings-input-path" value={appDataDir ? `${appDataDir}\\thumbnails` : t("settings.storage.notRead")} readOnly />
+                <input className="settings-input settings-input-mono settings-input-path" value={appDataDir ? appDataChildPath(appDataDir, "thumbnails") : t("settings.storage.notRead")} readOnly />
               </SettingRow>
               <SettingRow label={t("settings.storage.locations.database.label")} desc={t("settings.storage.locations.database.description")} searchText="数据库路径 sqlite database" shouldShow={shouldShow}>
-                <input className="settings-input settings-input-mono settings-input-path" value={appDataDir ? `${appDataDir}\\luckyray.db` : "%APPDATA%\\com.luckyray.desktop\\luckyray.db"} readOnly />
+                <input className="settings-input settings-input-mono settings-input-path" value={appDataDir ? appDataChildPath(appDataDir, "luckyray.db") : isMacPlatform() ? t("settings.storage.notRead") : "%APPDATA%\\com.luckyray.desktop\\luckyray.db"} readOnly />
               </SettingRow>
             </Group>
             <Group title={t("settings.storage.overview.group")} searchText="存储总览 素材 笔记 缓存 storage overview" shouldShow={shouldShow}>
@@ -1469,10 +1470,6 @@ function formatSize(bytes?: number) {
     index += 1;
   }
   return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-}
-
-function normalizePathForCompare(path: string) {
-  return path.trim().replace(/[\\/]+$/g, "").replace(/\//g, "\\").toLowerCase();
 }
 
 function formatShortcut(event: KeyboardEvent) {

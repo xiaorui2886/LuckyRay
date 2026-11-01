@@ -254,6 +254,14 @@ def download_track(
     return total
 
 
+def required_media_tool(directory: Path, name: str) -> Path:
+    """Resolve only the named, app-owned tool; never search PATH."""
+    if name not in ("ffmpeg", "ffprobe"):
+        raise ValueError("unsupported media tool")
+    filename = name if sys.platform == "darwin" else f"{name}.exe"
+    return (directory / filename).resolve(strict=True)
+
+
 def merge_track_pair(
     video_url: str,
     audio_url: str,
@@ -283,7 +291,7 @@ def merge_track_pair(
     download_track(
         audio_url, audio_path, suffixes, allow_loopback, user_agent, referer, deadline_at, max_bytes - used,
     )
-    ffmpeg = (ffmpeg_dir / "ffmpeg.exe").resolve(strict=True)
+    ffmpeg = required_media_tool(ffmpeg_dir, "ffmpeg")
     remaining = max(1.0, deadline_at - time.monotonic())
     try:
         result = subprocess.run([
@@ -326,7 +334,7 @@ def validate_muxed_candidate(path: Path, ffmpeg_dir: Path, expect_audio: bool = 
     intentionally reads only bounded codec/duration metadata and emits nothing.
     """
     try:
-        ffprobe = (ffmpeg_dir / "ffprobe.exe").resolve(strict=True)
+        ffprobe = required_media_tool(ffmpeg_dir, "ffprobe")
         candidate = path.resolve(strict=True)
         result = subprocess.run([
             str(ffprobe), "-v", "error", "-show_entries",

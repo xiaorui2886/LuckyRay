@@ -273,6 +273,15 @@ impl KnowledgeService {
         self.export_portable_notes(source_epoch, destination, approved, &[document.clone()], true)
     }
 
+    #[cfg(target_os = "macos")]
+    fn export_portable_notes(
+        &self, _source_epoch: u64, _destination: &Path,
+        _approved: &[(String, Vec<String>)], _documents: &[KnowledgeDocumentRef], _archive: bool,
+    ) -> Result<AttachmentExportResult, KnowledgeError> {
+        Err(error("knowledge-transaction-unsupported", "Vault export is unavailable on macOS"))
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn export_portable_notes(
         &self, source_epoch: u64, destination: &Path,
         approved: &[(String, Vec<String>)], documents: &[KnowledgeDocumentRef], archive: bool,

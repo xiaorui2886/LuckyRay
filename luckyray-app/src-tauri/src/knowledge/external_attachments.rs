@@ -29,16 +29,28 @@ fn normalized_path(path: &Path) -> PathBuf {
 }
 
 pub(super) fn file_path_key(path: &Path) -> String {
-    let value = path.to_string_lossy().replace('\\', "/");
-    #[cfg(windows)]
+    #[cfg(target_os = "macos")]
     {
-        return value.strip_prefix("//?/").unwrap_or(&value).to_lowercase();
+        return super::macos_path_identity::path_key(path);
     }
-    #[cfg(not(windows))]
-    value
+    #[cfg(not(target_os = "macos"))]
+    {
+        let value = path.to_string_lossy().replace('\\', "/");
+        #[cfg(windows)]
+        {
+            return value.strip_prefix("//?/").unwrap_or(&value).to_lowercase();
+        }
+        #[cfg(not(windows))]
+        value
+    }
 }
 
 pub(super) fn file_is_within(path: &Path, root: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return super::macos_path_identity::is_within(path, root);
+    }
+    #[cfg(not(target_os = "macos"))]
     Path::new(&file_path_key(path)).starts_with(Path::new(&file_path_key(root)))
 }
 

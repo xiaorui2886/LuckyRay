@@ -2585,6 +2585,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "image",
+ "libc",
  "minisign-verify",
  "notify",
  "pulldown-cmark",

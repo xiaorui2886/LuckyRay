@@ -140,6 +140,7 @@ struct LockedRuntimeObject {
 /// Backend-only proof that the accepted DSH-0 tree is still the exact set of
 /// filesystem objects opened by Node/DSH. Handles are non-inheritable and deny
 /// write/delete sharing for the entire outer-host + native-probe use window.
+#[cfg(windows)]
 fn lock_runtime_object(
     path: &Path,
     regular_file: bool,
@@ -308,6 +309,13 @@ fn verify_record_seal(control: &RuntimeSealControl<'_>) -> Result<(), ()> {
         }
     }
     Ok(())
+}
+
+// macOS does not yet have a qualified equivalent of the Windows sealed-tree
+// lease or platform records. Keep the runtime closed until both are available.
+#[cfg(target_os = "macos")]
+fn verify_record_seal(_control: &RuntimeSealControl<'_>) -> Result<(), ()> {
+    Err(())
 }
 
 fn normalize_tracked_record(bytes: &[u8]) -> Result<Vec<u8>, ()> {
@@ -595,6 +603,11 @@ fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
     {
         true
     }
+}
+
+#[cfg(target_os = "macos")]
+fn is_link_or_reparse(_metadata: &fs::Metadata) -> bool {
+    true
 }
 
 fn hash_file(path: &Path, control: &RuntimeSealControl<'_>) -> Result<String, ()> {

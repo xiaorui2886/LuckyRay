@@ -1,5 +1,6 @@
 import { useEffect, useRef, type DragEvent } from "react";
 import { dedupeDroppedLocalPaths } from "./externalDropPaths";
+import { isMacPlatform } from "../../app/macosPresentation";
 
 let diagnosticCount = 0;
 const diagnose = (stage: string, count = 0, hit = true) => {
@@ -104,7 +105,7 @@ export function useVaultFileDrop(options: DropOptions) {
                     Object.assign(
                       new File(
                         [],
-                        item.path.split(/[\\/]/).pop() || "attachment",
+                        (isMacPlatform() ? item.path.split("/") : item.path.split(/[\\/]/)).pop() || "attachment",
                       ),
                       { path: item.path },
                     ),

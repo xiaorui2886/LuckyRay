@@ -1,3 +1,32 @@
+import { isMacAbsolutePath, isMacPlatform } from "../../app/macosPresentation";
+
+function normalizeMacDroppedLocalPath(value: string): string {
+  if (!value || value.includes("\0")) return "";
+  let path = value;
+  if (/^file:/i.test(value)) {
+    // A file URI must represent a local path exactly. In particular, do not
+    // reinterpret encoded slashes or dot components as filesystem traversal.
+    // URL parsing would reinterpret literal backslashes and strip embedded
+    // ASCII tab/CR/LF, potentially selecting a different filesystem entry.
+    if (value !== value.trim() || /[\\\t\r\n]/.test(value)) return "";
+    try {
+      const rawPath = value.slice(value.indexOf(":") + 1).split(/[?#]/, 1)[0];
+      for (const segment of rawPath.split("/")) {
+        const decoded = decodeURIComponent(segment);
+        if (decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\0")) return "";
+      }
+      const url = new URL(value);
+      if (url.protocol !== "file:" || (url.hostname && url.hostname.toLowerCase() !== "localhost") ||
+          url.username || url.password || url.port || url.search || url.hash) return "";
+      path = decodeURIComponent(url.pathname);
+    } catch {
+      return "";
+    }
+  }
+  if (!isMacAbsolutePath(path)) return "";
+  return path === "/" ? path : path.replace(/\/+$/, "");
+}
+
 function decodeFileUriPath(value: string) {
   const raw = value.trim();
   if (!raw || !raw.toLowerCase().startsWith("file:")) return raw;
@@ -23,6 +52,7 @@ function decodeFileUriPath(value: string) {
 }
 
 export function normalizeDroppedLocalPath(value: string) {
+  if (isMacPlatform()) return normalizeMacDroppedLocalPath(value);
   let path = decodeFileUriPath(value).trim().replace(/\//g, "\\");
   if (!path) return "";
 
@@ -49,7 +79,7 @@ export function dedupeDroppedLocalPaths(values: Iterable<string | null | undefin
   for (const value of values) {
     const path = normalizeDroppedLocalPath(value || "");
     if (!path) continue;
-    const key = path.toLocaleLowerCase("en-US");
+    const key = isMacPlatform() ? path : path.toLocaleLowerCase("en-US");
     if (seen.has(key)) continue;
     seen.add(key);
     paths.push(path);

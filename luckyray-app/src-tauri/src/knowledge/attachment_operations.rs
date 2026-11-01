@@ -1503,6 +1503,12 @@ fn ensure_operation_parent(root: &Path, relative: &Path) -> Result<Vec<File>, Kn
     Ok(guards)
 }
 
+#[cfg(target_os = "macos")]
+fn recovery_directory(_root: &Path) -> Result<PathBuf, KnowledgeError> {
+    Err(error("knowledge-transaction-unsupported", "Attachment operations are unavailable on macOS"))
+}
+
+#[cfg(not(target_os = "macos"))]
 fn recovery_directory(root: &Path) -> Result<PathBuf, KnowledgeError> {
     let relative = Path::new(".luckyray/attachment-operations");
     assert_safe_components(root, relative)?;

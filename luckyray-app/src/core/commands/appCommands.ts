@@ -1,6 +1,7 @@
 import { isEnabled } from "../../featureFlags";
 import type { ShellRoute } from "../../app/AppSidebar";
 import type { ShortcutCommandId } from "../../app/shortcuts";
+import { formatShortcutForDisplay } from "../../app/macosPresentation";
 import { getLuckyRayBridge } from "../bridge/luckyRayBridge";
 import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "../i18n/index";
 
@@ -70,7 +71,7 @@ function localizeCommands(locale: Locale): LuckyRayCommand[] {
   return COMMAND_DEFINITIONS.map(({ labelKey, ...command }) => ({
     ...command,
     label: translate(locale, labelKey),
-    hint: command.hint.startsWith("navigation ") ? translate(locale, "shell.command.hint.navigation") : command.hint,
+    hint: command.hint.startsWith("navigation ") ? translate(locale, "shell.command.hint.navigation") : formatShortcutForDisplay(command.hint),
   }));
 }
 

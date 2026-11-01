@@ -17,6 +17,7 @@ import { registerAttachmentDraftSession, readAttachmentRelinkRequest, subscribeA
 import { AttachmentRelinkDialog } from "./AttachmentRelinkDialog";
 import { Activity, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { resolveScopedShortcut } from "../../app/shortcuts";
+import { isMacPlatform, joinMacPath } from "../../app/macosPresentation";
 import { attachmentContextIsCurrent, captureAttachmentContext, exportNoteArchive, publishVaultAttachment, getVaultAttachmentWorkflow } from "../../core/services/vaultAttachments";
 import { readActiveKnowledgeWriteSource } from "../../core/services/knowledgeSource";
 import type { ImportReceipt } from "../../core/services/vaultAttachmentWorkflow";
@@ -803,6 +804,7 @@ function resolveRealVaultEmbedAssetRelativePath(target: string, currentRelativeP
 
 function realVaultAssetAbsolutePath(rootPath: string | null | undefined, relativePath: string | null) {
   if (!rootPath || !relativePath || !isSafeRealVaultAssetRelativePath(relativePath)) return null;
+  if (isMacPlatform()) return joinMacPath(rootPath, relativePath);
   return `${rootPath.replace(/[\\/]+$/, "")}\\${relativePath.replace(/\//g, "\\")}`;
 }
 
@@ -1166,7 +1168,7 @@ function extractDroppedLocalPaths(dataTransfer: DataTransfer | null) {
   if (uriList) {
     uriList
       .split(/\r?\n/)
-      .map((line) => line.trim())
+      .map((line) => isMacPlatform() ? line : line.trim())
       .filter((line) => line && !line.startsWith("#"))
       .forEach(push);
   }
@@ -1175,7 +1177,7 @@ function extractDroppedLocalPaths(dataTransfer: DataTransfer | null) {
   if (plain) {
     plain
       .split(/\r?\n/)
-      .map((line) => line.trim())
+      .map((line) => isMacPlatform() ? line : line.trim())
       .filter(Boolean)
       .forEach(push);
   }
@@ -1189,7 +1191,7 @@ function extractDroppedLocalPaths(dataTransfer: DataTransfer | null) {
 }
 
 function isMarkdownImportPath(path: string) {
-  return /\.(md|markdown)$/i.test(path.trim());
+  return /\.(md|markdown)$/i.test(isMacPlatform() ? path : path.trim());
 }
 
 
@@ -5532,8 +5534,9 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
 
   const vaultAbsolutePath = useCallback((relativePath: string | null | undefined) => {
     if (!currentVault) return "";
-    const root = currentVault.rootPath.replace(/[\\/]+$/, "");
     const normalized = normalizeVaultRelativePath(relativePath || "");
+    if (isMacPlatform()) return joinMacPath(currentVault.rootPath, normalized);
+    const root = currentVault.rootPath.replace(/[\\/]+$/, "");
     return normalized ? `${root}\\${normalized.replace(/\//g, "\\")}` : root;
   }, [currentVault]);
 

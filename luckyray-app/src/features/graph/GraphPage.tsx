@@ -2,6 +2,7 @@
 
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { resolveScopedShortcut } from "../../app/shortcuts";
+import { isMacPlatform, joinMacPath } from "../../app/macosPresentation";
 import { useI18n, useMessages, type I18nContextValue } from "../../core/i18n/index";
 import { readActiveContext } from "../../core/activeContext";
 import { getLuckyRayBridgeSync } from "../../core/bridge/luckyRayBridge";
@@ -2508,7 +2509,9 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
         ? safeRealVaultDocumentRelativePath(node.entityId)
         : null;
     if (relativePath) {
-      const rootPath = knowledgeSnapshot.mode === "real-vault" ? knowledgeSnapshot.vault?.rootPath?.replace(/[\\/]+$/, "") : "";
+      const root = knowledgeSnapshot.mode === "real-vault" ? knowledgeSnapshot.vault?.rootPath || "" : "";
+      if (root && isMacPlatform()) return joinMacPath(root, relativePath);
+      const rootPath = root.replace(/[\\/]+$/, "");
       return rootPath ? `${rootPath}\\${relativePath.replace(/\//g, "\\")}` : null;
     }
 

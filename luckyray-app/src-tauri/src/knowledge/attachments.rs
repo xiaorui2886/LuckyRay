@@ -338,6 +338,12 @@ pub(super) fn publish_bytes(
     publish_bytes_with_reuse(root, inventory, note, name, bytes, true)
 }
 
+#[cfg(target_os = "macos")]
+fn publish_bytes_with_reuse(_root: &Path, _inventory: &[String], _note: &str, _name: &str, _bytes: &[u8], _reuse_content: bool) -> Result<AttachmentPublication, KnowledgeError> {
+    Err(error("knowledge-transaction-unsupported", "Attachment publication is unavailable on macOS"))
+}
+
+#[cfg(not(target_os = "macos"))]
 fn publish_bytes_with_reuse(root: &Path, inventory: &[String], note: &str, name: &str, bytes: &[u8], reuse_content: bool) -> Result<AttachmentPublication, KnowledgeError> {
     if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
         return Err(error(

@@ -1,4 +1,5 @@
 import type { BridgeVaultMetadata } from "../../core/bridge/bridgeTypes";
+import { isMacPlatform, macPathKey } from "../../app/macosPresentation";
 
 const KNOWN_NOTES_VAULTS_KEY = "luckyray-notes-known-vaults-v1";
 // Persist registered locations independently of the recent-menu display size.
@@ -7,6 +8,7 @@ const KNOWN_NOTES_VAULTS_LIMIT = 10000;
 type VaultReferenceStorage = Pick<Storage, "getItem"> & Partial<Pick<Storage, "setItem">>;
 
 function vaultPathKey(rootPath: string): string {
+  if (isMacPlatform()) return macPathKey(rootPath);
   return rootPath.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
 }
 

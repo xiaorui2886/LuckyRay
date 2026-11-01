@@ -350,25 +350,39 @@ impl KnowledgeService {
             .map_err(|_| unavailable())?;
         state.bind(&identity.identity_digest, source.epoch);
         let mut changed = Vec::new();
+        #[cfg(target_os = "macos")]
+        let mut incomplete = incomplete;
         for value in paths {
-            let path = Path::new(value);
-            let normalized = value.replace('\\', "/");
-            let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
-            let root_text = vault.root.to_string_lossy().replace('\\', "/");
-            let root_text = root_text
-                .strip_prefix("//?/")
-                .unwrap_or(&root_text)
-                .trim_end_matches('/');
-            let relative = if path.is_absolute() {
-                normalized
-                    .get(..root_text.len())
-                    .filter(|prefix| prefix.eq_ignore_ascii_case(root_text))
-                    .and_then(|_| normalized.get(root_text.len()..))
-                    .and_then(|tail| tail.strip_prefix('/'))
-                    .map(str::to_owned)
-            } else {
-                Some(normalized.to_owned())
+            #[cfg(target_os = "macos")]
+            let relative = super::macos_path_identity::watched_relative(value, &vault.root);
+            #[cfg(not(target_os = "macos"))]
+            let relative = {
+                let path = Path::new(value);
+                let normalized = value.replace('\\', "/");
+                let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
+                let root_text = vault.root.to_string_lossy().replace('\\', "/");
+                let root_text = root_text
+                    .strip_prefix("//?/")
+                    .unwrap_or(&root_text)
+                    .trim_end_matches('/');
+                if path.is_absolute() {
+                    normalized
+                        .get(..root_text.len())
+                        .filter(|prefix| prefix.eq_ignore_ascii_case(root_text))
+                        .and_then(|_| normalized.get(root_text.len()..))
+                        .and_then(|tail| tail.strip_prefix('/'))
+                        .map(str::to_owned)
+                } else {
+                    Some(normalized.to_owned())
+                }
             };
+            #[cfg(target_os = "macos")]
+            if relative.is_none() {
+                // An alias, outside-root path or unsupported spelling is not
+                // a trustworthy incremental event. Suppress the whole plan.
+                incomplete = true;
+                continue;
+            }
             if let Some(relative) = relative {
                 if safe_relative_path(&relative, false).is_ok()
                     && !relative.to_ascii_lowercase().ends_with(".md")

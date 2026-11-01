@@ -4,6 +4,7 @@ import { createMaterialLibraryAdapter } from "../../core/services/materialLibrar
 import type { MaterialCatalogAdapter, MaterialCatalogImportResult } from "../../core/services/materialCatalog";
 import { readSavedSettings } from "../settings/useSettings";
 import { MaterialRootEvents, RootEventBatch } from "./materialRootEvents";
+import { isMacAbsolutePath, isMacPlatform, macPathKey } from "../../app/macosPresentation";
 
 export type MaterialWatchStorageMode = "managed" | "linked" | "source";
 
@@ -104,8 +105,8 @@ function normalizeStorageMode(value: unknown): MaterialWatchStorageMode {
 function normalizeSource(value: unknown): MaterialWatchSource | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<MaterialWatchSource>;
-  const path = typeof raw.path === "string" ? raw.path.trim() : "";
-  if (!path) return null;
+  const path = typeof raw.path === "string" ? (isMacPlatform() ? raw.path : raw.path.trim()) : "";
+  if (!path || (isMacPlatform() && !isMacAbsolutePath(path))) return null;
   const now = new Date().toISOString();
   return {
     id: typeof raw.id === "string" && raw.id ? raw.id : createId(),
@@ -145,11 +146,11 @@ export function writeMaterialWatchSources(sources: MaterialWatchSource[]) {
 }
 
 export function addMaterialWatchSource(path: string, defaults?: Partial<MaterialWatchSource>): MaterialWatchSource[] {
-  const trimmedPath = path.trim();
-  if (!trimmedPath) return readMaterialWatchSources();
+  const sourcePath = isMacPlatform() ? path : path.trim();
+  if (!sourcePath || (isMacPlatform() && !isMacAbsolutePath(sourcePath))) return readMaterialWatchSources();
   const now = new Date().toISOString();
   const sources = readMaterialWatchSources();
-  const existingIndex = sources.findIndex((source) => normalizePath(source.path) === normalizePath(trimmedPath));
+  const existingIndex = sources.findIndex((source) => normalizePath(source.path) === normalizePath(sourcePath));
   if (existingIndex >= 0) {
     const next = [...sources];
     next[existingIndex] = {
@@ -157,7 +158,7 @@ export function addMaterialWatchSource(path: string, defaults?: Partial<Material
       enabled: true,
       updatedAt: now,
       ...defaults,
-      path: trimmedPath,
+      path: sourcePath,
       id: next[existingIndex].id,
       createdAt: next[existingIndex].createdAt,
     };
@@ -166,7 +167,7 @@ export function addMaterialWatchSource(path: string, defaults?: Partial<Material
   }
   const source: MaterialWatchSource = {
     id: createId(),
-    path: trimmedPath,
+    path: sourcePath,
     enabled: true,
     recursive: defaults?.recursive ?? true,
     storageMode: normalizeStorageMode(defaults?.storageMode || materialLibrarySession.getSnapshot().registry?.libraries.find(library => library.id === materialLibrarySession.getSnapshot().libraryId)?.storageMode || readSavedSettings()["materials.importMode"]),
@@ -412,5 +413,6 @@ export async function runMaterialWatchScan(bridge = bridgeRef, targets?: Map<str
 }
 
 function normalizePath(path: string) {
+  if (isMacPlatform()) return macPathKey(path);
   return path.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowerCase();
 }

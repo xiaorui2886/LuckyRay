@@ -17,7 +17,7 @@ pub(crate) mod trust_policy;
 use trust_policy::AuthorizationMode;
 
 use crate::backend::BackendServices;
-#[cfg(feature = "browser-host-runtime")]
+#[cfg(any(feature = "browser-host-runtime", target_os = "macos"))]
 use crate::dsh_host::DshHostService;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hmac::{Hmac, Mac};

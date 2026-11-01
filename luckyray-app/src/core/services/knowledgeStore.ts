@@ -11,6 +11,7 @@ import { VaultFileChangeQueue, markdownContentChanges, type VaultFileChangeBatch
 import { invalidateKnowledgeAttachmentInventory } from "./vaultAttachments";
 import { clearAttachmentResolutionReads } from "./vaultAttachmentResolution";
 import { knowledgeCommittedPaths, readKnowledgeCommittedCheckpoint } from "./knowledgeLiveSync";
+import { isMacPlatform, macRelativeWatchPath } from "../../app/macosPresentation";
 
 export type KnowledgeStoreMarkdownIndex = BridgeNotesVaultMarkdownIndex & {
   generation: number;
@@ -466,7 +467,18 @@ export class KnowledgeStore {
           this.queueVaultWatchRefresh();
           return;
         }
-        const paths = (event.paths || []).filter((path) => this.isRelevantVaultPath(path, vault.rootPath));
+        const reportedPaths = event.paths || [];
+        if (isMacPlatform() && reportedPaths.some((path) => {
+          const relative = macRelativeWatchPath(vault.rootPath, path);
+          return relative === null || relative === "";
+        })) {
+          // Case/Unicode aliases and out-of-root reports cannot safely be
+          // mapped to an incremental path. Reconcile instead of dropping them.
+          this.fileChanges.add(null, Date.now());
+          this.queueVaultWatchRefresh();
+          return;
+        }
+        const paths = reportedPaths.filter((path) => this.isRelevantVaultPath(path, vault.rootPath));
         if (!paths.length) return;
         this.fileChanges.add({ paths, type: event.type }, Date.now());
         this.queueVaultWatchRefresh();
@@ -509,9 +521,14 @@ export class KnowledgeStore {
         }
         this.publish({ attachmentChanges });
         const contentPaths = markdownContentChanges(attachmentChanges);
-        const root = vault.rootPath.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
-        if (contentPaths?.every(path => path.replace(/\\/g, "/").toLowerCase().startsWith(root.toLowerCase()))) {
-          modifiedPaths = contentPaths.map(path => path.replace(/\\/g, "/").slice(root.length));
+        if (isMacPlatform()) {
+          const relative = contentPaths?.map((path) => macRelativeWatchPath(vault.rootPath, path));
+          if (relative?.every((path): path is string => path !== null && path !== "")) modifiedPaths = relative;
+        } else {
+          const root = vault.rootPath.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+          if (contentPaths?.every(path => path.replace(/\\/g, "/").toLowerCase().startsWith(root.toLowerCase()))) {
+            modifiedPaths = contentPaths.map(path => path.replace(/\\/g, "/").slice(root.length));
+          }
         }
       }
       void this.invalidate({ reason: "vault-watch", modifiedPaths });
@@ -602,6 +619,12 @@ export class KnowledgeStore {
   }
 
   private isRelevantVaultPath(path: string, rootPath: string) {
+    if (isMacPlatform()) {
+      const relative = macRelativeWatchPath(rootPath, path);
+      if (!relative || relative.split("/").some((part) => part.toLocaleLowerCase() === ".luckyray")) return false;
+      const leaf = relative.split("/").pop() || "";
+      return !/\.(tmp|swp|swx|bak|crdownload|part)$/i.test(leaf);
+    }
     const normalizedPath = path.replace(/\\/g, "/").replace(/^\/\/\?\//, "").toLocaleLowerCase();
     const normalizedRoot = rootPath.replace(/\\/g, "/").replace(/^\/\/\?\//, "").replace(/\/$/, "").toLocaleLowerCase();
     if (!normalizedPath.startsWith(`${normalizedRoot}/`) && normalizedPath !== normalizedRoot) return false;

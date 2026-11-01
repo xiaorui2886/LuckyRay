@@ -67,6 +67,8 @@ impl AuthState {
         }
     }
     fn materials_grants_available(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        self.credential_store.available()?;
         match &self.materials_grants_error {
             Some(error) => Err(error.clone()),
             None => Ok(()),
@@ -74,6 +76,24 @@ impl AuthState {
     }
     // Add only grant metadata; the existing native/Collector credential file
     // remains byte/schema compatible with older installed native sidecars.
+    #[cfg(target_os = "macos")]
+    pub(super) fn load_materials_grants(&mut self) -> Result<(), String> {
+        let mut grants = Vec::new();
+        for (file, unified) in [(GRANTS_FILE, false), (LIBRARY_GRANTS_FILE, true)] {
+            if let Some(bytes) = self.credential_store.read(file)? {
+                let record: GrantRecord = serde_json::from_slice(&bytes).map_err(|_| "materials-grants-invalid")?;
+                if record.version != 1 || record.grants.iter().any(|g| g.knowledge.is_some() != unified) {
+                    return Err("materials-grants-version-invalid".into());
+                }
+                grants.extend(record.grants);
+            }
+        }
+        self.materials_grants = grants;
+        if !self.validate_materials_grants() { return Err("materials-grants-invalid".into()); }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub(super) fn load_materials_grants(&mut self) -> Result<(), String> {
         let mut grants = Vec::new();
         for (file, unified) in [(GRANTS_FILE, false), (LIBRARY_GRANTS_FILE, true)] {
@@ -100,7 +120,7 @@ impl AuthState {
     fn persist_grant_family(&self, unified: bool) -> Result<(), String> {
         // Existing desktop versions keep reading their original, unchanged schema.
         // Each operation changes one family in one atomic file replacement.
-        persist_auth_record(&self.path.with_file_name(if unified { LIBRARY_GRANTS_FILE } else { GRANTS_FILE }),
+        self.persist_record(&self.path.with_file_name(if unified { LIBRARY_GRANTS_FILE } else { GRANTS_FILE }),
             &GrantRecord {version: 1, grants: self.materials_grants.iter()
                 .filter(|g| g.knowledge.is_some() == unified).cloned().collect()})
     }

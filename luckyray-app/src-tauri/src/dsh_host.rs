@@ -1617,25 +1617,35 @@ fn strict_line_reader(
                                 let _ = sender.send(Err(()));
                                 break;
                             }
-                            let Some(service) = service.upgrade() else {
-                                let _ = sender.send(Err(()));
-                                break;
-                            };
-                            let response = service.execute_resource_payload(
-                                generation,
-                                frame.payload.as_deref().unwrap_or_default(),
-                            );
-                            let write = parent.lock().map_err(|_| ()).and_then(|mut channel| {
-                                channel.write_resource_result(
-                                    frame.request_id.as_deref().ok_or(())?,
-                                    &response,
-                                )
-                            });
-                            if write.is_err() {
+                            #[cfg(all(windows, feature = "browser-host-runtime"))]
+                            {
+                                let Some(service) = service.upgrade() else {
+                                    let _ = sender.send(Err(()));
+                                    break;
+                                };
+                                let response = service.execute_resource_payload(
+                                    generation,
+                                    frame.payload.as_deref().unwrap_or_default(),
+                                );
+                                let write = parent.lock().map_err(|_| ()).and_then(|mut channel| {
+                                    channel.write_resource_result(
+                                        frame.request_id.as_deref().ok_or(())?,
+                                        &response,
+                                    )
+                                });
+                                if write.is_err() {
+                                    let _ = sender.send(Err(()));
+                                    break;
+                                }
+                                continue;
+                            }
+                            #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+                            {
+                                // There is no authenticated parent channel on
+                                // this platform, so do not process the request.
                                 let _ = sender.send(Err(()));
                                 break;
                             }
-                            continue;
                         }
                         if frame.kind == "surface-failed" {
                             if frame.request_id.is_some()
@@ -2407,10 +2417,16 @@ fn bounded_reader_join(join: JoinHandle<()>) -> bool {
     join.is_finished() && join.join().is_ok()
 }
 
-#[cfg(not(all(windows, feature = "browser-host-runtime")))]
+#[cfg(target_os = "macos")]
+#[path = "dsh_host/macos_closed.rs"]
+mod macos_closed;
+#[cfg(target_os = "macos")]
+use macos_closed::HostHandle;
+
+#[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
 struct HostHandle;
 
-#[cfg(not(all(windows, feature = "browser-host-runtime")))]
+#[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
 impl HostHandle {
     fn process_id(&self) -> Option<u32> { None }
     fn update_request(&mut self, _kind: &str, _id: &str) -> Result<serde_json::Value, &'static str> {
@@ -3977,6 +3993,16 @@ impl DshHostService {
         }
         self.publish(DshHostStage::ProbeCompleted, retry_attempt, Some(duration));
         Ok(self.status())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn run_probe_on_host(
+        &self,
+        _host: &mut HostHandle,
+        _retry_attempt: u8,
+        _started: Instant,
+    ) -> Result<DshHostStatusView, ()> {
+        Err(())
     }
 
     #[cfg(all(windows, feature = "browser-host-runtime"))]

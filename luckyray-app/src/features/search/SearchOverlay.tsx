@@ -7,6 +7,7 @@ import "./search.css";
 import { consumeGlobalSearchQuery, consumeMaterialSearchReturn } from "./searchOpenIntent";
 import { dispatchMaterialsToolbarCommand } from "../materials/materialsToolbarProtocol";
 import { matchesShortcut } from "../../app/shortcuts";
+import { formatShortcutForDisplay } from "../../app/macosPresentation";
 import { readSavedSettings } from "../settings/useSettings";
 
 const SCOPES: Array<{ key: SearchOverlayScope; labelKey: MessageKey }> = [
@@ -301,7 +302,7 @@ export default function SearchOverlay({ open, onClose }: { open: boolean; onClos
         <div className="search-hints">
           <span className="search-hint"><kbd>↑↓</kbd> {t("search.hint.navigate")}</span>
           <span className="search-hint"><kbd>Enter</kbd> {t("search.hint.open")}</span>
-          <span className="search-hint"><kbd>Ctrl+K</kbd> {t("search.hint.search")}</span>
+          <span className="search-hint"><kbd>{formatShortcutForDisplay("Ctrl+K")}</kbd> {t("search.hint.search")}</span>
           {collectionBoxEnabled && <span className="search-hint">{t("search.collectionIsolated")}</span>}
         </div>
         {handoffError ? <div className="search-empty" role="status"><p>{handoffError}</p></div> : null}

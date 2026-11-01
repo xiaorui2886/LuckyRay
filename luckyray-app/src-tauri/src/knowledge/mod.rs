@@ -13,6 +13,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 mod index;
+#[cfg(target_os = "macos")]
+mod macos_no_clobber;
+#[cfg(target_os = "macos")]
+mod macos_path_identity;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_transactions;
 mod saved_scopes;
 pub(crate) use saved_scopes::SavedKnowledgeScope;
 #[cfg(test)]
@@ -2511,6 +2517,18 @@ impl KnowledgeService {
         relative: &Path,
         target: &Path,
     ) -> Result<KnowledgeDocumentSnapshot, KnowledgeError> {
+        #[cfg(target_os = "macos")]
+        let (bytes, metadata) = {
+            let parent = target.parent().ok_or_else(|| error("knowledge-read-failed", "Document parent is invalid"))?;
+            let name = target.file_name().ok_or_else(|| error("knowledge-read-failed", "Document name is invalid"))?;
+            let dir = crate::macos_fs::Directory::open(parent, false, false).map_err(|_| error("knowledge-path-reparse-forbidden", "Document parent is unsafe"))?;
+            let (bytes, version) = dir.read(name).map_err(|_| error("knowledge-read-failed", "Document could not be verified"))?
+                .ok_or_else(|| error("knowledge-not-found", "Document does not exist"))?;
+            let metadata = dir.open_regular(name).and_then(|file| file.metadata()).map_err(|_| error("knowledge-read-failed", "Document metadata could not be verified"))?;
+            if !version.matches_metadata(&metadata) { return Err(error("knowledge-revision-conflict", "Document changed during reading")); }
+            (bytes, metadata)
+        };
+        #[cfg(not(target_os = "macos"))]
         let bytes = std::fs::read(target).map_err(|failure| {
             error(
                 "knowledge-read-failed",
@@ -2524,6 +2542,7 @@ impl KnowledgeService {
                 "Knowledge documents must use UTF-8",
             )
         })?;
+        #[cfg(not(target_os = "macos"))]
         let metadata = std::fs::metadata(target).map_err(|failure| {
             error(
                 "knowledge-read-failed",
@@ -2666,7 +2685,40 @@ impl KnowledgeService {
         Ok(next_bytes)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    fn commit_existing_document(
+        &self,
+        vault: &TrustedVault,
+        target: &Path,
+        expected_revision: Option<&str>,
+        expected_target: Option<&KnowledgeTargetIdentity>,
+        target_guard: Option<&FilesystemDirectoryIdentityGuard>,
+        mutation: impl FnOnce(&DecodedDocument) -> Result<String, KnowledgeError>,
+    ) -> Result<Vec<u8>, KnowledgeError> {
+        let parent = target.parent().ok_or_else(|| error("knowledge-write-failed", "Document parent is unavailable"))?;
+        let name = target.file_name().ok_or_else(|| error("knowledge-write-failed", "Document name is invalid"))?;
+        let dir = crate::macos_fs::Directory::open(parent, false, false).map_err(|_| error("knowledge-path-reparse-forbidden", "Document parent is unsafe"))?;
+        let (original, version) = dir.read(name).map_err(|_| error("knowledge-read-failed", "Document could not be verified"))?
+            .ok_or_else(|| error("knowledge-not-found", "Document does not exist"))?;
+        if expected_revision.is_some_and(|value| value != version.hash) {
+            return Err(error("knowledge-revision-conflict", "Knowledge document changed since it was opened"));
+        }
+        let decoded = decode_document(&original)?;
+        let next = encode_document(&decoded, &mutation(&decoded)?);
+        #[cfg(test)]
+        let fail = self.write_fault_before_commit.swap(false, Ordering::AcqRel);
+        #[cfg(not(test))]
+        let fail = false;
+        #[cfg(test)]
+        if let Some(hook) = self.after_final_validation.lock().expect("knowledge test hook lock").take() { hook(); }
+        macos_transactions::write(target, &next, true, fail, Some(&version), || {
+            dir.current().map_err(|_| error("knowledge-revision-conflict", "Document parent changed"))?;
+            self.assert_expected_target_unlocked(vault, expected_target, target_guard)
+        })?;
+        Ok(next)
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     fn commit_existing_document(
         &self,
         _vault: &TrustedVault,
@@ -3393,6 +3445,16 @@ fn safe_markdown_name(value: &str) -> Result<String, KnowledgeError> {
     Ok(name)
 }
 
+#[cfg(target_os = "macos")]
+fn safe_existing_directory(root: &Path, relative: &Path) -> Result<PathBuf, KnowledgeError> {
+    let target = root.join(relative);
+    if !target.starts_with(root) { return Err(error("knowledge-path-outside-vault", "Document parent is outside the Vault")); }
+    crate::macos_fs::Directory::open(&target, false, false)
+        .map_err(|_| error("knowledge-path-reparse-forbidden", "Document parent contains a link or is unavailable"))?;
+    Ok(target)
+}
+
+#[cfg(not(target_os = "macos"))]
 fn safe_existing_directory(root: &Path, relative: &Path) -> Result<PathBuf, KnowledgeError> {
     let target = root.join(relative);
     assert_safe_components(root, relative)?;
@@ -3411,6 +3473,19 @@ fn safe_existing_directory(root: &Path, relative: &Path) -> Result<PathBuf, Know
     Ok(canonical)
 }
 
+#[cfg(target_os = "macos")]
+fn safe_existing_file(root: &Path, relative: &Path) -> Result<PathBuf, KnowledgeError> {
+    let target = root.join(relative);
+    if !target.starts_with(root) { return Err(error("knowledge-path-outside-vault", "Document is outside the Vault")); }
+    let parent = target.parent().ok_or_else(|| error("knowledge-path-outside-vault", "Document parent is invalid"))?;
+    let dir = crate::macos_fs::Directory::open(parent, false, false)
+        .map_err(|_| error("knowledge-path-reparse-forbidden", "Document parent contains a link or is unavailable"))?;
+    dir.open_regular(target.file_name().ok_or_else(|| error("knowledge-not-found", "Document does not exist"))?)
+        .map_err(|_| error("knowledge-path-reparse-forbidden", "Document contains a link or is unavailable"))?;
+    Ok(target)
+}
+
+#[cfg(not(target_os = "macos"))]
 fn safe_existing_file(root: &Path, relative: &Path) -> Result<PathBuf, KnowledgeError> {
     assert_safe_components(root, relative)?;
     let target = root.join(relative);
@@ -3725,6 +3800,14 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), KnowledgeError> {
         })
 }
 
+#[cfg(target_os = "macos")]
+fn write_new_synced(_path: &Path, _bytes: &[u8]) -> Result<(), KnowledgeError> {
+    Err(error(
+        "knowledge-transaction-unsupported",
+        "Knowledge transaction writes are unavailable on macOS",
+    ))
+}
+
 #[cfg(windows)]
 fn commit_prepared_document(
     target: &Path,
@@ -3808,7 +3891,12 @@ fn recover_pending_document_writes(root: &Path) -> Result<(), KnowledgeError> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn recover_pending_document_writes(root: &Path) -> Result<(), KnowledgeError> {
+    macos_transactions::recover_tree(root)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn recover_pending_document_writes(_root: &Path) -> Result<(), KnowledgeError> {
     Ok(())
 }
@@ -4077,10 +4165,19 @@ fn move_file_no_replace(source: &Path, destination: &Path) -> Result<(), Knowled
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn move_file_no_replace(_source: &Path, _destination: &Path) -> Result<(), KnowledgeError> {
+    Err(error(
+        "knowledge-transaction-unsupported",
+        "Knowledge transaction moves are unavailable on macOS",
+    ))
+}
+
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8], replace: bool) -> Result<(), KnowledgeError> {
     atomic_write_with_fault(path, bytes, replace, false)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn atomic_write_with_fault(
     path: &Path,
     bytes: &[u8],
@@ -4149,6 +4246,16 @@ fn atomic_write_with_fault(
     result
 }
 
+#[cfg(target_os = "macos")]
+fn atomic_write_with_fault(
+    path: &Path,
+    bytes: &[u8],
+    replace: bool,
+    fail_before_commit: bool,
+) -> Result<(), KnowledgeError> {
+    macos_transactions::write(path, bytes, replace, fail_before_commit, None, || Ok(()))
+}
+
 #[cfg(windows)]
 fn replace_file(target: &Path, replacement: &Path) -> Result<(), KnowledgeError> {
     use std::os::windows::ffi::OsStrExt;
@@ -4209,6 +4316,45 @@ mod tests {
     #[cfg(windows)]
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_platform_atomic_write_preserves_targets_on_conflict() {
+        let root = temp_path("macos-atomic-write");
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let existing = root.join("existing.md");
+        let missing = root.join("missing.md");
+        std::fs::write(&existing, b"synthetic-before").unwrap();
+        // Exercise only this synthetic file's ACL. A deny ACE must not be
+        // silently discarded by replacement through a new inode.
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        assert!(std::process::Command::new("/bin/chmod").args(["+a", "everyone deny delete"]).arg(&existing).status().unwrap().success());
+        struct ResetAcl(PathBuf);
+        impl Drop for ResetAcl { fn drop(&mut self) { let _ = std::process::Command::new("/bin/chmod").arg("-N").arg(&self.0).status(); } }
+        let reset_acl = ResetAcl(existing.clone());
+        let source_inode = std::fs::metadata(&existing).unwrap().ino();
+        let entries_before = std::fs::read_dir(&root).unwrap().count();
+        assert_eq!(atomic_write(&existing, b"not-published", true).unwrap_err().code, "knowledge-acl-unsupported");
+        assert_eq!(std::fs::read(&existing).unwrap(), b"synthetic-before");
+        assert_eq!(std::fs::metadata(&existing).unwrap().ino(), source_inode);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), entries_before);
+        assert!(crate::macos_fs::require_empty_acl(&File::open(&existing).unwrap()).is_err());
+        drop(reset_acl);
+        assert_eq!(atomic_write(&existing, b"new", false).unwrap_err().code, "knowledge-name-conflict");
+        assert_eq!(std::fs::read(&existing).unwrap(), b"synthetic-before");
+        assert!(!missing.exists());
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o444)).unwrap();
+        assert_eq!(atomic_write(&existing, b"new", true).unwrap_err().code, "knowledge-write-denied");
+        assert_eq!(std::fs::read(&existing).unwrap(), b"synthetic-before");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644)).unwrap();
+        atomic_write(&existing, b"next", true).unwrap();
+        assert_eq!(std::fs::read(&existing).unwrap(), b"next");
+        assert_eq!(std::fs::metadata(&existing).unwrap().permissions().mode() & 0o777, 0o644);
+        std::fs::remove_file(&existing).unwrap();
+        std::fs::remove_file(root.join(".lrm-write.lock")).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     fn temp_path(label: &str) -> PathBuf {
         let nonce = SystemTime::now()

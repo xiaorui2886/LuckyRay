@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod materials_grants;
+#[cfg(target_os = "macos")]
+mod macos_credentials;
 pub(crate) use materials_grants::MaterialsGrant;
 
 const AUTH_FILE_NAME: &str = "local-transport-auth-v1.json";
@@ -292,9 +294,32 @@ struct AuthState {
     persisted: PersistedAuth,
     materials_grants: Vec<MaterialsGrant>,
     materials_grants_error: Option<String>,
+    #[cfg(target_os = "macos")]
+    credential_store: macos_credentials::Store,
 }
 
 impl AuthState {
+    #[cfg(target_os = "macos")]
+    fn load_or_create(app_data_dir: &Path) -> Result<Self, String> {
+        let store = macos_credentials::Store::open(app_data_dir)?;
+        let bytes = store.read(AUTH_FILE_NAME)?;
+        let is_new = bytes.is_none();
+        let persisted: PersistedAuth = match bytes {
+            Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| "local transport credential file is invalid")?,
+            None => PersistedAuth { version: AUTH_FILE_VERSION, master_secret: random_hex(32), approved_origins: BTreeSet::new() },
+        };
+        if persisted.version != AUTH_FILE_VERSION || !is_strict_secret(&persisted.master_secret)
+            || persisted.approved_origins.iter().any(|v| canonical_extension_origin(v).as_deref() != Some(v.as_str())) {
+            return Err("local transport credential file is invalid".into());
+        }
+        let mut state = Self { path: app_data_dir.join(AUTH_FILE_NAME), persisted,
+            materials_grants: Vec::new(), materials_grants_error: None, credential_store: store };
+        state.initialize_materials_grants();
+        if is_new { state.persist()?; }
+        Ok(state)
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn load_or_create(app_data_dir: &Path) -> Result<Self, String> {
         fs::create_dir_all(app_data_dir)
             .map_err(|_| "local transport credential directory is unavailable".to_string())?;
@@ -329,7 +354,19 @@ impl AuthState {
     }
 
     fn persist(&self) -> Result<(), String> {
-        persist_auth_record(&self.path, &self.persisted)
+        self.persist_record(&self.path, &self.persisted)
+    }
+
+    fn persist_record(&self, path: &Path, record: &impl Serialize) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            if path.parent() != self.path.parent() { return Err("invalid credential record path".into()); }
+            let name = path.file_name().and_then(|v| v.to_str()).ok_or("invalid credential record path")?;
+            let bytes = serde_json::to_vec_pretty(record).map_err(|_| "credential serialization failed")?;
+            self.credential_store.write(name, &bytes)
+        }
+        #[cfg(not(target_os = "macos"))]
+        persist_auth_record(path, record)
     }
 
     fn approve_origin(&mut self, origin: &str) -> Result<(), String> {
@@ -362,10 +399,14 @@ impl AuthState {
     }
 
     fn native_credential(&self) -> Result<String, String> {
+        #[cfg(target_os = "macos")]
+        self.credential_store.available()?;
         derive_credential(&self.persisted.master_secret, "native\0v1")
     }
 
     fn extension_credential(&self, origin: &str) -> Result<String, String> {
+        #[cfg(target_os = "macos")]
+        self.credential_store.available()?;
         if !self.persisted.approved_origins.contains(origin) {
             return Err("extension origin is not approved".to_string());
         }
@@ -392,6 +433,7 @@ impl AuthState {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn persist_auth_record(path: &Path, record: &impl Serialize) -> Result<(), String> {
         let parent = path
             .parent()
@@ -426,6 +468,18 @@ fn persist_auth_record(path: &Path, record: &impl Serialize) -> Result<(), Strin
         Ok(())
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn load_native_credential(app_data_dir: &Path) -> Result<String, String> {
+    let bytes = macos_credentials::read_native(app_data_dir)?;
+    let persisted: PersistedAuth = serde_json::from_slice(&bytes).map_err(|_| "local transport credential file is invalid")?;
+    if persisted.version != AUTH_FILE_VERSION || !is_strict_secret(&persisted.master_secret)
+        || persisted.approved_origins.iter().any(|v| canonical_extension_origin(v).as_deref() != Some(v.as_str())) {
+        return Err("local transport credential file is invalid".into());
+    }
+    derive_credential(&persisted.master_secret, "native\0v1")
+}
+
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn load_native_credential(app_data_dir: &Path) -> Result<String, String> {
     let path = app_data_dir.join(AUTH_FILE_NAME);
     if !path.is_file() {
@@ -2544,6 +2598,8 @@ mod tests {
             REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&path).unwrap();
+        #[cfg(target_os = "macos")]
+        let path = path.canonicalize().unwrap();
         path
     }
 
@@ -4205,6 +4261,61 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_credential_boundary_rejects_unsafe_files_and_starts_transport() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = temp_dir("macos-credential-boundary");
+        let auth_path = dir.join(AUTH_FILE_NAME);
+        let mut state = AuthState::load_or_create(&dir).unwrap();
+        let credential = state.native_credential().unwrap();
+        assert_eq!(credential, load_native_credential(&dir).unwrap());
+        assert!(AuthState::load_or_create(&dir).is_err());
+        assert_eq!(fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(&auth_path).unwrap().permissions().mode() & 0o777, 0o600);
+        fs::write(&auth_path, b"synthetic external conflict").unwrap();
+        assert!(state.rotate_master().is_err());
+        assert!(state.native_credential().is_err());
+        assert_eq!(fs::read(&auth_path).unwrap(), b"synthetic external conflict");
+        drop(state);
+        fs::remove_file(&auth_path).unwrap();
+        fs::remove_file(dir.join(".local-transport-recovery-required")).unwrap();
+        let state = AuthState::load_or_create(&dir).unwrap();
+        drop(state);
+        fs::set_permissions(&auth_path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(load_native_credential(&dir).is_err());
+        assert!(AuthState::load_or_create(&dir).is_err());
+        fs::set_permissions(&auth_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let hardlink = dir.join("synthetic-hardlink");
+        fs::hard_link(&auth_path, &hardlink).unwrap();
+        assert!(load_native_credential(&dir).is_err());
+        fs::remove_file(hardlink).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(AuthState::load_or_create(&dir).is_err());
+        assert_eq!(fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o777);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let moved = dir.join("synthetic-original");
+        fs::rename(&auth_path, &moved).unwrap();
+        symlink(&moved, &auth_path).unwrap();
+        assert!(load_native_credential(&dir).is_err());
+        assert!(AuthState::load_or_create(&dir).is_err());
+        fs::remove_file(&auth_path).unwrap();
+        fs::rename(&moved, &auth_path).unwrap();
+        let backend = Arc::new(BackendServices::initialize(&dir).unwrap());
+        let adapter = Arc::new(LegacyLocalTransportAdapter::new(backend.clone()));
+        let handle = start_server(ServerConfig::test(dir.clone()), adapter).unwrap();
+        assert_eq!(handle.client_config().credential, load_native_credential(&dir).unwrap());
+        let response = authorized_request(&handle, "GET", "/api/folders", None, None);
+        assert_eq!(status(&response), 200);
+        let old = handle.client_config().credential;
+        handle.rotate_credentials().unwrap();
+        assert_ne!(load_native_credential(&dir).unwrap(), old);
+        drop(handle);
+        drop(backend);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn credential_file_is_stable_and_invalid_file_fails_closed() {
         let dir = temp_dir("credentials");

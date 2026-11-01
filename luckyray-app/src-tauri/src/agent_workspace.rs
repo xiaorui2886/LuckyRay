@@ -3797,9 +3797,9 @@ impl FilesystemDirectoryIdentityGuard {
 
     /// Confirms that the caller's current path still resolves to the exact
     /// directory object held by this guard. Windows can prove this while the
-    /// no-delete-share handle is live. Other platforms keep the existing
-    /// identity implementation for Workspace registration, but fail closed
-    /// when a caller requires the stronger replacement fence.
+    /// no-delete-share handle is live. macOS checks the visible device/inode
+    /// through no-follow handles; external moves can still race that check.
+    /// Other platforms fail closed when a replacement fence is required.
     pub(crate) fn verify_current_path(&self, path: &Path) -> Result<(), WorkspaceError> {
         #[cfg(windows)]
         {
@@ -3812,7 +3812,17 @@ impl FilesystemDirectoryIdentityGuard {
             }
             Ok(())
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            let directory = crate::macos_fs::Directory::open(path, false, false)
+                .map_err(|_| workspace_read_error())?;
+            let file = directory.identity_file().map_err(|_| workspace_read_error())?;
+            if workspace_file_identity(&file, path)? != self.identity {
+                return Err(WorkspaceError::new("workspace-grant-changed", "Workspace grant identity changed"));
+            }
+            directory.current().map_err(|_| workspace_read_error())
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         {
             let _ = path;
             Err(WorkspaceError::new(
@@ -3831,7 +3841,10 @@ pub(crate) fn filesystem_directory_identity_guard(
     // fences replacement, while independent identity readers can coexist.
     // The separate Workspace commit guard retains its existing DELETE access.
     let file = open_workspace_directory_fence(path, false)?;
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let file = crate::macos_fs::Directory::open(path, false, false)
+        .and_then(|dir| dir.identity_file()).map_err(|_| workspace_read_error())?;
+    #[cfg(not(any(windows, target_os = "macos")))]
     let file = {
         let metadata = fs::symlink_metadata(path).map_err(|_| workspace_read_error())?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
