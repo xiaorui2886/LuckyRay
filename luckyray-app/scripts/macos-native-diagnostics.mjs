@@ -14,7 +14,7 @@ const COMMANDS = Object.freeze(["node", "pnpm", "cargo", "make", "configure", "p
 const CLASSES = Object.freeze(["rust-compiler", "typescript-compiler", "python-error", "native-compiler", "compiler-error", "header-not-found", "unresolved-name", "type-mismatch",
   "linker-failure", "library-not-found", "compiler-link-probe-failed", "unsupported-option", "invalid-config", "io-error",
   "before-build-failed", "module-not-found", "native-module-load-failed", "architecture-mismatch", "permission-denied",
-  "disk-full", "source-download-failed", "pinned-input-rejected", "runtime-minimum-rejected", "project-error", "configure-log-unavailable", "configure-terminal"]);
+  "disk-full", "source-download-failed", "pinned-input-rejected", "runtime-minimum-rejected", "project-error", "configure-log-unavailable", "configure-terminal", "quoted-cflag-rejected"]);
 const ORIGINS = Object.freeze(["process-output", "configure-probe-log"]);
 const TERMINALS = Object.freeze({
   "C compiler test failed.": "ffmpeg-c-compiler-test-failed",
@@ -126,6 +126,8 @@ export class DiagnosticCollector {
       for (const module of PYTHON_MODULES) if (line.includes(`'${module}'`)) this.add({ class: "module-not-found", module });
     }
     if (/(?:^|:)\s*(?:fatal )?error:/.test(line)) this.add({ class: "compiler-error" });
+    if (/\berror:/i.test(line) && line.includes("'-ffile-prefix-map=")
+        && /no such file or directory|linker input file not found/i.test(line)) this.add({ class: "quoted-cflag-rejected" });
     const where = location(line, this.files);
     if (where.file && (/\berror\b|-->/.test(line))) this.add({ class: /\.rs:/.test(line) ? "rust-compiler" : /\.(?:ts|tsx)\(/.test(line) ? "typescript-compiler" : "native-compiler", ...where });
     for (const code of this.codes) if (line.includes(code)) this.add({ class: "project-error", code });

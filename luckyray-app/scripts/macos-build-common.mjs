@@ -97,6 +97,8 @@ export function releaseEnvironment(extra = {}) {
   const priorCflags = (process.env.CFLAGS ?? "").trimEnd();
   return { ...process.env, CARGO_TARGET_DIR: join(TAURI, "target"),
     CARGO_ENCODED_RUSTFLAGS: flags.join("\x1f"),
+    // cc-rs otherwise forwards the shell quotes in our CFLAGS as literal bytes.
+    CC_SHELL_ESCAPED_FLAGS: "1",
     CFLAGS: priorCflags.endsWith(hygiene) ? priorCflags : `${priorCflags} ${hygiene}`.trimStart(),
     ...extra };
 }
