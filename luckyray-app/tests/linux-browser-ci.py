@@ -23,6 +23,11 @@ EXCLUDED = {name: "NOT_RUN" for name in (
 STEPS = ("CHECKOUT", "INIT", "NODE", "PREFLIGHT", "DEPENDENCIES", "RUST", "FRONTEND",
          "BUILD", "DRIVER", "RUNTIME", "RESOURCES", "BROWSER")
 EXPORTS = ("source.json", "preflight.json", "build.json", "resources.json", "browser.json", "result.json")
+STARTUP_SCOPE = "normal-sandbox-browser-startup-only"
+STARTUP_EXPORTS = ("source.json", "preflight.json", "result.json")
+STARTUP_STEPS = ("CHECKOUT", "INIT", "NODE", "PREFLIGHT")
+STARTUP_EXCLUDED = {**EXCLUDED, **{name: "NOT_RUN" for name in (
+    "frontendBuild", "mainElfBuild", "nativeHostBuild", "driverBuild", "completeResources", "consentFlow")}}
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 CHECKS = ("explicitRequestDenialRetryApproval", "staleDecisionRejected", "realProtectedRead",
           "revocationStopsNativeAndCachedConnection", "oldCredentialAndBindingRemainInvalidAfterReapproval",
@@ -43,7 +48,7 @@ PREFLIGHT_FAILURE_CODES = frozenset(("ordinary-user-required", "user-namespace-f
     "browser-layout-invalid", "node-unavailable", "chromium-execution-failed", "chromium-timeout",
     "child-output-invalid", "child-report-invalid", "child-exit-status-mismatch", "sandbox-evidence-invalid",
     "source-verification-failed", "browser-identity-invalid", "extension-identity-invalid", "synthetic-profile-invalid",
-    "browser-arguments-invalid", "browser-start-failed", "browser-exited-before-devtools", "devtools-start-timeout",
+    "browser-arguments-invalid", "browser-start-failed", "browser-exited-before-devtools", "browser-signaled-before-devtools", "devtools-start-timeout",
     "cdp-connect-failed", "sandbox-page-failed", "sandbox-observation-failed", "sandbox-observation-timeout",
     "sandbox-assertion-failed", "namespace-sandbox-required", "pid-namespaces-required", "network-namespaces-required",
     "seccomp-bpf-required", "adequate-sandbox-required", "browser-cleanup-failed", "unclassified-client-failure"))
@@ -61,6 +66,95 @@ def browser_identity(value):
     return {key: value[key] for key in ("version", "sha256", "bytes")}
 
 
+STATIC_FATAL_REASONS = {
+    "CHECK": frozenset(("Check failed: client.StartHandler(handler_path, *database_path, metrics_path, url, annotations, arguments, false, false, attachments, preserve_handles)",)),
+    "FATAL": frozenset(("No usable sandbox!",)),
+    "CRASHPAD": frozenset(("--database is required",)),
+    "CXX": frozenset(("std::system_error: Resource temporarily unavailable",
+                      "std::system_error: Operation not permitted", "std::bad_alloc: std::bad_alloc")),
+}
+
+
+def static_fatal_reason(kind, value):
+    if not isinstance(value, str) or len(value) > 2048:
+        return "UNKNOWN_REASON"
+    normalized = " ".join(value.split())
+    return normalized if normalized in STATIC_FATAL_REASONS.get(kind, ()) else "UNKNOWN_REASON"
+
+def startup_fatal(value):
+    if not isinstance(value, dict):
+        return {"state": "UNAVAILABLE", "readBytes": 0, "truncated": False, "records": []}
+    result = {"state": value.get("state") if value.get("state") in ("FOUND", "NOT_FOUND", "UNAVAILABLE", "NOT_STARTED") else "UNAVAILABLE",
+              "readBytes": value.get("readBytes") if type(value.get("readBytes")) is int and 0 <= value["readBytes"] <= 65536 else 0,
+              "truncated": value.get("truncated") is True, "records": []}
+    records = value.get("records")
+    for record in records[:2] if isinstance(records, list) else []:
+        if not isinstance(record, dict) or not isinstance(record.get("reason"), str):
+            continue
+        kind, source, line = record.get("kind"), record.get("source"), record.get("line")
+        if kind in ("FATAL", "CHECK"):
+            if (not isinstance(source, str) or re.fullmatch(r"[a-z0-9_]{1,80}\.(?:cc|cpp|h)", source) is None
+                    or type(line) is not int or not 0 < line <= 9999999):
+                continue
+        elif not ((kind == "CRASHPAD" and source == "chrome_crashpad_handler")
+                  or (kind == "CXX" and source == "cxx-runtime")) or line is not None:
+            continue
+        reason = record["reason"]
+        if kind == "CHECK":
+            if " vs. " in reason:
+                values = reason.rfind(" (", 0, reason.index(" vs. "))
+                if values >= 0:
+                    reason = reason[:values]
+            reason = reason.split(". ", 1)[0]
+        result["records"].append({"kind": kind, "source": source, "line": line, "reason": static_fatal_reason(kind, reason)})
+    if result["state"] == "FOUND" and not result["records"]:
+        result["state"] = "UNAVAILABLE"
+    if value.get("errorCode") in ("ENOENT", "EACCES", "EPERM", "EIO", "ENOTDIR", "UNAVAILABLE"):
+        result["errorCode"] = value["errorCode"]
+    return result
+
+
+def startup_inspection(value):
+    if not isinstance(value, dict):
+        return None
+    result = {}
+    for name in ("browser", "crashpad"):
+        record = value.get(name)
+        if not isinstance(record, dict):
+            continue
+        item = {"state": record.get("state") if record.get("state") in ("OBSERVED", "MISSING", "UNSAFE", "UNAVAILABLE") else "UNAVAILABLE"}
+        for key in ("present", "regular", "trustedOwner", "executable", "elf"):
+            if type(record.get(key)) is bool or key in record and record[key] is None:
+                item[key] = record[key]
+        for key, maximum in (("mode", 0o7777), ("bytes", 2**53 - 1)):
+            if type(record.get(key)) is int and 0 <= record[key] <= maximum:
+                item[key] = record[key]
+        if isinstance(record.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", record["sha256"]):
+            item["sha256"] = record["sha256"]
+        if record.get("errorCode") in ("ENOENT", "EACCES", "EPERM", "EIO", "ENOTDIR", "UNAVAILABLE"):
+            item["errorCode"] = record["errorCode"]
+        result[name] = item
+    paths = value.get("paths")
+    if isinstance(paths, dict):
+        result["paths"] = {}
+        for name in ("HOME", "TMPDIR", "RUNNER_TEMP", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+                     "XDG_RUNTIME_DIR", "CHROME_CONFIG_HOME", "defaultCrashReports", "explicitProfile"):
+            record = paths.get(name)
+            if not isinstance(record, dict):
+                continue
+            item = {"set": record.get("set") is True,
+                    "state": record.get("state") if record.get("state") in ("UNSET", "OUTSIDE_SYNTHETIC", "UNSAFE", "MISSING", "DIRECTORY", "UNAVAILABLE") else "UNAVAILABLE"}
+            for key in ("writable", "parentWritable", "ownerCurrent"):
+                if type(record.get(key)) is bool:
+                    item[key] = record[key]
+            if type(record.get("mode")) is int and 0 <= record["mode"] <= 0o7777:
+                item["mode"] = record["mode"]
+            if record.get("errorCode") in ("ENOENT", "EACCES", "EPERM", "EIO", "ENOTDIR", "UNAVAILABLE"):
+                item["errorCode"] = record["errorCode"]
+            result["paths"][name] = item
+    return result
+
+
 def preflight_failure(value):
     value = value if isinstance(value, dict) else {}
     result = {"phase": value.get("phase") if isinstance(value.get("phase"), str) and value["phase"] in PREFLIGHT_PHASES else "unknown",
@@ -72,6 +166,8 @@ def preflight_failure(value):
         result["browserExitCode"] = code
     if isinstance(value.get("browserSignal"), str) and value["browserSignal"] in PREFLIGHT_SIGNALS:
         result["browserSignal"] = value["browserSignal"]
+    if "fatal" in value:
+        result["fatal"] = startup_fatal(value["fatal"])
     return result
 
 
@@ -79,11 +175,14 @@ def preflight_diagnostic(value):
     """Bounded projection: never forward child text, log output, paths or extra keys."""
     if not isinstance(value, dict):
         return {"status": "NOT_RUN"}
-    result = {"status": value.get("status") if value.get("status") in ("PASS", "FAIL") else "INVALID",
+    result = {"status": value.get("status") if value.get("status") in ("PASS", "FAIL", "NOT_RUN") else "INVALID",
               "phase": value.get("phase") if isinstance(value.get("phase"), str) and value["phase"] in PREFLIGHT_PHASES else "unknown"}
     browser = browser_identity(value.get("browser"))
     if browser:
         result["browser"] = browser
+    inspection = startup_inspection(value.get("startupInspection"))
+    if inspection is not None:
+        result["startupInspection"] = inspection
     if "failure" in value:
         result["failure"] = preflight_failure(value["failure"])
     probe = value.get("userNamespaceProbe")
@@ -159,10 +258,14 @@ class Run(runtime.Run):
                  "smoke": "linux-browser-connection-smoke.py", "webdriver": "linux-desktop-smoke.py",
                  "chromium": "lib/linux-browser-chromium-client.mjs",
                  "cdp": "browser-extension-runtime/lib/cdp-client.mjs"}
+        if getattr(self.args, "startup_only", False):
+            paths = {name: paths[name] for name in ("collector", "resourceCollector", "chromium", "cdp")}
         return {name: digest(self.app / "tests" / path) for name, path in paths.items()}
 
     def init(self):
         super().init()
+        if getattr(self.args, "startup_only", False):
+            return
         extension = extension_identity(self.app)
         write_json(self.private / "extension.json", extension)
         require(re.fullmatch(r"chrome-extension://[a-p]{32}", extension["origin"]), "invalid manifest-derived origin")
@@ -208,6 +311,9 @@ class Run(runtime.Run):
             identity = browser_identity(value.get("browser"))
             if identity:
                 report["browser"] = identity
+            inspection = startup_inspection(value.get("startupInspection"))
+            if inspection is not None:
+                report["startupInspection"] = inspection
             report["child"]["status"] = value.get("status") if value.get("status") in ("PASS", "FAIL") else "INVALID"
             if "failure" in value:
                 report["child"]["failure"] = preflight_failure(value["failure"])
@@ -296,6 +402,56 @@ class Run(runtime.Run):
         finally:
             write_json(self.evidence / "browser.json", report)
 
+    def finish_startup(self):
+        outcomes = {name: os.environ.get("CI_" + name, "missing") for name in STARTUP_STEPS}
+        source = {"commit": os.environ.get("GITHUB_SHA"), "sourceVerification": "FAILED"}
+        source_valid = False
+        try:
+            source = self.source()
+            original = read_json(self.evidence / "source.json")
+            require(original.get("status") == "PASS" and original.get("scope") == STARTUP_SCOPE
+                    and original.get("source") == source and original.get("scripts") == self.scripts(), "invalid startup source")
+            source_valid = True
+        except (OSError, KeyError, TypeError, ValueError, RuntimeError):
+            pass
+        preflight_path = self.evidence / "preflight.json"
+        try:
+            preflight = read_json(preflight_path)
+        except (OSError, ValueError, RuntimeError):
+            missing = not os.path.lexists(preflight_path)
+            preflight = {"status": "NOT_RUN" if missing and outcomes["PREFLIGHT"] in ("skipped", "missing") else "FAIL",
+                         "scope": STARTUP_SCOPE, "source": source, "attempts": 0, "phase": "unknown",
+                         "error": "startup preflight report unavailable"}
+            if not missing:
+                preflight_path.unlink()  # Only this run's unusable synthetic evidence entry; never its symlink target.
+            write_json(preflight_path, preflight)
+        passed = source_valid and all(value == "success" for value in outcomes.values())
+        try:
+            require(preflight.get("status") == "PASS" and "failure" not in preflight
+                    and preflight.get("scope") == STARTUP_SCOPE and preflight.get("source") == source
+                    and preflight.get("attempts") == 1 and preflight.get("phase") == "complete", "startup incomplete or stale")
+            require(preflight["userNamespaceProbe"]["exitCode"] == 0
+                    and browser_identity(preflight.get("browser")) is not None, "startup identity or user namespace missing")
+            child = preflight["child"]
+            require(child.get("exitCode") == 0 and child.get("status") == "PASS" and "failure" not in child,
+                    "startup child did not pass")
+            validate_sandbox(preflight.get("sandbox"))
+        except (KeyError, TypeError, ValueError, RuntimeError):
+            passed = False
+        export_safe = (set(p.name for p in self.evidence.iterdir()).issubset(STARTUP_EXPORTS)
+                       and all(p.is_file() and not p.is_symlink() for p in self.evidence.iterdir()))
+        passed = passed and export_safe
+        reports = {"source.json": "PASS" if source_valid else "INVALID",
+                   "preflight.json": preflight.get("status") if preflight.get("status") in ("PASS", "FAIL", "NOT_RUN") else "INVALID",
+                   "build.json": "NOT_RUN", "resources.json": "NOT_RUN", "browser.json": "NOT_RUN"}
+        write_json(self.evidence / "result.json", {"status": "STARTUP_PASS_ONLY" if passed else "FAIL", "scope": STARTUP_SCOPE,
+                   "startupStatus": "PASS" if passed else "NOT_RUN" if preflight.get("status") == "NOT_RUN" else "FAIL",
+                   "productAcceptance": "NOT_RUN", "source": source, "stepOutcomes": outcomes, "reports": reports,
+                   "preflightDiagnostic": preflight_diagnostic(preflight), "artifactAllowlist": list(STARTUP_EXPORTS),
+                   "exportPolicy": "PASS" if export_safe else "FAIL", "excluded": STARTUP_EXCLUDED,
+                   "limits": ["normal sandbox and preinstalled Chromium startup only", "no application build or consent-flow acceptance"]})
+        require(passed, "startup diagnostic failed or did not run")
+
     def finish(self):
         outcomes = {name: os.environ.get("CI_" + name, "missing") for name in STEPS}
         bodies, reports = {}, {}
@@ -333,13 +489,23 @@ class Run(runtime.Run):
 
 
 def main():
+    global SCOPE, EXCLUDED
     parser = argparse.ArgumentParser()
     parser.add_argument("phase", choices=("init", "preflight", "binaries", "resources", "browser", "finish"))
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--node", default="node")
     parser.add_argument("--driver", type=Path)
+    parser.add_argument("--startup-only", action="store_true")
     args = parser.parse_args()
-    getattr(Run(args), args.phase)()
+    if args.startup_only:
+        require(args.phase in ("init", "preflight", "finish"), "startup-only mode cannot enter product stages")
+        SCOPE, EXCLUDED = STARTUP_SCOPE, STARTUP_EXCLUDED
+        runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
+    run = Run(args)
+    if args.startup_only and args.phase == "finish":
+        run.finish_startup()
+    else:
+        getattr(run, args.phase)()
 
 
 if __name__ == "__main__":

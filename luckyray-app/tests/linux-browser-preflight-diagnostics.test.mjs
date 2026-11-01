@@ -16,40 +16,56 @@ const original = fs.readFileSync(client, "utf8");
 const body = original.replace(/^import .*;\n/gm, "")
   .replaceAll("import.meta.url", JSON.stringify(new URL("./lib/linux-browser-chromium-client.mjs", import.meta.url).href));
 const CANARY = "PRIVATE_CANARY_cookie_bearer_profile_7c494e";
+const KNOWN_CRASHPAD_CHECK = "Check failed: client.StartHandler(handler_path, *database_path, metrics_path, url, annotations, arguments, false, false, attachments, preserve_handles)";
 
-async function simulate(scenario) {
+async function simulate(scenario, fixture = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "luckyray-preflight-offline-"));
   const executable = path.join(root, CANARY);
   fs.writeFileSync(executable, Buffer.from([127, 69, 76, 70, 1, 2, 3, 4]));
-  let stdout = "", stderr = "", fatalMonitor, clock = 0, child, spawns = 0;
+  fs.chmodSync(executable, 0o755);
+  if (!fixture.crashpadMissing) {
+    fs.writeFileSync(path.join(root, "chrome_crashpad_handler"), Buffer.from([127, 69, 76, 70, 5, 6, 7, 8]));
+    fs.chmodSync(path.join(root, "chrome_crashpad_handler"), 0o755);
+  }
+  const home = path.join(root, "private/synthetic-home"), temporary = path.join(root, "private/tmp");
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(temporary, { recursive: true, mode: 0o700 });
+  let stdout = "", stderr = "", fatalMonitor, clock = 0, child, spawns = 0, observedProfile;
+  const accessedPaths = [];
   const processMock = {
     argv: ["node", client, "--browser", executable, "--mode", "preflight"],
-    platform: "linux", getuid: () => 1000, env: {},
+    platform: "linux", getuid: () => 1000, env: { HOME: home, TMPDIR: temporary, RUNNER_TEMP: temporary,
+      XDG_CONFIG_HOME: path.join(home, "config"), XDG_CACHE_HOME: path.join(home, "cache"),
+      XDG_DATA_HOME: fixture.outsideXdg ? "/personal/" + CANARY : path.join(home, "data") },
     stdout: { write: value => { stdout += value; return true; } },
     stderr: { write: value => { stderr += value; return true; } },
     once: (event, callback) => { assert.equal(event, "uncaughtExceptionMonitor"); fatalMonitor = callback; },
   };
   const fsMock = new Proxy(fs, { get(target, key) {
-    if (key === "statSync") return (...args) => {
-      const metadata = target.statSync(...args);
+    if (["statSync", "lstatSync", "fstatSync"].includes(key)) return (...args) => {
+      accessedPaths.push(String(args[0]));
+      const metadata = target[key](...args);
       return new Proxy(metadata, { get(value, field) {
         if (field === "uid") return 1000;
         return typeof value[field] === "function" ? value[field].bind(value) : value[field];
       } });
     };
     if (key === "readFileSync") return (...args) => {
+      accessedPaths.push(String(args[0]));
       if (scenario === "extension-identity" && String(args[0]).endsWith("/manifest.json")) throw new Error(CANARY);
       return target.readFileSync(...args);
     };
     if (key === "mkdtempSync" && scenario === "synthetic-profile") return () => { throw new Error(CANARY); };
     return target[key];
   } });
-  const spawn = (_binary, args) => {
+  const spawn = (_binary, args, options) => {
     spawns++;
     assert(!args.some(value => /no-sandbox|disable.*sandbox|single-process|in-process-gpu|disable-web-security/i.test(value)));
     child = new EventEmitter();
     child.exitCode = scenario === "early-exit" ? 23 : null;
-    child.signalCode = scenario === "signal-exit" ? "SIGTRAP" : null;
+    child.signalCode = scenario === "signal-exit" ? fixture.signal || "SIGTRAP" : null;
+    observedProfile = args.find(value => value.startsWith("--user-data-dir=")).split("=").slice(1).join("=");
+    if (fixture.stderr) fs.writeSync(options.stdio[2], fixture.stderr);
     child.kill = signal => {
       if (scenario !== "cleanup") { child.signalCode = signal; child.emit("exit"); }
       return true;
@@ -92,7 +108,7 @@ async function simulate(scenario) {
           if (scenario === "browser-identity") throw new Error(CANARY);
           return "Chromium 146.0.1.2 " + CANARY;
         },
-        createHash, randomUUID, fs: fsMock, os: { tmpdir: () => root }, path, readline, fileURLToPath,
+        createHash, randomUUID, fs: fsMock, os: { tmpdir: () => temporary }, path, readline, fileURLToPath,
         CdpConnection, attachSession: async () => {
           if (scenario === "sandbox-attach") throw new Error(CANARY);
           return "offline-session";
@@ -110,8 +126,9 @@ async function simulate(scenario) {
     const lines = stdout.trim().split("\n");
     assert.equal(lines.length, 1, "preflight must emit one terminal JSON, including cleanup failures");
     assert(!stdout.includes(CANARY), "exported report contains private data");
-    assert(stdout.length < 2048, "exported diagnostic is not bounded");
-    return { report: JSON.parse(lines[0]), exitCode: processMock.exitCode ?? 0, spawns, stderr };
+    assert(stdout.length < 8192, "exported diagnostic is not bounded");
+    return { report: JSON.parse(lines[0]), exitCode: processMock.exitCode ?? 0, spawns, stderr, elapsed: clock,
+      accessedPaths, profileRemoved: observedProfile ? !fs.existsSync(observedProfile) : true };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -123,7 +140,7 @@ const failures = [
   ["synthetic-profile", "synthetic-profile", "synthetic-profile-invalid"],
   ["spawn", "browser-start", "browser-start-failed"],
   ["early-exit", "browser-start", "browser-exited-before-devtools"],
-  ["signal-exit", "browser-start", "devtools-start-timeout"],
+  ["signal-exit", "browser-start", "browser-signaled-before-devtools"],
   ["devtools-timeout", "browser-start", "devtools-start-timeout"],
   ["cdp-connect", "cdp-connect", "cdp-connect-failed"],
   ["sandbox-page", "sandbox-page", "sandbox-page-failed"],
@@ -139,15 +156,17 @@ const failures = [
 ];
 for (const [scenario, phase, code] of failures) {
   test("offline failure classification: " + scenario, async () => {
-    const { report, exitCode, spawns } = await simulate(scenario);
+    const { report, exitCode, spawns, elapsed } = await simulate(scenario);
     assert.equal(exitCode, 1);
     assert.equal(report.status, "FAIL");
-    assert.deepEqual(report.failure, { phase, code, ...(
+    const { fatal, ...classification } = report.failure;
+    assert.deepEqual(classification, { phase, code, ...(
       scenario === "spawn" ? { osError: "EACCES" } : scenario === "cdp-connect" ? { osError: "ECONNREFUSED" } : {}),
       ...(["browser-identity", "extension-identity", "synthetic-profile"].includes(scenario) ? {}
         : { browserExitCode: scenario === "early-exit" ? 23 : null }),
       ...(scenario === "signal-exit" ? { browserSignal: "SIGTRAP" } : {}) });
     assert.equal(spawns, ["browser-identity", "extension-identity", "synthetic-profile"].includes(scenario) ? 0 : 1);
+    if (scenario === "signal-exit") assert(elapsed < 20000, "observed signal exit must not wait for the DevTools deadline");
     if (scenario === "browser-identity") assert.equal(report.browser, undefined);
     else assert.equal(report.browser.version, "Chromium 146.0.1.2");
   });
@@ -158,6 +177,62 @@ test("offline success is emitted only after cleanup", async () => {
   assert.equal(report.status, "PASS");
   assert.equal(report.failure, undefined);
   assert.equal(report.sandbox.adequatelySandboxed, true);
+});
+test("owned CHECK evidence is redacted before profile cleanup with read-only startup inspection", async () => {
+  const fixture = "[11:22:FATAL:/private/" + CANARY + "/crashpad_linux.cc:266] " + KNOWN_CRASHPAD_CHECK + " (" + CANARY + " vs. 0). Cookie=" + CANARY + "\n";
+  const { report, exitCode, spawns, profileRemoved } = await simulate("signal-exit", { signal: "SIGABRT", stderr: fixture });
+  assert.equal(exitCode, 1);
+  assert.equal(spawns, 1);
+  assert(profileRemoved);
+  assert.equal(report.failure.browserSignal, "SIGABRT");
+  assert.equal(report.failure.fatal.state, "FOUND");
+  assert.deepEqual(report.failure.fatal.records, [{ kind: "CHECK", source: "crashpad_linux.cc", line: 266,
+    reason: KNOWN_CRASHPAD_CHECK }]);
+  assert.equal(report.startupInspection.browser.executable, true);
+  assert.equal(report.startupInspection.crashpad.executable, true);
+  assert.match(report.startupInspection.crashpad.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(report.startupInspection.crashpad.sha256,
+    createHash("sha256").update(Buffer.from([127, 69, 76, 70, 5, 6, 7, 8])).digest("hex"));
+  assert.equal(report.startupInspection.paths.HOME.state, "DIRECTORY");
+  assert.equal(report.startupInspection.paths.XDG_CONFIG_HOME.state, "MISSING");
+  assert.equal(report.startupInspection.paths.XDG_CONFIG_HOME.parentWritable, true);
+  assert.equal(report.startupInspection.paths.XDG_RUNTIME_DIR.state, "UNSET");
+  assert.equal(report.startupInspection.paths.explicitProfile.writable, true);
+});
+test("crashpad reason survives while missing helper and outside-synthetic XDG paths are only observed", async () => {
+  const fixture = "/private/" + CANARY + "/chrome_crashpad_handler: --database is required\n"
+    + "[11:22:FATAL:crashpad_linux.cc:266] Check failed: client.StartHandler(). " + CANARY + "\n";
+  const { report, accessedPaths } = await simulate("signal-exit", { signal: "SIGABRT", stderr: fixture,
+    crashpadMissing: true, outsideXdg: true });
+  assert.equal(report.failure.fatal.records.length, 2);
+  assert.equal(report.failure.fatal.records[0].reason, "--database is required");
+  assert.equal(report.startupInspection.crashpad.state, "MISSING");
+  assert.equal(report.startupInspection.paths.XDG_DATA_HOME.state, "OUTSIDE_SYNTHETIC");
+  assert(!accessedPaths.some(value => value.startsWith("/personal/")));
+});
+test("bounded C++ termination retains only its known static reason and excludes the rest of stderr", async () => {
+  const fixture = "x".repeat(70000) + "\nterminate called after throwing an instance of 'std::system_error'\n"
+    + "  what(): Resource temporarily unavailable\nCookie: first=x; second=short-private-7; token=" + CANARY + " https://private.invalid/" + CANARY + "\n";
+  const { report } = await simulate("signal-exit", { signal: "SIGABRT", stderr: fixture });
+  assert.equal(report.failure.fatal.state, "FOUND");
+  assert.equal(report.failure.fatal.truncated, true);
+  assert(report.failure.fatal.readBytes <= 65536);
+  assert.equal(report.failure.fatal.records[0].kind, "CXX");
+  assert(report.failure.fatal.records[0].reason.includes("Resource temporarily unavailable"));
+  assert(!JSON.stringify(report).includes("private.invalid"));
+  assert(!JSON.stringify(report).includes("short-private-7"));
+});
+test("unknown fatal text cannot export short secrets with or without credential keywords", async () => {
+  const fixture = "[11:22:FATAL:logging.cc:47] Failed password hunter2\n"
+    + "[11:22:FATAL:logging.cc:48] Unexpected launch reply violet7\n";
+  const { report } = await simulate("signal-exit", { signal: "SIGABRT", stderr: fixture });
+  assert.deepEqual(report.failure.fatal.records, [
+    { kind: "FATAL", source: "logging.cc", line: 47, reason: "UNKNOWN_REASON" },
+    { kind: "FATAL", source: "logging.cc", line: 48, reason: "UNKNOWN_REASON" },
+  ]);
+  assert.equal(report.failure.browserSignal, "SIGABRT");
+  assert(!JSON.stringify(report).includes("hunter2"));
+  assert(!JSON.stringify(report).includes("violet7"));
 });
 test("actual Node fatal observer exports a redacted identity failure without launching Chromium", () => {
   const result = spawnSync(process.execPath, [client, "--mode", "preflight", "--browser",

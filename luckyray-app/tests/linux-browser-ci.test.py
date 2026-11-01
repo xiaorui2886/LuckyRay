@@ -106,6 +106,7 @@ class PreflightDiagnostics(unittest.TestCase):
     CANARY = "PRIVATE_CANARY_cookie_bearer_profile_f5499d"
     SOURCE = {"commit": "a" * 40, "tree": "b" * 40}
     BROWSER = {"version": "Chromium 146.0.1.2", "sha256": "c" * 64, "bytes": 123456}
+    KNOWN_CRASHPAD_CHECK = "Check failed: client.StartHandler(handler_path, *database_path, metrics_path, url, annotations, arguments, false, false, attachments, preserve_handles)"
     SANDBOX = {"status": "PASS", "namespace": "Yes", "pidNamespaces": "Yes", "networkNamespaces": "Yes",
                "seccompBpf": "Yes", "adequatelySandboxed": True, "securityDisablingFlags": [],
                "source": "ACTUAL_CHROME_SANDBOX_PAGE"}
@@ -149,7 +150,7 @@ class PreflightDiagnostics(unittest.TestCase):
             self.assertEqual(set(result["excluded"].values()), {"NOT_RUN"})
             self.assertEqual(set(p.name for p in run.evidence.iterdir()), {"source.json", "preflight.json", "result.json"})
             self.assertNotIn(self.CANARY, json.dumps([report, result]))
-            self.assertLess(len(json.dumps(result["preflightDiagnostic"])), 2048)
+            self.assertLess(len(json.dumps(result["preflightDiagnostic"])), 8192)
             self.assertEqual(result["preflightDiagnostic"], ci.preflight_diagnostic(report))
             logs = (run.private / "preflight.log").read_text() if (run.private / "preflight.log").exists() else ""
             return report, result, calls.call_count, logs
@@ -226,10 +227,11 @@ class PreflightDiagnostics(unittest.TestCase):
                 self.assertEqual(report["failure"], {"phase": "unknown", "code": "unclassified-client-failure"})
 
     def test_observed_browser_exit_and_allowed_signal_survive_without_arbitrary_signal_text(self):
-        failure = {"phase": "browser-start", "code": "devtools-start-timeout", "browserExitCode": None,
+        failure = {"phase": "browser-start", "code": "browser-signaled-before-devtools", "browserExitCode": None,
                    "browserSignal": "SIGTRAP", "signalText": self.CANARY}
         report, result, _, _ = self.simulate(self.child({"status": "FAIL", "browser": self.BROWSER, "failure": failure}))
         self.assertEqual(report["failure"]["browserSignal"], "SIGTRAP")
+        self.assertEqual(result["preflightDiagnostic"]["failure"]["code"], "browser-signaled-before-devtools")
         self.assertIsNone(result["preflightDiagnostic"]["failure"]["browserExitCode"])
         self.assertEqual(ci.preflight_failure({**failure, "browserSignal": self.CANARY}).get("browserSignal"), None)
 
@@ -244,6 +246,96 @@ class PreflightDiagnostics(unittest.TestCase):
         self.assertEqual(calls, 2)
         self.assertEqual(result["reports"]["build.json"], "NOT_RUN")
         self.assertEqual(result["reports"]["browser.json"], "NOT_RUN")
+
+    def test_controlled_fatal_and_installed_identity_survive_both_report_whitelists(self):
+        fatal = {"state": "FOUND", "readBytes": 1024, "truncated": False, "records": [
+            {"kind": "CHECK", "source": "crashpad_linux.cc", "line": 266,
+             "reason": self.KNOWN_CRASHPAD_CHECK + " (" + self.CANARY + " vs. 0). " + self.CANARY, "raw": self.CANARY},
+            {"kind": "CRASHPAD", "source": "chrome_crashpad_handler", "line": None,
+             "reason": "--database is required"}], "stderr": self.CANARY}
+        inspection = {"browser": {"state": "OBSERVED", "present": True, "regular": True, "elf": True,
+            "executable": True, "trustedOwner": True, "mode": 0o755, "bytes": 123456, "sha256": "c" * 64,
+            "path": self.CANARY}, "crashpad": {"state": "OBSERVED", "present": True, "executable": True,
+            "elf": True, "bytes": 12345, "sha256": "d" * 64}, "paths": {
+            "HOME": {"set": True, "state": "DIRECTORY", "mode": 0o700, "ownerCurrent": True, "writable": True, "value": self.CANARY},
+            "XDG_CONFIG_HOME": {"set": True, "state": "MISSING", "parentWritable": True},
+            "XDG_RUNTIME_DIR": {"set": False, "state": "UNSET"}, "environmentDump": self.CANARY}}
+        failure = {"phase": "browser-start", "code": "browser-signaled-before-devtools", "browserExitCode": None,
+                   "browserSignal": "SIGABRT", "fatal": fatal}
+        report, result, _, _ = self.simulate(self.child({"status": "FAIL", "browser": self.BROWSER,
+            "failure": failure, "startupInspection": inspection}))
+        projected = result["preflightDiagnostic"]
+        self.assertEqual(projected["failure"]["fatal"], report["failure"]["fatal"])
+        self.assertEqual(projected["failure"]["fatal"]["records"][0]["reason"], self.KNOWN_CRASHPAD_CHECK)
+        self.assertEqual(projected["failure"]["fatal"]["records"][1]["reason"], "--database is required")
+        self.assertEqual(projected["child"]["exitCode"], 1)
+        self.assertEqual(projected["failure"]["browserSignal"], "SIGABRT")
+        self.assertEqual(projected["startupInspection"]["crashpad"]["sha256"], "d" * 64)
+        self.assertEqual(projected["startupInspection"]["paths"]["XDG_CONFIG_HOME"]["parentWritable"], True)
+
+    def test_unknown_short_reason_and_extra_records_cannot_escape_the_static_allowlist(self):
+        fatal = {"state": "FOUND", "readBytes": 65536, "truncated": True, "records": [
+            {"kind": "CXX", "source": "cxx-runtime", "line": None, "reason":
+             "Unexpected launch reply violet7"},
+            {"kind": "FATAL", "source": "/personal/" + self.CANARY, "line": 10, "reason": self.CANARY},
+            {"kind": "CXX", "source": "cxx-runtime", "line": None, "reason": self.CANARY}]}
+        failure = {"phase": "browser-start", "code": "browser-signaled-before-devtools", "fatal": fatal}
+        report, result, _, _ = self.simulate(self.child({"status": "FAIL", "browser": self.BROWSER, "failure": failure,
+            "startupInspection": {"paths": {"XDG_RUNTIME_DIR": {"set": True, "state": "OUTSIDE_SYNTHETIC", "value": self.CANARY}}}}))
+        value = result["preflightDiagnostic"]["failure"]["fatal"]
+        self.assertEqual(len(value["records"]), 1)
+        self.assertEqual(value["records"][0]["reason"], "UNKNOWN_REASON")
+        self.assertLessEqual(len(value["records"][0]["reason"]), 240)
+        self.assertNotIn("private.invalid", json.dumps([report, result]))
+        self.assertNotIn("short-private-7", json.dumps([report, result]))
+        self.assertNotIn("violet7", json.dumps([report, result]))
+        self.assertEqual(ci.static_fatal_reason("FATAL", "Failed password hunter2"), "UNKNOWN_REASON")
+        self.assertEqual(ci.static_fatal_reason("CXX", "std::system_error: Resource temporarily unavailable"),
+                         "std::system_error: Resource temporarily unavailable")
+        self.assertEqual(value["readBytes"], 65536)
+        self.assertEqual(result["preflightDiagnostic"]["startupInspection"]["paths"]["XDG_RUNTIME_DIR"],
+                         {"set": True, "state": "OUTSIDE_SYNTHETIC"})
+
+    def test_startup_only_summary_exports_three_json_and_never_claims_product_acceptance(self):
+        for outcome in ("PASS", "FAIL", "NOT_RUN"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as root:
+                run = ci.Run(SimpleNamespace(work=Path(root), startup_only=True))
+                run.evidence.mkdir()
+                run.private.mkdir()
+                run.source = lambda: self.SOURCE
+                run.scripts = lambda: {}
+                ci.write_json(run.evidence / "source.json", {"status": "PASS", "scope": ci.STARTUP_SCOPE,
+                              "source": self.SOURCE, "scripts": {}})
+                preflight = {"status": outcome, "scope": ci.STARTUP_SCOPE, "source": self.SOURCE,
+                    "attempts": 1, "phase": "complete", "userNamespaceProbe": {"exitCode": 0},
+                    "browser": self.BROWSER, "sandbox": self.SANDBOX, "child": {"status": "PASS", "exitCode": 0}}
+                if outcome != "NOT_RUN":
+                    ci.write_json(run.evidence / "preflight.json", preflight)
+                env = {"CI_" + name: "success" for name in ci.STARTUP_STEPS}
+                if outcome == "FAIL":
+                    env["CI_PREFLIGHT"] = "failure"
+                elif outcome == "NOT_RUN":
+                    env.update(CI_NODE="failure", CI_PREFLIGHT="skipped")
+                with patch.dict(os.environ, env):
+                    if outcome == "PASS":
+                        run.finish_startup()
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            run.finish_startup()
+                result = json.loads((run.evidence / "result.json").read_text())
+                self.assertEqual(result["scope"], ci.STARTUP_SCOPE)
+                self.assertEqual(result["status"], "STARTUP_PASS_ONLY" if outcome == "PASS" else "FAIL")
+                self.assertEqual(result["productAcceptance"], "NOT_RUN")
+                self.assertEqual(result["startupStatus"], outcome)
+                self.assertEqual(result["artifactAllowlist"], list(ci.STARTUP_EXPORTS))
+                self.assertEqual(set(p.name for p in run.evidence.iterdir()), set(ci.STARTUP_EXPORTS))
+                self.assertEqual(set(result["excluded"].values()), {"NOT_RUN"})
+                for name in ("build.json", "resources.json", "browser.json"):
+                    self.assertEqual(result["reports"][name], "NOT_RUN")
+                if outcome == "NOT_RUN":
+                    stub = json.loads((run.evidence / "preflight.json").read_text())
+                    self.assertEqual(stub["status"], "NOT_RUN")
+                    self.assertEqual(stub["attempts"], 0)
 
 
 if __name__ == "__main__":
