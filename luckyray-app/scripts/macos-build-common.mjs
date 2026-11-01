@@ -245,5 +245,5 @@ export async function publishDirectory(source, name) {
 export async function requireMachO(path) {
   const bytes = await readRegular(path);
   if (bytes.length < 32 || ![0xfeedfacf, 0xbebafeca, 0xcafebabe].includes(bytes.readUInt32LE(0))) throw new Error("macos-build-not-macho");
-  await run("/usr/bin/lipo", ["-verify_arch", "arm64", path], { diagnosticStage: "arm64-check" });
+  await run("/usr/bin/lipo", [path, "-verify_arch", "arm64"], { diagnosticStage: "arm64-check" });
 }
