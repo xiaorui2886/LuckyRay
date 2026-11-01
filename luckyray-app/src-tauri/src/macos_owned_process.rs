@@ -316,9 +316,15 @@ mod tests {
         .unwrap();
         assert!(child.process.wait_for(Duration::from_secs(2)));
         assert!(child.process.succeeded());
-        assert_eq!(
-            unsafe { libc::getpgid(child.process.process_id() as i32) },
-            child.process.process_id() as i32
-        );
+        // Darwin's getpgid excludes exited processes. Repeated non-reaping
+        // waits prove that this exact child is still our retained PID anchor.
+        for _ in 0..2 {
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            assert_eq!(unsafe { libc::waitid(libc::P_PID, child.process.process_id() as libc::id_t,
+                &mut info, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT) }, 0);
+            assert_eq!(info.si_pid, child.process.process_id() as libc::pid_t);
+            assert_eq!(info.si_code, libc::CLD_EXITED);
+            assert_eq!(info.si_status, 0);
+        }
     }
 }

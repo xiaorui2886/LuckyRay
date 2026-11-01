@@ -167,11 +167,10 @@ pub(crate) fn write(
     dir.rename(OsStr::new(&backup), OsStr::new(name), before.is_some())
         .map_err(|_| failed())?;
     let installed = dir
-        .open_metadata(OsStr::new(name))
-        .and_then(|file| file.metadata())
+        .entry_info(OsStr::new(name))
         .map_err(|_| failed())?;
     let meta = staged_file.metadata().map_err(|_| failed())?;
-    if (installed.dev(), installed.ino()) != (meta.dev(), meta.ino()) {
+    if (installed.device, installed.inode) != (meta.dev(), meta.ino()) {
         return Err(conflict());
     }
     if let Some((_, expected)) = &before {
@@ -292,12 +291,12 @@ fn archive(dir: &Directory, record: &Journal, expected: &Version) -> Result<(), 
 // A mode-000 inode may be an interrupted publication or an external
 // permission restriction. Never guess and grant access during recovery.
 fn recover_unexposed_target(dir: &Directory, record: &Journal) -> Result<(), KnowledgeError> {
-    let file = match dir.open_metadata(OsStr::new(&record.target)) {
-        Ok(file) => file,
+    let info = match dir.entry_info(OsStr::new(&record.target)) {
+        Ok(info) => info,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(_) => return Err(failed()),
     };
-    if file.metadata().map_err(|_| failed())?.mode() & 0o777 == 0 {
+    if info.mode & 0o777 == 0 {
         return Err(failed());
     }
     Ok(())

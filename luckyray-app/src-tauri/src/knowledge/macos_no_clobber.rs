@@ -124,13 +124,18 @@ pub(super) fn rename_no_replace(
     target_name: &OsStr,
 ) -> std::io::Result<()> {
     use std::ffi::CString;
-    use std::os::fd::AsRawFd;
+    use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::raw::{c_char, c_int, c_uint};
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
 
     const RENAME_EXCL: c_uint = 0x0000_0004;
     const RENAME_NOFOLLOW_ANY: c_uint = 0x0000_0010;
+    const O_NOFOLLOW: c_int = 0x0000_0100;
+    const O_CLOEXEC: c_int = 0x0100_0000;
+    const O_NONBLOCK: c_int = 0x0000_0004;
     unsafe extern "C" {
+        fn openat(dirfd: c_int, path: *const c_char, flags: c_int, ...) -> c_int;
         fn renameatx_np(
             from_fd: c_int,
             from: *const c_char,
@@ -150,6 +155,20 @@ pub(super) fn rename_no_replace(
         .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
     let target = CString::new(target_name.as_bytes())
         .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let open_entry = |directory: &std::fs::File, entry: &CString| -> std::io::Result<std::fs::File> {
+        let fd = unsafe { openat(directory.as_raw_fd(), entry.as_ptr(), O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) };
+        if fd < 0 { return Err(std::io::Error::last_os_error()); }
+        let file = unsafe { std::fs::File::from_raw_fd(fd) };
+        let meta = file.metadata()?;
+        if !meta.is_file() && !meta.is_dir() {
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        }
+        Ok(file)
+    };
+    // RENAME_NOFOLLOW_ANY constrains traversal; rename can still move a leaf
+    // symlink without following it. Explicitly open and pin the source object.
+    let source_file = open_entry(source_directory, &source)?;
+    let original = source_file.metadata()?;
     // Each name is exactly one literal component, so it cannot escape its
     // directory handle through an absolute path or parent traversal. Both
     // handles and NUL-terminated names remain alive through the syscall.
@@ -164,6 +183,11 @@ pub(super) fn rename_no_replace(
         )
     };
     if result == 0 {
+        let installed = open_entry(target_directory, &target)?.metadata()?;
+        if (installed.dev(), installed.ino()) != (original.dev(), original.ino()) {
+            // Do not delete or rename either path after an identity conflict.
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())

@@ -4305,8 +4305,15 @@ mod tests {
         let adapter = Arc::new(LegacyLocalTransportAdapter::new(backend.clone()));
         let handle = start_server(ServerConfig::test(dir.clone()), adapter).unwrap();
         assert_eq!(handle.client_config().credential, load_native_credential(&dir).unwrap());
-        let response = authorized_request(&handle, "GET", "/api/folders", None, None);
-        assert_eq!(status(&response), 200);
+        // This route uses the injected real backend. The isolated transport
+        // fixture has no GUI-owned global BackendServices singleton.
+        let response = authorized_request(&handle, "GET", "/api/capability/list", None, None);
+        assert_eq!(status(&response), 200, "{response}");
+        let listed = body(&response);
+        assert_eq!(listed["ok"], true);
+        let capabilities = listed["capabilities"].as_array().unwrap();
+        assert!(!capabilities.is_empty());
+        assert_eq!(listed["count"].as_u64(), Some(capabilities.len() as u64));
         let old = handle.client_config().credential;
         handle.rotate_credentials().unwrap();
         assert_ne!(load_native_credential(&dir).unwrap(), old);

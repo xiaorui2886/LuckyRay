@@ -65,6 +65,12 @@ impl Version {
     }
 }
 
+pub(crate) struct EntryInfo {
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
+    pub(crate) mode: u32,
+}
+
 pub(crate) struct Directory {
     file: File,
     path: PathBuf,
@@ -190,6 +196,23 @@ impl Directory {
     }
     pub(crate) fn open_metadata(&self, entry: &OsStr) -> io::Result<File> {
         self.open_regular_with_access(entry, libc::O_EVTONLY)
+    }
+
+    /// Observe the named inode without opening its data stream. O_EVTONLY
+    /// still requests read access on Darwin, so it cannot inspect a mode-000
+    /// publication. This observation grants no authority to change that inode.
+    pub(crate) fn entry_info(&self, entry: &OsStr) -> io::Result<EntryInfo> {
+        self.current()?;
+        let entry = name(entry)?;
+        let mut meta: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstatat(self.file.as_raw_fd(), entry.as_ptr(), &mut meta, libc::AT_SYMLINK_NOFOLLOW) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if meta.st_mode & libc::S_IFMT != libc::S_IFREG {
+            return Err(invalid());
+        }
+        self.current()?;
+        Ok(EntryInfo { device: meta.st_dev as u64, inode: meta.st_ino, mode: meta.st_mode as u32 })
     }
     fn open_regular_with_access(&self, entry: &OsStr, access: i32) -> io::Result<File> {
         self.current()?;
