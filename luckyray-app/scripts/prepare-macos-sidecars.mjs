@@ -55,7 +55,7 @@ export async function prepareSidecars() {
     // build uses the real nonempty product resources and three staged binaries.
     TAURI_CONFIG: JSON.stringify({ bundle: { externalBin: [], resources: [] } }) });
   await run("cargo", ["build", "--locked", "--release", "--target", TARGET, "--features", "sidecar-binaries",
-    ...SIDECARS.flatMap(name => ["--bin", name])], { cwd: TAURI, env });
+    ...SIDECARS.flatMap(name => ["--bin", name])], { cwd: TAURI, env, diagnosticStage: "compile-sidecars" });
   const records = [];
   for (const name of SIDECARS) {
     const source = join(targetDir, TARGET, "release", name);

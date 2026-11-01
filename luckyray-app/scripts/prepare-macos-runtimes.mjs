@@ -11,6 +11,7 @@ import { SOURCES } from "./check-macos-media-sources.mjs";
 import { extractVerifiedPnpmPackage, validateDshFrozenClosure, projectPortableDshReleaseLayout,
   auditPortableInstalledClosure, reconcileLockedClosure } from "./dsh-supply-chain.mjs";
 import { prepareDshDistribution, checkFrozenDshMinimum } from "./macos-dsh-distribution.mjs";
+import { commandEvent } from "./macos-native-diagnostics.mjs";
 
 // The archive digest is the upstream release asset digest, not a digest of its
 // checksum text: https://github.com/openssl/openssl/releases/tag/openssl-3.5.9
@@ -78,16 +79,18 @@ async function prepareDsh(scratch, node, home) {
     npm_config_userconfig: emptyConfig, npm_config_globalconfig: emptyConfig });
   const store = await directory(join(BUILD, "pnpm-store"));
   const flags = ["--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile", "--prod", "--strict-peer-dependencies=true", "--verify-store-integrity=true", "--store-dir", store];
-  await run(node, [pnpm, "fetch", ...flags], { cwd: fetchHost, env });
+  await run(node, [pnpm, "fetch", ...flags], { cwd: fetchHost, env, diagnosticStage: "dsh-fetch" });
   // pnpm otherwise prefers POSIX .bin symlinks. Request its normal portable
   // shims without absolute NODE_PATH; retain the strict no-link projection.
   await run(node, [pnpm, "install", ...flags, "--offline", "--node-linker=hoisted", "--package-import-method=copy",
-    "--config.prefer-symlinked-executables=false", "--config.extend-node-path=false"], { cwd: host, env });
+    "--config.prefer-symlinked-executables=false", "--config.extend-node-path=false"], { cwd: host, env, diagnosticStage: "dsh-install" });
   // The existing projection removes only pinned development metadata and
   // generated install paths. It must succeed; there is no symlink fallback.
+  commandEvent("checkpoint", "dsh-project", "node");
   await projectPortableDshReleaseLayout({ stageRoot: dsh });
   const roots = await packageRoots(join(host, "node_modules"));
   const count = new Set(roots.map(item => `${item.name}@${item.version}`)).size;
+  commandEvent("checkpoint", "dsh-audit", "node");
   const audit = await auditPortableInstalledClosure({ nodeModulesRoot: join(host, "node_modules"), expectedPackageCount: count,
     entryPoint: "@deepseek-ai/dsh/lib/bin.js", platform: "darwin", architecture: "arm64" });
   const reconciliation = reconcileLockedClosure({ lockfile, stagedPackages: audit.packages, platform: "darwin", architecture: "arm64" });
@@ -100,11 +103,12 @@ async function prepareDsh(scratch, node, home) {
     return matches[0].path;
   });
   await run(node, ["--input-type=module", "-e",
-    "import {createRequire} from 'node:module'; import {pathToFileURL} from 'node:url'; for(const p of process.argv.slice(1)) createRequire(pathToFileURL(p+'/package.json'))(p);", ...nativeRoots], { cwd: host, env });
-  const version = (await run(node, [join(host, "node_modules/@deepseek-ai/dsh/lib/bin.js"), "--version"], { cwd: host, env, capture: true })).trim();
+    "import {createRequire} from 'node:module'; import {pathToFileURL} from 'node:url'; const names=JSON.parse(process.argv[1]); const trace=process.env.MACOS_INTERNAL_DIAGNOSTICS==='1'; for(const [i,p] of process.argv.slice(2).entries()){if(trace)console.error('MACOS_NATIVE_MODULE_START:'+names[i]); createRequire(pathToFileURL(p+'/package.json'))(p); if(trace)console.error('MACOS_NATIVE_MODULE_PASS:'+names[i]);}", JSON.stringify(modules), ...nativeRoots], { cwd: host, env, diagnosticStage: "dsh-native-load" });
+  const version = (await run(node, [join(host, "node_modules/@deepseek-ai/dsh/lib/bin.js"), "--version"], { cwd: host, env, capture: true, diagnosticStage: "dsh-version" })).trim();
   if (version !== authority.runtimePackage.version) throw new Error("macos-dsh-version-invalid");
   await mkdir(join(dsh, "node")); await copy(node, join(dsh, "node/node"), 0o755);
   await copy(join(node, "../LICENSE"), join(dsh, "node/LICENSE"));
+  commandEvent("checkpoint", "dsh-materials", "node");
   const distribution = await prepareDshDistribution({ dshRoot: dsh, audit, packageRoots: roots,
     nodeLicense: await readRegular(join(node, "../LICENSE")) });
   await jsonNew(join(dsh, "macos-build.json"), { schemaVersion: 1, platform: "darwin", architecture: "arm64",
@@ -127,16 +131,16 @@ async function prepareMedia(scratch, node, home) {
   }
   const ssl = join(scratch, "openssl-source", `openssl-${OPENSSL.version}`);
   const sslPrefix = join(scratch, "openssl-static");
-  await run("/usr/bin/perl", [join(ssl, "Configure"), "darwin64-arm64-cc", "no-shared", "no-module", "no-tests", `--prefix=${sslPrefix}`, "--openssldir=/etc/ssl", "--libdir=lib"], { cwd: ssl, env });
-  await run("/usr/bin/make", [`-j${JOBS}`], { cwd: ssl, env });
-  await run("/usr/bin/make", ["install_sw"], { cwd: ssl, env });
+  await run("/usr/bin/perl", [join(ssl, "Configure"), "darwin64-arm64-cc", "no-shared", "no-module", "no-tests", `--prefix=${sslPrefix}`, "--openssldir=/etc/ssl", "--libdir=lib"], { cwd: ssl, env, diagnosticStage: "openssl-configure" });
+  await run("/usr/bin/make", [`-j${JOBS}`], { cwd: ssl, env, diagnosticStage: "openssl-build" });
+  await run("/usr/bin/make", ["install_sw"], { cwd: ssl, env, diagnosticStage: "openssl-install" });
   await copy(join(ssl, "LICENSE.txt"), join(media, "licenses/OpenSSL-LICENSE.txt"));
   const python = join(scratch, "python-source", `Python-${SOURCES.python.version}`);
   const pythonInstall = join(scratch, "python-install");
   const pythonEnv = { ...env, CFLAGS: `-O2 -ffile-prefix-map=${scratch}=.`, LDFLAGS: "", ac_cv_header_readline_readline_h: "no" };
-  await run(join(python, "configure"), [`--prefix=${pythonInstall}`, "--disable-shared", "--without-ensurepip", `--with-openssl=${sslPrefix}`, "--with-openssl-rpath=no"], { cwd: python, env: pythonEnv });
-  await run("/usr/bin/make", [`-j${JOBS}`], { cwd: python, env: pythonEnv });
-  await run("/usr/bin/make", ["altinstall"], { cwd: python, env: pythonEnv });
+  await run(join(python, "configure"), [`--prefix=${pythonInstall}`, "--disable-shared", "--without-ensurepip", `--with-openssl=${sslPrefix}`, "--with-openssl-rpath=no"], { cwd: python, env: pythonEnv, diagnosticStage: "python-configure" });
+  await run("/usr/bin/make", [`-j${JOBS}`], { cwd: python, env: pythonEnv, diagnosticStage: "python-build" });
+  await run("/usr/bin/make", ["altinstall"], { cwd: python, env: pythonEnv, diagnosticStage: "python-install" });
   await copy(join(pythonInstall, "bin/python3.11"), join(media, "python/bin/python3.11"), 0o755);
   await copy(join(pythonInstall, "lib/python3.11/os.py"), join(media, "python/lib/python3.11/os.py"));
   const dynamic = join(pythonInstall, "lib/python3.11/lib-dynload");
@@ -151,14 +155,14 @@ with zipfile.ZipFile(target, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
   assert not path.is_symlink()
   if path.is_file() and path.suffix not in ('.pyc','.pyo','.a'): archive.write(path, relative.as_posix())
 `;
-  await run("python3", ["-I", "-B", "-c", zipCode, join(pythonInstall, "lib/python3.11"), join(media, "python/lib/python311.zip")], { env });
+  await run("python3", ["-I", "-B", "-c", zipCode, join(pythonInstall, "lib/python3.11"), join(media, "python/lib/python311.zip")], { env, diagnosticStage: "python-stdlib" });
   await copy(join(python, "LICENSE"), join(media, "licenses/Python-LICENSE.txt"));
   const ffmpeg = join(scratch, "ffmpeg-source", `ffmpeg-${SOURCES.ffmpeg.version}`);
   const ffmpegFlags = ["--disable-shared", "--enable-static", "--disable-gpl", "--disable-nonfree", "--disable-autodetect",
     "--disable-doc", "--disable-debug", "--disable-network", "--enable-small", "--enable-videotoolbox", "--cc=clang",
     `--extra-cflags=-ffile-prefix-map=${scratch}=.`];
-  await run(join(ffmpeg, "configure"), ffmpegFlags, { cwd: ffmpeg, env });
-  await run("/usr/bin/make", [`-j${JOBS}`, "ffmpeg", "ffprobe"], { cwd: ffmpeg, env });
+  await run(join(ffmpeg, "configure"), ffmpegFlags, { cwd: ffmpeg, env, diagnosticStage: "ffmpeg-configure" });
+  await run("/usr/bin/make", [`-j${JOBS}`, "ffmpeg", "ffprobe"], { cwd: ffmpeg, env, diagnosticStage: "ffmpeg-build" });
   for (const name of ["ffmpeg", "ffprobe"]) await copy(join(ffmpeg, name), join(media, "ffmpeg", name), 0o755);
   for (const name of ["LICENSE.md", "COPYING.LGPLv2.1"]) await copy(join(ffmpeg, name), join(media, "licenses", `FFmpeg-${name}`));
   await copy(archives.ffmpeg, join(media, "sources", "ffmpeg-9.0.1.tar.xz"));
@@ -194,10 +198,10 @@ with zipfile.ZipFile(target, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
     ytDlpWheel: `wheels/${sources.ytDlp.fileName}`, ytDlpEjsWheel: `wheels/${sources.ytDlpEjs.fileName}`,
     deno: "deno/deno", ffmpeg: "ffmpeg/ffmpeg", files });
   const result = await publishDirectory(media, "media-engine");
-  const probe = "import sys,ssl,hashlib,zlib,bz2,lzma,sqlite3,zipfile; assert sys.version_info[:3]==(3,11,8); assert ssl.OPENSSL_VERSION.startswith('OpenSSL 3.5.9 '); assert sys.prefix==sys.argv[1]";
-  await run(join(result, "python/bin/python3.11"), ["-I", "-B", "-c", probe, join(result, "python")], { env });
-  await run(join(result, "deno/deno"), ["--version"], { env });
-  await run(join(result, "ffmpeg/ffmpeg"), ["-hide_banner", "-version"], { env });
+  const probe = "import sys,ssl,hashlib,zlib,bz2,lzma,sqlite3,zipfile; assert sys.version_info[:3]==(3,11,8),'macos-python-version-probe'; assert ssl.OPENSSL_VERSION.startswith('OpenSSL 3.5.9 '),'macos-python-ssl-probe'; assert sys.prefix==sys.argv[1],'macos-python-prefix-probe'";
+  await run(join(result, "python/bin/python3.11"), ["-I", "-B", "-c", probe, join(result, "python")], { env, diagnosticStage: "python-probe" });
+  await run(join(result, "deno/deno"), ["--version"], { env, diagnosticStage: "deno-probe" });
+  await run(join(result, "ffmpeg/ffmpeg"), ["-hide_banner", "-version"], { env, diagnosticStage: "ffmpeg-probe" });
   return result;
 }
 

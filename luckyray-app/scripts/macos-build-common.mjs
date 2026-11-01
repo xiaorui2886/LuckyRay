@@ -6,6 +6,7 @@ import { open, mkdir, lstat, readdir, realpath, rename } from "node:fs/promises"
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
+import { commandEvent, DiagnosticCollector, safeDiagnosticSummary } from "./macos-native-diagnostics.mjs";
 
 export const APP = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 export const TAURI = join(APP, "src-tauri");
@@ -100,16 +101,38 @@ export function releaseEnvironment(extra = {}) {
     ...extra };
 }
 export async function run(command, args, options = {}) {
-  const { capture = false, ...rest } = options;
+  const { capture = false, diagnosticStage = "command", diagnosticInput, ...rest } = options;
+  const started = Date.now();
+  const startedId = commandEvent("start", diagnosticStage, command,
+    typeof diagnosticInput === "string" && /^[a-f0-9]{64}$/.test(diagnosticInput) ? { inputSha256: diagnosticInput } : {});
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, { cwd: APP, stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit", ...rest });
     let text = "";
+    let spawnFailed = false;
     if (capture) child.stdout.on("data", chunk => {
       text += chunk;
       if (text.length > 8 * 1024 * 1024) child.kill("SIGTERM");
     });
-    child.once("error", reject);
-    child.once("exit", (code, signal) => code === 0 ? resolveRun(text) : reject(new Error(`macos-build-command-failed:${command}:${code ?? signal}`)));
+    child.once("error", error => {
+      spawnFailed = true;
+      if (startedId) commandEvent("exit", diagnosticStage, command, { startedId, exit: "SPAWN_ERROR", ioCode: error.code, elapsedMs: Date.now() - started });
+      reject(error);
+    });
+    child.once("close", async (code, signal) => {
+      if (spawnFailed) return;
+      if (startedId && code !== 0 && ["python-configure", "ffmpeg-configure", "openssl-configure"].includes(diagnosticStage)) {
+        try {
+          const name = diagnosticStage === "ffmpeg-configure" ? "ffbuild/config.log" : "config.log";
+          const bytes = await readRegular(join(rest.cwd ?? APP, name), 2 * 1024 * 1024);
+          const details = new DiagnosticCollector(); details.feed("stderr", bytes);
+          commandEvent("issues", diagnosticStage, command, { issues: safeDiagnosticSummary(details.summary()).issues });
+        } catch {
+          commandEvent("issues", diagnosticStage, command, { issues: [{ class: "configure-log-unavailable" }] });
+        }
+      }
+      if (startedId) commandEvent("exit", diagnosticStage, command, { startedId, exit: code ?? signal, elapsedMs: Date.now() - started });
+      code === 0 ? resolveRun(text) : reject(new Error(`macos-build-command-failed:${command}:${code ?? signal}`));
+    });
   });
 }
 export async function download(input) {
@@ -127,8 +150,10 @@ export async function download(input) {
   try {
     const original = await fd.stat();
     // Curl writes the already-owned descriptor, never reopens an output path.
-    await run("/usr/bin/curl", ["--fail", "--location", "--silent", "--show-error", "--proto", "=https", "--tlsv1.2", "--max-filesize", "536870912", input.url],
-      { stdio: ["ignore", fd.fd, "inherit"] });
+    const httpDiagnostic = process.env.MACOS_INTERNAL_DIAGNOSTICS === "1"
+      ? ["--write-out", "%{stderr}MACOS_HTTP_STATUS:%{http_code}\n"] : [];
+    await run("/usr/bin/curl", ["--fail", "--location", "--silent", "--show-error", "--proto", "=https", "--tlsv1.2", "--max-filesize", "536870912", ...httpDiagnostic, input.url],
+      { stdio: ["ignore", fd.fd, "inherit"], diagnosticStage: "source-download", diagnosticInput: input.sha256 });
     await fd.sync();
     const named = await lstat(temporary);
     if (!named.isFile() || named.dev !== original.dev || named.ino !== original.ino || named.nlink !== 1)
@@ -180,7 +205,7 @@ with os.fdopen(fd, 'rb') as source:
  after = os.fstat(source.fileno())
  assert (before.st_size, before.st_mtime_ns, before.st_ctime_ns) == (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
 `;
-  await run("python3", ["-I", "-B", "-c", code, archive, expectedSha, destination]);
+  await run("python3", ["-I", "-B", "-c", code, archive, expectedSha, destination], { diagnosticStage: "source-extract", diagnosticInput: expectedSha });
 }
 export async function inventory(root) {
   const files = [];
@@ -220,5 +245,5 @@ export async function publishDirectory(source, name) {
 export async function requireMachO(path) {
   const bytes = await readRegular(path);
   if (bytes.length < 32 || ![0xfeedfacf, 0xbebafeca, 0xcafebabe].includes(bytes.readUInt32LE(0))) throw new Error("macos-build-not-macho");
-  await run("/usr/bin/lipo", ["-verify_arch", "arm64", path]);
+  await run("/usr/bin/lipo", ["-verify_arch", "arm64", path], { diagnosticStage: "arm64-check" });
 }

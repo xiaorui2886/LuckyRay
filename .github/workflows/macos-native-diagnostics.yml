@@ -46,9 +46,17 @@ jobs:
           rustc -vV
       - name: Validate the real app, runtimes, sidecars and own window internally
         working-directory: ${{ runner.temp }}/luckyray-macos-internal/luckyray-app
-        # The projected report is the diagnostic artifact. Bootstrap and child
-        # output are discarded; any nonzero exit still fails this step/job.
-        run: npm exec --yes --package=pnpm@11.25.0 -- node scripts/check-macos-internal.mjs > /dev/null 2>&1
+        # Publish only a re-projected typed summary after discarding bootstrap
+        # and raw child output. Preserve the actual validation exit status.
+        run: |
+          macos_validation_exit=0
+          npm exec --yes --package=pnpm@11.25.0 -- node scripts/check-macos-internal.mjs > /dev/null 2>&1 || macos_validation_exit=$?
+          macos_summary_exit=0
+          node scripts/check-macos-internal.mjs --print-summary || macos_summary_exit=$?
+          if [ "$macos_validation_exit" -ne 0 ]; then
+            exit "$macos_validation_exit"
+          fi
+          exit "$macos_summary_exit"
       - name: Retain only the projected report and actual own-window screenshot
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

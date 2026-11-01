@@ -22,7 +22,7 @@ export async function prepareBuild() {
   try {
     // Release sidecars link the shared Tauri library and therefore also need
     // the real frontendDist on a clean checkout, before their Cargo build.
-    await run("pnpm", ["build"], { cwd: APP });
+    await run("pnpm", ["build"], { cwd: APP, diagnosticStage: "frontend-build" });
     await prepareRuntimes();
     await prepareSidecars();
     const manifest = JSON.parse((await readRegular(join(TAURI, "media-engine/runtime-manifest.json"), 4 * 1024 * 1024)).toString());

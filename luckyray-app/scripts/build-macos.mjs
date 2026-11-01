@@ -79,7 +79,7 @@ export async function buildMacosApp({ internalValidation = false, onStage = () =
   // resources. The feature selection matches the controlled Windows app build:
   // sidecars are prepared separately rather than rediscovered as Cargo bins.
   onStage("compile-app");
-  await run("pnpm", appBuildArguments(internalValidation), { env });
+  await run("pnpm", appBuildArguments(internalValidation), { env, diagnosticStage: "tauri-build" });
   const bundle = join(targetDir, TARGET, "release/bundle"); const app = join(bundle, "macos/LuckyRay.app");
   onStage("verify-resources-and-runtimes");
   const result = await verifyApp(app, { internalValidation });

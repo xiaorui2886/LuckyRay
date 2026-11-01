@@ -8,6 +8,7 @@ import { APP, TAURI, BUILD, TARGET, SIDECARS, directory, readRegular, writeNew, 
   sha256, run, requireNative } from "./macos-build-common.mjs";
 import { appBuildArguments, buildMacosApp } from "./build-macos.mjs";
 import { checkStartup } from "./check-macos-app-startup.mjs";
+import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary } from "./macos-native-diagnostics.mjs";
 
 export const PHASES = Object.freeze(["install-frozen-frontend", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-app-window"]);
 export const EVIDENCE_FILES = Object.freeze(["report.json", "LuckyRay-real-app.png"]);
@@ -80,7 +81,7 @@ export async function internalPlan() {
     updaterArtifacts: false, sidecars: SIDECARS, phases: PHASES, evidenceFiles: EVIDENCE_FILES,
     distributionGate: "incomplete source remains ineligible for distribution; supplied bytes remain verified",
     binaryExport: false, dmg: false, applicationArchive: false, binaryUpload: false, release: false,
-    rawOutput: "discarded; only allowlisted error codes retained", nativeExecution: "not-run-by-plan" };
+    rawOutput: "streamed into bounded typed command/error summaries, then discarded", nativeExecution: "not-run-by-plan" };
 }
 async function requireInternalContext() {
   requireNative();
@@ -90,24 +91,35 @@ async function requireInternalContext() {
   const temp = await realpath(process.env.RUNNER_TEMP ?? "/missing-runner-temp");
   if (APP !== join(temp, "luckyray-macos-internal/luckyray-app"))
     throw new Error("macos-internal-temp-worktree-required");
-  const commit = (await run("git", ["rev-parse", "HEAD"], { capture: true })).trim();
-  const tree = (await run("git", ["rev-parse", "HEAD^{tree}"], { capture: true })).trim();
-  const origin = (await run("git", ["remote", "get-url", "origin"], { capture: true })).trim();
-  const changed = (await run("git", ["status", "--porcelain=v1", "--untracked-files=all"], { capture: true })).trim();
+  const quiet = { capture: true, stdio: ["ignore", "pipe", "ignore"] };
+  const commit = (await run("git", ["rev-parse", "HEAD"], quiet)).trim();
+  const tree = (await run("git", ["rev-parse", "HEAD^{tree}"], quiet)).trim();
+  const origin = (await run("git", ["remote", "get-url", "origin"], quiet)).trim();
+  const changed = (await run("git", ["status", "--porcelain=v1", "--untracked-files=all"], quiet)).trim();
   if (!/^[a-f0-9]{40}$/.test(commit) || !/^[a-f0-9]{40}$/.test(tree) || commit !== process.env.GITHUB_SHA
       || changed !== ""
       || !["https://github.com/xiaorui2886/LuckyRay", "https://github.com/xiaorui2886/LuckyRay.git"].includes(origin))
     throw new Error("macos-internal-source-identity-invalid");
   return { repository: "xiaorui2886/LuckyRay", commit, tree, cleanBeforeBuild: true };
 }
+async function diagnosticContext() {
+  const vocabulary = await diagnosticVocabulary(file => readRegular(join(APP, "scripts", file), 4 * 1024 * 1024));
+  // Source positions are allowed only for tracked public app source paths.
+  const tracked = await run("git", ["ls-files", "-z", "--", "src-tauri/src", "src-tauri/build.rs", "src"],
+    { capture: true, stdio: ["ignore", "pipe", "ignore"] });
+  const files = new Set(tracked.split("\0").filter(file => file.startsWith("src-tauri/") && file.endsWith(".rs")
+    || file.startsWith("src/") && /\.(?:ts|tsx)$/.test(file)).map(file => file.startsWith("src-tauri/") ? file.slice("src-tauri/".length) : file));
+  return { vocabulary, files };
+}
 async function worker() {
   if (!process.send) throw new Error("macos-internal-ci-required");
   try {
     await requireInternalContext();
+    process.env.MACOS_INTERNAL_DIAGNOSTICS = "1";
     process.send({ type: "phase", phase: "install-frozen-frontend" });
-    if ((await run("pnpm", ["--version"], { capture: true })).trim() !== "11.25.0")
+    if ((await run("pnpm", ["--version"], { capture: true, diagnosticStage: "package-manager-version" })).trim() !== "11.25.0")
       throw new Error("macos-internal-package-manager-mismatch");
-    await run("pnpm", ["install", "--frozen-lockfile", "--ignore-scripts", "--reporter=silent"]);
+    await run("pnpm", ["install", "--frozen-lockfile", "--ignore-scripts", "--reporter=silent"], { diagnosticStage: "frontend-install" });
     const result = await buildMacosApp({ internalValidation: true,
       onStage: phase => process.send({ type: "phase", phase }) });
     process.send({ type: "built", result });
@@ -128,15 +140,16 @@ export async function validateInternal() {
   await directory(BUILD);
   // No stale evidence is reused or overwritten, even after an interrupted run.
   await mkdir(EVIDENCE, { mode: 0o700 }); await directory(EVIDENCE);
+  const { vocabulary, files } = await diagnosticContext();
+  const diagnostics = new DiagnosticCollector(vocabulary, files);
   // The workflow supplies the pinned package manager on PATH. Launch Node
   // directly so the private IPC channel belongs to this worker, not npm.
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--worker"],
     { cwd: APP, env: internalWorkerEnvironment(process.env), stdio: ["ignore", "pipe", "pipe", "ipc"] });
-  let output = ""; let build; let window; let failure; let protocolInvalid = false;
+  let build; let window; let failure; let protocolInvalid = false;
   const phases = [];
-  for (const stream of [child.stdout, child.stderr]) stream.on("data", bytes => {
-    output = (output + bytes.toString()).slice(-262144);
-  });
+  child.stdout.on("data", bytes => diagnostics.feed("stdout", bytes));
+  child.stderr.on("data", bytes => diagnostics.feed("stderr", bytes));
   child.on("message", message => {
     try {
       if (message?.type === "phase" && message.phase === PHASES[phases.length]) {
@@ -181,20 +194,47 @@ export async function validateInternal() {
       status: success || index < phases.length - 1 ? "passed" : index < phases.length ? "failed" : "not-run" })),
     build: build ?? null, window: success ? window : null,
     failure: success ? null : failure ?? { code: protocolInvalid ? "invalid-worker-protocol" : "native-worker-failed" },
-    workerExit: exited.code, diagnostics: diagnosticSummary(output), rawOutput: "discarded-not-retained",
+    workerExit: exited.code, diagnostics: safeDiagnosticSummary(diagnostics.summary(), vocabulary, files), rawOutput: "discarded-not-retained",
     artifacts: success ? EVIDENCE_FILES : [EVIDENCE_FILES[0]],
     limitations: { frontendInteraction: "not-run", lshConnection: "not-run", notesRecovery: "not-run",
       nativeHostBrowserSession: "not-run", mcpSession: "not-run", installIntoApplications: "not-run",
       screenshotVisualReview: "required", notarization: "not-requested", release: "not-published" } };
-  output = "";
   await jsonNew(join(EVIDENCE, EVIDENCE_FILES[0]), report);
   console.log(JSON.stringify(report));
   if (!success) process.exitCode = 1;
   return report;
 }
+export function publishableReport(record, vocabulary = new Set(), files = new Set()) {
+  if (record?.schemaVersion !== 1 || record.mode !== "internal-native-validation" || record.binaryExport !== false
+      || !["passed", "failed"].includes(record.status) || record.source?.repository !== "xiaorui2886/LuckyRay"
+      || !/^[a-f0-9]{40}$/.test(record.source.commit) || !/^[a-f0-9]{40}$/.test(record.source.tree)
+      || !Array.isArray(record.phases) || record.phases.length !== PHASES.length
+      || record.phases.some((item, i) => item.phase !== PHASES[i] || !["passed", "failed", "not-run"].includes(item.status))
+      || record.status === "passed" && (record.workerExit !== 0 || record.phases.some(item => item.status !== "passed")))
+    throw new Error("macos-internal-result-invalid");
+  const failureCodes = [...SAFE_CODES, "native-command-failed", "native-validation-failed", "native-worker-failed", "invalid-worker-protocol"];
+  const failure = failureCodes.includes(record.failure?.code) ? { code: record.failure.code } : null;
+  if (failure && knownExit(record.failure.exit)) failure.exit = record.failure.exit;
+  return { schemaVersion: 1, mode: "internal-native-validation", status: record.status,
+    source: { repository: "xiaorui2886/LuckyRay", commit: record.source.commit, tree: record.source.tree },
+    phases: record.phases.map(item => ({ phase: item.phase, status: item.status })), failure,
+    diagnostics: safeDiagnosticSummary(record.diagnostics, vocabulary, files), binaryExport: false,
+    distributionReady: record.distributionReady === true, rawOutput: "not-published" };
+}
+async function printReportSummary() {
+  // Generated output is ignored by Git. Keep the same clean-source and exact
+  // CI location/origin/HEAD requirements when publishing the typed report.
+  const source = await requireInternalContext();
+  const record = JSON.parse((await readRegular(join(EVIDENCE, EVIDENCE_FILES[0]), 64 * 1024)).toString());
+  if (record.source?.commit !== source.commit || record.source?.tree !== source.tree)
+    throw new Error("macos-internal-source-identity-invalid");
+  const { vocabulary, files } = await diagnosticContext();
+  console.log(`MACOS_NATIVE_REPORT ${JSON.stringify(publishableReport(record, vocabulary, files))}`);
+}
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
     if (process.argv.length === 3 && process.argv[2] === "--plan") console.log(JSON.stringify(await internalPlan(), null, 2));
+    else if (process.argv.length === 3 && process.argv[2] === "--print-summary") await printReportSummary();
     else if (process.argv.length === 3 && process.argv[2] === "--worker") await worker();
     else if (process.argv.length === 2) await validateInternal();
     else throw new Error("macos-internal-arguments-invalid");
