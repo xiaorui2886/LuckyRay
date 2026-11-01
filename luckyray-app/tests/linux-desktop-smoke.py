@@ -74,6 +74,21 @@ def webdriver_value(opener, request, timeout):
             time.sleep(0.2)
 
 
+def auto_launch_read(wd, session):
+    # Execute Script resolves the returned Promise. This fixed read avoids the
+    # async-script callback bridge; it is still one POST with no transport retry.
+    value = wd("POST", f"/session/{session}/execute/sync", {
+        "script": "return window.__TAURI__.core.invoke('get_auto_launch_enabled').then(value=>({ok:true,value}),error=>({ok:false,error:String(error)}));",
+        "args": []})
+    if not isinstance(value, dict) or type(value.get("ok")) is not bool:
+        raise ValueError("autostart-read-invalid-envelope")
+    if not value["ok"]:
+        raise RuntimeError("autostart-read-ipc-rejected: " + str(value.get("error")))
+    if type(value.get("value")) is not bool:
+        raise ValueError("autostart-read-nonboolean-result")
+    return value["value"]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--application", required=True, type=Path)
@@ -149,6 +164,37 @@ def main():
             raise RuntimeError(f"production command {command} failed: {value.get('error')}")
         return value
 
+    def read_auto_launch(stage):
+        trace = {"stage": stage, "adapter": "execute-sync-returned-promise", "attempts": 1,
+                 "applicationCountBefore": len(app_pids(binary)), "ipcReply": "NOT_OBSERVED"}
+        report.setdefault("autostartReads", []).append(trace)
+        try:
+            value = auto_launch_read(wd, session)
+            trace.update(ipcReply="OBSERVED", value=value, status="PASS")
+            return value
+        except urllib.error.HTTPError as error:
+            trace.update(status="FAIL", failureLayer="WEBDRIVER_PROTOCOL",
+                         errorClass=type(error).__name__, httpStatus=error.code)
+            raise
+        except OSError as error:
+            trace.update(status="FAIL", failureLayer="WEBDRIVER_TRANSPORT",
+                         errorClass=type(error).__name__)
+            raise
+        except ValueError as error:
+            trace.update(status="FAIL", failureLayer="INVALID_RESPONSE",
+                         errorClass=type(error).__name__)
+            raise
+        except RuntimeError as error:
+            trace.update(status="FAIL", failureLayer="PRODUCTION_IPC",
+                         ipcReply="OBSERVED", error=str(error))
+            raise
+        finally:
+            trace["applicationCountAfter"] = len(app_pids(binary))
+            trace["applicationPresenceAfter"] = ("PRESENT" if trace["applicationCountAfter"]
+                                                  else "IDENTITY_GONE_EXIT_NOT_OBSERVED")
+            trace["driverExitCode"] = driver.poll()
+            trace["applicationExitStatus"] = "NOT_OBSERVED"
+
     def start():
         nonlocal session
         value = wd("POST", "/session", {"capabilities": {"alwaysMatch": {"tauri:options": {"application": str(binary)}}}})
@@ -207,29 +253,29 @@ def main():
             report["noteFlows"] = "NOT_RUN"
             report["materialImportCatalogRead"] = "NOT_RUN"
             entry = profile / "config/autostart/com.luckyray.desktop.desktop"
-            if invoke("get_auto_launch_enabled")["value"] or entry.exists():
+            if read_auto_launch("initial") or entry.exists():
                 raise RuntimeError("autostart query created or enabled an absent entry")
             invoke("set_auto_launch_enabled", {"enabled": True})
             enabled = entry.read_bytes()
             inode = entry.stat().st_ino
-            if not invoke("get_auto_launch_enabled")["value"] or b"Hidden=true" in enabled:
+            if not read_auto_launch("enabled") or b"Hidden=true" in enabled:
                 raise RuntimeError("production autostart enable did not take effect")
             if str(binary).encode() not in enabled:
                 raise RuntimeError("autostart did not bind the running executable")
             invoke("set_auto_launch_enabled", {"enabled": False})
-            if invoke("get_auto_launch_enabled")["value"] or entry.read_bytes() != enabled + b"Hidden=true\n":
+            if read_auto_launch("disabled") or entry.read_bytes() != enabled + b"Hidden=true\n":
                 raise RuntimeError("production autostart disable did not retain a hidden entry")
             if not any(path.stat().st_ino == inode for path in entry.parent.glob(".lrk-*.displaced")):
                 raise RuntimeError("autostart did not retain the prior inode")
             if not any(path.read_bytes() == enabled and path.stat().st_ino != inode for path in entry.parent.glob(".lrk-*.backup")):
                 raise RuntimeError("autostart did not retain an independent backup")
             invoke("set_auto_launch_enabled", {"enabled": True})
-            if entry.read_bytes() != enabled or not invoke("get_auto_launch_enabled")["value"]:
+            if entry.read_bytes() != enabled or not read_auto_launch("reenabled"):
                 raise RuntimeError("production autostart re-enable failed")
             invoke("set_auto_launch_enabled", {"enabled": False})
             stop()
             start()
-            if invoke("get_auto_launch_enabled")["value"] or entry.read_bytes() != enabled + b"Hidden=true\n":
+            if read_auto_launch("reopened") or entry.read_bytes() != enabled + b"Hidden=true\n":
                 raise RuntimeError("disabled autostart state did not survive native restart")
             stop()
             report["autostartEnableDisableReenablePersistence"] = "PASS"

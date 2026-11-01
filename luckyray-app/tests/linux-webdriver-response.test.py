@@ -92,6 +92,37 @@ class ResponseTests(unittest.TestCase):
             smoke.webdriver_value(self.http, request, 2)
         self.assertEqual(Handler.calls["/write-reset"], 1)
 
+    def test_autostart_read_accepts_only_an_observed_boolean_ipc_reply(self):
+        for result in (False, True):
+            calls = []
+            def wd(method, path, body):
+                calls.append((method, path, body))
+                return {"ok": True, "value": result}
+            self.assertIs(smoke.auto_launch_read(wd, "session"), result)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][:2], ("POST", "/session/session/execute/sync"))
+            self.assertIn("return window.__TAURI__.core.invoke('get_auto_launch_enabled')", calls[0][2]["script"])
+            self.assertNotIn("set_auto_launch_enabled", calls[0][2]["script"])
+        for value in (None, {}, {"ok": True}, {"ok": True, "value": None},
+                      {"ok": True, "value": 0}, {"ok": True, "value": "false"}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                smoke.auto_launch_read(lambda *_args: value, "session")
+        with self.assertRaisesRegex(RuntimeError, "ipc-rejected"):
+            smoke.auto_launch_read(lambda *_args: {"ok": False, "error": "synthetic IPC refusal"}, "session")
+
+    def test_autostart_read_does_not_retry_a_disconnected_post(self):
+        calls = []
+        def wd(method, path, body):
+            calls.append((method, path))
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{self.server.server_port}{path}",
+                data=json.dumps(body).encode(), method=method)
+            return smoke.webdriver_value(self.http, request, 2)
+        with self.assertRaises(http.client.RemoteDisconnected):
+            smoke.auto_launch_read(wd, "disconnected-read")
+        self.assertEqual(calls, [("POST", "/session/disconnected-read/execute/sync")])
+        self.assertEqual(Handler.calls["/session/disconnected-read/execute/sync"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
