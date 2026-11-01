@@ -17,13 +17,49 @@ const options = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, i
 }, []));
 const preflight = options["--mode"] === "preflight";
 assert(preflight || options["--mode"] === undefined);
+let browser, child, phase = "browser-identity", sandboxCheck, preflightEmitted = false;
+const phaseFailures = {
+  "browser-identity": "browser-identity-invalid", "extension-identity": "extension-identity-invalid",
+  "synthetic-profile": "synthetic-profile-invalid", "browser-arguments": "browser-arguments-invalid",
+  "browser-start": "browser-start-failed", "cdp-connect": "cdp-connect-failed",
+  "sandbox-page": "sandbox-page-failed", "sandbox-observation": "sandbox-observation-failed",
+  "sandbox-assertion": "sandbox-assertion-failed", "browser-cleanup": "browser-cleanup-failed",
+};
+function preflightFailure(error) {
+  const messages = new Map([
+    ["Chromium exited before DevTools was ready", "browser-exited-before-devtools"],
+    ["Chromium DevTools did not start; sandbox is never disabled as a fallback", "devtools-start-timeout"],
+    ["actual chrome://sandbox state unavailable", "sandbox-observation-timeout"],
+  ]);
+  const checks = { namespace: "namespace-sandbox-required", "PID namespaces": "pid-namespaces-required",
+    "Network namespaces": "network-namespaces-required", "Seccomp-BPF sandbox": "seccomp-bpf-required",
+    evaluation: "adequate-sandbox-required" };
+  return { phase: phaseFailures[phase] ? phase : "unknown",
+    code: messages.get(error?.message) || (phase === "sandbox-assertion" && checks[sandboxCheck])
+      || phaseFailures[phase] || "unclassified-client-failure",
+    ...(["ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET"].includes(error?.code)
+      ? { osError: error.code } : {}),
+    ...(child ? { browserExitCode: child.exitCode } : {}),
+    ...(["SIGABRT", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGKILL", "SIGSEGV", "SIGSYS", "SIGTERM", "SIGTRAP"].includes(child?.signalCode)
+      ? { browserSignal: child.signalCode } : {}) };
+}
+function emitPreflightFailure(failure) {
+  if (preflightEmitted) return;
+  preflightEmitted = true;
+  process.stdout.write(JSON.stringify({ status: "FAIL", ...(browser ? { browser } : {}), failure }) + "\n");
+}
+// Observe initialization failures without changing Node's fatal exit behavior.
+if (preflight) process.once("uncaughtExceptionMonitor", error => emitPreflightFailure(preflightFailure(error)));
 const browserPath = fs.realpathSync(options["--browser"]);
 const metadata = fs.statSync(browserPath);
 assert([0, process.getuid()].includes(metadata.uid) && !(metadata.mode & 0o7022));
 assert(fs.readFileSync(browserPath).subarray(0, 4).equals(Buffer.from([127, 69, 76, 70])), "preinstalled Chromium ELF required");
-const version = execFileSync(browserPath, ["--version"], { encoding: "utf8", timeout: 10000 }).trim();
-assert(/^Chromium \d+\./.test(version), "the runner's unbranded Chromium is required");
-const browser = { version, sha256: sha(fs.readFileSync(browserPath)), bytes: metadata.size };
+const versionOutput = execFileSync(browserPath, ["--version"], { encoding: "utf8", timeout: 10000 }).trim();
+assert(/^Chromium \d+\./.test(versionOutput), "the runner's unbranded Chromium is required");
+const version = versionOutput.match(/^Chromium \d+(?:\.\d+)+/)?.[0];
+assert(version && version.length <= 80, "bounded Chromium version required");
+browser = { version, sha256: sha(fs.readFileSync(browserPath)), bytes: metadata.size };
+phase = "extension-identity";
 const extensionPath = fileURLToPath(new URL("../../browser-extension-prototype/", import.meta.url));
 const manifest = JSON.parse(fs.readFileSync(path.join(extensionPath, "manifest.json"), "utf8"));
 const keyHash = createHash("sha256").update(Buffer.from(manifest.key, "base64")).digest("hex").slice(0, 32);
@@ -49,6 +85,7 @@ if (!preflight) assert.equal(origin, options["--origin"], "compile and register 
 const port = Number(options["--port"]);
 if (!preflight) assert(Number.isInteger(port) && port >= 37418 && port <= 37467);
 const session = randomUUID();
+phase = "synthetic-profile";
 const diagnostics = fs.mkdtempSync(path.join(os.tmpdir(), "luckyray-chromium-consent-"));
 fs.chmodSync(diagnostics, 0o700);
 // Chromium searches DIR_USER_DATA/NativeMessagingHosts. Use the exact default
@@ -80,13 +117,14 @@ if (fs.existsSync(activeFile)) {
   assert(old.isFile() && old.uid === process.getuid() && old.nlink === 1);
   fs.unlinkSync(activeFile);
 }
+phase = "browser-arguments";
 const args = ["--headless=new", "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
   "--disable-component-update", "--disable-default-apps", "--disable-sync", "--remote-debugging-address=127.0.0.1",
   "--remote-debugging-port=0", `--user-data-dir=${profile}`];
 if (!preflight) args.push(`--load-extension=${extensionPath}`);
 args.push("about:blank");
 assert(!args.some(arg => /no-sandbox|disable.*sandbox|single-process|in-process-gpu|disable-web-security/i.test(arg)));
-let child, connection, worker, phase = "browser-start";
+let connection, worker;
 const counters = { protectedReads: 0, anonymousBootstrap: 0 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, ms, message) {
@@ -95,6 +133,7 @@ async function until(fn, ms, message) {
   throw new Error(message);
 }
 async function start() {
+  phase = "browser-start";
   const stderr = fs.openSync(path.join(diagnostics, "browser.stderr"), "wx", 0o600);
   try { child = spawn(browserPath, args, { stdio: ["ignore", "ignore", stderr], env: process.env }); }
   finally { fs.closeSync(stderr); }
@@ -109,19 +148,28 @@ async function start() {
     if (!/^\d+$/.test(text) || !endpoint?.startsWith("/devtools/browser/")) return null;
     return `ws://127.0.0.1:${Number(text)}${endpoint}`;
   }, 20000, "Chromium DevTools did not start; sandbox is never disabled as a fallback");
+  phase = "cdp-connect";
   connection = await CdpConnection.connect(active);
-  phase = "sandbox-observation";
+  phase = "sandbox-page";
   const { targetId } = await connection.send("Target.createTarget", { url: "chrome://sandbox/" });
   const sandboxSession = await attachSession(connection, targetId);
+  phase = "sandbox-observation";
   const state = await until(async () => {
     const value = await evaluate(connection, sandboxSession,
       "({evaluation:document.querySelector('#evaluation')?.innerText,rows:[...document.querySelectorAll('#sandbox-status tr')].map(r=>[...r.cells].map(c=>c.innerText))})");
     return value?.evaluation && value.rows.length ? value : null;
   }, 15000, "actual chrome://sandbox state unavailable");
   const rows = Object.fromEntries(state.rows);
+  phase = "sandbox-assertion";
+  sandboxCheck = "namespace";
   assert(rows["Layer 1 Sandbox"] === "Namespace" || rows["Namespace Sandbox"] === "Yes", "namespace sandbox required");
-  for (const name of ["PID namespaces", "Network namespaces", "Seccomp-BPF sandbox"]) assert.equal(rows[name], "Yes", name);
+  for (const name of ["PID namespaces", "Network namespaces", "Seccomp-BPF sandbox"]) {
+    sandboxCheck = name;
+    assert.equal(rows[name], "Yes", name);
+  }
+  sandboxCheck = "evaluation";
   assert.equal(state.evaluation, "You are adequately sandboxed.");
+  phase = "sandbox-page";
   await connection.send("Target.closeTarget", { targetId });
   const sandbox = { status: "PASS", namespace: "Yes", pidNamespaces: "Yes", networkNamespaces: "Yes", seccompBpf: "Yes",
     adequatelySandboxed: true, securityDisablingFlags: [], source: "ACTUAL_CHROME_SANDBOX_PAGE" };
@@ -155,12 +203,12 @@ async function cleanup() {
   assert(!child || child.exitCode !== null || child.signalCode !== null, "owned Chromium did not stop");
   fs.rmSync(diagnostics, { recursive: true });
 }
-let failure;
+let failure, failureDetail, preflightSandbox;
 try {
   assert(process.platform === "linux" && process.getuid() !== 0, "ordinary Linux user required");
   const sandbox = await start();
   if (preflight) {
-    process.stdout.write(JSON.stringify({ status: "PASS", browser, sandbox }) + "\n");
+    preflightSandbox = sandbox;
   } else {
     for await (const line of readline.createInterface({ input: process.stdin })) {
       const command = JSON.parse(line);
@@ -185,10 +233,20 @@ try {
   }
 } catch (error) {
   failure = error;
+  failureDetail = preflightFailure(error);
   process.stderr.write(`Linux Chromium acceptance failed: ${error.message}\n`);
   if (!preflight) process.stdout.write(JSON.stringify({ ok: false, code: "chromium-client-failed", phase, counters }) + "\n");
   process.exitCode = 1;
 } finally {
-  try { await cleanup(); } catch (error) { failure ||= error; process.exitCode = 1; }
-  if (failure && preflight) process.stdout.write(JSON.stringify({ status: "FAIL", browser, failure: failure.message }) + "\n");
+  phase = "browser-cleanup";
+  try { await cleanup(); } catch (error) {
+    failure ||= error; failureDetail ||= preflightFailure(error); process.exitCode = 1;
+  }
+  if (preflight) {
+    if (failure) emitPreflightFailure(failureDetail);
+    else {
+      preflightEmitted = true;
+      process.stdout.write(JSON.stringify({ status: "PASS", browser, sandbox: preflightSandbox }) + "\n");
+    }
+  }
 }

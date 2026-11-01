@@ -35,6 +35,71 @@ COMMANDS = (("connect", False, "extension-connection-approval-required"), ("conn
             ("connect", True, None), ("read", True, None), ("connect", False, "extension-connection-revoked"))
 
 
+PREFLIGHT_PHASES = frozenset(("ordinary-user", "user-namespace", "browser-layout", "node-selection",
+    "chromium-subprocess", "chromium-output", "source-verification", "complete", "unknown",
+    "browser-identity", "extension-identity", "synthetic-profile", "browser-arguments", "browser-start",
+    "cdp-connect", "sandbox-page", "sandbox-observation", "sandbox-assertion", "browser-cleanup"))
+PREFLIGHT_FAILURE_CODES = frozenset(("ordinary-user-required", "user-namespace-failed", "user-namespace-timeout",
+    "browser-layout-invalid", "node-unavailable", "chromium-execution-failed", "chromium-timeout",
+    "child-output-invalid", "child-report-invalid", "child-exit-status-mismatch", "sandbox-evidence-invalid",
+    "source-verification-failed", "browser-identity-invalid", "extension-identity-invalid", "synthetic-profile-invalid",
+    "browser-arguments-invalid", "browser-start-failed", "browser-exited-before-devtools", "devtools-start-timeout",
+    "cdp-connect-failed", "sandbox-page-failed", "sandbox-observation-failed", "sandbox-observation-timeout",
+    "sandbox-assertion-failed", "namespace-sandbox-required", "pid-namespaces-required", "network-namespaces-required",
+    "seccomp-bpf-required", "adequate-sandbox-required", "browser-cleanup-failed", "unclassified-client-failure"))
+PREFLIGHT_OS_ERRORS = frozenset(("ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET"))
+PREFLIGHT_SIGNALS = frozenset(("SIGABRT", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGKILL",
+                             "SIGSEGV", "SIGSYS", "SIGTERM", "SIGTRAP"))
+
+
+def browser_identity(value):
+    if (not isinstance(value, dict) or not isinstance(value.get("version"), str)
+            or len(value["version"]) > 80 or re.fullmatch(r"Chromium [0-9]+(?:\.[0-9]+)+", value["version"]) is None
+            or not isinstance(value.get("sha256"), str) or re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is None
+            or type(value.get("bytes")) is not int or not 0 < value["bytes"] <= 2**53 - 1):
+        return None
+    return {key: value[key] for key in ("version", "sha256", "bytes")}
+
+
+def preflight_failure(value):
+    value = value if isinstance(value, dict) else {}
+    result = {"phase": value.get("phase") if isinstance(value.get("phase"), str) and value["phase"] in PREFLIGHT_PHASES else "unknown",
+              "code": value.get("code") if isinstance(value.get("code"), str) and value["code"] in PREFLIGHT_FAILURE_CODES else "unclassified-client-failure"}
+    if isinstance(value.get("osError"), str) and value["osError"] in PREFLIGHT_OS_ERRORS:
+        result["osError"] = value["osError"]
+    code = value.get("browserExitCode")
+    if "browserExitCode" in value and (code is None or type(code) is int and -65535 <= code <= 65535):
+        result["browserExitCode"] = code
+    if isinstance(value.get("browserSignal"), str) and value["browserSignal"] in PREFLIGHT_SIGNALS:
+        result["browserSignal"] = value["browserSignal"]
+    return result
+
+
+def preflight_diagnostic(value):
+    """Bounded projection: never forward child text, log output, paths or extra keys."""
+    if not isinstance(value, dict):
+        return {"status": "NOT_RUN"}
+    result = {"status": value.get("status") if value.get("status") in ("PASS", "FAIL") else "INVALID",
+              "phase": value.get("phase") if isinstance(value.get("phase"), str) and value["phase"] in PREFLIGHT_PHASES else "unknown"}
+    browser = browser_identity(value.get("browser"))
+    if browser:
+        result["browser"] = browser
+    if "failure" in value:
+        result["failure"] = preflight_failure(value["failure"])
+    probe = value.get("userNamespaceProbe")
+    if isinstance(probe, dict):
+        code = probe.get("exitCode")
+        result["userNamespaceProbe"] = {"exitCode": code if type(code) is int and -65535 <= code <= 65535 else None}
+    child = value.get("child")
+    if isinstance(child, dict):
+        code = child.get("exitCode")
+        result["child"] = {"exitCode": code if type(code) is int and -65535 <= code <= 65535 else None,
+                           "status": child.get("status") if child.get("status") in ("PASS", "FAIL", "INVALID", "TIMEOUT") else "INVALID"}
+        if "failure" in child:
+            result["child"]["failure"] = preflight_failure(child["failure"])
+    return result
+
+
 def extension_identity(app):
     root = app / "browser-extension-prototype"
     manifest = json.loads((root / "manifest.json").read_text())
@@ -111,30 +176,67 @@ class Run(runtime.Run):
         report = {"status": "FAIL", "scope": SCOPE, "source": source, "attempts": 1,
                   "supportedEnvironment": "standard GitHub Ubuntu 22.04 VM, ordinary user, preinstalled unbranded Chromium",
                   "securityOrPolicyChanges": "NONE"}
+        def phase(name, code):
+            report["phase"] = name
+            return {"phase": name, "code": code}
+        failure = phase("ordinary-user", "ordinary-user-required")
         try:
             require(os.geteuid() != 0, "ordinary user required")
+            failure = phase("user-namespace", "user-namespace-failed")
             result = subprocess.run(["/usr/bin/unshare", "--user", "--map-root-user", "/bin/true"],
                                     env=self.env(), capture_output=True, timeout=10)
             (self.private / "userns.log").write_bytes(result.stdout + result.stderr)
             report["userNamespaceProbe"] = {"exitCode": result.returncode, "logSha256": digest(self.private / "userns.log")}
             require(result.returncode == 0, "user namespaces unavailable; stop before builds, no sandbox fallback")
+            failure = phase("browser-layout", "browser-layout-invalid")
             browser = Path("/usr/bin/chromium").resolve(strict=True)
             require(browser == Path("/usr/local/share/chromium/chrome-linux/chrome"), "runner Chromium layout changed")
+            failure = phase("node-selection", "node-unavailable")
             node = str(Path(shutil.which("node")).resolve(strict=True))
             command = [node, str(self.app / "tests/lib/linux-browser-chromium-client.mjs"),
                        "--browser", str(browser), "--mode", "preflight"]
+            failure = phase("chromium-subprocess", "chromium-execution-failed")
+            report["child"] = {"exitCode": None, "status": "INVALID"}
             result = subprocess.run(command, env=self.env(), text=True, capture_output=True, timeout=90)
+            report["child"]["exitCode"] = result.returncode
             (self.private / "preflight.log").write_text(result.stdout + result.stderr)
+            failure = phase("chromium-output", "child-output-invalid")
+            require(len(result.stdout.encode("utf8")) <= 16 * 1024, "bounded child report required")
             value = json.loads(result.stdout)
-            require(result.returncode == 0 and value.get("status") == "PASS", "normal browser sandbox preflight failed")
+            failure = phase("chromium-output", "child-report-invalid")
+            require(isinstance(value, dict), "child report must be an object")
+            identity = browser_identity(value.get("browser"))
+            if identity:
+                report["browser"] = identity
+            report["child"]["status"] = value.get("status") if value.get("status") in ("PASS", "FAIL") else "INVALID"
+            if "failure" in value:
+                report["child"]["failure"] = preflight_failure(value["failure"])
+            failure = phase("chromium-output", "child-exit-status-mismatch")
+            if value.get("status") == "FAIL":
+                failure = preflight_failure(value.get("failure"))
+                report["phase"] = failure["phase"]
+            require(result.returncode == 0 and value.get("status") == "PASS" and "failure" not in value,
+                    "normal browser sandbox preflight failed")
+            failure = phase("browser-identity", "browser-identity-invalid")
+            require(identity is not None, "verified browser identity required")
+            failure = phase("sandbox-assertion", "sandbox-evidence-invalid")
             validate_sandbox(value.get("sandbox"))
-            report.update(browser=value["browser"], sandbox=value["sandbox"])
+            report["sandbox"] = {key: value["sandbox"][key] for key in ("status", "namespace", "pidNamespaces",
+                "networkNamespaces", "seccompBpf", "adequatelySandboxed", "securityDisablingFlags", "source")}
             write_json(self.private / "browser-layout.json", {"browser": str(browser), "node": node})
+            failure = phase("source-verification", "source-verification-failed")
             self.source()
             report["status"] = "PASS"
+            report["phase"] = "complete"
         except Exception as error:
-            report["error"] = str(error)
-            raise
+            if isinstance(error, subprocess.TimeoutExpired):
+                code = "user-namespace-timeout" if report["phase"] == "user-namespace" else "chromium-timeout"
+                failure = {"phase": report["phase"], "code": code}
+                if "child" in report:
+                    report["child"]["status"] = "TIMEOUT"
+            report["failure"] = failure
+            report["error"] = "preflight failed: " + failure["code"]
+            raise RuntimeError(report["error"]) from None
         finally:
             write_json(self.evidence / "preflight.json", report)
 
@@ -221,6 +323,7 @@ class Run(runtime.Run):
         passed = passed and export_safe
         write_json(self.evidence / "result.json", {"status": "PASS" if passed else "FAIL", "scope": SCOPE,
                    "source": source, "stepOutcomes": outcomes, "reports": reports, "artifactAllowlist": list(EXPORTS),
+                   "preflightDiagnostic": preflight_diagnostic(bodies.get("preflight.json")),
                    "exportPolicy": "PASS" if export_safe else "FAIL", "included": {"realChromiumConsentFlows": 1},
                    "excluded": EXCLUDED, "limits": ["synthetic profile and explicit temporary consent only",
                    "diagnostic ELFs, not installed personal-browser or package acceptance",
