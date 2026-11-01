@@ -1,0 +1,202 @@
+// Disposable native development validation. Only a projected JSON report and
+// the freshly launched app's own window may leave the runner. No export path.
+import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { mkdir, realpath } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { APP, TAURI, BUILD, TARGET, SIDECARS, directory, readRegular, writeNew, jsonNew,
+  sha256, run, requireNative } from "./macos-build-common.mjs";
+import { appBuildArguments, buildMacosApp } from "./build-macos.mjs";
+import { checkStartup } from "./check-macos-app-startup.mjs";
+
+export const PHASES = Object.freeze(["install-frozen-frontend", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-app-window"]);
+export const EVIDENCE_FILES = Object.freeze(["report.json", "LuckyRay-real-app.png"]);
+const EVIDENCE = join(BUILD, "internal-validation-evidence");
+const digest = value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+const count = value => Number.isSafeInteger(value) && value >= 0;
+const knownExit = value => typeof value === "string" && ((/^\d{1,3}$/.test(value) && Number(value) <= 255)
+  || ["SIGABRT", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGPIPE", "SIGQUIT", "SIGSEGV", "SIGTERM", "SIGTRAP", "SIGXCPU", "SIGXFSZ"].includes(value));
+const SAFE_CODES = Object.freeze([
+  "macos-arm64-build-required", "macos-internal-ci-required", "macos-internal-temp-worktree-required",
+  "macos-internal-source-identity-invalid", "macos-internal-unexpected-bundle-export", "macos-internal-package-manager-mismatch",
+  "macos-internal-build-override-rejected",
+  "macos-app-version-mismatch", "macos-app-sidecar-bytes-changed", "macos-app-media-manifest-changed",
+  "macos-app-media-bytes-changed", "macos-app-dsh-record-invalid", "macos-app-dsh-bytes-changed",
+  "macos-app-distribution-index-changed", "macos-app-cli-contract-mismatch", "macos-app-node-version-invalid",
+  "macos-app-dsh-version-invalid", "macos-dsh-distribution-materials-incomplete",
+  "macos-dsh-corresponding-source-missing", "macos-dsh-corresponding-source-changed",
+  "macos-dsh-distributed-license-changed", "macos-distribution-recipe-changed",
+  "macos-real-app-exited-before-window", "macos-real-app-window-timeout", "macos-real-app-exited-before-capture",
+  "macos-real-app-capture-invalid", "macos-window-observation-failed", "macos-build-cache-conflict",
+  "macos-build-download-hash-invalid", "macos-build-linked-output", "macos-build-output-unsafe",
+]);
+
+// Never return raw command output, exception messages, filenames or env values.
+export function diagnosticSummary(output) {
+  return { buildCodes: SAFE_CODES.filter(code => output.includes(code)),
+    rustErrorCodes: [...new Set([...output.matchAll(/\berror\[(E\d{4})\]/g)].map(match => match[1]))].sort(),
+    ioCodes: ["ENOENT", "EACCES", "EPERM", "ENOSPC", "EIO", "ETIMEDOUT"].filter(code => new RegExp(`\\b${code}\\b`).test(output)) };
+}
+export function failureSummary(error) {
+  if (SAFE_CODES.includes(error?.message)) return { code: error.message };
+  const exit = /^macos-build-command-failed:[^\n]+:(\d{1,3}|SIG[A-Z]+)$/.exec(error?.message ?? "");
+  if (exit) return { code: "native-command-failed", ...(knownExit(exit[1]) ? { exit: exit[1] } : {}) };
+  return { code: "native-validation-failed" };
+}
+export function internalWorkerEnvironment(input) {
+  // Reject product trust/resource overrides before filtering credentials; do
+  // not turn an existing reject-on-conflict contract into silent acceptance.
+  if (Object.keys(input).some(name => name.startsWith("LUCKYRAY_") || name === "TAURI_CONFIG"))
+    throw new Error("macos-internal-build-override-rejected");
+  const env = {};
+  for (const name of ["HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL", "CI",
+    "GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_SHA", "RUNNER_TEMP",
+    "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "CARGO_BUILD_JOBS", "CARGO_ENCODED_RUSTFLAGS",
+    "SDKROOT", "DEVELOPER_DIR", "MACOSX_DEPLOYMENT_TARGET", "CFLAGS", "CXXFLAGS", "LDFLAGS",
+    "__CF_USER_TEXT_ENCODING", "XPC_FLAGS", "XPC_SERVICE_NAME", "SECURITYSESSIONID"])
+    if (typeof input[name] === "string") env[name] = input[name];
+  return env;
+}
+export function summarizeBuildResult(result) {
+  const d = result?.distribution;
+  if (result?.target !== TARGET || JSON.stringify(result.sidecars) !== JSON.stringify(SIDECARS)
+      || typeof result.version !== "string" || !/^\d+\.\d+\.\d+(?:-[a-z0-9.-]{1,40})?$/.test(result.version)
+      || !count(result.mediaFiles) || !count(result.dshFiles) || !digest(d?.sourceInputsSha256)
+      || typeof d.readyToPackage !== "boolean" || !count(d.providedSourceInputs) || !count(d.providedSourceBytes)
+      || !Array.isArray(d.missingRequirements) || d.missingRequirements.length > 128
+      || d.missingRequirements.some(item => typeof item.id !== "string" || !/^[a-z0-9-]{1,96}$/.test(item.id))
+      || d.readyToPackage !== (d.missingRequirements.length === 0))
+    throw new Error("macos-internal-result-invalid");
+  return { version: result.version, target: TARGET, sidecars: SIDECARS, mediaFiles: result.mediaFiles, dshFiles: result.dshFiles,
+    distribution: { readyToPackage: d.readyToPackage, sourceInputsSha256: d.sourceInputsSha256,
+      providedSourceInputs: d.providedSourceInputs, providedSourceBytes: d.providedSourceBytes,
+      missingRequirementIds: d.missingRequirements.map(item => item.id) } };
+}
+export async function internalPlan() {
+  const config = JSON.parse((await readRegular(join(TAURI, "tauri.macos.conf.json"), 64 * 1024)).toString());
+  if (config.bundle.macOS.minimumSystemVersion !== "15.0") throw new Error("macos-internal-minimum-profile-invalid");
+  return { mode: "internal-native-validation", target: TARGET, minimumSystemVersion: config.bundle.macOS.minimumSystemVersion,
+    sourceWorktree: "$RUNNER_TEMP/luckyray-macos-internal", appBuild: ["pnpm", ...appBuildArguments(true)],
+    updaterArtifacts: false, sidecars: SIDECARS, phases: PHASES, evidenceFiles: EVIDENCE_FILES,
+    distributionGate: "incomplete source remains ineligible for distribution; supplied bytes remain verified",
+    binaryExport: false, dmg: false, applicationArchive: false, binaryUpload: false, release: false,
+    rawOutput: "discarded; only allowlisted error codes retained", nativeExecution: "not-run-by-plan" };
+}
+async function requireInternalContext() {
+  requireNative();
+  if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_REPOSITORY !== "xiaorui2886/LuckyRay")
+    throw new Error("macos-internal-ci-required");
+  internalWorkerEnvironment(process.env);
+  const temp = await realpath(process.env.RUNNER_TEMP ?? "/missing-runner-temp");
+  if (APP !== join(temp, "luckyray-macos-internal/luckyray-app"))
+    throw new Error("macos-internal-temp-worktree-required");
+  const commit = (await run("git", ["rev-parse", "HEAD"], { capture: true })).trim();
+  const tree = (await run("git", ["rev-parse", "HEAD^{tree}"], { capture: true })).trim();
+  const origin = (await run("git", ["remote", "get-url", "origin"], { capture: true })).trim();
+  const changed = (await run("git", ["status", "--porcelain=v1", "--untracked-files=all"], { capture: true })).trim();
+  if (!/^[a-f0-9]{40}$/.test(commit) || !/^[a-f0-9]{40}$/.test(tree) || commit !== process.env.GITHUB_SHA
+      || changed !== ""
+      || !["https://github.com/xiaorui2886/LuckyRay", "https://github.com/xiaorui2886/LuckyRay.git"].includes(origin))
+    throw new Error("macos-internal-source-identity-invalid");
+  return { repository: "xiaorui2886/LuckyRay", commit, tree, cleanBeforeBuild: true };
+}
+async function worker() {
+  if (!process.send) throw new Error("macos-internal-ci-required");
+  try {
+    await requireInternalContext();
+    process.send({ type: "phase", phase: "install-frozen-frontend" });
+    if ((await run("pnpm", ["--version"], { capture: true })).trim() !== "11.25.0")
+      throw new Error("macos-internal-package-manager-mismatch");
+    await run("pnpm", ["install", "--frozen-lockfile", "--ignore-scripts", "--reporter=silent"]);
+    const result = await buildMacosApp({ internalValidation: true,
+      onStage: phase => process.send({ type: "phase", phase }) });
+    process.send({ type: "built", result });
+    process.send({ type: "phase", phase: "real-app-window" });
+    const window = await checkStartup();
+    const bytes = await readRegular(join(window.artifactDirectory, "LuckyRay-real-app.png"), 32 * 1024 * 1024);
+    await writeNew(join(EVIDENCE, "own-window.pending"), bytes, 0o600);
+    process.send({ type: "window", pid: window.pid, windowID: window.windowID,
+      width: window.width, height: window.height, screenshotSha256: sha256(bytes) });
+  } catch (error) {
+    process.send({ type: "failed", failure: failureSummary(error) });
+    process.exitCode = 1;
+  } finally { process.disconnect(); }
+}
+export async function validateInternal() {
+  const source = await requireInternalContext();
+  const plan = await internalPlan();
+  await directory(BUILD);
+  // No stale evidence is reused or overwritten, even after an interrupted run.
+  await mkdir(EVIDENCE, { mode: 0o700 }); await directory(EVIDENCE);
+  // The workflow supplies the pinned package manager on PATH. Launch Node
+  // directly so the private IPC channel belongs to this worker, not npm.
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--worker"],
+    { cwd: APP, env: internalWorkerEnvironment(process.env), stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  let output = ""; let build; let window; let failure; let protocolInvalid = false;
+  const phases = [];
+  for (const stream of [child.stdout, child.stderr]) stream.on("data", bytes => {
+    output = (output + bytes.toString()).slice(-262144);
+  });
+  child.on("message", message => {
+    try {
+      if (message?.type === "phase" && message.phase === PHASES[phases.length]) {
+        phases.push(message.phase);
+        console.log(`macos-internal-phase:${message.phase}`);
+      } else if (message?.type === "built" && phases.length === PHASES.length - 1 && !build) {
+        build = summarizeBuildResult(message.result);
+      } else if (message?.type === "window" && phases.length === PHASES.length && build && !window
+          && count(message.pid) && message.pid > 0 && count(message.windowID) && message.windowID > 0
+          && Number.isFinite(message.width) && message.width >= 1000 && message.width <= 32768
+          && Number.isFinite(message.height) && message.height >= 600 && message.height <= 32768
+          && digest(message.screenshotSha256)) {
+        window = { pid: message.pid, windowID: message.windowID, width: message.width, height: message.height,
+          screenshotSha256: message.screenshotSha256 };
+      } else if (message?.type === "failed" && !failure) {
+        const f = message.failure;
+        if (!SAFE_CODES.includes(f?.code) && !["native-command-failed", "native-validation-failed"].includes(f?.code))
+          throw new Error("invalid-failure-code");
+        failure = { code: f.code };
+        if (f.code === "native-command-failed" && knownExit(f.exit)) failure.exit = f.exit;
+      } else throw new Error("invalid-worker-message");
+    } catch {
+      protocolInvalid = true; child.kill("SIGTERM");
+    }
+  });
+  const exited = await new Promise(resolveExit => {
+    child.once("error", () => resolveExit({ code: null, signal: null }));
+    child.once("close", (code, signal) => resolveExit({ code, signal }));
+  });
+  let success = exited.code === 0 && !protocolInvalid && !failure && !!build && !!window && phases.length === PHASES.length;
+  if (success) {
+    const bytes = await readRegular(join(EVIDENCE, "own-window.pending"), 32 * 1024 * 1024);
+    if (bytes.length < 1024 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
+        || sha256(bytes) !== window.screenshotSha256) {
+      success = false; failure = { code: "macos-real-app-capture-invalid" };
+    } else await writeNew(join(EVIDENCE, EVIDENCE_FILES[1]), bytes);
+  }
+  const report = { schemaVersion: 1, mode: "internal-native-validation", source,
+    status: success ? "passed" : "failed", minimumSystemVersion: plan.minimumSystemVersion, binaryExport: false,
+    distributionReady: build?.distribution.readyToPackage ?? false, distributionAssessment: build ? "verified" : "not-reached",
+    phases: PHASES.map((phase, index) => ({ phase,
+      status: success || index < phases.length - 1 ? "passed" : index < phases.length ? "failed" : "not-run" })),
+    build: build ?? null, window: success ? window : null,
+    failure: success ? null : failure ?? { code: protocolInvalid ? "invalid-worker-protocol" : "native-worker-failed" },
+    workerExit: exited.code, diagnostics: diagnosticSummary(output), rawOutput: "discarded-not-retained",
+    artifacts: success ? EVIDENCE_FILES : [EVIDENCE_FILES[0]],
+    limitations: { frontendInteraction: "not-run", lshConnection: "not-run", notesRecovery: "not-run",
+      nativeHostBrowserSession: "not-run", mcpSession: "not-run", installIntoApplications: "not-run",
+      screenshotVisualReview: "required", notarization: "not-requested", release: "not-published" } };
+  output = "";
+  await jsonNew(join(EVIDENCE, EVIDENCE_FILES[0]), report);
+  console.log(JSON.stringify(report));
+  if (!success) process.exitCode = 1;
+  return report;
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try {
+    if (process.argv.length === 3 && process.argv[2] === "--plan") console.log(JSON.stringify(await internalPlan(), null, 2));
+    else if (process.argv.length === 3 && process.argv[2] === "--worker") await worker();
+    else if (process.argv.length === 2) await validateInternal();
+    else throw new Error("macos-internal-arguments-invalid");
+  } catch (error) { console.error(JSON.stringify(failureSummary(error))); process.exitCode = 1; }
+}

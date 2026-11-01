@@ -3,12 +3,21 @@
 // runtime and sidecar inventories, so no post-compile tool changes those bytes.
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { mkdir, symlink, lstat, rename } from "node:fs/promises";
+import { symlink, lstat, rename, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { APP, TAURI, TARGET, SIDECARS, sha256, directory, stage, readRegular, inventory,
   run, requireNative, requireMachO, isolatedEnvironment, jsonNew, releaseEnvironment } from "./macos-build-common.mjs";
+import { inspectDshDistribution } from "./macos-dsh-distribution.mjs";
 
-export async function verifyApp(app) {
+export const APP_BUILD_ARGUMENTS = Object.freeze(["exec", "tauri", "build", "--ci", "--target", TARGET,
+  "--bundles", "app", "--no-sign", "--", "--locked", "--no-default-features", "--features", "browser-host-runtime", "--bin", "luckyray-app"]);
+export function appBuildArguments(internalValidation = false) {
+  const args = [...APP_BUILD_ARGUMENTS];
+  if (internalValidation) args.splice(args.indexOf("--"), 0, "--config", '{"bundle":{"createUpdaterArtifacts":false}}');
+  return args;
+}
+
+export async function verifyApp(app, { internalValidation = false } = {}) {
   const contents = join(app, "Contents"); const resources = join(contents, "Resources");
   const pkg = JSON.parse((await readRegular(join(APP, "package.json"))).toString());
   const version = (await run("/usr/bin/plutil", ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", join(contents, "Info.plist")], { capture: true })).trim();
@@ -35,6 +44,13 @@ export async function verifyApp(app) {
     throw new Error("macos-app-dsh-record-invalid");
   const dshFiles = (await inventory(dsh)).filter(item => item.path !== "macos-build.json");
   if (JSON.stringify(dshFiles) !== JSON.stringify(record.files)) throw new Error("macos-app-dsh-bytes-changed");
+  const distribution = await inspectDshDistribution(dsh);
+  if (record.distribution?.sourceInputsSha256 !== distribution.sourceInputsSha256
+      || record.distribution.readyToPackage !== distribution.readyToPackage
+      || JSON.stringify(record.distribution.missingRequirements) !== JSON.stringify(distribution.missingRequirements))
+    throw new Error("macos-app-distribution-index-changed");
+  if (!internalValidation && !distribution.readyToPackage)
+    throw new Error("macos-dsh-distribution-materials-incomplete");
   const scratch = await stage("bundled-runtime-probes");
   const env = isolatedEnvironment(scratch);
   const cli = JSON.parse(await run(join(contents, "MacOS/luckyray-cli"), ["protocol", "identity"], { capture: true, env }));
@@ -49,25 +65,39 @@ export async function verifyApp(app) {
     "import sys,ssl,zlib; assert sys.version_info[:3]==(3,11,8); assert sys.prefix==sys.argv[1]", join(media, "python")], { env });
   await run(join(media, "deno/deno"), ["--version"], { env });
   await run(join(media, "ffmpeg/ffmpeg"), ["-hide_banner", "-version"], { env });
-  return { version, target: TARGET, sidecars: SIDECARS, mediaFiles: manifest.files.length, dshFiles: dshFiles.length,
+  return { version, target: TARGET, sidecars: SIDECARS, mediaFiles: manifest.files.length, dshFiles: dshFiles.length, distribution,
     ui: "not-tested-by-inventory-and-command-probes", hostConnection: "not-tested" };
 }
 
-export async function buildMacos() {
+// This function creates only an app bundle. The independent internal entry
+// never calls buildMacos(), which is the sole DMG/archive export path below.
+export async function buildMacosApp({ internalValidation = false, onStage = () => {} } = {}) {
   requireNative();
   const targetDir = await directory(join(TAURI, "target"));
   const env = releaseEnvironment({ CARGO_TARGET_DIR: targetDir });
   // This is a full main binary with production features and real externalBin
   // resources. The feature selection matches the controlled Windows app build:
   // sidecars are prepared separately rather than rediscovered as Cargo bins.
-  await run("pnpm", ["exec", "tauri", "build", "--ci", "--target", TARGET, "--bundles", "app", "--no-sign", "--",
-    "--locked", "--no-default-features", "--features", "browser-host-runtime", "--bin", "luckyray-app"], { env });
+  onStage("compile-app");
+  await run("pnpm", appBuildArguments(internalValidation), { env });
   const bundle = join(targetDir, TARGET, "release/bundle"); const app = join(bundle, "macos/LuckyRay.app");
-  const result = await verifyApp(app);
+  onStage("verify-resources-and-runtimes");
+  const result = await verifyApp(app, { internalValidation });
+  if (internalValidation && (JSON.stringify((await readdir(bundle)).sort()) !== '["macos"]'
+      || JSON.stringify((await readdir(join(bundle, "macos"))).sort()) !== '["LuckyRay.app"]'))
+    throw new Error("macos-internal-unexpected-bundle-export");
   // Do not use --deep while signing: nested binaries already have their own
   // signatures and the compiled manifest/CLI contracts bind their exact bytes.
+  onStage("ad-hoc-sign");
   await run("/usr/bin/codesign", ["--force", "--sign", "-", "--options", "runtime", app]);
   await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+  return { ...result, app, bundle };
+}
+
+export async function buildMacos() {
+  // Default verification requires complete corresponding source; an internal
+  // validation result is never accepted as export authorization here.
+  const { app, bundle, ...result } = await buildMacosApp();
   const imageRoot = await stage("dmg-contents");
   await run("/usr/bin/ditto", ["--noqtn", "--norsrc", app, join(imageRoot, "LuckyRay.app")]);
   await symlink("/Applications", join(imageRoot, "Applications"));

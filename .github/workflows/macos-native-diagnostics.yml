@@ -1,8 +1,8 @@
-name: macOS native product build
+name: macOS internal native validation
 
-# One native product build per reviewed push. The lower-level native checks
-# already passed on 6d227334; this phase exercises full app/resources/sidecars
-# and startup, without repeating those diagnostics or requesting real accounts.
+# One internal native build per reviewed push. Incomplete corresponding source
+# still prevents distribution. Only the projected report and own-window PNG
+# are uploaded; the temporary app and all dependencies stay on the runner.
 on:
   push:
     branches: [port/macos-desktop-20261101]
@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  native-product-build:
+  native-internal-validation:
     if: github.repository == 'xiaorui2886/LuckyRay'
     runs-on: macos-15
     timeout-minutes: 120
@@ -35,30 +35,28 @@ jobs:
           uname -m
           test "$(uname -m)" = arm64
           xcodebuild -version
+      - name: Create a disposable worktree of the exact reviewed source
+        working-directory: ${{ github.workspace }}
+        run: git worktree add --detach "$RUNNER_TEMP/luckyray-macos-internal" "$GITHUB_SHA"
       - name: Set the pinned Rust toolchain and target
+        working-directory: ${{ runner.temp }}/luckyray-macos-internal/luckyray-app
         run: |
           rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin
           rustup override set 1.95.0
           rustc -vV
-      - name: Install the frozen frontend dependencies without lifecycle scripts
-        run: npm exec --yes --package=pnpm@11.25.0 -- pnpm install --frozen-lockfile --ignore-scripts
-      - name: Build the complete native app with real runtimes and sidecars
-        id: full_app
-        run: npm exec --yes --package=pnpm@11.25.0 -- node scripts/build-macos.mjs
-      - name: Start the actual LuckyRay app and capture its own window
-        if: steps.full_app.outcome == 'success'
-        run: node scripts/check-macos-app-startup.mjs
-      - name: Retain the native app, disk image and actual window evidence
+      - name: Validate the real app, runtimes, sidecars and own window internally
+        working-directory: ${{ runner.temp }}/luckyray-macos-internal/luckyray-app
+        # The projected report is the diagnostic artifact. Bootstrap and child
+        # output are discarded; any nonzero exit still fails this step/job.
+        run: npm exec --yes --package=pnpm@11.25.0 -- node scripts/check-macos-internal.mjs > /dev/null 2>&1
+      - name: Retain only the projected report and actual own-window screenshot
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: macos-native-product
+          name: macos-internal-validation
           path: |
-            luckyray-app/src-tauri/target/aarch64-apple-darwin/release/bundle/*.app.tar.gz
-            luckyray-app/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-            luckyray-app/src-tauri/target/aarch64-apple-darwin/release/bundle/macos-artifacts-*.json
-            luckyray-app/src-tauri/.macos-build/actual-app-startup-*/LuckyRay-real-app.png
-            luckyray-app/src-tauri/.macos-build/actual-app-startup-*/startup-result.json
-          if-no-files-found: ignore
+            ${{ runner.temp }}/luckyray-macos-internal/luckyray-app/src-tauri/.macos-build/internal-validation-evidence/report.json
+            ${{ runner.temp }}/luckyray-macos-internal/luckyray-app/src-tauri/.macos-build/internal-validation-evidence/LuckyRay-real-app.png
+          if-no-files-found: error
           include-hidden-files: true
           retention-days: 2

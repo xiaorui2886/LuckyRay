@@ -10,6 +10,7 @@ import { DENO_INPUT, verifyDenoArchive, validateDenoListing } from "./prepare-ma
 import { SOURCES } from "./check-macos-media-sources.mjs";
 import { extractVerifiedPnpmPackage, validateDshFrozenClosure, projectPortableDshReleaseLayout,
   auditPortableInstalledClosure, reconcileLockedClosure } from "./dsh-supply-chain.mjs";
+import { prepareDshDistribution, checkFrozenDshMinimum } from "./macos-dsh-distribution.mjs";
 
 // The archive digest is the upstream release asset digest, not a digest of its
 // checksum text: https://github.com/openssl/openssl/releases/tag/openssl-3.5.9
@@ -90,6 +91,8 @@ async function prepareDsh(scratch, node, home) {
   const audit = await auditPortableInstalledClosure({ nodeModulesRoot: join(host, "node_modules"), expectedPackageCount: count,
     entryPoint: "@deepseek-ai/dsh/lib/bin.js", platform: "darwin", architecture: "arm64" });
   const reconciliation = reconcileLockedClosure({ lockfile, stagedPackages: audit.packages, platform: "darwin", architecture: "arm64" });
+  const macos = JSON.parse((await readRegular(join(TAURI, "tauri.macos.conf.json"))).toString());
+  const minimumSystem = await checkFrozenDshMinimum({ packageRoots: roots, appMinimum: macos.bundle.macOS.minimumSystemVersion });
   const modules = ["koffi", "node-pty", "sharp", "node-addon-require-builtin"];
   const nativeRoots = modules.map(name => {
     const matches = roots.filter(item => item.name === name);
@@ -102,9 +105,11 @@ async function prepareDsh(scratch, node, home) {
   if (version !== authority.runtimePackage.version) throw new Error("macos-dsh-version-invalid");
   await mkdir(join(dsh, "node")); await copy(node, join(dsh, "node/node"), 0o755);
   await copy(join(node, "../LICENSE"), join(dsh, "node/LICENSE"));
+  const distribution = await prepareDshDistribution({ dshRoot: dsh, audit, packageRoots: roots,
+    nodeLicense: await readRegular(join(node, "../LICENSE")) });
   await jsonNew(join(dsh, "macos-build.json"), { schemaVersion: 1, platform: "darwin", architecture: "arm64",
     node: NODE_INPUT, runtimePackage: authority.runtimePackage, lockfileSha256: sha256(lockfile),
-    nativeModuleLoadProbe: { status: "passed", modules }, versionProbe: version, audit, reconciliation,
+    nativeModuleLoadProbe: { status: "passed", modules }, versionProbe: version, audit, reconciliation, distribution, minimumSystem,
     files: await inventory(dsh) });
   return publishDirectory(dsh, "dsh");
 }

@@ -10,7 +10,7 @@
       "binaries/luckyray-mcp"
     ],
     "macOS": {
-      "minimumSystemVersion": "13.0",
+      "minimumSystemVersion": "15.0",
       "signingIdentity": null
     }
   }

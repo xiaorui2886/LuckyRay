@@ -1,0 +1,2408 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin",
+  "architecture": "arm64",
+  "runtimeVersion": "0.2.1-rc.3",
+  "packageCount": 564,
+  "standardTexts": {
+    "MIT": {
+      "path": "bodies/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+      "bytes": 1078,
+      "sourceKind": "standard license/version text, not a package-specific copyright grant",
+      "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/MIT.txt",
+      "sourcePath": "standard-MIT.txt"
+    },
+    "Apache-2.0": {
+      "path": "bodies/074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff.txt",
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+      "bytes": 10280,
+      "sourceKind": "standard license/version text, not a package-specific copyright grant",
+      "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/Apache-2.0.txt",
+      "sourcePath": "standard-Apache-2.0.txt"
+    },
+    "ISC": {
+      "path": "bodies/521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53.txt",
+      "sha256": "521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53",
+      "bytes": 737,
+      "sourceKind": "standard license/version text, not a package-specific copyright grant",
+      "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/ISC.txt",
+      "sourcePath": "standard-ISC.txt"
+    },
+    "MPL-1.1": {
+      "path": "bodies/6214f8b1300bb9f37b16ebc146f8f61af0187e0025042ff95c8b3030744a8795.txt",
+      "sha256": "6214f8b1300bb9f37b16ebc146f8f61af0187e0025042ff95c8b3030744a8795",
+      "bytes": 23669,
+      "sourceKind": "standard license/version text, not a package-specific copyright grant",
+      "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/MPL-1.1.txt",
+      "sourcePath": "standard-MPL-1.1.txt"
+    },
+    "LGPL-3.0-or-later": {
+      "path": "bodies/996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1.txt",
+      "sha256": "996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1",
+      "bytes": 42098,
+      "sourceKind": "standard license/version text, not a package-specific copyright grant",
+      "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/LGPL-3.0-or-later.txt",
+      "sourcePath": "LGPL-3.0-or-later.txt"
+    },
+    "GPL-3.0-or-later": {
+      "path": "bodies/fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0.txt",
+      "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+      "bytes": 34674,
+      "sourceKind": "standard license/version text, not a package-specific copyright grant",
+      "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/GPL-3.0-or-later.txt",
+      "sourcePath": "GPL-3.0-or-later.txt"
+    },
+    "AOM-Patent-1.0": {
+      "path": "bodies/eb1955a99d10bf2bbb37c375e7a61bdb560b76ab8590c1a45be6c2a20245146e.txt",
+      "sha256": "eb1955a99d10bf2bbb37c375e7a61bdb560b76ab8590c1a45be6c2a20245146e",
+      "bytes": 5700,
+      "sourceKind": "standard license/version text, not a package-specific copyright grant",
+      "sourceUrl": "https://raw.githubusercontent.com/AOMediaCodec/oac/a7e25a2b8c36bb73de5ba39025f6f9f94d7c2bef/PATENTS",
+      "sourcePath": "standard-AOM-Patent-1.0.txt"
+    }
+  },
+  "missingStandaloneNoticeGrants": [
+    {
+      "identity": "@aws-sdk/credential-provider-http@3.972.74",
+      "license": "Apache-2.0",
+      "contentSha256": "69c6c7d53e7222e6e9fb113d30ef80ad4e330cdf8e1beaa352ffacd5bb34c6a9",
+      "manifestSha256": "6db5ed1c0c41ca8672b0eb663e539f87ed0deb7fc96d241ef766d2b441fe59a1",
+      "standardLicense": "Apache-2.0",
+      "originalManifestAttribution": {
+        "author": {
+          "name": "AWS SDK for JavaScript Team",
+          "url": "https://aws.amazon.com/sdk-for-javascript/"
+        },
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/aws/aws-sdk-js-v3.git",
+          "directory": "packages-internal/credential-provider-http"
+        },
+        "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-http"
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "@aws-sdk/credential-provider-login@3.972.79",
+      "license": "Apache-2.0",
+      "contentSha256": "3e4c601c5d6a037ba411de7b6ed8c4e0356d8b07b5e6d16869f651abad55d9cc",
+      "manifestSha256": "5993af12213692c03386b8af68d3894c007c87fcbee64356743668aa9ea39696",
+      "standardLicense": "Apache-2.0",
+      "originalManifestAttribution": {
+        "author": {
+          "name": "AWS SDK for JavaScript Team",
+          "url": "https://aws.amazon.com/sdk-for-javascript/"
+        },
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/aws/aws-sdk-js-v3.git",
+          "directory": "packages-internal/credential-provider-login"
+        },
+        "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-login"
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "@aws-sdk/nested-clients@3.997.46",
+      "license": "Apache-2.0",
+      "contentSha256": "e4f9f48bc93125b63449b8fabf530632f356d410f8d1b960ec093062cfd466cd",
+      "manifestSha256": "dd334b9f6453d2e9094bf36a10e3a1a5637fa6c43fe38ca42e649e3fae4fdbd3",
+      "standardLicense": "Apache-2.0",
+      "originalManifestAttribution": {
+        "author": {
+          "name": "AWS SDK for JavaScript Team",
+          "url": "https://aws.amazon.com/sdk-for-javascript/"
+        },
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/aws/aws-sdk-js-v3.git",
+          "directory": "packages/nested-clients"
+        },
+        "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages/nested-clients"
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "@earendil-works/pi-ai@1.3.0",
+      "license": "MIT",
+      "contentSha256": "32ffff6d634df6df5931dafc3d748975aec16b01a8ed3971f71530b9be842948",
+      "manifestSha256": "4e9ed07b06a91d844485874c251f312b610d015a4a4fd32c78cde58a7862a3f1",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": "Mario Zechner",
+        "repository": {
+          "type": "git",
+          "url": "git+https://github.com/earendil-works/pi.git",
+          "directory": "packages/ai"
+        }
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "@earendil-works/pi-telemetry@1.3.0",
+      "license": "MIT",
+      "contentSha256": "23ea8356ebd1900799e0cda3999bb404e53030b4deea176f0240758d2103533b",
+      "manifestSha256": "386479e7767a2aff572fea6339558405b1b23e9e7951504731515fc71b7db6ae",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": "Mario Zechner",
+        "repository": {
+          "type": "git",
+          "url": "git+https://github.com/earendil-works/pi.git",
+          "directory": "packages/telemetry"
+        }
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "@koromix/koffi-darwin-arm64@3.1.1",
+      "license": "MIT",
+      "contentSha256": "2291deedaf7c84bd1a4b202210d8ffb4c1c8b9b57b51a2d239cdc9f803cf816b",
+      "manifestSha256": "5af2fc97fdceee8c2482029e3e4d273b86ae570f57a2a0101f10ca0ec2ff622f",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": {
+          "name": "Niels Martignène",
+          "email": "niels.martignene@protonmail.com",
+          "url": "https://koromix.dev/"
+        },
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/Koromix/koffi"
+        },
+        "homepage": "https://koffi.dev/"
+      },
+      "additionalNotices": [
+        {
+          "path": "bodies/22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290.txt",
+          "sha256": "22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290",
+          "bytes": 1117,
+          "sourceKind": "same-version paired npm package original notice",
+          "sourceUrl": "https://registry.npmjs.org/koffi/3.1.1",
+          "sourcePath": "LICENSE.txt"
+        }
+      ],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "@xterm/addon-serialize@0.14.0",
+      "license": "MIT",
+      "contentSha256": "aad61b323e63128930eda04ff17b950b747855fa5ffa471cccfc7e436ff5e09f",
+      "manifestSha256": "48b1c275c67f141828765fbf188457c430827c333dba069fe4520cbedb729763",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": {
+          "name": "The xterm.js authors",
+          "url": "https://xtermjs.org/"
+        },
+        "repository": "https://github.com/xtermjs/xterm.js/tree/master/addons/addon-serialize"
+      },
+      "additionalNotices": [
+        {
+          "path": "bodies/b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd.txt",
+          "sha256": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd",
+          "bytes": 1261,
+          "sourceKind": "original source notice at npm metadata-declared gitHead",
+          "sourceUrl": "https://raw.githubusercontent.com/xtermjs/xterm.js/f447274f430fd22513f6adbf9862d19524471c04/LICENSE",
+          "sourcePath": "LICENSE"
+        }
+      ],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "@xterm/headless@6.0.0",
+      "license": "MIT",
+      "contentSha256": "5a52a0879dddb49d9d885c29eba1cd352b877387b2dc745c24f90318abe42bad",
+      "manifestSha256": "6c39530ee759998113bd8bcc306d1b725c0b1d5b0cdc04e071f6945a5f5edf1a",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "repository": "https://github.com/xtermjs/xterm.js"
+      },
+      "additionalNotices": [
+        {
+          "path": "bodies/b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd.txt",
+          "sha256": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd",
+          "bytes": 1261,
+          "sourceKind": "original source notice at npm metadata-declared gitHead",
+          "sourceUrl": "https://raw.githubusercontent.com/xtermjs/xterm.js/f447274f430fd22513f6adbf9862d19524471c04/LICENSE",
+          "sourcePath": "LICENSE"
+        }
+      ],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "brotli@1.3.3",
+      "license": "MIT",
+      "contentSha256": "72a905fd14e11ff214b98d5b9b32a230eff819261404d36bbe84e505aa8fbd3e",
+      "manifestSha256": "387b47d00ea96cab9b4c521629fbcdc7621053ac061812526f3c69700924cef5",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": "Devon Govett <devongovett@gmail.com>",
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/devongovett/brotli.js.git"
+        },
+        "homepage": "https://github.com/devongovett/brotli.js"
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "data-uri-to-buffer@4.0.1",
+      "license": "MIT",
+      "contentSha256": "2960d3e802956a480e7ae6e1a0476a8f3f36197c933181ef4307d644c3ea8313",
+      "manifestSha256": "ad4f90a737ab5d8af4dad265e9218456e3779ca5beb70df38dd5feecf80121dd",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": "Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)",
+        "repository": {
+          "type": "git",
+          "url": "git://github.com/TooTallNate/node-data-uri-to-buffer.git"
+        },
+        "homepage": "https://github.com/TooTallNate/node-data-uri-to-buffer"
+      },
+      "additionalNotices": [
+        {
+          "path": "bodies/a7cc4332acfa1f9b6530e01aac77fefe74f2efa32579215fddaa473013f9a25c.txt",
+          "sha256": "a7cc4332acfa1f9b6530e01aac77fefe74f2efa32579215fddaa473013f9a25c",
+          "bytes": 2926,
+          "sourceKind": "exact published README including original full MIT grant",
+          "sourceUrl": "https://registry.npmjs.org/data-uri-to-buffer/4.0.1",
+          "sourcePath": "README.md"
+        }
+      ],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "dfa@1.2.0",
+      "license": "MIT",
+      "contentSha256": "bd37eb980d769310888ae17b028f79ab6f4c167aa6fe4105986bb9b45fe6e664",
+      "manifestSha256": "96c0ce3cc17b34aabd58fd442157766d9e244cba735e54ee4fe10d7841f0460c",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": "Devon Govett <devongovett@gmail.com>",
+        "repository": {
+          "type": "git",
+          "url": "git+ssh://git@github.com/devongovett/dfa.git"
+        },
+        "homepage": "https://github.com/devongovett/dfa#readme"
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "fontkit@2.0.4",
+      "license": "MIT",
+      "contentSha256": "7af3b20887581aa3da64df1a3636089215fd4c098f1eb3eb7a936bb2e406d99d",
+      "manifestSha256": "49c60605b92316a5d5fe57b9a3bca8950ad9a8beab1cb633d6f29862d1bd163d",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": "Devon Govett <devongovett@gmail.com>",
+        "repository": {
+          "type": "git",
+          "url": "git://github.com/foliojs/fontkit.git"
+        }
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "proxy-agent-negotiate@1.1.0",
+      "license": "MIT",
+      "contentSha256": "9f744ffdb8f12ea58bfe97ca6e759044fe14f66d385ef56ddbead9d7723a881a",
+      "manifestSha256": "7b7c2579ea138d20d4f7699ca78ef16c526f35168dbf694f1d47cc861b0954d4",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": "Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)",
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/TooTallNate/proxy-agents.git",
+          "directory": "packages/negotiate"
+        }
+      },
+      "additionalNotices": [],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "saxes@6.0.0",
+      "license": "ISC",
+      "contentSha256": "8b8d4372c5aa2d2a79afd24253242568c69eac0cc1abb364281dc608c6fe757a",
+      "manifestSha256": "32052572b41c2a890ed0854798c48454cc5991dcaafe5fb1718a4253046acfd3",
+      "standardLicense": "ISC",
+      "originalManifestAttribution": {
+        "author": "Louis-Dominique Dubeau <ldd@lddubeau.com>",
+        "repository": "https://github.com/lddubeau/saxes.git"
+      },
+      "additionalNotices": [
+        {
+          "path": "bodies/0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e.txt",
+          "sha256": "0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e",
+          "bytes": 3011,
+          "sourceKind": "original source notice at npm metadata-declared gitHead",
+          "sourceUrl": "https://raw.githubusercontent.com/lddubeau/saxes/211fa0ebec9b628affc09219199639887174bfc3/LICENSE",
+          "sourcePath": "LICENSE"
+        }
+      ],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "sherpa-onnx-darwin-arm64@1.13.8",
+      "license": "Apache-2.0",
+      "contentSha256": "bdbff9e8798a2e44a33656a76cb726b0dacc351f08c73ff6f4d6cf9f36bb18c4",
+      "manifestSha256": "70ac867468808896163ec3739879efd7a393157cf0bfebf2801e531642c14d95",
+      "standardLicense": "Apache-2.0",
+      "originalManifestAttribution": {
+        "author": "The next-gen Kaldi team",
+        "repository": {
+          "type": "git",
+          "url": "git+https://github.com/csukuangfj/sherpa-onnx.git"
+        },
+        "homepage": "https://github.com/csukuangfj/sherpa-onnx#readme"
+      },
+      "additionalNotices": [
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original source notice at npm metadata-declared gitHead",
+          "sourceUrl": "https://raw.githubusercontent.com/csukuangfj/sherpa-onnx/11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf/LICENSE",
+          "sourcePath": "LICENSE"
+        }
+      ],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "sherpa-onnx-node@1.13.8",
+      "license": "Apache-2.0",
+      "contentSha256": "9637af2fc92e55dd65e9e5783109034c953df3891991ab30e728a87c5873872f",
+      "manifestSha256": "e93e192e89e06d62e45ba583600af3c2f87b01a58f1dff121906714f06d703aa",
+      "standardLicense": "Apache-2.0",
+      "originalManifestAttribution": {
+        "author": "The next-gen Kaldi team",
+        "repository": {
+          "type": "git",
+          "url": "git+https://github.com/csukuangfj/sherpa-onnx.git"
+        },
+        "homepage": "https://github.com/csukuangfj/sherpa-onnx#readme"
+      },
+      "additionalNotices": [
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original source notice at npm metadata-declared gitHead",
+          "sourceUrl": "https://raw.githubusercontent.com/csukuangfj/sherpa-onnx/11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf/LICENSE",
+          "sourcePath": "LICENSE"
+        }
+      ],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    },
+    {
+      "identity": "standardwebhooks@1.1.1",
+      "license": "MIT",
+      "contentSha256": "6107e9c234a58fde48434d55643aa82ae38c54bb930d9aa0eefff164f0e1fd1d",
+      "manifestSha256": "686397f0f0202e0b693cfd3f6241d7a8da3df326f9642867a484fbbd295690b6",
+      "standardLicense": "MIT",
+      "originalManifestAttribution": {
+        "author": "Standard Webhooks",
+        "repository": "https://github.com/standard-webhooks/standard-webhooks",
+        "homepage": "https://github.com/standard-webhooks/standard-webhooks/tree/main/libraries/javascript"
+      },
+      "additionalNotices": [
+        {
+          "path": "bodies/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "bytes": 11357,
+          "sourceKind": "upstream repository root additional Apache notice; npm MIT declaration remains unchanged",
+          "sourceUrl": "https://raw.githubusercontent.com/standard-webhooks/standard-webhooks/b4d2c14fc5b4ccff3ff271e3b087dff812254c59/LICENSE",
+          "sourcePath": "LICENSE"
+        }
+      ],
+      "noticeSupply": "Exact published SPDX grant and available original attribution are retained. Standard text is explicitly supplementary; no invented holder/year or another version substitution."
+    }
+  ],
+  "libvipsNotices": [
+    {
+      "path": "bodies/5dd6d3c034f925604681d49b7bedc71bd08dcf3d0cfc6d16b9f0569497d700dc.txt",
+      "sha256": "5dd6d3c034f925604681d49b7bedc71bd08dcf3d0cfc6d16b9f0569497d700dc",
+      "bytes": 4333,
+      "sourceKind": "exact locked npm libvips README; original component license selections retained",
+      "sourceUrl": "https://registry.npmjs.org/@img%2fsharp-libvips-darwin-arm64/1.3.4",
+      "sourcePath": "README.md"
+    }
+  ],
+  "onnxRuntime": {
+    "version": "1.28.2",
+    "archiveSha256": "d9e5c0c79929e201f5b8eb095e6809a91ce78be9866a1bca0dfab7e20b40ae40",
+    "payloadDylibSha256": "b0613d0ae53199a83b05fa48e169211498e9d40d54beaa372068ebe5ec5b0929",
+    "notices": [
+      {
+        "path": "bodies/0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2.txt",
+        "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
+        "bytes": 325054,
+        "sourceKind": "original notice in pinned ONNX archive matching npm dylib",
+        "sourceUrl": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/onnxruntime-osx-arm64-1.28.2.zip",
+        "sourcePath": "onnxruntime-osx-arm64-1.28.2/ThirdPartyNotices.txt"
+      },
+      {
+        "path": "bodies/2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c.txt",
+        "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+        "bytes": 1073,
+        "sourceKind": "original notice in pinned ONNX archive matching npm dylib",
+        "sourceUrl": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/onnxruntime-osx-arm64-1.28.2.zip",
+        "sourcePath": "onnxruntime-osx-arm64-1.28.2/LICENSE"
+      }
+    ]
+  },
+  "sourceInputs": [
+    {
+      "recipeLine": 123,
+      "url": "https://github.com/frida/proxy-libintl/archive/0.5.tar.gz",
+      "sha256": "f7a1cbd7579baaf575c66f9d99fb6295e9b0684a28b095967cfda17857595303",
+      "bytes": 13056,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-123",
+      "required": true,
+      "archiveName": "0.5.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/d245807f90032872d1438d741ed21e2490e1175dc8aa3afa5ddb6c8e529b58e5.txt",
+          "sha256": "d245807f90032872d1438d741ed21e2490e1175dc8aa3afa5ddb6c8e529b58e5",
+          "bytes": 25292,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/frida/proxy-libintl/archive/0.5.tar.gz",
+          "sourcePath": "proxy-libintl-0.5/COPYING"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 130,
+      "url": "https://github.com/zlib-ng/zlib-ng/archive/2.3.3.tar.gz",
+      "sha256": "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1",
+      "bytes": 2447397,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-130",
+      "required": true,
+      "archiveName": "2.3.3.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee.txt",
+          "sha256": "6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee",
+          "bytes": 867,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/zlib-ng/zlib-ng/archive/2.3.3.tar.gz",
+          "sourcePath": "zlib-ng-2.3.3/LICENSE.md"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 138,
+      "url": "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz",
+      "sha256": "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4",
+      "bytes": 1581626,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-138",
+      "required": true,
+      "archiveName": "libffi-3.8.0.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/e67978cd18816c0cb7d29aaaacde7b7447402c2fb321a051698890a8eaedda94.txt",
+          "sha256": "e67978cd18816c0cb7d29aaaacde7b7447402c2fb321a051698890a8eaedda94",
+          "bytes": 18698,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz",
+          "sourcePath": "libffi-3.8.0/LICENSE-BUILDTOOLS"
+        },
+        {
+          "path": "bodies/17b64dc60f3b6897a60f971e288b973f655c2edcdf08b25f3c3dd5549857881c.txt",
+          "sha256": "17b64dc60f3b6897a60f971e288b973f655c2edcdf08b25f3c3dd5549857881c",
+          "bytes": 1132,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz",
+          "sourcePath": "libffi-3.8.0/LICENSE"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "id": "libvips-input-145",
+      "recipeLine": 145,
+      "url": "https://download.gnome.org/sources/glib/2.90/glib-2.90.0.tar.xz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "id": "libvips-input-147",
+      "recipeLine": 147,
+      "url": "https://gist.github.com/kleisauke/284d685efa00908da99ea6afbaaf39ae/raw/bdad5489a61c217850631571caf57f5db6ea8b2c/glib-without-gregex.patch",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "patch",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "id": "libvips-input-155",
+      "recipeLine": 155,
+      "url": "https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.4.tar.xz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "recipeLine": 162,
+      "url": "https://github.com/libexif/libexif/releases/download/v0.6.26/libexif-0.6.26.tar.xz",
+      "sha256": "4a055ed6575e61ca46c3172be3c753cc16c9becd0f99ec71d58dd0e471476c0c",
+      "bytes": 1335488,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-162",
+      "required": true,
+      "archiveName": "libexif-0.6.26.tar.xz",
+      "notices": [
+        {
+          "path": "bodies/36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89.txt",
+          "sha256": "36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89",
+          "bytes": 26434,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libexif/libexif/releases/download/v0.6.26/libexif-0.6.26.tar.xz",
+          "sourcePath": "libexif-0.6.26/COPYING"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 170,
+      "url": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+      "sha256": "bfc54f7bab59fbc921012014a8032e4cba4abd46db47d46b76416a8c0b2815c8",
+      "bytes": 5728743,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-170",
+      "required": true,
+      "archiveName": "lcms2-2.19.1.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/6dbd60437f8ef91d8de1f08ad75882547fd4931bfcc3566a0735f28db1484d31.txt",
+          "sha256": "6dbd60437f8ef91d8de1f08ad75882547fd4931bfcc3566a0735f28db1484d31",
+          "bytes": 1080,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+          "sourcePath": "lcms2-2.19.1/LICENSE"
+        },
+        {
+          "path": "bodies/c53a65c2fd561c87eaabf1072ef5dcab8653042bc15308465f52413585eb6271.txt",
+          "sha256": "c53a65c2fd561c87eaabf1072ef5dcab8653042bc15308465f52413585eb6271",
+          "bytes": 35146,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+          "sourcePath": "lcms2-2.19.1/plugins/fast_float/COPYING.GPL3"
+        },
+        {
+          "path": "bodies/c53a65c2fd561c87eaabf1072ef5dcab8653042bc15308465f52413585eb6271.txt",
+          "sha256": "c53a65c2fd561c87eaabf1072ef5dcab8653042bc15308465f52413585eb6271",
+          "bytes": 35146,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+          "sourcePath": "lcms2-2.19.1/plugins/threaded/COPYING.GPL3"
+        },
+        {
+          "path": "bodies/8baac37d14eed89b82ffcb041677dd701164eb5cc0f26e165fe47eb11afa0dca.txt",
+          "sha256": "8baac37d14eed89b82ffcb041677dd701164eb5cc0f26e165fe47eb11afa0dca",
+          "bytes": 3234,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+          "sourcePath": "lcms2-2.19.1/utils/jpgicc/LICENSE_iccjpeg"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "id": "libvips-input-177",
+      "recipeLine": 177,
+      "url": "https://storage.googleapis.com/aom-releases/libaom-3.15.1.tar.gz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "recipeLine": 190,
+      "url": "https://github.com/strukturag/libheif/releases/download/v1.23.5/libheif-1.23.5.tar.gz",
+      "sha256": "fd9036064c4432f0550d15072ddf34956a248279ee9aeaff0fba3fa0f77d8f1a",
+      "bytes": 2276803,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-190",
+      "required": true,
+      "archiveName": "libheif-1.23.5.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/fa81ce652315b013359d6e8e4744335f31a50c7c192907176d3632f78a3b4596.txt",
+          "sha256": "fa81ce652315b013359d6e8e4744335f31a50c7c192907176d3632f78a3b4596",
+          "bytes": 44366,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/strukturag/libheif/releases/download/v1.23.5/libheif-1.23.5.tar.gz",
+          "sourcePath": "libheif-1.23.5/COPYING"
+        },
+        {
+          "path": "bodies/278ee9bbb13ecb080a131c68927bd589a6a56fd5449ce25e8e594c858864830d.txt",
+          "sha256": "278ee9bbb13ecb080a131c68927bd589a6a56fd5449ce25e8e594c858864830d",
+          "bytes": 1066,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/strukturag/libheif/releases/download/v1.23.5/libheif-1.23.5.tar.gz",
+          "sourcePath": "libheif-1.23.5/examples/COPYING"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 198,
+      "url": "https://github.com/mozilla/mozjpeg/archive/0826579.tar.gz",
+      "sha256": "b680167bd5d9afebdd576a12f8c49d2c9066a3b92ef96a2b2c5f7829b8600fe5",
+      "bytes": 2443542,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-198",
+      "required": true,
+      "archiveName": "0826579.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430.txt",
+          "sha256": "96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430",
+          "bytes": 5620,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mozilla/mozjpeg/archive/0826579.tar.gz",
+          "sourcePath": "mozjpeg-08265790774cd0714832c9e675522acbe5581437/LICENSE.md"
+        },
+        {
+          "path": "bodies/4b9abebc4338048a7c2dc184e9f800deb349366bdf28eb23c2677a77b4c87726.txt",
+          "sha256": "4b9abebc4338048a7c2dc184e9f800deb349366bdf28eb23c2677a77b4c87726",
+          "bytes": 19274,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mozilla/mozjpeg/archive/0826579.tar.gz",
+          "sourcePath": "mozjpeg-08265790774cd0714832c9e675522acbe5581437/java/doc/legal/LICENSE"
+        },
+        {
+          "path": "bodies/933e1427ec78050c76396182fd9819a23fef58c17e997b67581852167be971db.txt",
+          "sha256": "933e1427ec78050c76396182fd9819a23fef58c17e997b67581852167be971db",
+          "bytes": 2172,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mozilla/mozjpeg/archive/0826579.tar.gz",
+          "sourcePath": "mozjpeg-08265790774cd0714832c9e675522acbe5581437/release/License.rtf"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 201,
+      "url": "https://github.com/mozilla/mozjpeg/commit/f90668e0e4fb79c81e1f24a0ccc0e2090af761bf.patch",
+      "sha256": "a65f87cadf3a6052e44d6314c906f6e2891352f82646b8a6f0b8fcf2c1891e7c",
+      "bytes": 8103,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-201",
+      "required": true,
+      "archiveName": "f90668e0e4fb79c81e1f24a0ccc0e2090af761bf.patch",
+      "notices": [],
+      "kind": "patch"
+    },
+    {
+      "recipeLine": 210,
+      "url": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+      "sha256": "a9d4df463d36a6e5f9c29bd6f4967312d17e996c1854f3511f833924eb1993cf",
+      "bytes": 1592190,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-210",
+      "required": true,
+      "archiveName": "v1.6.58.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526.txt",
+          "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526",
+          "bytes": 5345,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/LICENSE"
+        },
+        {
+          "path": "bodies/508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1.txt",
+          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+          "bytes": 1036,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/ci/LICENSE_MIT.txt"
+        },
+        {
+          "path": "bodies/d6cb0e9e560f51085556949a84af12b79a00f10ab8b66c752537faf7cd665572.txt",
+          "sha256": "d6cb0e9e560f51085556949a84af12b79a00f10ab8b66c752537faf7cd665572",
+          "bytes": 18097,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/contrib/gregbook/COPYING"
+        },
+        {
+          "path": "bodies/b6a03c1803eb58ffb1f1278d5c7d4096c4c116e66dce8a7553e8c77d163c3438.txt",
+          "sha256": "b6a03c1803eb58ffb1f1278d5c7d4096c4c116e66dce8a7553e8c77d163c3438",
+          "bytes": 2373,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/contrib/gregbook/LICENSE"
+        },
+        {
+          "path": "bodies/508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1.txt",
+          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+          "bytes": 1036,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/contrib/pngexif/LICENSE_MIT.txt"
+        },
+        {
+          "path": "bodies/1806f1f10d393e9e377b3a8d1b968452b54f1a90378f14eeef45426946ace330.txt",
+          "sha256": "1806f1f10d393e9e377b3a8d1b968452b54f1a90378f14eeef45426946ace330",
+          "bytes": 1164,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/contrib/pngminus/LICENSE.txt"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 217,
+      "url": "https://github.com/lovell/libimagequant/archive/v2.4.1.tar.gz",
+      "sha256": "47d2a84b7b1052975c9d50a3d4e3cacbf57b43d84a4c3131210848ead9964dfb",
+      "bytes": 45792,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-217",
+      "required": true,
+      "archiveName": "v2.4.1.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/7391bfbcde4404cefb9849553362c3ab436f929f5cc1abb57071ec045590ee99.txt",
+          "sha256": "7391bfbcde4404cefb9849553362c3ab436f929f5cc1abb57071ec045590ee99",
+          "bytes": 1851,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/lovell/libimagequant/archive/v2.4.1.tar.gz",
+          "sourcePath": "libimagequant-2.4.1/COPYRIGHT"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "id": "libvips-input-223",
+      "recipeLine": 223,
+      "url": "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0.tar.gz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "recipeLine": 230,
+      "url": "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.tar.gz",
+      "sha256": "62b15f44c10106065211efa22a2dc77937bd97ee1f6e3afd2c9659010de112eb",
+      "bytes": 2616788,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-230",
+      "required": true,
+      "archiveName": "libtiff-v4.7.2.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade.txt",
+          "sha256": "0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade",
+          "bytes": 2416,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.tar.gz",
+          "sourcePath": "libtiff-v4.7.2/LICENSE.md"
+        },
+        {
+          "path": "bodies/02e86af3b805e0f2075ebb5ac512831f6ab2a97ddeb186de076c418956418ba1.txt",
+          "sha256": "02e86af3b805e0f2075ebb5ac512831f6ab2a97ddeb186de076c418956418ba1",
+          "bytes": 1181,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.tar.gz",
+          "sourcePath": "libtiff-v4.7.2/doc/project/license.rst"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 241,
+      "url": "https://github.com/google/highway/archive/1.4.0.tar.gz",
+      "sha256": "e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c",
+      "bytes": 3691240,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-241",
+      "required": true,
+      "archiveName": "1.4.0.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af.txt",
+          "sha256": "e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af",
+          "bytes": 20785,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/highway/archive/1.4.0.tar.gz",
+          "sourcePath": "highway-1.4.0/LICENSE"
+        },
+        {
+          "path": "bodies/6e4ecf1cae052b678ea3178dd4b3652d581ee66a82d58db8800dd7d80dd6de76.txt",
+          "sha256": "6e4ecf1cae052b678ea3178dd4b3652d581ee66a82d58db8800dd7d80dd6de76",
+          "bytes": 825,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/highway/archive/1.4.0.tar.gz",
+          "sourcePath": "highway-1.4.0/debian/copyright"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 252,
+      "url": "https://github.com/freetype/freetype/archive/VER-2-14-3.tar.gz",
+      "sha256": "dc49de6b01a266eef4876a4dd34d9842c475d3e28ff2eff63bd2fb760ab56261",
+      "bytes": 2515533,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-252",
+      "required": true,
+      "archiveName": "VER-2-14-3.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b.txt",
+          "sha256": "bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b",
+          "bytes": 2149,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/freetype/freetype/archive/VER-2-14-3.tar.gz",
+          "sourcePath": "freetype-VER-2-14-3/LICENSE.TXT"
+        },
+        {
+          "path": "bodies/5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f.txt",
+          "sha256": "5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f",
+          "bytes": 6743,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/freetype/freetype/archive/VER-2-14-3.tar.gz",
+          "sourcePath": "freetype-VER-2-14-3/docs/FTL.TXT"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 261,
+      "url": "https://github.com/libexpat/libexpat/releases/download/R_2_8_5/expat-2.8.5.tar.xz",
+      "sha256": "1e727b8933ec51a77a9a9d9afcf8e688bce45d907c13e36ab7393fe36e703182",
+      "bytes": 528380,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-261",
+      "required": true,
+      "archiveName": "expat-2.8.5.tar.xz",
+      "notices": [
+        {
+          "path": "bodies/31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87.txt",
+          "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+          "bytes": 1144,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libexpat/libexpat/releases/download/R_2_8_5/expat-2.8.5.tar.xz",
+          "sourcePath": "expat-2.8.5/COPYING"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 269,
+      "url": "https://github.com/libarchive/libarchive/releases/download/v3.8.9/libarchive-3.8.9.tar.xz",
+      "sha256": "888c934f9d95648ecb9163dc8e23ab80a476ecb81a8f1154704a227b5b676dde",
+      "bytes": 6617696,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-269",
+      "required": true,
+      "archiveName": "libarchive-3.8.9.tar.xz",
+      "notices": [
+        {
+          "path": "bodies/30e556b3959e3985d66efefec5eaac51d4995053caa1d3cffe6eb916f146f229.txt",
+          "sha256": "30e556b3959e3985d66efefec5eaac51d4995053caa1d3cffe6eb916f146f229",
+          "bytes": 3089,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libarchive/libarchive/releases/download/v3.8.9/libarchive-3.8.9.tar.xz",
+          "sourcePath": "libarchive-3.8.9/COPYING"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "id": "libvips-input-278",
+      "recipeLine": 278,
+      "url": "https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/2.18.3/fontconfig-2.18.3.tar.gz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "recipeLine": 291,
+      "url": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+      "sha256": "97ec7488a46b974e18e08ee774af93173e7e1dbf738424796eb315ebcb735ec5",
+      "bytes": 38777964,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-291",
+      "required": true,
+      "archiveName": "14.5.0.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64.txt",
+          "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64",
+          "bytes": 1971,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/COPYING"
+        },
+        {
+          "path": "bodies/cf977e70247d5fa9d44955e4d8ed23b503c31f78570f62136756278c2cfcb3c3.txt",
+          "sha256": "cf977e70247d5fa9d44955e4d8ed23b503c31f78570f62136756278c2cfcb3c3",
+          "bytes": 1289,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/perf/texts/COPYING"
+        },
+        {
+          "path": "bodies/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+          "bytes": 1141,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/src/ms-use/COPYING"
+        },
+        {
+          "path": "bodies/9b35b8485f69cd298fccbb3c40a827dc06cf1185553bef827903497d2944a8d7.txt",
+          "sha256": "9b35b8485f69cd298fccbb3c40a827dc06cf1185553bef827903497d2944a8d7",
+          "bytes": 4370,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/test/COPYING"
+        },
+        {
+          "path": "bodies/f55f74bf740db07bb032a90aa74af4307adea3d489c1ccba12453cf0c0a764cb.txt",
+          "sha256": "f55f74bf740db07bb032a90aa74af4307adea3d489c1ccba12453cf0c0a764cb",
+          "bytes": 593,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/test/shape/data/aots/COPYING"
+        },
+        {
+          "path": "bodies/d24039e4d22c9bc72096f6174374539d92a3d6e1163938546ec59179fe095e6f.txt",
+          "sha256": "d24039e4d22c9bc72096f6174374539d92a3d6e1163938546ec59179fe095e6f",
+          "bytes": 584,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/test/shape/data/text-rendering-tests/COPYING"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "id": "libvips-input-302",
+      "recipeLine": 302,
+      "url": "https://cairographics.org/releases/pixman-0.46.4.tar.gz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "id": "libvips-input-310",
+      "recipeLine": 310,
+      "url": "https://cairographics.org/releases/cairo-1.18.6.tar.xz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "recipeLine": 318,
+      "url": "https://github.com/fribidi/fribidi/releases/download/v1.0.17/fribidi-1.0.17.tar.xz",
+      "sha256": "6949dcde27d41cebad1fd741fcafc36d55a1020d2d872d4a6eb3914caabbada2",
+      "bytes": 1203284,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-318",
+      "required": true,
+      "archiveName": "fribidi-1.0.17.tar.xz",
+      "notices": [
+        {
+          "path": "bodies/20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95.txt",
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "bytes": 26419,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/fribidi/fribidi/releases/download/v1.0.17/fribidi-1.0.17.tar.xz",
+          "sourcePath": "fribidi-1.0.17/COPYING"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "id": "libvips-input-325",
+      "recipeLine": 325,
+      "url": "https://download.gnome.org/sources/pango/1.58/pango-1.58.2.tar.xz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "id": "libvips-input-334",
+      "recipeLine": 334,
+      "url": "https://download.gnome.org/sources/librsvg/2.63/librsvg-2.63.2.tar.xz",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "source-archive",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "recipeLine": 345,
+      "url": "https://github.com/GNOME/librsvg/commit/9106011db93d701728ac2c9da50c9ab2c1bb5dc6.patch",
+      "sha256": "8b841d2ec8feb964fa76859075e0e0c41b69136ba143cf0d26469d9bebc19231",
+      "bytes": 5111,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-345",
+      "required": true,
+      "archiveName": "9106011db93d701728ac2c9da50c9ab2c1bb5dc6.patch",
+      "notices": [],
+      "kind": "patch"
+    },
+    {
+      "recipeLine": 354,
+      "url": "https://github.com/dloebl/cgif/archive/v0.5.4.tar.gz",
+      "sha256": "83a70a15bc2da41f081a44ebc58ee48e2e1d524a6d3fdb4a24064afa08d5ad4d",
+      "bytes": 40028,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-354",
+      "required": true,
+      "archiveName": "v0.5.4.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/7264dede477abab4ac3fe8236beb8153845c04ccd33b18f281085087e219fc6d.txt",
+          "sha256": "7264dede477abab4ac3fe8236beb8153845c04ccd33b18f281085087e219fc6d",
+          "bytes": 1099,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/dloebl/cgif/archive/v0.5.4.tar.gz",
+          "sourcePath": "cgif-0.5.4/LICENSE"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "recipeLine": 361,
+      "url": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+      "sha256": "aa8d193bb887c348c419780511dd03b374f4e07af8812b6d3f80c8537cf1ef2c",
+      "bytes": 1518872,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-361",
+      "required": true,
+      "archiveName": "v2.0.2.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/c9247b5cb07866938643cc238292434e6f2af8642e1fce10771c0e4cc7909316.txt",
+          "sha256": "c9247b5cb07866938643cc238292434e6f2af8642e1fce10771c0e4cc7909316",
+          "bytes": 12566,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/LICENSE"
+        },
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/LICENSE-APACHE"
+        },
+        {
+          "path": "bodies/029624bf1488ed7b8c92727d267c95f588c9c12fa6932c207884c2641a7e9d37.txt",
+          "sha256": "029624bf1488ed7b8c92727d267c95f588c9c12fa6932c207884c2641a7e9d37",
+          "bytes": 1088,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/LICENSE-MIT"
+        },
+        {
+          "path": "bodies/746d8c9c414b335bb7c9615918a15a6489a4dcc1c5c3aac2bda410d1072c332a.txt",
+          "sha256": "746d8c9c414b335bb7c9615918a15a6489a4dcc1c5c3aac2bda410d1072c332a",
+          "bytes": 66,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/adobe-hdr-gain-map-license/NOTICE"
+        },
+        {
+          "path": "bodies/c4b2cd68902b8c4a82c9b5ddebe15538acbce7f70a88fcc751e1e921bde89f7f.txt",
+          "sha256": "c4b2cd68902b8c4a82c9b5ddebe15538acbce7f70a88fcc751e1e921bde89f7f",
+          "bytes": 19354,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/tests/data/LICENSE"
+        },
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/third_party/image_io/LICENSE"
+        },
+        {
+          "path": "bodies/d47e8390fb0d7ad4a18f26aedd6283c7ab6b5b4fabab536ccb4db7f9f6d90c08.txt",
+          "sha256": "d47e8390fb0d7ad4a18f26aedd6283c7ab6b5b4fabab536ccb4db7f9f6d90c08",
+          "bytes": 1721,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/third_party/image_io/src/modp_b64/LICENSE"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "id": "libvips-input-364",
+      "recipeLine": 364,
+      "url": "https://patch-diff.githubusercontent.com/raw/google/libultrahdr/pull/383.patch",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "patch",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "recipeLine": 373,
+      "url": "https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz",
+      "sha256": "5baaead3b0bb20ffdb9e9ff09aa9fda08620923df77b63b436654cb5e0b3bf94",
+      "bytes": 25425084,
+      "digestProvenance": "SHA256 measured from these exact upstream HTTPS bytes; input URL from pinned upstream build recipe; not an invented upstream signature",
+      "id": "libvips-input-373",
+      "required": true,
+      "archiveName": "vips-8.18.7.tar.xz",
+      "notices": [
+        {
+          "path": "bodies/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+          "bytes": 26530,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz",
+          "sourcePath": "vips-8.18.7/LICENSE"
+        },
+        {
+          "path": "bodies/1469b759cf18e43c6e1b4ff892307d3962cbbb337ac497620d6690a219fad10c.txt",
+          "sha256": "1469b759cf18e43c6e1b4ff892307d3962cbbb337ac497620d6690a219fad10c",
+          "bytes": 1133,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz",
+          "sourcePath": "vips-8.18.7/libvips/foreign/libnsgif/COPYING"
+        }
+      ],
+      "kind": "source-archive"
+    },
+    {
+      "id": "libvips-input-376",
+      "recipeLine": 376,
+      "url": "https://gist.githubusercontent.com/lovell/313a6901e9db1bf285f2a1f1180499e4/raw/3988223c7dfa4d22745d9392034b0117abef1446/libvips-cpp-soversion.patch",
+      "sha256": null,
+      "bytes": null,
+      "required": true,
+      "kind": "patch",
+      "notices": [],
+      "availability": "not-materialized",
+      "reason": "Exact source input not obtained; reference URL is not supplied source. No automatic fetch is allowed without a reviewed digest."
+    },
+    {
+      "id": "sherpa-source",
+      "url": "https://github.com/csukuangfj/sherpa-onnx/archive/11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf.tar.gz",
+      "sha256": "0a8db6c55dd318f4a688faba85f7760b99a6c92e8ef8864479d418531bee1ac2",
+      "bytes": 11645413,
+      "required": true,
+      "kind": "source-archive",
+      "archiveName": "sherpa-source.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/sherpa-onnx/archive/11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf.tar.gz",
+          "sourcePath": "sherpa-onnx-11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "libreoffice-core",
+      "url": "https://github.com/LibreOffice/core/archive/bce0998afefdbc355585ca324285661a2170ba77.tar.gz",
+      "sha256": "c046d25748ff3cd0c31e226f45ba47eb328aeba3f8d4d844b9d9db78cf1f85eb",
+      "bytes": 353665929,
+      "required": true,
+      "kind": "source-archive",
+      "archiveName": "libreoffice-core-long-attempt.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903.txt",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+          "bytes": 35147,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/LibreOffice/core/archive/bce0998afefdbc355585ca324285661a2170ba77.tar.gz",
+          "sourcePath": "core-bce0998afefdbc355585ca324285661a2170ba77/COPYING"
+        },
+        {
+          "path": "bodies/a853c2ffec17057872340eee242ae4d96cbf2b520ae27d903e1b2fef1a5f9d1c.txt",
+          "sha256": "a853c2ffec17057872340eee242ae4d96cbf2b520ae27d903e1b2fef1a5f9d1c",
+          "bytes": 7639,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/LibreOffice/core/archive/bce0998afefdbc355585ca324285661a2170ba77.tar.gz",
+          "sourcePath": "core-bce0998afefdbc355585ca324285661a2170ba77/COPYING.LGPL"
+        },
+        {
+          "path": "bodies/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+          "bytes": 16725,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/LibreOffice/core/archive/bce0998afefdbc355585ca324285661a2170ba77.tar.gz",
+          "sourcePath": "core-bce0998afefdbc355585ca324285661a2170ba77/COPYING.MPL"
+        }
+      ],
+      "role": "exact core preferred source at package-declared revision; original patches and engine source are in npm package; external dependencies are not asserted complete"
+    },
+    {
+      "id": "sherpa-espeak-source",
+      "url": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+      "sha256": "e4e262cbe34f7fe21f91f1ba3397f2728e1f30eafbae7853f2b753a9ed13f0dd",
+      "bytes": 18011501,
+      "required": true,
+      "kind": "source-archive",
+      "archiveName": "sherpa-espeak-source.zip",
+      "notices": [
+        {
+          "path": "bodies/8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903.txt",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+          "bytes": 35147,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING"
+        },
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING.APACHE"
+        },
+        {
+          "path": "bodies/a8b0c1c7d7af6c0415c068be8cf373799d1a42b0707b79dc4ccfcaf593cd902d.txt",
+          "sha256": "a8b0c1c7d7af6c0415c068be8cf373799d1a42b0707b79dc4ccfcaf593cd902d",
+          "bytes": 1244,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING.BSD2"
+        },
+        {
+          "path": "bodies/be029c50df83105a810e391778b6edcb522d6cb4b4e142332aca54437a499bf7.txt",
+          "sha256": "be029c50df83105a810e391778b6edcb522d6cb4b4e142332aca54437a499bf7",
+          "bytes": 2788,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING.UCD"
+        },
+        {
+          "path": "bodies/bc2c7097493b7e17cdbbe24764648c90d45ea20698a92edc7961b9e92eff6633.txt",
+          "sha256": "bc2c7097493b7e17cdbbe24764648c90d45ea20698a92edc7961b9e92eff6633",
+          "bytes": 847,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/src/libespeak-ng/espeak_api.c (original license header)"
+        }
+      ]
+    },
+    {
+      "id": "sherpa-piper-source",
+      "url": "https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip",
+      "sha256": "d9cca4e2bdc7d6dd8dffb96a4668283dbd3f77a9c194a3e530c1e8eba9406a5d",
+      "bytes": 9805962,
+      "required": true,
+      "kind": "source-archive",
+      "archiveName": "sherpa-piper-source.zip",
+      "notices": [
+        {
+          "path": "bodies/13746d509d74e55ea2265fbef204bb7cdbf84a8315b0207e988326cb54387028.txt",
+          "sha256": "13746d509d74e55ea2265fbef204bb7cdbf84a8315b0207e988326cb54387028",
+          "bytes": 1071,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip",
+          "sourcePath": "piper-phonemize-f3ff95afc03640bc1399e113e83361192a2fafb4/LICENSE.md"
+        }
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "libvips/proxy-libintl",
+      "version": "0.5",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-123"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        123
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/d245807f90032872d1438d741ed21e2490e1175dc8aa3afa5ddb6c8e529b58e5.txt",
+          "sha256": "d245807f90032872d1438d741ed21e2490e1175dc8aa3afa5ddb6c8e529b58e5",
+          "bytes": 25292,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/frida/proxy-libintl/archive/0.5.tar.gz",
+          "sourcePath": "proxy-libintl-0.5/COPYING"
+        }
+      ],
+      "usedUnderTerms": "LGPLv3"
+    },
+    {
+      "id": "libvips/zlib-ng",
+      "version": "2.3.3",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-130"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        130
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee.txt",
+          "sha256": "6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee",
+          "bytes": 867,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/zlib-ng/zlib-ng/archive/2.3.3.tar.gz",
+          "sourcePath": "zlib-ng-2.3.3/LICENSE.md"
+        }
+      ],
+      "usedUnderTerms": "zlib License"
+    },
+    {
+      "id": "libvips/ffi",
+      "version": "3.8.0",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-138"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        138
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/e67978cd18816c0cb7d29aaaacde7b7447402c2fb321a051698890a8eaedda94.txt",
+          "sha256": "e67978cd18816c0cb7d29aaaacde7b7447402c2fb321a051698890a8eaedda94",
+          "bytes": 18698,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz",
+          "sourcePath": "libffi-3.8.0/LICENSE-BUILDTOOLS"
+        },
+        {
+          "path": "bodies/17b64dc60f3b6897a60f971e288b973f655c2edcdf08b25f3c3dd5549857881c.txt",
+          "sha256": "17b64dc60f3b6897a60f971e288b973f655c2edcdf08b25f3c3dd5549857881c",
+          "bytes": 1132,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz",
+          "sourcePath": "libffi-3.8.0/LICENSE"
+        }
+      ],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libvips/glib",
+      "version": "2.90.0",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-145",
+        "libvips-input-147"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        145,
+        147
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "LGPLv3"
+    },
+    {
+      "id": "libvips/xml2",
+      "version": "2.15.4",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-155"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        155
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libvips/exif",
+      "version": "0.6.26",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-162"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        162
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89.txt",
+          "sha256": "36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89",
+          "bytes": 26434,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libexif/libexif/releases/download/v0.6.26/libexif-0.6.26.tar.xz",
+          "sourcePath": "libexif-0.6.26/COPYING"
+        }
+      ],
+      "usedUnderTerms": "LGPLv3"
+    },
+    {
+      "id": "libvips/lcms",
+      "version": "2.19.1",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-170"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        170
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/6dbd60437f8ef91d8de1f08ad75882547fd4931bfcc3566a0735f28db1484d31.txt",
+          "sha256": "6dbd60437f8ef91d8de1f08ad75882547fd4931bfcc3566a0735f28db1484d31",
+          "bytes": 1080,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+          "sourcePath": "lcms2-2.19.1/LICENSE"
+        },
+        {
+          "path": "bodies/c53a65c2fd561c87eaabf1072ef5dcab8653042bc15308465f52413585eb6271.txt",
+          "sha256": "c53a65c2fd561c87eaabf1072ef5dcab8653042bc15308465f52413585eb6271",
+          "bytes": 35146,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+          "sourcePath": "lcms2-2.19.1/plugins/fast_float/COPYING.GPL3"
+        },
+        {
+          "path": "bodies/c53a65c2fd561c87eaabf1072ef5dcab8653042bc15308465f52413585eb6271.txt",
+          "sha256": "c53a65c2fd561c87eaabf1072ef5dcab8653042bc15308465f52413585eb6271",
+          "bytes": 35146,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+          "sourcePath": "lcms2-2.19.1/plugins/threaded/COPYING.GPL3"
+        },
+        {
+          "path": "bodies/8baac37d14eed89b82ffcb041677dd701164eb5cc0f26e165fe47eb11afa0dca.txt",
+          "sha256": "8baac37d14eed89b82ffcb041677dd701164eb5cc0f26e165fe47eb11afa0dca",
+          "bytes": 3234,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mm2/Little-CMS/releases/download/lcms2.19.1/lcms2-2.19.1.tar.gz",
+          "sourcePath": "lcms2-2.19.1/utils/jpgicc/LICENSE_iccjpeg"
+        }
+      ],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libvips/aom",
+      "version": "3.15.1",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-177"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        177
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "BSD 2-Clause + Alliance for Open Media Patent License 1.0"
+    },
+    {
+      "id": "libvips/heif",
+      "version": "1.23.5",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-190"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        190
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/fa81ce652315b013359d6e8e4744335f31a50c7c192907176d3632f78a3b4596.txt",
+          "sha256": "fa81ce652315b013359d6e8e4744335f31a50c7c192907176d3632f78a3b4596",
+          "bytes": 44366,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/strukturag/libheif/releases/download/v1.23.5/libheif-1.23.5.tar.gz",
+          "sourcePath": "libheif-1.23.5/COPYING"
+        },
+        {
+          "path": "bodies/278ee9bbb13ecb080a131c68927bd589a6a56fd5449ce25e8e594c858864830d.txt",
+          "sha256": "278ee9bbb13ecb080a131c68927bd589a6a56fd5449ce25e8e594c858864830d",
+          "bytes": 1066,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/strukturag/libheif/releases/download/v1.23.5/libheif-1.23.5.tar.gz",
+          "sourcePath": "libheif-1.23.5/examples/COPYING"
+        }
+      ],
+      "usedUnderTerms": "LGPLv3"
+    },
+    {
+      "id": "libvips/mozjpeg",
+      "version": "0826579",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-198",
+        "libvips-input-201"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        198,
+        201
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430.txt",
+          "sha256": "96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430",
+          "bytes": 5620,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mozilla/mozjpeg/archive/0826579.tar.gz",
+          "sourcePath": "mozjpeg-08265790774cd0714832c9e675522acbe5581437/LICENSE.md"
+        },
+        {
+          "path": "bodies/4b9abebc4338048a7c2dc184e9f800deb349366bdf28eb23c2677a77b4c87726.txt",
+          "sha256": "4b9abebc4338048a7c2dc184e9f800deb349366bdf28eb23c2677a77b4c87726",
+          "bytes": 19274,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mozilla/mozjpeg/archive/0826579.tar.gz",
+          "sourcePath": "mozjpeg-08265790774cd0714832c9e675522acbe5581437/java/doc/legal/LICENSE"
+        },
+        {
+          "path": "bodies/933e1427ec78050c76396182fd9819a23fef58c17e997b67581852167be971db.txt",
+          "sha256": "933e1427ec78050c76396182fd9819a23fef58c17e997b67581852167be971db",
+          "bytes": 2172,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/mozilla/mozjpeg/archive/0826579.tar.gz",
+          "sourcePath": "mozjpeg-08265790774cd0714832c9e675522acbe5581437/release/License.rtf"
+        }
+      ],
+      "usedUnderTerms": "zlib License, IJG License, BSD 3-Clause"
+    },
+    {
+      "id": "libvips/png",
+      "version": "1.6.58",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-210"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        210
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526.txt",
+          "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526",
+          "bytes": 5345,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/LICENSE"
+        },
+        {
+          "path": "bodies/508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1.txt",
+          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+          "bytes": 1036,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/ci/LICENSE_MIT.txt"
+        },
+        {
+          "path": "bodies/d6cb0e9e560f51085556949a84af12b79a00f10ab8b66c752537faf7cd665572.txt",
+          "sha256": "d6cb0e9e560f51085556949a84af12b79a00f10ab8b66c752537faf7cd665572",
+          "bytes": 18097,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/contrib/gregbook/COPYING"
+        },
+        {
+          "path": "bodies/b6a03c1803eb58ffb1f1278d5c7d4096c4c116e66dce8a7553e8c77d163c3438.txt",
+          "sha256": "b6a03c1803eb58ffb1f1278d5c7d4096c4c116e66dce8a7553e8c77d163c3438",
+          "bytes": 2373,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/contrib/gregbook/LICENSE"
+        },
+        {
+          "path": "bodies/508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1.txt",
+          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+          "bytes": 1036,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/contrib/pngexif/LICENSE_MIT.txt"
+        },
+        {
+          "path": "bodies/1806f1f10d393e9e377b3a8d1b968452b54f1a90378f14eeef45426946ace330.txt",
+          "sha256": "1806f1f10d393e9e377b3a8d1b968452b54f1a90378f14eeef45426946ace330",
+          "bytes": 1164,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "sourcePath": "libpng-1.6.58/contrib/pngminus/LICENSE.txt"
+        }
+      ],
+      "usedUnderTerms": "libpng License"
+    },
+    {
+      "id": "libvips/imagequant",
+      "version": "2.4.1",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-217"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        217
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/7391bfbcde4404cefb9849553362c3ab436f929f5cc1abb57071ec045590ee99.txt",
+          "sha256": "7391bfbcde4404cefb9849553362c3ab436f929f5cc1abb57071ec045590ee99",
+          "bytes": 1851,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/lovell/libimagequant/archive/v2.4.1.tar.gz",
+          "sourcePath": "libimagequant-2.4.1/COPYRIGHT"
+        }
+      ],
+      "usedUnderTerms": "BSD 2-Clause"
+    },
+    {
+      "id": "libvips/webp",
+      "version": "1.6.0",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-223"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        223
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "New BSD License"
+    },
+    {
+      "id": "libvips/tiff",
+      "version": "4.7.2",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-230"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        230
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade.txt",
+          "sha256": "0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade",
+          "bytes": 2416,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.tar.gz",
+          "sourcePath": "libtiff-v4.7.2/LICENSE.md"
+        },
+        {
+          "path": "bodies/02e86af3b805e0f2075ebb5ac512831f6ab2a97ddeb186de076c418956418ba1.txt",
+          "sha256": "02e86af3b805e0f2075ebb5ac512831f6ab2a97ddeb186de076c418956418ba1",
+          "bytes": 1181,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.tar.gz",
+          "sourcePath": "libtiff-v4.7.2/doc/project/license.rst"
+        }
+      ],
+      "usedUnderTerms": "libtiff License (BSD-like)"
+    },
+    {
+      "id": "libvips/highway",
+      "version": "1.4.0",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-241"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        241
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af.txt",
+          "sha256": "e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af",
+          "bytes": 20785,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/highway/archive/1.4.0.tar.gz",
+          "sourcePath": "highway-1.4.0/LICENSE"
+        },
+        {
+          "path": "bodies/6e4ecf1cae052b678ea3178dd4b3652d581ee66a82d58db8800dd7d80dd6de76.txt",
+          "sha256": "6e4ecf1cae052b678ea3178dd4b3652d581ee66a82d58db8800dd7d80dd6de76",
+          "bytes": 825,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/highway/archive/1.4.0.tar.gz",
+          "sourcePath": "highway-1.4.0/debian/copyright"
+        }
+      ],
+      "usedUnderTerms": "BSD 3-Clause"
+    },
+    {
+      "id": "libvips/freetype",
+      "version": "2.14.3",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-252"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        252
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b.txt",
+          "sha256": "bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b",
+          "bytes": 2149,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/freetype/freetype/archive/VER-2-14-3.tar.gz",
+          "sourcePath": "freetype-VER-2-14-3/LICENSE.TXT"
+        },
+        {
+          "path": "bodies/5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f.txt",
+          "sha256": "5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f",
+          "bytes": 6743,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/freetype/freetype/archive/VER-2-14-3.tar.gz",
+          "sourcePath": "freetype-VER-2-14-3/docs/FTL.TXT"
+        }
+      ],
+      "usedUnderTerms": "freetype License (BSD-like)"
+    },
+    {
+      "id": "libvips/expat",
+      "version": "2.8.5",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-261"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        261
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87.txt",
+          "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+          "bytes": 1144,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libexpat/libexpat/releases/download/R_2_8_5/expat-2.8.5.tar.xz",
+          "sourcePath": "expat-2.8.5/COPYING"
+        }
+      ],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libvips/archive",
+      "version": "3.8.9",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-269"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        269
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/30e556b3959e3985d66efefec5eaac51d4995053caa1d3cffe6eb916f146f229.txt",
+          "sha256": "30e556b3959e3985d66efefec5eaac51d4995053caa1d3cffe6eb916f146f229",
+          "bytes": 3089,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libarchive/libarchive/releases/download/v3.8.9/libarchive-3.8.9.tar.xz",
+          "sourcePath": "libarchive-3.8.9/COPYING"
+        }
+      ],
+      "usedUnderTerms": "BSD 2-Clause"
+    },
+    {
+      "id": "libvips/fontconfig",
+      "version": "2.18.3",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-278"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        278
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "fontconfig License (BSD-like)"
+    },
+    {
+      "id": "libvips/harfbuzz",
+      "version": "14.5.0",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-291"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        291
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64.txt",
+          "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64",
+          "bytes": 1971,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/COPYING"
+        },
+        {
+          "path": "bodies/cf977e70247d5fa9d44955e4d8ed23b503c31f78570f62136756278c2cfcb3c3.txt",
+          "sha256": "cf977e70247d5fa9d44955e4d8ed23b503c31f78570f62136756278c2cfcb3c3",
+          "bytes": 1289,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/perf/texts/COPYING"
+        },
+        {
+          "path": "bodies/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+          "bytes": 1141,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/src/ms-use/COPYING"
+        },
+        {
+          "path": "bodies/9b35b8485f69cd298fccbb3c40a827dc06cf1185553bef827903497d2944a8d7.txt",
+          "sha256": "9b35b8485f69cd298fccbb3c40a827dc06cf1185553bef827903497d2944a8d7",
+          "bytes": 4370,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/test/COPYING"
+        },
+        {
+          "path": "bodies/f55f74bf740db07bb032a90aa74af4307adea3d489c1ccba12453cf0c0a764cb.txt",
+          "sha256": "f55f74bf740db07bb032a90aa74af4307adea3d489c1ccba12453cf0c0a764cb",
+          "bytes": 593,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/test/shape/data/aots/COPYING"
+        },
+        {
+          "path": "bodies/d24039e4d22c9bc72096f6174374539d92a3d6e1163938546ec59179fe095e6f.txt",
+          "sha256": "d24039e4d22c9bc72096f6174374539d92a3d6e1163938546ec59179fe095e6f",
+          "bytes": 584,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/harfbuzz/harfbuzz/archive/14.5.0.tar.gz",
+          "sourcePath": "harfbuzz-14.5.0/test/shape/data/text-rendering-tests/COPYING"
+        }
+      ],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libvips/pixman",
+      "version": "0.46.4",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-302"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        302
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libvips/cairo",
+      "version": "1.18.6",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-310"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        310
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "Mozilla Public License 1.1"
+    },
+    {
+      "id": "libvips/fribidi",
+      "version": "1.0.17",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-318"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        318
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95.txt",
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "bytes": 26419,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/fribidi/fribidi/releases/download/v1.0.17/fribidi-1.0.17.tar.xz",
+          "sourcePath": "fribidi-1.0.17/COPYING"
+        }
+      ],
+      "usedUnderTerms": "LGPLv3"
+    },
+    {
+      "id": "libvips/pango",
+      "version": "1.58.2",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-325"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        325
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "LGPLv3"
+    },
+    {
+      "id": "libvips/rsvg",
+      "version": "2.63.2",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-334",
+        "libvips-input-345"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        334,
+        345
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [],
+      "usedUnderTerms": "LGPLv3"
+    },
+    {
+      "id": "libvips/cgif",
+      "version": "0.5.4",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-354"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        354
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/7264dede477abab4ac3fe8236beb8153845c04ccd33b18f281085087e219fc6d.txt",
+          "sha256": "7264dede477abab4ac3fe8236beb8153845c04ccd33b18f281085087e219fc6d",
+          "bytes": 1099,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/dloebl/cgif/archive/v0.5.4.tar.gz",
+          "sourcePath": "cgif-0.5.4/LICENSE"
+        }
+      ],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libvips/uhdr",
+      "version": "2.0.2",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-361",
+        "libvips-input-364"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        361,
+        364
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/c9247b5cb07866938643cc238292434e6f2af8642e1fce10771c0e4cc7909316.txt",
+          "sha256": "c9247b5cb07866938643cc238292434e6f2af8642e1fce10771c0e4cc7909316",
+          "bytes": 12566,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/LICENSE"
+        },
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/LICENSE-APACHE"
+        },
+        {
+          "path": "bodies/029624bf1488ed7b8c92727d267c95f588c9c12fa6932c207884c2641a7e9d37.txt",
+          "sha256": "029624bf1488ed7b8c92727d267c95f588c9c12fa6932c207884c2641a7e9d37",
+          "bytes": 1088,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/LICENSE-MIT"
+        },
+        {
+          "path": "bodies/746d8c9c414b335bb7c9615918a15a6489a4dcc1c5c3aac2bda410d1072c332a.txt",
+          "sha256": "746d8c9c414b335bb7c9615918a15a6489a4dcc1c5c3aac2bda410d1072c332a",
+          "bytes": 66,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/adobe-hdr-gain-map-license/NOTICE"
+        },
+        {
+          "path": "bodies/c4b2cd68902b8c4a82c9b5ddebe15538acbce7f70a88fcc751e1e921bde89f7f.txt",
+          "sha256": "c4b2cd68902b8c4a82c9b5ddebe15538acbce7f70a88fcc751e1e921bde89f7f",
+          "bytes": 19354,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/tests/data/LICENSE"
+        },
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/third_party/image_io/LICENSE"
+        },
+        {
+          "path": "bodies/d47e8390fb0d7ad4a18f26aedd6283c7ab6b5b4fabab536ccb4db7f9f6d90c08.txt",
+          "sha256": "d47e8390fb0d7ad4a18f26aedd6283c7ab6b5b4fabab536ccb4db7f9f6d90c08",
+          "bytes": 1721,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/google/libultrahdr/archive/v2.0.2.tar.gz",
+          "sourcePath": "libultrahdr-2.0.2/third_party/image_io/src/modp_b64/LICENSE"
+        }
+      ],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libvips/vips",
+      "version": "8.18.7",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-373",
+        "libvips-input-376"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "recipeLines": [
+        373,
+        376
+      ],
+      "licenseSelectionSource": "locked npm README (retained without relabeling)",
+      "noticeBodies": [
+        {
+          "path": "bodies/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+          "bytes": 26530,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz",
+          "sourcePath": "vips-8.18.7/LICENSE"
+        },
+        {
+          "path": "bodies/1469b759cf18e43c6e1b4ff892307d3962cbbb337ac497620d6690a219fad10c.txt",
+          "sha256": "1469b759cf18e43c6e1b4ff892307d3962cbbb337ac497620d6690a219fad10c",
+          "bytes": 1133,
+          "sourceKind": "original notice in exact source archive",
+          "sourceUrl": "https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz",
+          "sourcePath": "vips-8.18.7/libvips/foreign/libnsgif/COPYING"
+        }
+      ],
+      "usedUnderTerms": "LGPLv3"
+    },
+    {
+      "id": "libvips/libnsgif",
+      "version": "bundled in libvips 8.18.7; not separately versioned in npm versions.json",
+      "binaryPackage": "@img/sharp-libvips-darwin-arm64@1.3.4",
+      "sourceInputs": [
+        "libvips-input-373"
+      ],
+      "buildRecipe": "recipes/build/posix.sh",
+      "licenseSelectionSource": "locked npm README",
+      "noticeBodies": [
+        {
+          "path": "bodies/025d4f1d5d0b3b7dd710b6d2deacfda005da787c440db2eaee7f5866c7ff709c.txt",
+          "sha256": "025d4f1d5d0b3b7dd710b6d2deacfda005da787c440db2eaee7f5866c7ff709c",
+          "bytes": 371,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz",
+          "sourcePath": "vips-8.18.7/libvips/foreign/libnsgif/gif.c (original license header)"
+        },
+        {
+          "path": "bodies/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt",
+          "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+          "bytes": 1078,
+          "sourceKind": "standard license/version text, not a package-specific copyright grant",
+          "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/MIT.txt",
+          "sourcePath": "standard-MIT.txt"
+        }
+      ],
+      "usedUnderTerms": "MIT License"
+    },
+    {
+      "id": "libreoffice/core",
+      "version": "26.8.0.3 / bce0998afefdbc355585ca324285661a2170ba77",
+      "binaryPackage": "@deepseek-ai/libreoffice-kit-darwin-arm64@0.1.5",
+      "usedUnderTerms": "MPL-2.0 with original embedded component terms",
+      "sourceInputs": [
+        "libreoffice-core"
+      ],
+      "buildRecipe": "exact package sources/core.json and sources/engine/native/configure.mjs; external download.lst is preserved",
+      "noticeBodies": [
+        {
+          "path": "bodies/8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903.txt",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+          "bytes": 35147,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/LibreOffice/core/archive/bce0998afefdbc355585ca324285661a2170ba77.tar.gz",
+          "sourcePath": "core-bce0998afefdbc355585ca324285661a2170ba77/COPYING"
+        },
+        {
+          "path": "bodies/a853c2ffec17057872340eee242ae4d96cbf2b520ae27d903e1b2fef1a5f9d1c.txt",
+          "sha256": "a853c2ffec17057872340eee242ae4d96cbf2b520ae27d903e1b2fef1a5f9d1c",
+          "bytes": 7639,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/LibreOffice/core/archive/bce0998afefdbc355585ca324285661a2170ba77.tar.gz",
+          "sourcePath": "core-bce0998afefdbc355585ca324285661a2170ba77/COPYING.LGPL"
+        },
+        {
+          "path": "bodies/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+          "bytes": 16725,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/LibreOffice/core/archive/bce0998afefdbc355585ca324285661a2170ba77.tar.gz",
+          "sourcePath": "core-bce0998afefdbc355585ca324285661a2170ba77/COPYING.MPL"
+        }
+      ]
+    },
+    {
+      "id": "sherpa/eSpeak-NG",
+      "version": "ed530aa113046142eb5115cf2fc9157854d0ffe1",
+      "binaryPackage": "sherpa-onnx-darwin-arm64@1.13.8",
+      "usedUnderTerms": "GPL-3.0-or-later",
+      "sourceInputs": [
+        "sherpa-espeak-source",
+        "sherpa-source",
+        "sherpa-piper-source"
+      ],
+      "buildRecipe": "exact sherpa source cmake/espeak-ng-for-piper.cmake and npm-addon-macos workflow",
+      "noticeBodies": [
+        {
+          "path": "bodies/8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903.txt",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+          "bytes": 35147,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING"
+        },
+        {
+          "path": "bodies/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "bytes": 11358,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING.APACHE"
+        },
+        {
+          "path": "bodies/a8b0c1c7d7af6c0415c068be8cf373799d1a42b0707b79dc4ccfcaf593cd902d.txt",
+          "sha256": "a8b0c1c7d7af6c0415c068be8cf373799d1a42b0707b79dc4ccfcaf593cd902d",
+          "bytes": 1244,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING.BSD2"
+        },
+        {
+          "path": "bodies/be029c50df83105a810e391778b6edcb522d6cb4b4e142332aca54437a499bf7.txt",
+          "sha256": "be029c50df83105a810e391778b6edcb522d6cb4b4e142332aca54437a499bf7",
+          "bytes": 2788,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING.UCD"
+        },
+        {
+          "path": "bodies/bc2c7097493b7e17cdbbe24764648c90d45ea20698a92edc7961b9e92eff6633.txt",
+          "sha256": "bc2c7097493b7e17cdbbe24764648c90d45ea20698a92edc7961b9e92eff6633",
+          "bytes": 847,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip",
+          "sourcePath": "espeak-ng-ed530aa113046142eb5115cf2fc9157854d0ffe1/src/libespeak-ng/espeak_api.c (original license header)"
+        }
+      ],
+      "linkedPayload": {
+        "path": "libsherpa-onnx-c-api.dylib",
+        "sha256": "6baf16572b925c6d4722a3ffdb7d34c3de6477ba6e587baf8c4573cc3f889ca1"
+      }
+    },
+    {
+      "id": "sherpa/piper-phonemize",
+      "version": "f3ff95afc03640bc1399e113e83361192a2fafb4",
+      "binaryPackage": "sherpa-onnx-darwin-arm64@1.13.8",
+      "usedUnderTerms": "MIT; linked eSpeak retains its GPL terms",
+      "sourceInputs": [
+        "sherpa-piper-source"
+      ],
+      "buildRecipe": "exact sherpa source cmake/piper-phonemize.cmake",
+      "noticeBodies": [
+        {
+          "path": "bodies/13746d509d74e55ea2265fbef204bb7cdbf84a8315b0207e988326cb54387028.txt",
+          "sha256": "13746d509d74e55ea2265fbef204bb7cdbf84a8315b0207e988326cb54387028",
+          "bytes": 1071,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip",
+          "sourcePath": "piper-phonemize-f3ff95afc03640bc1399e113e83361192a2fafb4/LICENSE.md"
+        }
+      ]
+    }
+  ],
+  "additionalUnresolvedRequirements": [
+    {
+      "id": "librsvg-rust-and-glib-subprojects",
+      "required": true,
+      "reason": "Exact effective librsvg Cargo source closure and glib fallback gvdb source must follow the unavailable source inputs."
+    },
+    {
+      "id": "libreoffice-adapter-0-1-5-preferred-source",
+      "required": true,
+      "reason": "Published adapter is 0.1.5; advertised public repository snapshot is 0.1.3 and differs from packaged engine source. It is not substituted as the corresponding 0.1.5 adapter source."
+    },
+    {
+      "id": "libreoffice-external-source-closure",
+      "required": true,
+      "reason": "Core source, original patches and engine source are supplied. Original external download.lst is preserved; exact embedded dependency archives must still be supplied from the build configuration."
+    },
+    {
+      "id": "sherpa-gpl-combined-runtime-source",
+      "required": true,
+      "reason": "Frozen Sherpa C API statically contains GPLv3-or-later eSpeak. Own source, eSpeak and Piper are supplied; complete linked runtime source scope and all build dependency inputs still require closure."
+    }
+  ],
+  "recipes": [
+    {
+      "path": "recipes/build.sh",
+      "bytes": 2804,
+      "sha256": "f32e344b1355b6bcf3836e7f25e2c2de7f25eefeb8c96d02711ad3fcea487488",
+      "sourceUrl": "https://raw.githubusercontent.com/lovell/sharp-libvips/ebb95f8add54eee8bed840e3fb587e4cbec857d7/build.sh"
+    },
+    {
+      "path": "recipes/build/posix.sh",
+      "bytes": 23877,
+      "sha256": "333031b3b49bf1a16d0b9d6812d98f67c404218932ef8c0b389388524a524b36",
+      "sourceUrl": "https://raw.githubusercontent.com/lovell/sharp-libvips/ebb95f8add54eee8bed840e3fb587e4cbec857d7/build/posix.sh"
+    },
+    {
+      "path": "recipes/versions.properties",
+      "bytes": 594,
+      "sha256": "c0ad634f7c2ac8994f831dd0bcb5c60043db7ba4ddd9cc2dbc3703b15f4ec7e5",
+      "sourceUrl": "https://raw.githubusercontent.com/lovell/sharp-libvips/ebb95f8add54eee8bed840e3fb587e4cbec857d7/versions.properties"
+    },
+    {
+      "path": "recipes/THIRD-PARTY-NOTICES.md",
+      "bytes": 4230,
+      "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe",
+      "sourceUrl": "https://raw.githubusercontent.com/lovell/sharp-libvips/ebb95f8add54eee8bed840e3fb587e4cbec857d7/THIRD-PARTY-NOTICES.md"
+    },
+    {
+      "path": "recipes/platforms/darwin-arm64v8/Toolchain.cmake",
+      "sha256": "752c37ab0b1b9401ec9cad4ef0d6588511b6a1011fe8789acba4066f65cccf99",
+      "bytes": 390,
+      "sourceUrl": "https://raw.githubusercontent.com/lovell/sharp-libvips/ebb95f8add54eee8bed840e3fb587e4cbec857d7/platforms/darwin-arm64v8/Toolchain.cmake"
+    },
+    {
+      "path": "recipes/platforms/darwin-arm64v8/meson.ini",
+      "sha256": "d9143811fe878743bc874d92de848a87a2c9a334b0d39e34d49b56c0a025a5ee",
+      "bytes": 210,
+      "sourceUrl": "https://raw.githubusercontent.com/lovell/sharp-libvips/ebb95f8add54eee8bed840e3fb587e4cbec857d7/platforms/darwin-arm64v8/meson.ini"
+    },
+    {
+      "path": "recipes/LICENSE",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "bytes": 11357,
+      "sourceUrl": "https://raw.githubusercontent.com/lovell/sharp-libvips/ebb95f8add54eee8bed840e3fb587e4cbec857d7/LICENSE"
+    },
+    {
+      "path": "recipes/libreoffice-download.lst",
+      "sha256": "cf38c8d828d8ac1cdf7f06f037118f272ad700e46507f7f05f82d50d2ad3d812",
+      "bytes": 33420,
+      "sourceUrl": "https://raw.githubusercontent.com/LibreOffice/core/bce0998afefdbc355585ca324285661a2170ba77/download.lst"
+    }
+  ],
+  "origin": "Exact npm inputs and pinned upstream source recipe; contents are product license/source materials, not a qualification report."
+}

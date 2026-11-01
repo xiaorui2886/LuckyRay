@@ -1,0 +1,3 @@
+# Licensing bodies and preserved upstream recipes are hashed original bytes.
+bodies/** -text
+recipes/** -text

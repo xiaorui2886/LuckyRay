@@ -484,6 +484,18 @@ const ALLOWED_LICENSES = new Set([
   "Python-2.0",
 ]);
 
+// The locked Darwin package separates libvips from sharp's Apache-licensed
+// addon. Admit its original LGPL declaration only for this exact six-file
+// package, including its upstream licensing notice and dylib. This is not a
+// general LGPL allowlist entry and does not change the Windows audit policy.
+const DARWIN_ARM64_LIBVIPS = Object.freeze({
+  name: "@img/sharp-libvips-darwin-arm64",
+  version: "1.3.4",
+  license: "LGPL-3.0-or-later",
+  fileCount: 6,
+  contentSha256: "e66987a7375e7a58bd17a0de0fe5ca88cd64d32a7a8b9f33a667c869a7646598",
+});
+
 const LIFECYCLE_SCRIPT_REVIEWS = Object.freeze([
   {
     name: "@deepseek-ai/dsh-subprocess-local",
@@ -915,7 +927,7 @@ export async function verifyDetachedDshRuntime({ stageRoot, current = stageRoot 
   return Object.freeze({ fileCount, sharedWritableFiles: 0 });
 }
 
-async function auditPackage(packageRoot) {
+async function auditPackage(packageRoot, platform = "win32", architecture = "x64") {
   let manifest;
   try {
     manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
@@ -929,7 +941,11 @@ async function auditPackage(packageRoot) {
   ) {
     throw new DshSupplyChainError("dsh-package-manifest-invalid");
   }
-  if (!ALLOWED_LICENSES.has(manifest.license)) {
+  const pinnedDarwinPackage = platform === "darwin" && architecture === "arm64"
+    && manifest.name === DARWIN_ARM64_LIBVIPS.name && manifest.version === DARWIN_ARM64_LIBVIPS.version;
+  const pinnedDarwinLicense = pinnedDarwinPackage && manifest.license === DARWIN_ARM64_LIBVIPS.license;
+  if ((!ALLOWED_LICENSES.has(manifest.license) && !pinnedDarwinLicense)
+    || (pinnedDarwinPackage && !pinnedDarwinLicense)) {
     throw new DshSupplyChainError("dsh-license-not-allowlisted");
   }
 
@@ -944,11 +960,12 @@ async function auditPackage(packageRoot) {
     const fileHash = sha256(bytes);
     byteCount += bytes.length;
     contentHash.update(path).update("\0").update(fileHash).update("\n");
-    if (/\.(?:node|dll|exe)$/i.test(path)) {
+    if (/\.(?:node|dll|exe)$/i.test(path) || (pinnedDarwinLicense && /\.dylib$/i.test(path))) {
       nativeArtifacts.push({ path, sha256: fileHash, size: bytes.length });
     }
     if (/^(?:licen[cs]e|copying|notice)(?:\..*)?$/i.test(basename(path))
-        || (manifest.license === "(MIT OR CC0-1.0)" && /^license-(?:mit|cc0)$/i.test(basename(path)))) {
+        || (manifest.license === "(MIT OR CC0-1.0)" && /^license-(?:mit|cc0)$/i.test(basename(path)))
+        || (pinnedDarwinLicense && path === "README.md")) {
       licenseFiles.push({ path, sha256: fileHash, size: bytes.length });
     }
   }
@@ -957,11 +974,16 @@ async function auditPackage(packageRoot) {
     .filter((stage) => typeof manifest.scripts?.[stage] === "string")
     .map((stage) => ({ stage, command: manifest.scripts[stage] }));
 
+  const contentSha256 = contentHash.digest("hex");
+  if (pinnedDarwinLicense && (files.length !== DARWIN_ARM64_LIBVIPS.fileCount
+      || contentSha256 !== DARWIN_ARM64_LIBVIPS.contentSha256)) {
+    throw new DshSupplyChainError("dsh-license-not-allowlisted");
+  }
   return {
     name: manifest.name,
     version: manifest.version,
     license: manifest.license,
-    contentSha256: contentHash.digest("hex"),
+    contentSha256,
     fileCount: files.length,
     byteCount,
     lifecycleScripts,
@@ -1057,7 +1079,7 @@ export async function auditPortableInstalledClosure({ nodeModulesRoot, expectedP
   const byIdentity = new Map();
   const byPackageRoot = new Map();
   for (const packageRoot of packageRoots) {
-    const audited = await auditPackage(packageRoot);
+    const audited = await auditPackage(packageRoot, platform, architecture);
     const identity = `${audited.name}@${audited.version}`;
     const existing = byIdentity.get(identity);
     if (existing && existing.contentSha256 !== audited.contentSha256) {
