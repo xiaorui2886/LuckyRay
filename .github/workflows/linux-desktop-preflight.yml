@@ -1,53 +1,150 @@
-name: Linux normal sandbox startup diagnostic
+name: Linux Chromium consent focused validation
 on:
   push:
     branches: [port/linux-desktop-20261101]
 permissions:
   contents: read
 jobs:
-  linux-browser-startup-diagnostic:
+  linux-chromium-consent-validation:
     if: github.repository == 'xiaorui2886/LuckyRay'
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       - name: Check out only the public candidate
         id: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Bind the source and initialize private startup state
+      - name: Bind the source and initialize private synthetic state
         id: init
         env:
-          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-startup-work
-        run: python3 luckyray-app/tests/linux-browser-ci.py init --startup-only --work "$WORK_ROOT"
-      - name: Select the pinned Node for Chromium control
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: python3 luckyray-app/tests/linux-browser-ci.py init --work "$WORK_ROOT"
+      - name: Select the pinned Node for real Chromium control
         id: node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.14.1'
-      - name: Exercise the preinstalled browser and normal sandbox once
+      - name: Require the existing normal Chromium sandbox before any build
         id: preflight
         timeout-minutes: 3
         env:
-          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-startup-work
-        run: python3 luckyray-app/tests/linux-browser-ci.py preflight --startup-only --work "$WORK_ROOT"
-      - name: Summarize startup only and leave product acceptance not run
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: python3 luckyray-app/tests/linux-browser-ci.py preflight --work "$WORK_ROOT"
+      - name: Install normal dependencies on the disposable runner
+        id: dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+            webkit2gtk-driver xvfb xauth dbus-x11 desktop-file-utils \
+            python3-gi gir1.2-gtk-3.0 fonts-noto-cjk
+      - name: Install the pinned Rust toolchain
+        id: rust
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Build the required embedded frontend once
+        id: frontend
+        working-directory: luckyray-app
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@11.3.0 --ignore-scripts --no-audit --no-fund
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Build the actual main and native host once for the public extension origin
+        id: build
+        timeout-minutes: 55
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          # Actual runtime resources are staged below, never substituted by fixtures.
+          # This build still does not establish a package or release sidecar identity.
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo build --locked --bin luckyray-app --bin luckyray-native-host \
+            --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            --message-format=json-render-diagnostics > "$WORK_ROOT/private/native-artifacts.jsonl"
+          python3 luckyray-app/tests/linux-browser-ci.py binaries --work "$WORK_ROOT"
+      - name: Build the pinned WebDriver tool once
+        id: driver
+        timeout-minutes: 20
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: |
+          set -euo pipefail
+          rustup run 1.95.0 cargo install tauri-driver --locked --version 2.1.0 --debug \
+            --root "$WORK_ROOT/driver" --target-dir "$WORK_ROOT/driver-target"
+      - name: Assemble the genuine pinned LSH runtime offline
+        id: runtime
+        timeout-minutes: 25
+        working-directory: luckyray-app
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: |
+          set -euo pipefail
+          curl --disable --fail --silent --show-error --location --proto '=https' \
+            --proto-redir '=https' --max-time 180 --max-filesize 134217728 \
+            --output "$WORK_ROOT/node.tar.gz" \
+            https://nodejs.org/dist/v22.19.0/node-v22.19.0-linux-x64.tar.gz
+          curl --disable --fail --silent --show-error --location --proto '=https' \
+            --proto-redir '=https' --max-time 180 --max-filesize 33554432 \
+            --output "$WORK_ROOT/pnpm.tgz" https://registry.npmjs.org/pnpm/-/pnpm-11.7.0.tgz
+          node scripts/linux/acquire-lsh-inputs.mjs "$WORK_ROOT/inputs"
+          node scripts/linux/prepare-lsh-runtime.mjs "$WORK_ROOT/node.tar.gz" "$WORK_ROOT/pnpm.tgz" \
+            "$WORK_ROOT/inputs" "$WORK_ROOT/runtime" "$WORK_ROOT/records" \
+            > "$WORK_ROOT/private/lsh-assembly.log"
+      - name: Stage and identify complete resources at the actual Tauri directory
+        id: resources
+        timeout-minutes: 10
+        working-directory: luckyray-app
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: |
+          set -euo pipefail
+          node scripts/linux/stage-lsh-resources.mjs "$WORK_ROOT/runtime" "$WORK_ROOT/resources" \
+            > "$WORK_ROOT/private/lsh-stage.log"
+          python3 tests/linux-browser-ci.py resources --work "$WORK_ROOT"
+      - name: Exercise real Chromium authorization access revocation and reopen
+        id: browser
+        timeout-minutes: 15
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: |
+          python3 luckyray-app/tests/linux-browser-ci.py browser --work "$WORK_ROOT" \
+            --driver "$WORK_ROOT/driver/bin/tauri-driver"
+      - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
-          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-startup-work
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
           CI_CHECKOUT: ${{ steps.checkout.outcome }}
           CI_INIT: ${{ steps.init.outcome }}
-          CI_NODE: ${{ steps.node.outcome }}
           CI_PREFLIGHT: ${{ steps.preflight.outcome }}
-        run: python3 luckyray-app/tests/linux-browser-ci.py finish --startup-only --work "$WORK_ROOT"
-      - name: Retain only the three startup evidence JSON files
+          CI_DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          CI_RUST: ${{ steps.rust.outcome }}
+          CI_NODE: ${{ steps.node.outcome }}
+          CI_FRONTEND: ${{ steps.frontend.outcome }}
+          CI_BUILD: ${{ steps.build.outcome }}
+          CI_DRIVER: ${{ steps.driver.outcome }}
+          CI_RUNTIME: ${{ steps.runtime.outcome }}
+          CI_RESOURCES: ${{ steps.resources.outcome }}
+          CI_BROWSER: ${{ steps.browser.outcome }}
+        run: python3 luckyray-app/tests/linux-browser-ci.py finish --work "$WORK_ROOT"
+      - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: linux-browser-startup-synthetic-evidence
+          name: linux-chromium-consent-synthetic-evidence
           retention-days: 3
           if-no-files-found: warn
           path: |
-            ${{ runner.temp }}/luckyray-linux-startup-work/evidence/source.json
-            ${{ runner.temp }}/luckyray-linux-startup-work/evidence/preflight.json
-            ${{ runner.temp }}/luckyray-linux-startup-work/evidence/result.json
+            ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/source.json
+            ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/build.json
+            ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/resources.json
+            ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/preflight.json
+            ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/browser.json
+            ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/result.json
