@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary } from "../scripts/macos-native-diagnostics.mjs";
+import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary, PYTHON_PROBE_IMPORTS } from "../scripts/macos-native-diagnostics.mjs";
 import { publishableReport, PHASES } from "../scripts/check-macos-internal.mjs";
+import { PYTHON_RUNTIME_PROBE } from "../scripts/prepare-macos-runtimes.mjs";
 const canary = "private_test_value_never_publish";
 const event = value => `MACOS_NATIVE_EVENT ${JSON.stringify(value)}\n`;
 
@@ -65,6 +66,35 @@ test("a real failing diagnostic fixture preserves its exit code and drains stder
   assert(summary.commands.some(item => item.stage === "diagnostic-self-test" && item.status === "failed" && item.exit === 23));
   assert(summary.issues.some(item => item.code === "E0308")); assert(summary.issues.some(item => item.line === 9));
   assert(!JSON.stringify(summary).includes(canary));
+  if (process.platform !== "win32") for (const { missing, stage } of [
+    { missing: PYTHON_PROBE_IMPORTS, stage: "python-install-probe" },
+    { missing: ["bz2", "lzma", "sqlite3"], stage: "python-probe" },
+    { missing: [], stage: "python-probe" },
+  ]) {
+    const fixture = `import sys
+print('HOST_VERSION:' + '.'.join(map(str, sys.version_info[:3])))
+class MissingExtension:
+ def find_spec(self, fullname, path=None, target=None):
+  if fullname in ${JSON.stringify(missing)}: raise ModuleNotFoundError(${JSON.stringify(canary)})
+sys.meta_path.insert(0, MissingExtension())
+${PYTHON_RUNTIME_PROBE}`;
+    const child = spawnSync("python3", ["-I", "-B", "-c", fixture, "unused-prefix", "1"], { encoding: "utf8", timeout: 10000 });
+    assert.equal(child.status, 1, "real Python import failure must retain exit 1");
+    const diagnostics = new DiagnosticCollector();
+    diagnostics.feed("stderr", event({ event: "start", id: "5:1", stage, command: "python3" }));
+    diagnostics.feed("stderr", child.stderr);
+    diagnostics.feed("stderr", `MACOS_PYTHON_PROBE_IMPORTS:${canary}\n`);
+    for (let code = 400; code < 430; code++) diagnostics.feed("stderr", `MACOS_HTTP_STATUS:${code}\n`);
+    diagnostics.feed("stderr", event({ event: "exit", id: "5:2", startedId: "5:1", stage, command: "python3", exit: child.status }));
+    const safe = safeDiagnosticSummary(diagnostics.summary());
+    assert.equal(safe.issues.length, 12);
+    assert.deepEqual(safe.pythonImports, [{ stage, imports: PYTHON_PROBE_IMPORTS.map(name => ({ name, status: missing.includes(name) ? "failed" : "passed" })) }]);
+    assert(child.stderr.includes("macos-python-prefix-probe"), "invalid prefix must fail even after collecting imports");
+    if (child.stdout.trim() !== "HOST_VERSION:3.11.8") assert(child.stderr.includes("macos-python-version-probe"));
+    if (missing.includes("ssl")) assert(child.stderr.includes("macos-python-ssl-probe"));
+    assert(!child.stderr.includes(canary));
+    assert(!JSON.stringify(safe).includes(canary));
+  }
 });
 
 test("published workflow summary projects typed facts and preserves failed phases", () => {
@@ -73,10 +103,13 @@ test("published workflow summary projects typed facts and preserves failed phase
     phases: PHASES.map((phase, i) => ({ phase, status: i === 0 ? "passed" : i === 1 ? "failed" : "not-run", secret: canary })),
     failure: { code: "native-command-failed", exit: "1", rawMessage: canary }, distributionReady: false,
     diagnostics: { lastCheckpoint: "dsh-audit", raw: canary, commands: [{ stage: "tauri-build", command: "pnpm", status: "failed", exit: 1, arguments: canary }],
-      issues: [{ class: "unsupported-option", raw: canary }, { class: canary, code: canary }] }, rawLog: canary };
+      issues: [{ class: "unsupported-option", raw: canary }, { class: canary, code: canary }],
+      pythonImports: [{ stage: "python-install-probe", imports: PYTHON_PROBE_IMPORTS.map(name => ({ name, status: "failed", raw: canary })) }, { stage: canary }] }, rawLog: canary };
   const summary = publishableReport(input);
   assert.equal(summary.phases[1].status, "failed"); assert.equal(summary.failure.exit, "1");
   assert.deepEqual(summary.diagnostics.issues, [{ class: "unsupported-option" }]);
+  assert.deepEqual(summary.diagnostics.pythonImports, [{ stage: "python-install-probe", imports: PYTHON_PROBE_IMPORTS.map(name => ({ name, status: "failed" })) }]);
+  assert.deepEqual(safeDiagnosticSummary({ pythonImports: [{ stage: "python-probe", imports: [{ name: canary, status: "failed" }] }] }).pythonImports, []);
   assert(!JSON.stringify(summary).includes(canary));
   assert.throws(() => publishableReport({ ...input, status: "passed" }), /macos-internal-result-invalid/);
 });

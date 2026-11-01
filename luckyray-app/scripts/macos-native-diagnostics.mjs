@@ -4,7 +4,7 @@ export const DIAGNOSTIC_STAGES = Object.freeze([
   "command", "frontend-build", "frontend-install", "package-manager-version", "tauri-build",
   "dsh-fetch", "dsh-install", "dsh-project", "dsh-audit", "dsh-native-load", "dsh-version", "dsh-materials",
   "source-download", "source-extract", "openssl-configure", "openssl-build", "openssl-install",
-  "python-configure", "python-build", "python-install", "python-stdlib", "python-probe",
+  "python-configure", "python-build", "python-install", "python-install-probe", "python-stdlib", "python-probe",
   "ffmpeg-flags", "ffmpeg-configure", "ffmpeg-build", "ffmpeg-probe", "deno-probe", "node-version",
   "compile-sidecars", "cli-identity", "arm64-check", "code-sign", "diagnostic-self-test",
 ]);
@@ -22,7 +22,9 @@ const TERMINALS = Object.freeze({
 const HEADERS = Object.freeze(["stdio.h", "stdlib.h", "Python.h", "openssl/ssl.h", "openssl/crypto.h", "ffi.h", "zlib.h", "bzlib.h", "lzma.h", "sqlite3.h", "readline/readline.h"]);
 const NATIVE_MODULES = Object.freeze(["koffi", "node-pty", "sharp", "node-addon-require-builtin"]);
 const PYTHON_ERRORS = Object.freeze(["SyntaxError", "ModuleNotFoundError", "ImportError", "AssertionError", "FileNotFoundError", "PermissionError"]);
-const PYTHON_MODULES = Object.freeze(["_ssl", "ssl", "zlib", "sqlite3", "bz2", "lzma", "yt_dlp", "yt_dlp_ejs"]);
+export const PYTHON_PROBE_IMPORTS = Object.freeze(["ssl", "hashlib", "zlib", "bz2", "lzma", "sqlite3", "zipfile"]);
+const PYTHON_PROBE_STAGES = Object.freeze(["python-install-probe", "python-probe"]);
+const PYTHON_MODULES = Object.freeze([...PYTHON_PROBE_IMPORTS, "_ssl", "_hashlib", "_socket", "_bz2", "_lzma", "_sqlite3", "_struct", "binascii", "encodings", "codecs", "yt_dlp", "yt_dlp_ejs"]);
 const IO_CODES = Object.freeze(["ENOENT", "EACCES", "EPERM", "ENOSPC", "EIO", "ETIMEDOUT"]);
 const SIGNALS = Object.freeze(["SIGABRT", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGPIPE", "SIGQUIT", "SIGSEGV", "SIGTERM", "SIGTRAP", "SIGXCPU", "SIGXFSZ"]);
 const PREFIX = "MACOS_NATIVE_EVENT ";
@@ -55,7 +57,7 @@ function location(line, files) {
   return count(row) && count(column) ? { file: match[1], line: row, column } : {};
 }
 export class DiagnosticCollector {
-  constructor(codes = new Set(), files = new Set(), origin = "process-output") { this.codes = codes; this.files = files; this.origin = ORIGINS.includes(origin) ? origin : "process-output"; this.buffers = { stdout: "", stderr: "" }; this.commands = []; this.issues = []; this.nativeModules = new Map(); this.lastCheckpoint = null; this.truncated = false; }
+  constructor(codes = new Set(), files = new Set(), origin = "process-output") { this.codes = codes; this.files = files; this.origin = ORIGINS.includes(origin) ? origin : "process-output"; this.buffers = { stdout: "", stderr: "" }; this.commands = []; this.issues = []; this.nativeModules = new Map(); this.pythonImports = new Map(); this.lastCheckpoint = null; this.truncated = false; }
   feed(stream, chunk) {
     if (!["stdout", "stderr"].includes(stream)) return;
     const text = this.buffers[stream] + chunk.toString();
@@ -73,6 +75,12 @@ export class DiagnosticCollector {
   }
   line(line) {
     if (Object.hasOwn(TERMINALS, line.trim())) this.add({ class: "configure-terminal", code: TERMINALS[line.trim()] });
+    const pythonImports = /^MACOS_PYTHON_PROBE_IMPORTS:([01]{7})$/.exec(line);
+    if (pythonImports) {
+      const active = this.commands.findLast(item => item.status === "started" && PYTHON_PROBE_STAGES.includes(item.stage));
+      if (active) this.pythonImports.set(active.stage, PYTHON_PROBE_IMPORTS.map((name, i) => ({ name, status: pythonImports[1][i] === "1" ? "passed" : "failed" })));
+      return;
+    }
     const native = /^MACOS_NATIVE_MODULE_(START|PASS):([a-z-]+)$/.exec(line);
     if (native && NATIVE_MODULES.includes(native[2])) {
       if (native[1] === "START") this.nativeModules.set(native[2], "started");
@@ -147,12 +155,20 @@ export class DiagnosticCollector {
   summary() {
     for (const stream of Object.keys(this.buffers)) { if (this.buffers[stream]) this.line(this.buffers[stream]); this.buffers[stream] = ""; }
     return { lastCheckpoint: this.lastCheckpoint, commands: this.commands.slice(-16), issues: this.issues,
-      nativeModules: [...this.nativeModules].map(([name, status]) => ({ name, status })), truncated: this.truncated };
+      nativeModules: [...this.nativeModules].map(([name, status]) => ({ name, status })),
+      pythonImports: [...this.pythonImports].map(([stage, imports]) => ({ stage, imports })), truncated: this.truncated };
   }
 }
 // Re-project persisted reports before publishing them to the workflow log.
 export function safeDiagnosticSummary(input, codes = new Set(), files = new Set()) {
-  const result = { lastCheckpoint: DIAGNOSTIC_STAGES.includes(input?.lastCheckpoint) ? input.lastCheckpoint : null, commands: [], issues: [], nativeModules: [], truncated: input?.truncated === true };
+  const result = { lastCheckpoint: DIAGNOSTIC_STAGES.includes(input?.lastCheckpoint) ? input.lastCheckpoint : null, commands: [], issues: [], nativeModules: [], pythonImports: [], truncated: input?.truncated === true };
+  // Two fixed probe stages, seven fixed results each; independent of issue eviction.
+  for (const stage of PYTHON_PROBE_STAGES) {
+    const item = (Array.isArray(input?.pythonImports) ? input.pythonImports : []).slice(0, 2).find(item => item?.stage === stage);
+    if (!Array.isArray(item?.imports) || item.imports.length !== PYTHON_PROBE_IMPORTS.length
+        || item.imports.some((value, i) => value?.name !== PYTHON_PROBE_IMPORTS[i] || !["passed", "failed"].includes(value.status))) continue;
+    result.pythonImports.push({ stage, imports: item.imports.map((value, i) => ({ name: PYTHON_PROBE_IMPORTS[i], status: value.status })) });
+  }
   for (const item of (Array.isArray(input?.nativeModules) ? input.nativeModules : []).slice(-4))
     if (NATIVE_MODULES.includes(item.name) && ["started", "passed"].includes(item.status)) result.nativeModules.push({ name: item.name, status: item.status });
   for (const item of (Array.isArray(input?.commands) ? input.commands : []).slice(-16)) {

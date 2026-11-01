@@ -11,7 +11,7 @@ import { SOURCES } from "./check-macos-media-sources.mjs";
 import { extractVerifiedPnpmPackage, validateDshFrozenClosure, projectPortableDshReleaseLayout,
   auditPortableInstalledClosure, reconcileLockedClosure } from "./dsh-supply-chain.mjs";
 import { prepareDshDistribution, checkFrozenDshMinimum } from "./macos-dsh-distribution.mjs";
-import { commandEvent } from "./macos-native-diagnostics.mjs";
+import { commandEvent, PYTHON_PROBE_IMPORTS } from "./macos-native-diagnostics.mjs";
 
 // The archive digest is the upstream release asset digest, not a digest of its
 // checksum text: https://github.com/openssl/openssl/releases/tag/openssl-3.5.9
@@ -22,6 +22,28 @@ export const INPUTS = Object.freeze({ platform: "darwin", architecture: "arm64",
   deno: DENO_INPUT, python: SOURCES.python, ffmpeg: SOURCES.ffmpeg, openssl: OPENSSL });
 const JOBS = String(Math.max(1, Math.min(cpus().length, 6)));
 const copy = async (from, to, mode = 0o644) => writeNew(to, await readRegular(from), mode);
+
+export const PYTHON_RUNTIME_PROBE = String.raw`import sys
+results = []
+failed = []
+for name in ${JSON.stringify(PYTHON_PROBE_IMPORTS)}:
+ try:
+  __import__(name)
+ except Exception:
+  results.append('0')
+  failed.append(name)
+ else:
+  results.append('1')
+if sys.argv[2] == '1': print('MACOS_PYTHON_PROBE_IMPORTS:' + ''.join(results), file=sys.stderr)
+checks = [(sys.version_info[:3] == (3,11,8), 'macos-python-version-probe'),
+          (sys.prefix == sys.argv[1], 'macos-python-prefix-probe'),
+          ('ssl' not in failed and sys.modules['ssl'].OPENSSL_VERSION.startswith('OpenSSL 3.5.9 '), 'macos-python-ssl-probe')]
+for valid, code in checks:
+ if not valid:
+  failed.append(code)
+  if sys.argv[2] == '1': print(code, file=sys.stderr)
+if failed: raise SystemExit(1)
+`;
 
 export async function normalizeFfmpegCflags(value = "") {
   if (typeof value !== "string" || value.length > 65536 || value.includes("\0"))
@@ -155,6 +177,8 @@ async function prepareMedia(scratch, node, home) {
   await run(join(python, "configure"), [`--prefix=${pythonInstall}`, "--disable-shared", "--without-ensurepip", `--with-openssl=${sslPrefix}`, "--with-openssl-rpath=no"], { cwd: python, env: pythonEnv, diagnosticStage: "python-configure" });
   await run("/usr/bin/make", [`-j${JOBS}`], { cwd: python, env: pythonEnv, diagnosticStage: "python-build" });
   await run("/usr/bin/make", ["altinstall"], { cwd: python, env: pythonEnv, diagnosticStage: "python-install" });
+  await run(join(pythonInstall, "bin/python3.11"), ["-I", "-B", "-c", PYTHON_RUNTIME_PROBE, pythonInstall,
+    process.env.MACOS_INTERNAL_DIAGNOSTICS === "1" ? "1" : "0"], { env: pythonEnv, diagnosticStage: "python-install-probe" });
   await copy(join(pythonInstall, "bin/python3.11"), join(media, "python/bin/python3.11"), 0o755);
   await copy(join(pythonInstall, "lib/python3.11/os.py"), join(media, "python/lib/python3.11/os.py"));
   const dynamic = join(pythonInstall, "lib/python3.11/lib-dynload");
@@ -213,8 +237,8 @@ with zipfile.ZipFile(target, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
     ytDlpWheel: `wheels/${sources.ytDlp.fileName}`, ytDlpEjsWheel: `wheels/${sources.ytDlpEjs.fileName}`,
     deno: "deno/deno", ffmpeg: "ffmpeg/ffmpeg", files });
   const result = await publishDirectory(media, "media-engine");
-  const probe = "import sys,ssl,hashlib,zlib,bz2,lzma,sqlite3,zipfile; assert sys.version_info[:3]==(3,11,8),'macos-python-version-probe'; assert ssl.OPENSSL_VERSION.startswith('OpenSSL 3.5.9 '),'macos-python-ssl-probe'; assert sys.prefix==sys.argv[1],'macos-python-prefix-probe'";
-  await run(join(result, "python/bin/python3.11"), ["-I", "-B", "-c", probe, join(result, "python")], { env, diagnosticStage: "python-probe" });
+  await run(join(result, "python/bin/python3.11"), ["-I", "-B", "-c", PYTHON_RUNTIME_PROBE, join(result, "python"),
+    process.env.MACOS_INTERNAL_DIAGNOSTICS === "1" ? "1" : "0"], { env, diagnosticStage: "python-probe" });
   await run(join(result, "deno/deno"), ["--version"], { env, diagnosticStage: "deno-probe" });
   await run(join(result, "ffmpeg/ffmpeg"), ["-hide_banner", "-version"], { env, diagnosticStage: "ffmpeg-probe" });
   return result;
