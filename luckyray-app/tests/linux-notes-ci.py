@@ -44,7 +44,76 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "preview-not-visible", "preview-pixels-mismatch", "screenshot-invalid", "screenshot-size-invalid",
     "image-outside-screenshot", "attachment-open-not-interactable", "attachment-open-ui-not-observed", "attachment-detail-target-mismatch", "attachment-open-control-mismatch",
     "attachment-receiver-not-observed", "attachment-handoff-mismatch",
-    "reopen-file-content-mismatch", "quit-process-remained", "webdriver-command-failed", "editor-not-ready", "editor-input-mismatch", "unexpected-error"))
+    "reopen-file-content-mismatch", "quit-process-remained", "quit-already-attempted", "driver-cleanup-incomplete",
+    "webdriver-command-failed", "editor-not-ready", "editor-input-mismatch", "unexpected-error"))
+
+
+def bounded_driver(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    return {"kind": raw.get("kind") if raw.get("kind") in ("HTTP_ERROR", "TRANSPORT_ERROR", "INVALID_RESPONSE") else "UNKNOWN",
+        "operation": raw.get("operation") if isinstance(raw.get("operation"), str) and raw["operation"] in smoke.DRIVER_OPERATIONS else "other",
+        "error": raw.get("error") if isinstance(raw.get("error"), str) and raw["error"] in smoke.DRIVER_ERRORS else "unknown-standard-error",
+        "httpStatus": raw.get("httpStatus") if type(raw.get("httpStatus")) is int and 400 <= raw["httpStatus"] <= 599 else None,
+        "transport": raw.get("transport") if isinstance(raw.get("transport"), str) and raw["transport"] in smoke.TRANSPORT_CODES else "UNKNOWN",
+        "responseState": raw.get("responseState") if raw.get("responseState") in ("UNCONFIRMED", "HTTP_ERROR_RECEIVED") else "UNKNOWN",
+        "elapsedMs": media_layout.integer(raw.get("elapsedMs"), 0, 60000)}
+
+
+def bounded_exit(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    return {"state": raw.get("state") if raw.get("state") in ("RUNNING", "EXITED", "SIGNALED", "IDENTITY_CHANGED", "UNOBSERVED") else "UNOBSERVED",
+            "exitCode": media_layout.integer(raw.get("exitCode"), 0, 255), "signal": media_layout.integer(raw.get("signal"), 1, 64)}
+
+
+def bounded_processes(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    result = {"driver": bounded_exit(raw.get("driver"))}
+    for name in ("app", "nativeDriver"):
+        value = raw.get(name) if isinstance(raw.get(name), dict) else {}
+        result[name] = {key: media_layout.integer(value.get(key), 0, 2) for key in ("tracked", "running", "gone", "identityChanged", "unobserved")}
+        result[name].update(overflow=value.get("overflow") is True,
+                           exitStatus="NOT_OBSERVED" if value.get("exitStatus") == "NOT_OBSERVED" else "INVALID")
+    return result
+
+
+def bounded_clipboard_probe(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    return {"attempts": media_layout.integer(raw.get("attempts"), 0, 1),
+        "method": "XCLIP_READONLY_ONCE" if raw.get("method") == "XCLIP_READONLY_ONCE" else "INVALID",
+        "state": raw.get("state") if raw.get("state") in ("READ", "TIMEOUT", "SIZE_LIMIT", "EXIT_ERROR", "IO_ERROR", "UNAVAILABLE", "CLEANUP_UNCONFIRMED") else "UNAVAILABLE",
+        "exactAbsolutePath": raw.get("exactAbsolutePath") if type(raw.get("exactAbsolutePath")) is bool else None,
+        "readBytes": media_layout.integer(raw.get("readBytes"), 0, 8193), "overflow": raw.get("overflow") is True,
+        "exit": bounded_exit(raw.get("exit"))}
+
+
+def bounded_unconfirmed_copy(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    result = {"action": "context-copy" if raw.get("action") == "context-copy" else "unknown",
+        "writeAttempts": media_layout.integer(raw.get("writeAttempts"), 0, 1),
+        "responseState": "UNCONFIRMED" if raw.get("responseState") == "UNCONFIRMED" else "UNKNOWN",
+        "state": raw.get("state") if raw.get("state") in ("OBSERVED", "UNAVAILABLE") else "UNAVAILABLE",
+        **{key: bounded_processes(raw.get(key)) for key in ("beforeRequest", "atUnconfirmedResponse")}}
+    if "clipboard" in raw:
+        result["clipboard"] = bounded_clipboard_probe(raw["clipboard"])
+    if "afterClipboardRead" in raw:
+        result["afterClipboardRead"] = bounded_processes(raw["afterClipboardRead"])
+    return result
+
+
+def bounded_cleanup(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    quit_command = raw.get("quitCommand") if isinstance(raw.get("quitCommand"), dict) else {}
+    termination = raw.get("driverTermination") if isinstance(raw.get("driverTermination"), dict) else {}
+    result = {"quitAttemptedInFinally": raw.get("quitAttemptedInFinally") is True,
+        "quitSkippedAlreadyAttempted": raw.get("quitSkippedAlreadyAttempted") is True,
+        "quitCommand": {name: quit_command.get(name) if type(quit_command.get(name)) is bool else None for name in ("attempted", "ipcReplyObserved")},
+        **{name: bounded_processes(raw.get(name)) for name in ("beforeDriverTermination", "afterDriverTermination")},
+        "driverTermination": {"termRequested": termination.get("termRequested") is True, "killRequested": termination.get("killRequested") is True,
+            "error": termination.get("error") if termination.get("error") in ("NONE", "PROCESS_GROUP_GONE", "TIMEOUT", "IO_ERROR") else "IO_ERROR",
+            "exit": bounded_exit(termination.get("exit"))}}
+    if "quitFailure" in raw:
+        result["quitFailure"] = bounded_driver(raw["quitFailure"])
+    return result
 
 
 def bounded_drop_trace(raw):
@@ -146,12 +215,11 @@ def bounded_report(raw):
                              "action": failure.get("action") if isinstance(failure.get("action"), str) and failure["action"] in smoke.ACTIONS else "unknown",
                              "code": failure.get("code") if isinstance(failure.get("code"), str) and failure["code"] in FAILURES else "unexpected-error"}
         if "webdriver" in failure:
-            driver = failure["webdriver"] if isinstance(failure["webdriver"], dict) else {}
-            result["failure"]["webdriver"] = {
-                "kind": driver.get("kind") if driver.get("kind") in ("HTTP_ERROR", "TRANSPORT_ERROR", "INVALID_RESPONSE") else "UNKNOWN",
-                "operation": driver.get("operation") if isinstance(driver.get("operation"), str) and driver["operation"] in smoke.DRIVER_OPERATIONS else "other",
-                "error": driver.get("error") if isinstance(driver.get("error"), str) and driver["error"] in smoke.DRIVER_ERRORS else "unknown-standard-error",
-                "httpStatus": driver.get("httpStatus") if type(driver.get("httpStatus")) is int and 400 <= driver["httpStatus"] <= 599 else None}
+            result["failure"]["webdriver"] = bounded_driver(failure["webdriver"])
+    if "unconfirmedCopy" in raw:
+        result["unconfirmedCopy"] = bounded_unconfirmed_copy(raw["unconfirmedCopy"])
+    if "cleanupEvidence" in raw:
+        result["cleanupEvidence"] = bounded_cleanup(raw["cleanupEvidence"])
     if "cleanup" in raw:
         result["cleanup"] = "UNCONFIRMED"
     return result
@@ -161,6 +229,7 @@ def validate_notes(raw, build, source, scripts):
     require(isinstance(raw, dict) and raw == bounded_report(raw), "notes-report-shape-invalid")
     require(isinstance(raw, dict) and raw.get("schemaVersion") == 1 and raw.get("status") == "PASS" and "failure" not in raw and "cleanup" not in raw,
             "notes-flow-not-complete")
+    require("unconfirmedCopy" not in raw, "copy-response-not-confirmed")
     require(raw.get("scope") == SCOPE and raw.get("commit") == source["commit"]
             and raw.get("applicationSha256") == build["application"]["sha256"]
             and raw.get("scriptSha256") == scripts["smoke"] and raw.get("helperSha256") == scripts["webdriver"], "notes-source-identity-mismatch")

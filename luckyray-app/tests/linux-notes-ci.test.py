@@ -1,6 +1,7 @@
 """Offline evidence-gate and owned fixture tests. No GUI/Runner PASS is implied."""
 import ast
 import copy
+import errno
 import hashlib
 import importlib.util
 import io
@@ -8,14 +9,18 @@ import http.client
 import json
 import os
 import re
+import signal
+import socket
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import zlib
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -277,7 +282,11 @@ class EvidenceTests(unittest.TestCase):
             with self.assertRaises(ci.smoke.DriverFailure) as raised:
                 ci.smoke.webdriver_command(opener, request, 1)
             self.assertEqual(opener.open.call_count, 1)
-            self.assertEqual(raised.exception.observation, {"kind": "HTTP_ERROR", "operation": "click", "error": expected, "httpStatus": 400})
+            observed = raised.exception.observation
+            self.assertEqual({key: value for key, value in observed.items() if key != "elapsedMs"},
+                             {"kind": "HTTP_ERROR", "operation": "click", "error": expected, "httpStatus": 400,
+                              "transport": "NOT_APPLICABLE", "responseState": "HTTP_ERROR_RECEIVED"})
+            self.assertTrue(type(observed["elapsedMs"]) is int and 0 <= observed["elapsedMs"] <= 60000)
             self.assertNotIn("hunter2", str(raised.exception))
             raw = copy.deepcopy(self.raw)
             raw["failure"] = {"phase": "edit-save", "action": "source-toggle", "code": str(raised.exception),
@@ -324,7 +333,8 @@ class EvidenceTests(unittest.TestCase):
         failure = ci.bounded_report(raw)["failure"]
         self.assertNotIn("hunter2", json.dumps(failure))
         self.assertEqual(failure["action"], "unknown")
-        self.assertEqual(failure["webdriver"], {"kind": "UNKNOWN", "operation": "other", "error": "unknown-standard-error", "httpStatus": None})
+        self.assertEqual(failure["webdriver"], {"kind": "UNKNOWN", "operation": "other", "error": "unknown-standard-error", "httpStatus": None,
+                                                "transport": "UNKNOWN", "responseState": "UNKNOWN", "elapsedMs": None})
 
     def test_image_copy_probe_distinguishes_missing_duplicate_digest_name_and_link_failures(self):
         for case in ("complete", "missing", "duplicate", "different-extra", "digest", "name", "link", "source"):
@@ -455,6 +465,186 @@ class EvidenceTests(unittest.TestCase):
         self.assertLess(text.index("        id: layout"), text.index("        id: build"))
         self.assertIn("CI_LAYOUT: ${{ steps.layout.outcome }}", text)
         self.assertEqual(text.count("if: ${{ success() && steps.layout.outcome == 'success' }}"), 2)
+
+
+class TransportEvidenceTests(unittest.TestCase):
+    def test_typed_transport_categories_never_read_private_reason_text(self):
+        cases = [(TimeoutError("hunter2"), "TIMEOUT"), (http.client.RemoteDisconnected("hunter2"), "REMOTE_DISCONNECT"),
+            (ConnectionResetError("hunter2"), "CONNECTION_RESET"), (ConnectionRefusedError("hunter2"), "CONNECTION_REFUSED"),
+            (ConnectionAbortedError("hunter2"), "CONNECTION_ABORTED"), (BrokenPipeError("hunter2"), "BROKEN_PIPE"),
+            (http.client.IncompleteRead(b"hunter2"), "INCOMPLETE_RESPONSE"), (http.client.BadStatusLine("hunter2"), "HTTP_PROTOCOL_ERROR"),
+            (OSError(errno.ENETUNREACH, "hunter2"), "NETWORK_UNREACHABLE"),
+            (urllib.error.URLError("hunter2"), "UNKNOWN"), (OSError("hunter2"), "IO_ERROR")]
+        for error, expected in cases:
+            for wrapped in (error, urllib.error.URLError(error)):
+                with self.subTest(category=expected):
+                    opener = mock.Mock()
+                    opener.open.side_effect = wrapped
+                    request = urllib.request.Request("http://127.0.0.1/session/owned/element/owned/click", method="POST", data=b"{}")
+                    with self.assertRaises(ci.smoke.DriverFailure) as raised:
+                        ci.smoke.webdriver_command(opener, request, 1)
+                    self.assertEqual(opener.open.call_count, 1)
+                    self.assertEqual(raised.exception.observation["transport"], expected)
+                    self.assertEqual(raised.exception.observation["responseState"], "UNCONFIRMED")
+                    self.assertEqual(ci.bounded_driver(raised.exception.observation), raised.exception.observation)
+                    self.assertNotIn("hunter2", json.dumps(raised.exception.observation))
+
+    def test_real_loopback_post_disconnect_reset_and_timeout_are_not_replayed(self):
+        for mode, expected in (("close", "REMOTE_DISCONNECT"), ("reset", "CONNECTION_RESET"), ("delay", "TIMEOUT")):
+            requests = []
+            class Handler(BaseHTTPRequestHandler):
+                def do_POST(self):
+                    requests.append(self.command)
+                    if mode == "delay":
+                        threading.Event().wait(.2)
+                    elif mode == "reset":
+                        self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                    self.close_connection = True
+                    self.connection.close()
+                def log_message(self, *args):
+                    pass
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            worker = threading.Thread(target=lambda: server.serve_forever(poll_interval=.01), daemon=True)
+            worker.start()
+            try:
+                request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/session/owned/element/owned/click", method="POST", data=b"{}")
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with self.assertRaises(ci.smoke.DriverFailure) as raised:
+                    ci.smoke.webdriver_command(opener, request, .05)
+                self.assertEqual(raised.exception.observation["transport"], expected)
+                self.assertEqual(raised.exception.observation["responseState"], "UNCONFIRMED")
+                self.assertEqual(requests, ["POST"])
+            finally:
+                server.shutdown(); server.server_close(); worker.join(timeout=1)
+
+    def test_single_read_clipboard_probe_is_bounded_readonly_and_never_returns_contents(self):
+        expected = "/owned/SyntheticNote.md"
+        real_popen = subprocess.Popen
+        for mode in ("match", "different", "oversize", "timeout", "missing"):
+            with self.subTest(mode=mode):
+                def launch(command, **kwargs):
+                    self.assertEqual(command, ["xclip", "-selection", "clipboard", "-o"])
+                    if mode == "missing":
+                        raise FileNotFoundError("hunter2")
+                    program = {"match": "import sys;sys.stdout.buffer.write(" + repr(expected.encode()) + ")",
+                        "different": "import sys;sys.stdout.buffer.write(b'hunter2')",
+                        "oversize": "import sys;sys.stdout.buffer.write(b'x'*9000)",
+                        "timeout": "import time;time.sleep(1)"}[mode]
+                    return real_popen([sys.executable, "-c", program], **kwargs)
+                with mock.patch.object(ci.smoke.subprocess, "Popen", side_effect=launch) as process:
+                    value = ci.smoke.clipboard_read_once({}, expected, timeout=.1)
+                self.assertEqual(process.call_count, 1)
+                self.assertEqual(value["attempts"], 1)
+                self.assertEqual(value["state"], {"match": "READ", "different": "READ", "oversize": "SIZE_LIMIT", "timeout": "TIMEOUT", "missing": "IO_ERROR"}[mode])
+                self.assertEqual(value["exactAbsolutePath"], True if mode == "match" else False if mode == "different" else None)
+                self.assertLessEqual(value["readBytes"], 8193)
+                self.assertEqual(value, ci.bounded_clipboard_probe(value))
+                self.assertNotIn("hunter2", json.dumps(value))
+                self.assertNotIn(expected, json.dumps(value))
+
+    def test_uncertain_copy_effect_match_does_not_confirm_response_or_pass_the_flow(self):
+        fixture = EvidenceTests(methodName="runTest")
+        fixture.setUp()
+        anchors = {"driver": None, "app": {}, "nativeDriver": {}}
+        report = copy.deepcopy(fixture.raw)
+        failure = ci.smoke.DriverFailure("TRANSPORT_ERROR", "click", transport="REMOTE_DISCONNECT", elapsed=1)
+        wd = mock.Mock(side_effect=failure)
+        probe = {"attempts": 1, "method": "XCLIP_READONLY_ONCE", "state": "READ", "exactAbsolutePath": True, "readBytes": 23,
+                 "overflow": False, "exit": {"state": "EXITED", "exitCode": 0, "signal": None}}
+        with mock.patch.object(ci.smoke, "clipboard_read_once", return_value=probe) as reader:
+            with self.assertRaises(ci.smoke.DriverFailure) as raised:
+                ci.smoke.copy_click_once(wd, "/session/owned/element/owned/click", {}, Path("/owned/SyntheticNote.md"), None, anchors, report)
+        self.assertIs(raised.exception, failure)
+        wd.assert_called_once_with("POST", "/session/owned/element/owned/click", {})
+        reader.assert_called_once()
+        self.assertEqual(report["unconfirmedCopy"]["responseState"], "UNCONFIRMED")
+        self.assertTrue(report["unconfirmedCopy"]["clipboard"]["exactAbsolutePath"])
+        self.assertEqual(report["unconfirmedCopy"], ci.bounded_unconfirmed_copy(report["unconfirmedCopy"]))
+        # Even spoofing all success checks cannot turn an unconfirmed response green.
+        with self.assertRaisesRegex(RuntimeError, "copy-response-not-confirmed"):
+            ci.validate_notes(ci.bounded_report(report), fixture.build, fixture.source, fixture.scripts)
+        for kind in ("HTTP_ERROR", "INVALID_RESPONSE"):
+            wd = mock.Mock(side_effect=ci.smoke.DriverFailure(kind, "click"))
+            report = {}
+            with mock.patch.object(ci.smoke, "clipboard_read_once", return_value=probe) as reader:
+                with self.assertRaises(ci.smoke.DriverFailure):
+                    ci.smoke.copy_click_once(wd, "/session/owned/element/owned/click", {}, Path("/owned/SyntheticNote.md"), None, anchors, report)
+            self.assertEqual(reader.call_count, 0 if kind == "HTTP_ERROR" else 1)
+            self.assertEqual(wd.call_count, 1)
+
+    def test_diagnostic_failure_never_masks_original_uncertain_command(self):
+        wd = mock.Mock(side_effect=ci.smoke.DriverFailure("TRANSPORT_ERROR", "click", transport="TIMEOUT"))
+        report = {}
+        with mock.patch.object(ci.smoke, "clipboard_read_once", side_effect=RuntimeError("hunter2")):
+            with self.assertRaises(ci.smoke.DriverFailure):
+                ci.smoke.copy_click_once(wd, "/session/owned/element/owned/click", {}, Path("/owned/SyntheticNote.md"), None,
+                                        {"driver": None, "app": {}, "nativeDriver": {}}, report)
+        self.assertEqual(report["unconfirmedCopy"]["state"], "UNAVAILABLE")
+        self.assertEqual(wd.call_count, 1)
+        self.assertNotIn("hunter2", json.dumps(ci.bounded_unconfirmed_copy(report["unconfirmedCopy"])))
+
+    def test_uncertain_quit_is_marked_before_dispatch_and_cannot_be_replayed(self):
+        for effect in (ci.smoke.DriverFailure("TRANSPORT_ERROR", "execute", transport="CONNECTION_RESET"), None):
+            state = {"attempted": False, "ipcReplyObserved": False}
+            close = mock.Mock(side_effect=effect)
+            if effect is not None:
+                with self.assertRaises(ci.smoke.DriverFailure):
+                    ci.smoke.quit_once(state, close)
+            else:
+                ci.smoke.quit_once(state, close)
+            with self.assertRaisesRegex(ci.smoke.SmokeFailure, "quit-already-attempted"):
+                ci.smoke.quit_once(state, close)
+            self.assertEqual(close.call_count, 1)
+            self.assertEqual(state, {"attempted": True, "ipcReplyObserved": effect is None})
+
+    def test_owned_process_snapshot_distinguishes_cleanup_signal_without_exporting_ids(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(10)"], start_new_session=True)
+        try:
+            identity = ci.smoke.helpers.live_identity(child.pid)
+            self.assertIsNotNone(identity)
+            anchors = {"driver": identity, "app": {str(child.pid): identity}, "nativeDriver": {}}
+            before = ci.smoke.observe_processes(child, anchors)
+            self.assertEqual(before["driver"]["state"], "RUNNING")
+            self.assertEqual(before["app"]["running"], 1)
+            stopped = ci.smoke.terminate_driver(child)
+            after = ci.smoke.observe_processes(child, anchors)
+            self.assertTrue(stopped["termRequested"])
+            self.assertFalse(stopped["killRequested"])
+            self.assertEqual(stopped["exit"], {"state": "SIGNALED", "exitCode": None, "signal": signal.SIGTERM})
+            self.assertEqual(after["app"]["gone"], 1)
+            self.assertEqual(after["app"]["exitStatus"], "NOT_OBSERVED")
+            self.assertEqual(after, ci.bounded_processes(after))
+            self.assertNotIn(str(child.pid), json.dumps(after))
+            fake = mock.Mock(pid=child.pid)
+            fake.poll.return_value = None
+            with mock.patch.object(ci.smoke.helpers, "live_identity", return_value="new-private-identity"):
+                changed = ci.smoke.observe_processes(fake, anchors)
+            self.assertEqual(changed["driver"]["state"], "IDENTITY_CHANGED")
+            self.assertEqual(changed["app"]["identityChanged"], 1)
+            self.assertNotIn("new-private-identity", json.dumps(changed))
+        finally:
+            if child.poll() is None:
+                child.kill(); child.wait(timeout=2)
+
+    def test_backend_exit_during_capture_does_not_discard_independent_app_identity(self):
+        driver = mock.Mock(pid=123)
+        with mock.patch.object(ci.smoke.helpers, "live_identity", return_value="owned-driver"), \
+             mock.patch.object(ci.smoke.helpers, "app_pids", side_effect=[{"456": "owned-backend"}, {"789": "owned-app"}]), \
+             mock.patch.object(ci.smoke.os, "getpgid", side_effect=ProcessLookupError):
+            anchors = ci.smoke.capture_processes(driver, Path("/owned/Main"))
+        self.assertEqual(anchors, {"driver": "owned-driver", "nativeDriver": {}, "app": {"789": "owned-app"}})
+
+    def test_all_new_transport_process_clipboard_and_cleanup_projections_are_closed(self):
+        value = {"kind": "TRANSPORT_ERROR", "transport": "hunter2", "responseState": "hunter2", "elapsedMs": True,
+                 "pid": "hunter2", "path": "hunter2", "stdout": "hunter2", "reason": "hunter2"}
+        for project in (ci.bounded_driver, ci.bounded_exit, ci.bounded_processes, ci.bounded_clipboard_probe, ci.bounded_unconfirmed_copy, ci.bounded_cleanup):
+            self.assertNotIn("hunter2", json.dumps(project(value)))
+            self.assertNotIn("hunter2", json.dumps(project(["hunter2"])))
+        fixture = EvidenceTests(methodName="runTest"); fixture.setUp()
+        fixture.raw.update(unconfirmedCopy={"action": "context-copy", "clipboard": {**value, "exactAbsolutePath": True},
+            "atUnconfirmedResponse": {"driver": value, "app": value}, "afterClipboardRead": {"nativeDriver": value}},
+            cleanupEvidence={"quitFailure": value, "driverTermination": {**value, "exit": value}, "beforeDriverTermination": {"app": value}})
+        self.assertNotIn("hunter2", json.dumps(ci.bounded_report(fixture.raw)))
 
 
 class ComponentLayoutGateTests(unittest.TestCase):

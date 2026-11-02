@@ -6,12 +6,14 @@ No application command, bridge, media source or clipboard API is substituted.
 """
 import argparse
 import base64
+import errno
 import hashlib
 import http.client
 import importlib.util
 import json
 import os
 import re
+import selectors
 import shutil
 import signal
 import stat
@@ -46,11 +48,13 @@ ACTIONS = frozenset(("setup", "session-start", "backend-ready", "vault-setup", "
     "editor-append", "editor-value-check", "editor-save", "editor-save-readback", "context-open", "context-menu-ready", "context-copy",
     "clipboard-readback", "preview-toggle", "preview-ready", "preview-geometry", "preview-screenshot", "attachment-hover", "attachment-hit-check", "attachment-open",
     "attachment-ui-ready", "attachment-detail-check", "attachment-system-open", "attachment-receiver", "reopen-value-check",
-    "reopen-files", "quit-request", "quit-processes", "session-delete", "unknown"))
+    "reopen-files", "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
 DRIVER_ERRORS = frozenset(("element click intercepted", "element not interactable", "invalid argument", "invalid element state", "invalid selector",
     "invalid session id", "javascript error", "no such element", "no such window", "stale element reference", "script timeout",
     "timeout", "unknown command", "unknown error", "unsupported operation", "unexpected alert open", "move target out of bounds"))
 DRIVER_OPERATIONS = frozenset(("session-start", "session-delete", "timeouts", "execute", "click", "actions", "release-actions", "screenshot", "other"))
+TRANSPORT_CODES = frozenset(("TIMEOUT", "REMOTE_DISCONNECT", "CONNECTION_RESET", "CONNECTION_REFUSED", "CONNECTION_ABORTED",
+    "BROKEN_PIPE", "INCOMPLETE_RESPONSE", "HTTP_PROTOCOL_ERROR", "NETWORK_UNREACHABLE", "ADDRESS_UNREACHABLE", "IO_ERROR", "UNKNOWN", "NOT_APPLICABLE"))
 MEDIA_OPEN_FLAGS = ("hoverApplied", "toolbarVisible", "toolbarFullyVisible", "buttonEnabled", "controlsFullyVisible", "buttonCenterHit", "allButtonCentersHit")
 MEDIA_OPEN_PROBE = """
 const button=[...document.querySelectorAll(arguments[0])].find(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0);
@@ -132,9 +136,36 @@ class SmokeFailure(RuntimeError):
 
 
 class DriverFailure(SmokeFailure):
-    def __init__(self, kind, operation, error="unknown-standard-error", status=None):
+    def __init__(self, kind, operation, error="unknown-standard-error", status=None, transport="NOT_APPLICABLE", elapsed=None):
         super().__init__("webdriver-command-failed")
-        self.observation = {"kind": kind, "operation": operation, "error": error, "httpStatus": status}
+        self.observation = {"kind": kind, "operation": operation, "error": error, "httpStatus": status,
+            "transport": transport, "responseState": "HTTP_ERROR_RECEIVED" if kind == "HTTP_ERROR" else "UNCONFIRMED",
+            "elapsedMs": elapsed}
+
+
+def transport_code(error):
+    # URLError.reason can itself be an exception or arbitrary private text.
+    # Inspect only known types/errno, never its message or class name.
+    for _ in range(4):
+        if not isinstance(error, urllib.error.URLError) or not isinstance(error.reason, BaseException):
+            break
+        error = error.reason
+    if isinstance(error, http.client.RemoteDisconnected):
+        return "REMOTE_DISCONNECT"
+    if isinstance(error, TimeoutError):
+        return "TIMEOUT"
+    for kind, code in ((ConnectionResetError, "CONNECTION_RESET"), (ConnectionRefusedError, "CONNECTION_REFUSED"),
+                       (ConnectionAbortedError, "CONNECTION_ABORTED"), (BrokenPipeError, "BROKEN_PIPE")):
+        if isinstance(error, kind):
+            return code
+    if isinstance(error, http.client.IncompleteRead):
+        return "INCOMPLETE_RESPONSE"
+    if isinstance(error, http.client.HTTPException):
+        return "HTTP_PROTOCOL_ERROR"
+    return {errno.ETIMEDOUT: "TIMEOUT", errno.ECONNRESET: "CONNECTION_RESET", errno.ECONNREFUSED: "CONNECTION_REFUSED",
+        errno.ECONNABORTED: "CONNECTION_ABORTED", errno.EPIPE: "BROKEN_PIPE", errno.ENETUNREACH: "NETWORK_UNREACHABLE",
+        errno.EHOSTUNREACH: "ADDRESS_UNREACHABLE"}.get(getattr(error, "errno", None),
+            "IO_ERROR" if isinstance(error, OSError) and not isinstance(error, urllib.error.URLError) else "UNKNOWN")
 
 
 def driver_operation(request):
@@ -154,6 +185,9 @@ def driver_operation(request):
 def webdriver_command(opener, request, timeout):
     """Never retry a mutation or retain a raw WebDriver response/error message."""
     operation = driver_operation(request)
+    began = time.monotonic()
+    def elapsed():
+        return min(60000, max(0, round((time.monotonic() - began) * 1000)))
     try:
         return helpers.webdriver_value(opener, request, timeout)
     except urllib.error.HTTPError as error:
@@ -171,11 +205,179 @@ def webdriver_command(opener, request, timeout):
         finally:
             error.close()
         status = error.code if type(error.code) is int and 400 <= error.code <= 599 else None
-        raise DriverFailure("HTTP_ERROR", operation, code, status) from None
-    except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.RemoteDisconnected):
-        raise DriverFailure("TRANSPORT_ERROR", operation) from None
+        raise DriverFailure("HTTP_ERROR", operation, code, status, elapsed=elapsed()) from None
+    except (OSError, http.client.HTTPException) as error:
+        raise DriverFailure("TRANSPORT_ERROR", operation, transport=transport_code(error), elapsed=elapsed()) from None
     except (ValueError, UnicodeError):
-        raise DriverFailure("INVALID_RESPONSE", operation) from None
+        raise DriverFailure("INVALID_RESPONSE", operation, elapsed=elapsed()) from None
+
+
+def process_exit(code):
+    if code is None:
+        return {"state": "RUNNING", "exitCode": None, "signal": None}
+    if type(code) is int and 0 <= code <= 255:
+        return {"state": "EXITED", "exitCode": code, "signal": None}
+    if type(code) is int and -64 <= code < 0:
+        return {"state": "SIGNALED", "exitCode": None, "signal": -code}
+    return {"state": "UNOBSERVED", "exitCode": None, "signal": None}
+
+
+def capture_processes(driver, binary):
+    """Hold private identities from this actual driver session, never export PIDs."""
+    anchors = {"driver": None, "app": {}, "nativeDriver": {}}
+    if driver is not None:
+        try:
+            anchors["driver"] = helpers.live_identity(driver.pid)
+        except OSError:
+            pass
+        try:
+            native = helpers.app_pids(Path("/usr/bin/WebKitWebDriver"))
+        except OSError:
+            native = {}
+        for pid, identity in native.items():
+            try:
+                if os.getpgid(int(pid)) == driver.pid:
+                    anchors["nativeDriver"][pid] = identity
+            except OSError:
+                pass
+    try:
+        anchors["app"] = helpers.app_pids(binary)
+    except OSError:
+        pass
+    return anchors
+
+
+def observe_processes(driver, anchors):
+    def group(identities):
+        counts = {"tracked": len(identities), "running": 0, "gone": 0, "identityChanged": 0, "unobserved": 0}
+        for pid, identity in identities.items():
+            try:
+                current = helpers.live_identity(pid)
+                counts["running" if current == identity else "gone" if current is None else "identityChanged"] += 1
+            except OSError:
+                counts["unobserved"] += 1
+        return {**{name: min(value, 2) for name, value in counts.items()}, "overflow": any(value > 2 for value in counts.values()),
+                "exitStatus": "NOT_OBSERVED"}
+    state = {"state": "UNOBSERVED", "exitCode": None, "signal": None}
+    try:
+        if driver is not None:
+            state = process_exit(driver.poll())
+            if state["state"] == "RUNNING":
+                current = helpers.live_identity(driver.pid)
+                if current is None or anchors["driver"] is None:
+                    state["state"] = "UNOBSERVED"
+                elif current != anchors["driver"]:
+                    state["state"] = "IDENTITY_CHANGED"
+    except OSError:
+        pass
+    return {"driver": state, **{name: group(anchors[name]) for name in ("app", "nativeDriver")}}
+
+
+def clipboard_read_once(environment, expected, timeout=3):
+    """One read-only xclip process, <=8193 bytes, no polling or clipboard write."""
+    result = {"attempts": 1, "method": "XCLIP_READONLY_ONCE", "state": "UNAVAILABLE", "exactAbsolutePath": None,
+              "readBytes": 0, "overflow": False, "exit": {"state": "UNOBSERVED", "exitCode": None, "signal": None}}
+    child = None
+    try:
+        child = subprocess.Popen(["xclip", "-selection", "clipboard", "-o"], env=environment,
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        data = bytearray()
+        deadline = time.monotonic() + timeout
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    result["state"] = "TIMEOUT"
+                    break
+                part = os.read(child.stdout.fileno(), min(4096, 8193 - len(data)))
+                data.extend(part)
+                result["readBytes"] = len(data)
+                if len(data) > 8192:
+                    result.update(state="SIZE_LIMIT", overflow=True)
+                    break
+                if not part:
+                    code = child.wait(timeout=max(.001, deadline - time.monotonic()))
+                    result["state"] = "READ" if code == 0 else "EXIT_ERROR"
+                    if code == 0:
+                        result["exactAbsolutePath"] = bytes(data) == str(expected).encode("utf8")
+                    break
+    except subprocess.TimeoutExpired:
+        result["state"] = "TIMEOUT"
+    except OSError:
+        result["state"] = "IO_ERROR"
+    finally:
+        if child is not None:
+            try:
+                if child.poll() is None:
+                    child.terminate()
+                    try:
+                        child.wait(timeout=.5)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait(timeout=.5)
+                result["exit"] = process_exit(child.poll())
+            except (OSError, subprocess.TimeoutExpired):
+                result["state"] = "CLEANUP_UNCONFIRMED"
+            finally:
+                child.stdout.close()
+    return result
+
+
+def copy_click_once(wd, suffix, environment, expected, driver, anchors, report):
+    before = observe_processes(driver, anchors)
+    try:
+        wd("POST", suffix, {})
+    except DriverFailure as error:
+        if error.observation["operation"] == "click" and error.observation["responseState"] == "UNCONFIRMED":
+            observation = {"action": "context-copy", "writeAttempts": 1, "responseState": "UNCONFIRMED", "state": "OBSERVED",
+                           "beforeRequest": before, "atUnconfirmedResponse": observe_processes(driver, anchors)}
+            report["unconfirmedCopy"] = observation
+            try:
+                observation["clipboard"] = clipboard_read_once(environment, expected)
+                observation["afterClipboardRead"] = observe_processes(driver, anchors)
+            except Exception:
+                observation["state"] = "UNAVAILABLE"
+        # Effect readback is diagnostic only, even if it matches. Never replay this POST.
+        raise
+
+
+def quit_once(state, close):
+    # Mark before dispatch, including when the response is lost. finally must
+    # never replay this product command or the subsequent session DELETE.
+    require(not state["attempted"], "quit-already-attempted")
+    state["attempted"] = True
+    close()
+    state["ipcReplyObserved"] = True
+
+
+def terminate_driver(driver):
+    result = {"termRequested": False, "killRequested": False, "error": "NONE",
+              "exit": {"state": "UNOBSERVED", "exitCode": None, "signal": None}}
+    if driver is None:
+        return result
+    try:
+        result["termRequested"] = True
+        os.killpg(driver.pid, signal.SIGTERM)
+        driver.wait(timeout=10)
+    except ProcessLookupError:
+        result["error"] = "PROCESS_GROUP_GONE"
+    except subprocess.TimeoutExpired:
+        result["error"] = "TIMEOUT"
+        if driver.poll() is None:
+            try:
+                result["killRequested"] = True
+                os.killpg(driver.pid, signal.SIGKILL)
+                driver.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                result["error"] = "IO_ERROR"
+    except OSError:
+        result["error"] = "IO_ERROR"
+    try:
+        result["exit"] = process_exit(driver.poll())
+    except OSError:
+        result["error"] = "IO_ERROR"
+    return result
 
 
 def editor_key_actions(command):
@@ -305,6 +507,8 @@ def main():
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     socket_root = log = driver = trace_offset = vault = None
+    process_anchors = {"driver": None, "app": {}, "nativeDriver": {}}
+    quit_state = {"attempted": False, "ipcReplyObserved": False}
     http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     session, phase, action = None, "synthetic-setup", "setup"
     image_identity = {"materialAssetId": None}
@@ -342,20 +546,22 @@ def main():
         require(helpers.wait_until(lambda: execute(script, arguments), seconds), "ui-observation-timeout")
 
     def start():
-        nonlocal session, action
+        nonlocal session, action, process_anchors
         action = "session-start"
+        quit_state.update(attempted=False, ipcReplyObserved=False)
         session = wd("POST", "/session", {"capabilities": {"alwaysMatch": {"tauri:options": {"application": str(binary)}}}})["sessionId"]
         wd("POST", f"/session/{session}/timeouts", {"script": 45000})
         until("return !!window.__TAURI__?.core?.invoke;", seconds=30)
         action = "backend-ready"
         require(helpers.wait_until(lambda: invoke("get_backend_bootstrap_status").get("ready") is True, 30), "backend-not-ready")
         report["appSessions"] += 1
+        process_anchors = capture_processes(driver, binary)
 
     def stop():
         nonlocal session, action
         action = "quit-request"
         old = helpers.app_pids(binary)
-        invoke("close_window")
+        quit_once(quit_state, lambda: invoke("close_window"))
         action = "quit-processes"
         require(old and helpers.wait_until(lambda: all(helpers.live_identity(pid) != identity for pid, identity in old.items()), 20), "quit-process-remained")
         report["quitRequests"].append({"ipcReplyObserved": True, "priorProcessIdentitiesGone": True, "exitStatus": "NOT_OBSERVED"})
@@ -536,7 +742,9 @@ def main():
         menu = execute("return [...document.querySelectorAll('.note-ctx-react .note-ctx-item-react')].find(e=>/^(复制绝对路径|Copy absolute path)$/.test(e.textContent.trim())&&e.getBoundingClientRect().width>0);")
         require(isinstance(menu, dict) and isinstance(menu.get('element-6066-11e4-a52e-4f735466cecf'), str), "copy-path-menu-missing")
         action = "context-copy"
-        wd("POST", f"/session/{session}/element/{menu['element-6066-11e4-a52e-4f735466cecf']}/click", {})
+        process_anchors = capture_processes(driver, binary)
+        copy_click_once(wd, f"/session/{session}/element/{menu['element-6066-11e4-a52e-4f735466cecf']}/click",
+                        env, upper, driver, process_anchors, report)
         def clipboard_matches():
             result = subprocess.run(["xclip", "-selection", "clipboard", "-o"], env=env, capture_output=True, timeout=3)
             return result.returncode == 0 and result.stdout.decode() == str(upper)
@@ -619,29 +827,40 @@ def main():
             report["failure"]["webdriver"] = error.observation
         raise
     finally:
-        if session:
+        cleanup = {"quitAttemptedInFinally": False, "quitSkippedAlreadyAttempted": bool(session and quit_state["attempted"])}
+        report["cleanupEvidence"] = cleanup
+        if session and not quit_state["attempted"]:
+            cleanup["quitAttemptedInFinally"] = True
             try:
                 stop()
-            except Exception:
+            except Exception as error:
                 report["cleanup"] = "UNCONFIRMED"
+                if isinstance(error, DriverFailure):
+                    cleanup["quitFailure"] = error.observation
+        cleanup["quitCommand"] = dict(quit_state)
         if vault is not None:
             report["dropTargets"] = drop_targets(vault)
             values = report["dropTargets"].values()
             report["drop"]["retainedNotes"] = sum(values) if all(type(value) is bool for value in values) else None
         report["dropTrace"] = read_drop_trace(output / "driver.log", trace_offset)
+        cleanup["beforeDriverTermination"] = observe_processes(driver, process_anchors)
+        cleanup["driverTermination"] = terminate_driver(driver)
+        cleanup["afterDriverTermination"] = observe_processes(driver, process_anchors)
+        if driver is not None and cleanup["driverTermination"]["exit"]["state"] not in ("EXITED", "SIGNALED"):
+            report["cleanup"] = "UNCONFIRMED"
+        try:
+            if log is not None:
+                log.close()
+            if socket_root is not None:
+                shutil.rmtree(socket_root)
+        except OSError:
+            report["cleanup"] = "UNCONFIRMED"
+        cleanup_failed_after_success = report["status"] == "PASS" and "cleanup" in report
+        if cleanup_failed_after_success:
+            report.update(status="FAIL", failure={"phase": "quit", "action": "driver-cleanup", "code": "driver-cleanup-incomplete"})
         (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-        if driver is not None:
-            try:
-                os.killpg(driver.pid, signal.SIGTERM)
-                driver.wait(timeout=10)
-            except (ProcessLookupError, subprocess.TimeoutExpired):
-                if driver.poll() is None:
-                    os.killpg(driver.pid, signal.SIGKILL)
-                    driver.wait(timeout=5)
-        if log is not None:
-            log.close()
-        if socket_root is not None:
-            shutil.rmtree(socket_root)
+        if cleanup_failed_after_success:
+            raise SmokeFailure("driver-cleanup-incomplete")
 
 
 if __name__ == "__main__":
