@@ -171,6 +171,30 @@ def bounded_drop_trace(raw):
     return result
 
 
+def bounded_attachment_open_trace(raw):
+    """Closed projection of the sanitized attachment-open evidence."""
+    raw = raw if isinstance(raw, dict) else {}
+    count = raw.get("readBytes")
+    result = {"state": "UNAVAILABLE" if raw.get("state") == "UNAVAILABLE" else "NOT_OBSERVED",
+              "readBytes": count if type(count) is int and 0 <= count <= 65536 else 0,
+              "truncated": raw.get("truncated") is True, "records": []}
+    rows = raw.get("records") if isinstance(raw.get("records"), list) else []
+    for item in rows[:8]:
+        if (not isinstance(item, dict) or item.get("route") not in smoke.ATTACHMENT_ROUTES
+                or item.get("status") not in smoke.ATTACHMENT_STATUSES or item.get("opener") not in smoke.ATTACHMENT_OPENERS):
+            continue
+        exit_code, digest, elapsed = item.get("exitCode"), item.get("sha256"), item.get("elapsedMs")
+        result["records"].append({"route": item["route"], "status": item["status"], "opener": item["opener"],
+            "exitCode": exit_code if type(exit_code) is int and 0 <= exit_code <= 255 else None,
+            "sha256": digest if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) else None,
+            "elapsedMs": elapsed if type(elapsed) is int and 0 <= elapsed <= 60000 else 0})
+    if result["records"]:
+        result["state"] = "OBSERVED"
+    if len(rows) > 8:
+        result["truncated"] = True
+    return result
+
+
 def bounded_report(raw):
     """Closed projection. No child text, path, clipboard value, log or environment."""
     raw = raw if isinstance(raw, dict) else {}
@@ -198,6 +222,7 @@ def bounded_report(raw):
         value = raw.get(name) if isinstance(raw.get(name), dict) else {}
         result[name] = {key: value.get(key) if type(value.get(key)) is bool else None for key in keys}
     result["dropTrace"] = bounded_drop_trace(raw.get("dropTrace"))
+    result["attachmentOpen"] = bounded_attachment_open_trace(raw.get("attachmentOpen"))
     policy = raw.get("attachmentPolicy") if isinstance(raw.get("attachmentPolicy"), dict) else {}
     result["attachmentPolicy"] = {name: expected if policy.get(name) == expected else None
         for name, expected in (("selected", "copy"), ("readBack", "copy"), ("method", "PRODUCTION_PREFERENCE_IPC"))}
@@ -301,6 +326,10 @@ def validate_notes(raw, build, source, scripts):
             and handoff.get("externalApplicationDisplay") == "NOT_RUN", "os-handoff-readback-missing")
     require(raw.get("quitRequests") == [{"ipcReplyObserved": True, "priorProcessIdentitiesGone": True, "exitStatus": "NOT_OBSERVED"}] * 2,
             "application-quit-evidence-incomplete")
+    opened = raw.get("attachmentOpen", {})
+    records = opened.get("records", [])
+    require(opened.get("state") == "OBSERVED" and opened.get("truncated") is False and records
+            and records[0].get("route") in ("SYSTEM_OPEN", "MATERIAL_DETAIL"), "attachment-open-diagnostic-not-observed")
     require(all(raw.get(name) == "NOT_RUN" for name in
             ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer")), "unverified-coverage-claimed")
 

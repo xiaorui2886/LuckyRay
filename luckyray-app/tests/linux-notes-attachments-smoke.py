@@ -58,6 +58,9 @@ TRANSPORT_CODES = frozenset(("TIMEOUT", "REMOTE_DISCONNECT", "CONNECTION_RESET",
 FORWARD_HYPER = ("NONE", "INCOMPLETE_MESSAGE", "CANCELED", "CLOSED", "TIMEOUT", "PARSE", "BODY_WRITE_ABORTED", "USER", "OTHER")
 FORWARD_IO = ("NONE", "CONNECTION_REFUSED", "CONNECTION_RESET", "CONNECTION_ABORTED", "BROKEN_PIPE", "TIMEOUT", "NOT_CONNECTED", "UNEXPECTED_EOF", "WOULD_BLOCK", "OTHER")
 MEDIA_OPEN_FLAGS = ("hoverApplied", "toolbarVisible", "toolbarFullyVisible", "buttonEnabled", "controlsFullyVisible", "buttonCenterHit", "allButtonCentersHit")
+ATTACHMENT_ROUTES = ("NOTE_JUMP", "SYSTEM_OPEN", "MATERIAL_DETAIL")
+ATTACHMENT_STATUSES = ("NONE", "MATERIAL_OPENED", "MATERIAL_PREVIEW_PENDING", "MATERIAL_NOT_FOUND")
+ATTACHMENT_OPENERS = ("NOT_ATTEMPTED", "LAUNCHED", "FAILED")
 MEDIA_OPEN_PROBE = """
 const button=[...document.querySelectorAll(arguments[0])].find(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0);
 const empty={hoverApplied:false,toolbarVisible:false,toolbarFullyVisible:false,buttonEnabled:false,controlsFullyVisible:false,buttonCenterHit:false,allButtonCentersHit:false};
@@ -118,6 +121,42 @@ def read_drop_trace(path, offset):
             break
         count = int(match[2])
         report["records"].append({"stage": match[1], "count": min(count, 2), "overflow": count > 2, "hit": match[3] == "true"})
+    if report["records"]:
+        report["state"] = "OBSERVED"
+    return report
+
+
+def read_attachment_open_trace(path, offset):
+    """At most 64 KiB of this run's owned log; only exact closed-code lines."""
+    report = {"state": "UNAVAILABLE", "readBytes": 0, "truncated": False, "records": []}
+    if type(offset) is not int or offset < 0:
+        return report
+    try:
+        with path.open("rb") as stream:
+            size = stream.seek(0, 2)
+            if offset > size:
+                return report
+            stream.seek(offset)
+            data = stream.read(65536)
+    except OSError:
+        return report
+    report.update(state="NOT_OBSERVED", readBytes=len(data), truncated=size - offset > len(data))
+    pattern = (r"\[notes-attachment-open\] route=(" + "|".join(ATTACHMENT_ROUTES)
+               + r") status=(" + "|".join(ATTACHMENT_STATUSES) + r") opener=(" + "|".join(ATTACHMENT_OPENERS)
+               + r") exit=(NOT_EXPOSED|0|[1-9][0-9]{0,2}) sha256=(none|[0-9a-f]{64}) elapsedMs=([0-9]{1,5})")
+    for line in data.decode("utf8", errors="replace").splitlines(keepends=True):
+        if not line.endswith("\n"):
+            continue
+        line = line.rstrip("\r\n")
+        match = re.fullmatch(pattern, line)
+        if not match:
+            continue
+        if len(report["records"]) == 8:
+            report["truncated"] = True
+            break
+        report["records"].append({"route": match[1], "status": match[2], "opener": match[3],
+            "exitCode": None if match[4] == "NOT_EXPOSED" else int(match[4]),
+            "sha256": None if match[5] == "none" else match[5], "elapsedMs": int(match[6])})
     if report["records"]:
         report["state"] = "OBSERVED"
     return report
@@ -650,7 +689,7 @@ def main():
         require(sys.platform == "linux" and stream.read(4) == b"\x7fELF", "real-linux-main-required")
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
-    socket_root = log = driver = trace_offset = vault = None
+    socket_root = log = driver = trace_offset = attachment_open_offset = vault = None
     process_anchors = {"driver": None, "app": {}, "nativeDriver": {}}
     quit_state = {"attempted": False, "ipcReplyObserved": False}
     http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -907,6 +946,7 @@ def main():
         preview()
         phase = "attachment-open"
         action = "attachment-hover"
+        attachment_open_offset = (output / "driver.log").stat().st_size
         preview_image = element('#page-notes .note-preview .note-media[data-kind=image] img')
         wd("POST", f"/session/{session}/actions", {"actions": [{"type": "pointer", "id": "context", "parameters": {"pointerType": "mouse"},
             "actions": [{"type": "pointerMove", "origin": {"element-6066-11e4-a52e-4f735466cecf": preview_image}, "x": 0, "y": 0}]}]})
@@ -994,6 +1034,7 @@ def main():
             values = report["dropTargets"].values()
             report["drop"]["retainedNotes"] = sum(values) if all(type(value) is bool for value in values) else None
         report["dropTrace"] = read_drop_trace(output / "driver.log", trace_offset)
+        report["attachmentOpen"] = read_attachment_open_trace(output / "driver.log", attachment_open_offset)
         cleanup["beforeDriverTermination"] = observe_processes(driver, process_anchors)
         cleanup["driverTermination"] = terminate_driver(driver)
         cleanup["afterDriverTermination"] = observe_processes(driver, process_anchors)

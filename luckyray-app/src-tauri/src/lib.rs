@@ -191,6 +191,7 @@ pub mod native_messaging;
 mod linux_browser_connection;
 #[cfg(target_os = "linux")]
 mod native_messaging_linux;
+mod notes_attachment_open_diagnostics;
 mod notes_inline;
 mod owned_process;
 mod runtime_profile;
@@ -648,6 +649,28 @@ fn notes_drop_diagnostic(caller: tauri::Webview, stage: String, count: usize, hi
     Ok(())
 }
 
+/// Records which branch "open attachment" took and what the UI said about it.
+/// Only closed codes leave the renderer; `path` is used solely for a content
+/// digest and is never logged. Unknown codes are dropped by the recorder.
+#[tauri::command]
+fn notes_attachment_open_diagnostic(
+    caller: tauri::Webview,
+    route: String,
+    status: String,
+    opener: String,
+    path: Option<String>,
+) -> Result<(), String> {
+    require_main_caller(&caller)?;
+    notes_attachment_open_diagnostics::record(
+        &route,
+        &status,
+        &opener,
+        path.as_deref().map(|value| std::path::Path::new(value)),
+        None,
+    );
+    Ok(())
+}
+
 #[cfg(debug_assertions)]
 fn notes_drop_error_stage(raw: &str) -> &'static str {
     if raw.len() > 4096 { return "native-error-other"; }
@@ -880,6 +903,7 @@ pub fn run() {
             extension_packages::manage_extension_packages,
             extension_runtime::extension_runtime,
             notes_drop_diagnostic,
+            notes_attachment_open_diagnostic,
             minimize_window,
             hide_window,
             show_window,

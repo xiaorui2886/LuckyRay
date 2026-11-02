@@ -24,10 +24,25 @@ pub(crate) fn perform(
     catalog: &MaterialCatalog,
     request: &MaterialShellRequest,
 ) -> Result<(), String> {
-    perform_with_launcher(catalog, request, |path, action| match action {
-        MaterialShellAction::Open => tauri_plugin_opener::open_path(path, None::<&str>)
-            .map_err(|error| format!("material-shell-launch-failed: {error}")),
-        MaterialShellAction::Reveal => reveal(path),
+    perform_with_launcher(catalog, request, |path, action| {
+        let began = std::time::Instant::now();
+        let launched = match action {
+            MaterialShellAction::Open => tauri_plugin_opener::open_path(path, None::<&str>)
+                .map_err(|error| format!("material-shell-launch-failed: {error}")),
+            MaterialShellAction::Reveal => reveal(path),
+        };
+        // Second hop of the attachment-open route: the inspector's own Open
+        // action. Evidence stays closed (codes plus a content digest only).
+        if action == MaterialShellAction::Open {
+            crate::notes_attachment_open_diagnostics::record(
+                "MATERIAL_DETAIL",
+                "NONE",
+                if launched.is_ok() { "LAUNCHED" } else { "FAILED" },
+                Some(path),
+                Some(began.elapsed().as_millis()),
+            );
+        }
+        launched
     })
 }
 

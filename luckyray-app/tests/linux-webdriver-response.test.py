@@ -19,6 +19,7 @@ spec.loader.exec_module(smoke)
 
 class Handler(BaseHTTPRequestHandler):
     calls = {}
+    bodies = {}
 
     def do_GET(self):
         self.calls[self.path] = self.calls.get(self.path, 0) + 1
@@ -43,6 +44,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.calls[self.path] = self.calls.get(self.path, 0) + 1
+        # http.client sends the request headers and body in two send() calls.
+        # Closing while any declared body byte is still unread makes the Linux
+        # kernel answer with RST instead of FIN, so this fixture would surface
+        # CONNECTION_RESET where the scenario expects a clean remote disconnect.
+        # Consume exactly the declared body before closing the connection.
+        length = self.headers.get("Content-Length")
+        if length is None or not length.isdigit() or int(length) > 65536:
+            raise AssertionError("synthetic fixture expects one bounded declared body")
+        self.bodies.setdefault(self.path, []).append(self.rfile.read(int(length)))
         self.connection.shutdown(socket.SHUT_RDWR)
         self.connection.close()
 
@@ -91,6 +101,18 @@ class ResponseTests(unittest.TestCase):
         with self.assertRaises(http.client.RemoteDisconnected):
             smoke.webdriver_value(self.http, request, 2)
         self.assertEqual(Handler.calls["/write-reset"], 1)
+
+    def test_disconnect_fixture_reads_the_declared_body_before_closing(self):
+        # http.client sends the headers and the 2-byte body in two send() calls.
+        # A fixture that closes while the declared body is still unread gets RST
+        # instead of FIN on Linux, i.e. a spuriously reset "clean disconnect".
+        # The fixture must therefore consume exactly the declared body.
+        request = urllib.request.Request(f"http://127.0.0.1:{self.server.server_port}/body-disconnect",
+                                         data=b"{}", method="POST")
+        with self.assertRaises(http.client.RemoteDisconnected):
+            smoke.webdriver_value(self.http, request, .5)
+        self.assertEqual(Handler.calls["/body-disconnect"], 1)
+        self.assertEqual(Handler.bodies["/body-disconnect"], [b"{}"])
 
     def test_autostart_read_accepts_only_an_observed_boolean_ipc_reply(self):
         for result in (False, True):

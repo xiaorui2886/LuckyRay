@@ -33,7 +33,7 @@ import { useApplicationModalSurface } from "../../app/applicationModalIsolation"
 import { useI18n } from "../../core/i18n/index";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, SetStateAction } from "react";
 import { flushSync } from "react-dom";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { getLuckyRayBridgeSync } from "../../core/bridge/luckyRayBridge";
 import type { BridgeNotesInlineApplyResult, BridgeNotesInlinePreview, BridgeNotesVaultMarkdownEmbed, BridgeNotesVaultMarkdownIndex, BridgeNotesVaultMarkdownIndexDocument, BridgeNotesVaultMarkdownWikiLink, BridgeVaultMetadata } from "../../core/bridge/bridgeTypes";
 import { hasMarkdownTagReferencesInText } from "../../core/markdown/inlineTags";
@@ -246,6 +246,18 @@ const NOTES_TITLEBAR_PANE_NEW_EVENT = "luckyray:notes-titlebar-pane-new";
 const NOTES_TITLEBAR_PANE_CLOSE_EVENT = "luckyray:notes-titlebar-pane-close";
 const NOTES_SPLIT_DIVIDER_SIZE = 8;
 const NOTES_SPLIT_LIVE_FIRST_TRACK = "--notes-split-live-first-track";
+
+// Sanitized evidence for the "open attachment" click: the branch taken, the UI
+// status kind and the opener outcome are closed codes. The native recorder
+// derives a content digest from the path; no path, name or content is logged.
+type AttachmentOpenRoute = "NOTE_JUMP" | "SYSTEM_OPEN" | "MATERIAL_DETAIL";
+type AttachmentOpenStatus = "NONE" | "MATERIAL_OPENED" | "MATERIAL_PREVIEW_PENDING" | "MATERIAL_NOT_FOUND";
+type AttachmentOpenOpener = "NOT_ATTEMPTED" | "LAUNCHED" | "FAILED";
+
+function recordAttachmentOpen(route: AttachmentOpenRoute, status: AttachmentOpenStatus, opener: AttachmentOpenOpener, filePath?: string) {
+  if (!isTauri()) return;
+  void invoke("notes_attachment_open_diagnostic", { route, status, opener, path: filePath ?? null }).catch(() => undefined);
+}
 
 type NotesSplitDividerDragState = {
   splitId: string;
@@ -4494,6 +4506,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     if (assetId.startsWith(REAL_VAULT_MARKDOWN_EMBED_PREFIX)) {
       const noteId = assetId.slice(REAL_VAULT_MARKDOWN_EMBED_PREFIX.length);
       if (isRealVaultNoteId(noteId)) {
+        recordAttachmentOpen("NOTE_JUMP", "NONE", "NOT_ATTEMPTED");
         void selectNote(noteId, { scrollList: true });
         return;
       }
@@ -4502,15 +4515,18 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       const absolutePath = realVaultAssetOpenPathRef.current.get(assetId);
       const label = assetId.slice(REAL_VAULT_ASSET_PREFIX.length);
       if (!absolutePath) {
+        recordAttachmentOpen("SYSTEM_OPEN", "MATERIAL_NOT_FOUND", "NOT_ATTEMPTED");
         setStatus(t("editor.notes.status.materialNotFoundNamed", { label }));
         return;
       }
       void (async () => {
         const opened = bridge?.openFilePath ? await bridge.openFilePath(absolutePath) : false;
+        recordAttachmentOpen("SYSTEM_OPEN", opened ? "MATERIAL_OPENED" : "MATERIAL_PREVIEW_PENDING", opened ? "LAUNCHED" : "FAILED", absolutePath);
         setStatus(opened ? t("editor.notes.status.materialOpened", { label }) : t("editor.notes.status.materialFoundPreviewPending", { label }));
       })();
       return;
     }
+    recordAttachmentOpen("MATERIAL_DETAIL", "NONE", "NOT_ATTEMPTED");
     focusEntity("asset", assetId, { action: "detail", source: "notes-embed" });
     window.location.hash = "#materials";
   }, [bridge, selectNote, t]);

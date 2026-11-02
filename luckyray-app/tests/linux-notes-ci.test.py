@@ -73,6 +73,11 @@ class EvidenceTests(unittest.TestCase):
             "dropTrace": {"state": "OBSERVED", "readBytes": 1200, "truncated": False,
                 "records": [{"stage": stage, "count": count, "overflow": False, "hit": True}
                     for stage, count in (("native-import-start", 2), ("native-source-active", 0), ("native-import-ok", 2), ("native-import-failed", 0))]},
+            "attachmentOpen": {"state": "OBSERVED", "readBytes": 640, "truncated": False,
+                "records": [{"route": "MATERIAL_DETAIL", "status": "NONE", "opener": "NOT_ATTEMPTED", "exitCode": None,
+                             "sha256": None, "elapsedMs": 0},
+                            {"route": "MATERIAL_DETAIL", "status": "NONE", "opener": "LAUNCHED", "exitCode": None,
+                             "sha256": hashlib.sha256(ci.smoke.png_bytes()).hexdigest(), "elapsedMs": 42}]},
             "attachmentPolicy": {"selected": "copy", "readBack": "copy", "method": "PRODUCTION_PREFERENCE_IPC"},
             "mediaOpen": {"method": "WEBDRIVER_POINTER_MOVE", "clickAttempts": 1, **{name: True for name in ci.smoke.MEDIA_OPEN_FLAGS}},
             "imageCopies": [{"session": n, "pngCount": 1, "matchingDigestCount": 1,
@@ -124,6 +129,11 @@ class EvidenceTests(unittest.TestCase):
         changes.extend([lambda r: r["dropTrace"]["records"][2].update(stage="native-import-partial"),
                         lambda r: r["dropTrace"].update(state="NOT_OBSERVED", records=[]),
                         lambda r: r["dropTrace"].update(truncated=True)])
+        changes.extend([lambda r: r["attachmentOpen"].update(state="UNAVAILABLE", records=[]),
+                        lambda r: r["attachmentOpen"].update(records=[]),
+                        lambda r: r["attachmentOpen"].update(truncated=True),
+                        lambda r: r["attachmentOpen"]["records"][0].update(route="NOTE_JUMP"),
+                        lambda r: r.pop("attachmentOpen")])
         for index, change in enumerate(changes):
             with self.subTest(index=index):
                 raw = copy.deepcopy(self.raw)
@@ -234,6 +244,72 @@ class EvidenceTests(unittest.TestCase):
             self.assertTrue(all(item["count"] == 2 and item["overflow"] for item in report["records"]))
             self.assertEqual(ci.smoke.read_drop_trace(log, None)["state"], "UNAVAILABLE")
             self.assertEqual(ci.smoke.read_drop_trace(log, -1)["state"], "UNAVAILABLE")
+
+    def test_attachment_open_trace_projection_is_closed_and_never_exports_free_text(self):
+        with tempfile.TemporaryDirectory(prefix="notes-attachment-trace-offline-") as temporary:
+            log = Path(temporary) / "owned-driver.log"
+            prefix = b"hunter2 /home/real-user/notes\n"
+            digest = hashlib.sha256(ci.smoke.png_bytes()).hexdigest()
+            body = ("[notes-attachment-open] route=MATERIAL_DETAIL status=NONE opener=NOT_ATTEMPTED "
+                    "exit=NOT_EXPOSED sha256=none elapsedMs=0\n"
+                    "[notes-attachment-open] route=MATERIAL_DETAIL status=NONE opener=LAUNCHED "
+                    "exit=NOT_EXPOSED sha256=" + digest + " elapsedMs=42\n"
+                    "[notes-attachment-open] route=SYSTEM_OPEN status=MATERIAL_OPENED opener=LAUNCHED "
+                    "exit=7 sha256=none elapsedMs=1200\n"
+                    "[notes-attachment-open] route=hunter2 status=NONE opener=LAUNCHED exit=NOT_EXPOSED sha256=none elapsedMs=1\n"
+                    "[notes-attachment-open] route=SYSTEM_OPEN status=hunter2 opener=LAUNCHED exit=NOT_EXPOSED sha256=none elapsedMs=1\n"
+                    "[notes-attachment-open] route=SYSTEM_OPEN status=NONE opener=hunter2 exit=NOT_EXPOSED sha256=none elapsedMs=1\n"
+                    "[notes-attachment-open] route=SYSTEM_OPEN status=NONE opener=LAUNCHED "
+                    "exit=NOT_EXPOSED sha256=/home/real-user/hunter2.png elapsedMs=1\n"
+                    "[notes-attachment-open] route=SYSTEM_OPEN status=NONE opener=LAUNCHED exit=NOT_EXPOSED sha256=none\n"
+                    "error hunter2 /home/real-user/private.png\n"
+                    "[notes-attachment-open] route=SYSTEM_OPEN status=NONE opener=FAILED exit=NOT_EXPOSED sha256=none elapsedMs=1")
+            log.write_bytes(prefix + body.encode())
+            report = ci.smoke.read_attachment_open_trace(log, len(prefix))
+            self.assertEqual([(item["route"], item["status"], item["opener"], item["exitCode"], item["elapsedMs"])
+                              for item in report["records"]],
+                [("MATERIAL_DETAIL", "NONE", "NOT_ATTEMPTED", None, 0), ("MATERIAL_DETAIL", "NONE", "LAUNCHED", None, 42),
+                 ("SYSTEM_OPEN", "MATERIAL_OPENED", "LAUNCHED", 7, 1200)])
+            self.assertEqual(report["records"][1]["sha256"], digest)
+            self.assertIsNone(report["records"][0]["sha256"])
+            self.assertEqual(report["state"], "OBSERVED")
+            self.assertFalse(report["truncated"])
+            self.assertNotIn("hunter2", json.dumps(report))
+            self.assertNotIn("/home", json.dumps(report))
+            self.assertEqual(ci.bounded_attachment_open_trace(report), report)
+            raw = copy.deepcopy(self.raw)
+            raw["attachmentOpen"] = {**report, "path": "hunter2", "records": report["records"] + [
+                {"route": "hunter2", "status": "NONE", "opener": "LAUNCHED", "sha256": None, "exitCode": None, "elapsedMs": 0}]}
+            self.assertNotIn("hunter2", json.dumps(ci.bounded_report(raw)))
+            self.assertEqual(ci.smoke.read_attachment_open_trace(log, None)["state"], "UNAVAILABLE")
+            self.assertEqual(ci.smoke.read_attachment_open_trace(log, -1)["state"], "UNAVAILABLE")
+            self.assertEqual(ci.smoke.read_attachment_open_trace(Path(temporary) / "absent.log", 0)["state"], "UNAVAILABLE")
+
+    def test_attachment_open_trace_reads_and_records_are_bounded(self):
+        with tempfile.TemporaryDirectory(prefix="notes-attachment-limit-offline-") as temporary:
+            log = Path(temporary) / "owned-driver.log"
+            log.write_bytes(b"[notes-attachment-open] route=SYSTEM_OPEN status=NONE opener=NOT_ATTEMPTED "
+                            b"exit=NOT_EXPOSED sha256=none elapsedMs=0\n" * 2000)
+            report = ci.smoke.read_attachment_open_trace(log, 0)
+            self.assertEqual(report["readBytes"], 65536)
+            self.assertEqual(len(report["records"]), 8)
+            self.assertTrue(report["truncated"])
+            self.assertEqual(ci.bounded_attachment_open_trace(report)["truncated"], True)
+            overflow = {"state": "OBSERVED", "readBytes": 10, "truncated": False,
+                        "records": [{"route": "SYSTEM_OPEN", "status": "NONE", "opener": "LAUNCHED",
+                                     "exitCode": 400, "sha256": "z" * 64, "elapsedMs": 99999}] * 9}
+            projected = ci.bounded_attachment_open_trace(overflow)
+            self.assertTrue(projected["truncated"])
+            self.assertEqual(len(projected["records"]), 8)
+            self.assertEqual(projected["records"][0], {"route": "SYSTEM_OPEN", "status": "NONE", "opener": "LAUNCHED",
+                                                       "exitCode": None, "sha256": None, "elapsedMs": 0})
+
+    def test_attachment_open_trace_offset_past_the_owned_log_is_unavailable(self):
+        with tempfile.TemporaryDirectory(prefix="notes-attachment-offset-offline-") as temporary:
+            log = Path(temporary) / "owned-driver.log"
+            log.write_bytes(b"[notes-attachment-open] route=SYSTEM_OPEN status=NONE opener=LAUNCHED "
+                            b"exit=NOT_EXPOSED sha256=none elapsedMs=1\n")
+            self.assertEqual(ci.smoke.read_attachment_open_trace(log, log.stat().st_size + 1)["state"], "UNAVAILABLE")
 
     def test_drop_target_probe_reads_only_the_two_owned_targets(self):
         with tempfile.TemporaryDirectory(prefix="notes-targets-offline-") as temporary:
@@ -721,13 +797,33 @@ class TransportEvidenceTests(unittest.TestCase):
                     self.assertNotIn("hunter2", json.dumps(raised.exception.observation))
 
     def test_real_loopback_post_disconnect_reset_and_timeout_are_not_replayed(self):
-        for mode, expected in (("close", "REMOTE_DISCONNECT"), ("reset", "CONNECTION_RESET"), ("delay", "TIMEOUT")):
+        # http.client sends the headers and the POST body in two send() calls.
+        # Closing while any body byte is still unread makes the Linux kernel
+        # answer with RST instead of FIN, so "close" could surface as
+        # CONNECTION_RESET depending on segment timing. Consume exactly the
+        # declared body first; only "reset" then forces RST via SO_LINGER=0.
+        # "late-body" pins the timing that previously produced the RST.
+        real_send = http.client.HTTPConnection.send
+        def late_body_send(connection, data):
+            if data == b"{}":
+                threading.Event().wait(.01)
+            return real_send(connection, data)
+        for mode, expected in (("close", "REMOTE_DISCONNECT"), ("late-body", "REMOTE_DISCONNECT"),
+                               ("reset", "CONNECTION_RESET"), ("delay", "TIMEOUT")):
             requests = []
+            bodies = []
             class Handler(BaseHTTPRequestHandler):
                 def do_POST(self):
                     requests.append(self.command)
+                    length = self.headers.get("Content-Length")
+                    if length is None or not length.isdigit() or int(length) > 65536:
+                        raise AssertionError("synthetic fixture expects one bounded declared body")
+                    bodies.append(self.rfile.read(int(length)))
                     if mode == "delay":
                         threading.Event().wait(.2)
+                    elif mode == "late-body":
+                        # Without the read above, the late body would now sit unread.
+                        threading.Event().wait(.03)
                     elif mode == "reset":
                         self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
                     self.close_connection = True
@@ -740,11 +836,14 @@ class TransportEvidenceTests(unittest.TestCase):
             try:
                 request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/session/owned/element/owned/click", method="POST", data=b"{}")
                 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                with self.assertRaises(ci.smoke.DriverFailure) as raised:
-                    ci.smoke.webdriver_command(opener, request, .05)
-                self.assertEqual(raised.exception.observation["transport"], expected)
+                timeout = .5 if mode == "late-body" else .05
+                with mock.patch.object(http.client.HTTPConnection, "send", late_body_send if mode == "late-body" else real_send), \
+                        self.assertRaises(ci.smoke.DriverFailure) as raised:
+                    ci.smoke.webdriver_command(opener, request, timeout)
+                self.assertEqual(raised.exception.observation["transport"], expected, mode)
                 self.assertEqual(raised.exception.observation["responseState"], "UNCONFIRMED")
                 self.assertEqual(requests, ["POST"])
+                self.assertEqual(bodies, [b"{}"])
             finally:
                 server.shutdown(); server.server_close(); worker.join(timeout=1)
 
