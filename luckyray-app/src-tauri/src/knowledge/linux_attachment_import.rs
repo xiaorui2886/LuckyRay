@@ -309,7 +309,7 @@ impl KnowledgeService {
                     result.issues.push(AttachmentOperationIssue {
                         document: file.relative_path.clone(),
                         target: String::new(),
-                        status: failure.code,
+                        status: failure.code.to_owned(),
                     });
                     break;
                 }
