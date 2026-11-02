@@ -32,6 +32,14 @@ fn opened(fd: i32) -> io::Result<File> {
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 }
+fn stat_entry(fd: i32, entry: &OsStr) -> io::Result<libc::stat> {
+    let entry = name(entry)?;
+    let mut meta: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstatat(fd, entry.as_ptr(), &mut meta, libc::AT_SYMLINK_NOFOLLOW) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(meta)
+}
 pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -240,16 +248,21 @@ impl Directory {
     /// publication. This observation grants no authority to change that inode.
     pub(crate) fn entry_info(&self, entry: &OsStr) -> io::Result<EntryInfo> {
         self.current()?;
-        let entry = name(entry)?;
-        let mut meta: libc::stat = unsafe { std::mem::zeroed() };
-        if unsafe { libc::fstatat(self.file.as_raw_fd(), entry.as_ptr(), &mut meta, libc::AT_SYMLINK_NOFOLLOW) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
+        let meta = stat_entry(self.file.as_raw_fd(), entry)?;
         if meta.st_mode & libc::S_IFMT != libc::S_IFREG {
             return Err(invalid());
         }
         self.current()?;
         Ok(EntryInfo { device: meta.st_dev as u64, inode: meta.st_ino, mode: meta.st_mode as u32 })
+    }
+
+    /// Read-only classification for scans. This never follows a symlink and
+    /// does not grant the regular-file authority required by entry_info.
+    pub(crate) fn entry_is_directory(&self, entry: &OsStr) -> io::Result<bool> {
+        self.current()?;
+        let meta = stat_entry(self.file.as_raw_fd(), entry)?;
+        self.current()?;
+        Ok(meta.st_mode & libc::S_IFMT == libc::S_IFDIR)
     }
     fn open_regular_with_access(&self, entry: &OsStr, access: i32) -> io::Result<File> {
         self.current()?;

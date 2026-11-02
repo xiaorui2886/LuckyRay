@@ -233,12 +233,12 @@ pub(super) fn snapshot(root: &Directory) -> stdio::Result<RecoverySnapshot> {
                     }),
                 }
             } else if layout::data_path(value) {
-                let info = match directory.entry_info(&name) {
-                    Ok(info) => info,
+                let is_directory = match directory.entry_is_directory(&name) {
+                    Ok(value) => value,
                     Err(error) if error.kind() == stdio::ErrorKind::NotFound => continue,
                     Err(error) => return Err(error),
                 };
-                if info.mode & u32::from(libc::S_IFMT) == u32::from(libc::S_IFDIR) {
+                if is_directory {
                     pending.push(relative);
                 }
             }
@@ -371,6 +371,16 @@ mod tests {
         assert!(item.can_restore);
         assert!(!item.pending);
         root.child(OsStr::new("other"), true).unwrap();
+        assert!(root.entry_is_directory(OsStr::new("other")).unwrap());
+        assert!(root.entry_info(OsStr::new("other")).is_err());
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(
+            outside.path().join(format!(".lrk-remove-{}.json", "e".repeat(32))),
+            b"synthetic outside record must not be scanned",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(outside.path(), path.join("linked")).unwrap();
+        assert!(!root.entry_is_directory(OsStr::new("linked")).unwrap());
         assert!(copy_version(
             &root,
             &item.record_path,
@@ -432,9 +442,12 @@ mod tests {
             || Ok(()),
         )
         .unwrap();
-        let updated = snapshot(&root)
-            .unwrap()
-            .records
+        let scanned = snapshot(&root).unwrap();
+        assert!(!scanned.scan_incomplete);
+        assert!(scanned.records.iter().all(|item| !item.record_path.starts_with("linked/")));
+        assert!(scanned.issues.iter().all(|item| !item.record_path.starts_with("linked/")));
+        assert!(!root.entry_is_directory(OsStr::new("recovered.md")).unwrap());
+        let updated = scanned.records
             .into_iter()
             .find(|item| item.can_restore)
             .unwrap();
