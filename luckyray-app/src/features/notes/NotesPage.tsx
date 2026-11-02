@@ -5532,8 +5532,13 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
 
   const vaultAbsolutePath = useCallback((relativePath: string | null | undefined) => {
     if (!currentVault) return "";
-    const root = currentVault.rootPath.replace(/[\\/]+$/, "");
     const normalized = normalizeVaultRelativePath(relativePath || "");
+    // Native POSIX vault roots use '/'; leave Windows/UNC spelling below intact.
+    if (currentVault.rootPath.startsWith("/") && !currentVault.rootPath.startsWith("//")) {
+      const root = currentVault.rootPath.replace(/\/+$/, "") || "/";
+      return normalized ? `${root === "/" ? "" : root}/${normalized}` : root;
+    }
+    const root = currentVault.rootPath.replace(/[\\/]+$/, "");
     return normalized ? `${root}\\${normalized.replace(/\//g, "\\")}` : root;
   }, [currentVault]);
 

@@ -1,6 +1,11 @@
+function isPosixAbsolutePath(value: string) {
+  // Keep forward-slash UNC inputs on the existing Windows normalization path.
+  return value.startsWith("/") && !value.startsWith("//");
+}
+
 function decodeFileUriPath(value: string) {
   const raw = value.trim();
-  if (!raw || !raw.toLowerCase().startsWith("file:")) return raw;
+  if (!raw || !raw.toLowerCase().startsWith("file:")) return value;
 
   try {
     const url = new URL(raw);
@@ -11,7 +16,7 @@ function decodeFileUriPath(value: string) {
     }
     if (/^\/[a-zA-Z]:/.test(path)) path = path.slice(1);
     if (/^\/[a-zA-Z]\|/.test(path)) path = `${path[1]}:${path.slice(3)}`;
-    return path.replace(/\//g, "\\");
+    return path;
   } catch {
     const fallback = raw.replace(/^file:\/*/i, "");
     try {
@@ -23,7 +28,10 @@ function decodeFileUriPath(value: string) {
 }
 
 export function normalizeDroppedLocalPath(value: string) {
-  let path = decodeFileUriPath(value).trim().replace(/\//g, "\\");
+  const decoded = decodeFileUriPath(value);
+  // POSIX backslashes, case and trailing whitespace are filename characters.
+  if (isPosixAbsolutePath(decoded)) return decoded;
+  let path = decoded.trim().replace(/\//g, "\\");
   if (!path) return "";
 
   if (/^\\\\\?\\UNC\\/i.test(path)) {
@@ -49,7 +57,7 @@ export function dedupeDroppedLocalPaths(values: Iterable<string | null | undefin
   for (const value of values) {
     const path = normalizeDroppedLocalPath(value || "");
     if (!path) continue;
-    const key = path.toLocaleLowerCase("en-US");
+    const key = isPosixAbsolutePath(path) ? path : path.toLocaleLowerCase("en-US");
     if (seen.has(key)) continue;
     seen.add(key);
     paths.push(path);
