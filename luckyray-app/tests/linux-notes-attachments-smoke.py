@@ -251,6 +251,14 @@ def webdriver_command(opener, request, timeout):
     def elapsed():
         return min(60000, max(0, round((time.monotonic() - began) * 1000)))
     try:
+        if request.get_method() == "GET" and urllib.parse.urlsplit(request.full_url).path == "/status":
+            # Startup polling owns its one deadline. Do not add the helper's
+            # second GET attempt and sleep inside an individual status probe.
+            with opener.open(request, timeout=timeout) as response:
+                body = json.load(response)
+                if not isinstance(body, dict):
+                    raise ValueError("invalid-status-response")
+                return body.get("value")
         return helpers.webdriver_value(opener, request, timeout)
     except urllib.error.HTTPError as error:
         code = "unknown-standard-error"
@@ -272,6 +280,33 @@ def webdriver_command(opener, request, timeout):
         raise DriverFailure("TRANSPORT_ERROR", operation, transport=transport_code(error), elapsed=elapsed()) from None
     except (ValueError, UnicodeError):
         raise DriverFailure("INVALID_RESPONSE", operation, elapsed=elapsed()) from None
+
+
+def wait_driver_ready(wd, driver, seconds=20):
+    """Only startup GET/status connection refusal is temporarily not ready."""
+    deadline = time.monotonic() + seconds
+    while driver.poll() is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            value = wd("GET", "/status", timeout=min(1, remaining))
+        except DriverFailure as error:
+            if (error.observation["kind"] != "TRANSPORT_ERROR"
+                    or error.observation["operation"] != "other"
+                    or error.observation["transport"] != "CONNECTION_REFUSED"
+                    or error.observation["responseState"] != "UNCONFIRMED"):
+                raise
+        else:
+            if not isinstance(value, dict) or type(value.get("ready")) is not bool:
+                raise DriverFailure("INVALID_RESPONSE", "other")
+            if value["ready"]:
+                return driver.poll() is None and time.monotonic() < deadline
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or driver.poll() is not None:
+            return False
+        time.sleep(min(.1, remaining))
+    return False
 
 
 def process_exit(code):
@@ -725,12 +760,7 @@ def main():
         driver = subprocess.Popen([str(driver_binary), "--port", str(port), "--native-port", str(native_port),
                                    "--native-driver", "/usr/bin/WebKitWebDriver"], env=env, stdout=log,
                                   stderr=subprocess.STDOUT, start_new_session=True)
-        def ready():
-            try:
-                return wd("GET", "/status", timeout=1).get("ready") is True
-            except (OSError, ValueError):
-                return False
-        require(helpers.wait_until(ready, 20), "driver-not-ready")
+        require(wait_driver_ready(wd, driver, 20), "driver-not-ready")
         phase = "main-start"
         start()
         action = "vault-setup"

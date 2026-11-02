@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import zlib
 import urllib.error
@@ -331,6 +332,125 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(ci.smoke.DriverFailure) as raised:
             ci.smoke.webdriver_command(opener, urllib.request.Request("http://127.0.0.1/session/owned/execute/sync", data=b"{}", method="POST"), 1)
         self.assertEqual(raised.exception.observation["kind"], "INVALID_RESPONSE")
+
+    def test_status_readiness_waits_for_real_delayed_listen_and_bounds_persistent_refusal(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = b'{"value":{"ready":true}}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *args):
+                pass
+        for delayed in (True, False):
+            with self.subTest(delayed=delayed):
+                server = ThreadingHTTPServer(("127.0.0.1", 0), Handler, bind_and_activate=False)
+                server.server_bind()
+                thread = None
+                if delayed:
+                    def serve():
+                        time.sleep(.25)
+                        server.server_activate()
+                        server.serve_forever(poll_interval=.01)
+                    thread = threading.Thread(target=serve, daemon=True)
+                    thread.start()
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                driver = mock.Mock(); driver.poll.return_value = None
+                attempts, refusals = [], []
+                def wd(method, suffix, timeout):
+                    attempts.append((method, suffix, timeout))
+                    request = urllib.request.Request("http://127.0.0.1:" + str(server.server_port) + suffix, method=method)
+                    try:
+                        return ci.smoke.webdriver_command(opener, request, timeout)
+                    except ci.smoke.DriverFailure as error:
+                        refusals.append(error.observation["transport"])
+                        raise
+                began = time.monotonic()
+                try:
+                    self.assertEqual(ci.smoke.wait_driver_ready(wd, driver, 2 if delayed else .25), delayed)
+                    elapsed = time.monotonic() - began
+                    self.assertTrue(refusals and all(code == "CONNECTION_REFUSED" for code in refusals))
+                    self.assertTrue(all(method == "GET" and suffix == "/status" for method, suffix, _ in attempts))
+                    self.assertTrue(all(0 < timeout <= 1 for _, _, timeout in attempts))
+                    if not delayed:
+                        self.assertTrue(.25 <= elapsed < 1)
+                finally:
+                    if thread is not None:
+                        server.shutdown()
+                    server.server_close()
+                    if thread is not None:
+                        thread.join(timeout=2)
+                        self.assertFalse(thread.is_alive())
+
+    def test_status_readiness_exited_process_never_sends_a_request(self):
+        wd = mock.Mock()
+        with subprocess.Popen([sys.executable, "-c", "pass"]) as driver:
+            self.assertEqual(driver.wait(timeout=2), 0)
+            self.assertFalse(ci.smoke.wait_driver_ready(wd, driver, 20))
+        wd.assert_not_called()
+        driver = mock.Mock(); driver.poll.side_effect = [None, 1]
+        wd = mock.Mock(return_value={"ready": True})
+        self.assertFalse(ci.smoke.wait_driver_ready(wd, driver, 20))
+        wd.assert_called_once_with("GET", "/status", timeout=1)
+
+    def test_status_readiness_does_not_swallow_protocol_or_other_transport_failures(self):
+        failures = [ci.smoke.DriverFailure("HTTP_ERROR", "other", status=500),
+                    ci.smoke.DriverFailure("INVALID_RESPONSE", "other")]
+        failures.extend(ci.smoke.DriverFailure("TRANSPORT_ERROR", "other", transport=code)
+                        for code in ci.smoke.TRANSPORT_CODES if code != "CONNECTION_REFUSED")
+        failures.append(ci.smoke.DriverFailure("TRANSPORT_ERROR", "click", transport="CONNECTION_REFUSED"))
+        failures.append(OSError("hunter2"))
+        driver = mock.Mock(); driver.poll.return_value = None
+        for failure in failures:
+            with self.subTest(kind=type(failure).__name__):
+                wd = mock.Mock(side_effect=failure)
+                with self.assertRaises(type(failure)) as raised:
+                    ci.smoke.wait_driver_ready(wd, driver, 20)
+                self.assertIs(raised.exception, failure)
+                wd.assert_called_once_with("GET", "/status", timeout=1)
+
+    def test_status_readiness_has_one_deadline_caps_probe_and_sleep_and_rejects_late_ready(self):
+        driver = mock.Mock(); driver.poll.return_value = None
+        for ready in (True, False):
+            clock, timeouts, sleeps = [0.0], [], []
+            def wd(method, suffix, timeout):
+                self.assertEqual((method, suffix), ("GET", "/status"))
+                timeouts.append(timeout)
+                clock[0] += timeout
+                return {"ready": ready}
+            def sleep(seconds):
+                sleeps.append(seconds); clock[0] += seconds
+            with mock.patch.object(ci.smoke.time, "monotonic", side_effect=lambda: clock[0]), \
+                 mock.patch.object(ci.smoke.time, "sleep", side_effect=sleep):
+                self.assertFalse(ci.smoke.wait_driver_ready(wd, driver, .25))
+            self.assertEqual(timeouts, [.25])
+            self.assertEqual(sleeps, [])
+            self.assertEqual(clock[0], .25)
+        clock, sleeps = [0.0], []
+        def sleep(seconds):
+            sleeps.append(seconds); clock[0] += seconds
+        wd = mock.Mock(return_value={"ready": False})
+        with mock.patch.object(ci.smoke.time, "monotonic", side_effect=lambda: clock[0]), \
+             mock.patch.object(ci.smoke.time, "sleep", side_effect=sleep):
+            self.assertFalse(ci.smoke.wait_driver_ready(wd, driver, .25))
+        self.assertAlmostEqual(sum(sleeps), .25)
+        self.assertTrue(all(0 < value <= .1 for value in sleeps))
+
+    def test_status_probe_has_one_attempt_and_invalid_schema_fails_closed(self):
+        request = urllib.request.Request("http://127.0.0.1/status", method="GET")
+        opener = mock.Mock(); opener.open.side_effect = http.client.RemoteDisconnected("hunter2")
+        with self.assertRaises(ci.smoke.DriverFailure) as raised:
+            ci.smoke.webdriver_command(opener, request, .25)
+        opener.open.assert_called_once_with(request, timeout=.25)
+        self.assertEqual(raised.exception.observation["transport"], "REMOTE_DISCONNECT")
+        driver = mock.Mock(); driver.poll.return_value = None
+        for value in (None, [], {}, {"ready": "true"}, {"ready": 1}):
+            wd = mock.Mock(return_value=value)
+            with self.assertRaises(ci.smoke.DriverFailure) as raised:
+                ci.smoke.wait_driver_ready(wd, driver)
+            self.assertEqual(raised.exception.observation["kind"], "INVALID_RESPONSE")
+            self.assertEqual(wd.call_count, 1)
 
     def test_failure_action_and_protocol_projection_reject_arbitrary_fields(self):
         raw = copy.deepcopy(self.raw)
