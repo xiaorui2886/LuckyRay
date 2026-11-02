@@ -150,6 +150,14 @@ pub(crate) fn no_default_acl(directory: &File) -> io::Result<()> {
     Err(attributes_unsupported())
 }
 
+pub(crate) fn private_file_metadata(file: &File) -> io::Result<()> {
+    Version::of(file)?;
+    let m = file.metadata()?;
+    if m.uid() != unsafe { libc::geteuid() } || m.gid() != unsafe { libc::getegid() }
+        || m.mode() & 0o7777 != 0o600 { return Err(conflict()); }
+    no_attributes(file)
+}
+
 impl Permissions {
     pub(crate) fn capture(file: &File) -> io::Result<Self> {
         no_attributes(file)?;
@@ -296,6 +304,59 @@ impl Directory {
             return Err(conflict());
         }
         Ok(())
+    }
+
+    pub(crate) fn try_clone(&self) -> io::Result<Self> {
+        self.verify()?;
+        Ok(Self { file: self.file.try_clone()?, path: self.path.clone(), identity: self.identity, policy: self.policy })
+    }
+
+    /// Owned child reached through this held descriptor; never a path-based mkdir.
+    pub(crate) fn child_owned(&self, name: &OsStr, create: bool, private: bool) -> io::Result<Self> {
+        if !matches!(self.policy, DirectoryPolicy::Owned | DirectoryPolicy::Private) { return Err(conflict()); }
+        self.verify()?;
+        no_attributes(&self.file)?;
+        no_default_acl(&self.file)?;
+        let component = component(name)?;
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        let mut fd = unsafe { libc::openat(self.file.as_raw_fd(), component.as_ptr(), flags) };
+        if fd < 0 && create && io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
+            if unsafe { libc::mkdirat(self.file.as_raw_fd(), component.as_ptr(), 0o700) } != 0
+                && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
+                return Err(io::Error::last_os_error());
+            }
+            self.file.sync_all()?;
+            fd = unsafe { libc::openat(self.file.as_raw_fd(), component.as_ptr(), flags) };
+        }
+        let file = owned_fd(fd)?;
+        let m = file.metadata()?;
+        if m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o7022 != 0
+            || (private && m.mode() & 0o077 != 0) { return Err(conflict()); }
+        no_attributes(&file)?;
+        no_default_acl(&file)?;
+        let child = Self { file, path: self.path.join(name), identity: (m.dev(), m.ino()),
+            policy: if private { DirectoryPolicy::Private } else { DirectoryPolicy::Owned } };
+        self.verify()?;
+        child.verify()?;
+        Ok(child)
+    }
+
+    /// Check inherited access metadata before writing any private payload bytes.
+    pub(crate) fn create_private(&self, name: &OsStr, bytes: &[u8]) -> io::Result<File> {
+        if !matches!(self.policy, DirectoryPolicy::Owned | DirectoryPolicy::Private) { return Err(conflict()); }
+        self.verify()?;
+        no_attributes(&self.file)?;
+        no_default_acl(&self.file)?;
+        let component = component(name)?;
+        let mut file = owned_fd(unsafe { libc::openat(self.file.as_raw_fd(), component.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, 0o600) })?;
+        private_file_metadata(&file)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        private_file_metadata(&file)?;
+        self.verify_named(name, &file)?;
+        self.file.sync_all()?;
+        Ok(file)
     }
 
     pub(crate) fn open_file(&self, name: &OsStr, private: bool) -> io::Result<File> {

@@ -37,7 +37,8 @@ DROP_STAGES = frozenset(("listener-ready", "listener-failed", "listener-disabled
     "classify-start", "classified-files", "classified-dirs", "owner-stale", "import-route-start", "import-route-complete", "drop-rejected",
     "source-stale", "activation-start", "activation-error", "activation-ready", "native-import-start", "native-source-active",
     "native-import-ok", "native-import-partial", "native-import-failed", "native-error-source-inactive", "native-error-vault-denied",
-    "native-error-path-denied", "native-error-policy-denied", "native-error-other", "native-result-incomplete", "native-result-readback-failed",
+    "native-error-path-denied", "native-error-policy-denied", "native-error-write-unsupported", "native-error-permissions-unsupported",
+    "native-error-name-conflict", "native-error-revision-conflict", "native-error-other", "native-result-incomplete", "native-result-readback-failed",
     "native-result-readback-changed", "native-result-partial", "native-result-other"))
 
 
@@ -287,7 +288,12 @@ def main():
         require(helpers.wait_until(ready, 20), "driver-not-ready")
         phase = "main-start"
         start()
-        invoke("create_notes_vault", {"rootPath": str(vault)})
+        created_vault = invoke("create_notes_vault", {"rootPath": str(vault)})
+        # Set up the copied-attachment scenario through the existing preference
+        # before reload, so the frontend starts with its own fresh source epoch.
+        activation = invoke("knowledge_activate_ui_source", {"vaultId": created_vault["id"]})
+        selected_policy = invoke("knowledge_set_attachment_handling_policy", {"vaultId": created_vault["id"],
+            "sourceEpoch": activation["sourceEpoch"], "policy": "copy"})
         # Reload discards any pre-bootstrap frontend snapshot. The real app
         # then activates its persisted vault through the normal startup path.
         trace_offset = (output / "driver.log").stat().st_size
@@ -295,6 +301,11 @@ def main():
         until("return !!document.querySelector('#page-notes .notes-vault-entry');", seconds=45)
         until("return document.querySelector('#page-notes .notes-vault-meta')?.textContent===arguments[0];", [str(vault)])
         report["checks"]["nativeStartup"] = "PASS"
+        # Read the persisted production choice after reload; reference remains
+        # the product default, and no importer is invoked by this setup.
+        observed_policy = invoke("knowledge_get_attachment_handling_policy", {"vaultId": created_vault["id"]})
+        require(selected_policy == observed_policy == "copy", "attachment-copy-policy-not-confirmed")
+        report["attachmentPolicy"] = {"selected": "copy", "readBack": "copy", "method": "PRODUCTION_PREFERENCE_IPC"}
         phase = "drop-import"
         position = execute("const e=document.querySelector('#page-notes .notes-index-folder-section');const r=e.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+Math.min(30,r.height/2),hit=document.elementFromPoint(x,y),root=document.getElementById('page-notes');return {x:x*devicePixelRatio,y:y*devicePixelRatio,insideNotes:!!hit&&!!root?.contains(hit),rootTarget:hit?.closest('[data-folder-drop-id]')?.dataset.folderDropId==='__root__'};")
         report["dropHit"] = {name: position.get(name) is True for name in ("insideNotes", "rootTarget")}

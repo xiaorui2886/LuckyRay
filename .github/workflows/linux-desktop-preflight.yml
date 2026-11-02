@@ -50,7 +50,12 @@ jobs:
             python3-gi gir1.2-gtk-3.0 fonts-noto-cjk xclip xdg-utils
       - name: Install the pinned Rust toolchain
         id: rust
-        run: rustup toolchain install 1.95.0 --profile minimal
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-import-checks
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup run 1.95.0 cargo test --locked --manifest-path luckyray-app/tests/linux-import-transaction/Cargo.toml
       - name: Build the required embedded frontend once
         id: frontend
         working-directory: luckyray-app

@@ -121,7 +121,7 @@ pub(crate) struct AttachmentOperationResult {
 fn payload(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
-fn bytes(payload: &Option<String>) -> Result<Option<Vec<u8>>, KnowledgeError> {
+pub(super) fn bytes(payload: &Option<String>) -> Result<Option<Vec<u8>>, KnowledgeError> {
     payload
         .as_ref()
         .map(|value| {
@@ -269,6 +269,10 @@ fn plan_attachment_copy(
         ));
     }
     append_change(plan, change(relative.clone(), None, Some(content)))?;
+    #[cfg(target_os = "linux")]
+    if plan.kind == "import" {
+        plan.external_dependencies.push((canonical.to_string_lossy().into_owned(), digest.clone()));
+    }
     source_copies.insert(source_key, (relative.clone(), digest));
     Ok(relative)
 }
@@ -321,6 +325,8 @@ impl KnowledgeService {
         let (vault,guard,identity)=self.capture_current_target()?;
         if vault.registration.id!=vault_id {return Err(knowledge_target_not_current());}
         if id.len()!=32 || !id.bytes().all(|b|b.is_ascii_hexdigit()) {return Err(error("knowledge-recovery-invalid","Invalid operation identifier"));}
+        #[cfg(target_os = "linux")]
+        return self.read_linux_attachment_operation_plan(&vault, id, &guard);
         let path=recovery_directory(&vault.root)?.join(format!("{id}.json"));
         if has_reparse_point(&path)? {return Err(error("knowledge-path-reparse-forbidden","Invalid recovery path"));}
         let mut bytes=Vec::new();
@@ -333,6 +339,8 @@ impl KnowledgeService {
         let (vault,guard,identity)=self.capture_current_target()?;
         if vault.registration.id!=vault_id {return Err(knowledge_target_not_current());}
         if result.operation_id.len()!=32 || !result.operation_id.bytes().all(|b|b.is_ascii_hexdigit()) {return Err(error("knowledge-recovery-invalid","Invalid operation identifier"));}
+        #[cfg(target_os = "linux")]
+        return self.record_linux_attachment_projection(&vault, &guard, result);
         let directory=recovery_directory(&vault.root)?;
         self.verify_current_target(&identity,&guard)?;
         write_new_synced(&directory.join(format!("{}-{:032x}.result.json",result.operation_id,rand::random::<u128>())),&serde_json::to_vec(result).map_err(|_|error("knowledge-recovery-invalid","Cannot encode projection receipt"))?)
@@ -349,6 +357,12 @@ impl KnowledgeService {
         let relative = Path::new(".luckyray/attachment-operations");
         if !vault.root.join(relative).exists() {
             return Ok(Vec::new());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let ids = crate::linux_attachment_store::ImportStore::list_ids(&vault.root).map_err(linux_transactions::failure)?;
+            self.verify_current_target(&identity, &guard)?;
+            return Ok(ids);
         }
         let directory = safe_existing_directory(&vault.root, relative)?;
         let entries = std::fs::read_dir(directory).map_err(|_| {
@@ -616,6 +630,8 @@ impl KnowledgeService {
         let mut documents = Vec::new();
         for note in source_notes {
             let original = read_scoped_attachment_bytes(&source_root, Path::new(note))?;
+            #[cfg(target_os = "linux")]
+            result.external_dependencies.push((source_root.join(note).to_string_lossy().into_owned(), sha256_hex(&original)));
             let decoded = decode_document(&original)?;
             let destination = &mapping[note];
             let mut patches = Vec::new();
@@ -757,6 +773,8 @@ impl KnowledgeService {
             .map_err(|_| error("knowledge-lock-poisoned", "Knowledge mutation lock failed"))?;
         let vault = self.current_vault_unlocked()?;
         validate_plan(&vault, operation)?;
+        #[cfg(target_os = "linux")]
+        return self.execute_linux_attachment_import_unlocked(&vault, operation, cancelled);
         let _external_files = self.hold_external_plan(&vault, operation, source_epoch)?;
         let _external_locations = hold_external_dependencies(operation)?;
         // Validate every before-state before publishing the durable intent.
@@ -800,6 +818,8 @@ impl KnowledgeService {
                 "Invalid operation identifier",
             ));
         }
+        #[cfg(target_os = "linux")]
+        return self.recover_linux_attachment_import_unlocked(&vault, id, rollback, cancelled);
         let directory = recovery_directory(&vault.root)?;
         let path = directory.join(format!("{id}.json"));
         if has_reparse_point(&path)? {
@@ -1345,7 +1365,7 @@ fn hold_external_dependencies(operation:&AttachmentOperationPlan)->Result<Vec<su
     }).collect()
 }
 
-fn validate_plan(
+pub(super) fn validate_plan(
     vault: &TrustedVault,
     operation: &AttachmentOperationPlan,
 ) -> Result<(), KnowledgeError> {

@@ -33,7 +33,7 @@ PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "m
                     "image-preview", "attachment-open", "reopen", "quit", "unknown"))
 FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready", "backend-not-ready", "production-ipc-rejected", "visible-control-missing",
     "ui-observation-timeout", "drop-target-unavailable", "both-input-notes-not-retained", "case-distinct-content-mismatch",
-    "special-name-png-not-retained", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
+    "special-name-png-not-retained", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
     "preview-not-visible", "preview-pixels-mismatch", "screenshot-invalid", "screenshot-size-invalid",
     "image-outside-screenshot", "attachment-receiver-not-observed", "attachment-handoff-mismatch",
     "reopen-file-content-mismatch", "quit-process-remained", "unexpected-error"))
@@ -86,6 +86,9 @@ def bounded_report(raw):
         value = raw.get(name) if isinstance(raw.get(name), dict) else {}
         result[name] = {key: value.get(key) if type(value.get(key)) is bool else None for key in keys}
     result["dropTrace"] = bounded_drop_trace(raw.get("dropTrace"))
+    policy = raw.get("attachmentPolicy") if isinstance(raw.get("attachmentPolicy"), dict) else {}
+    result["attachmentPolicy"] = {name: expected if policy.get(name) == expected else None
+        for name, expected in (("selected", "copy"), ("readBack", "copy"), ("method", "PRODUCTION_PREFERENCE_IPC"))}
     result["previews"] = []
     for probe in raw["previews"] if isinstance(raw.get("previews"), list) and len(raw["previews"]) <= 2 else []:
         if not isinstance(probe, dict):
@@ -136,6 +139,15 @@ def validate_notes(raw, build, source, scripts):
             "inputNotes": 2, "retainedNotes": 2, "collisionRenameObserved": True,
             "originalCaseSpellingsBothRetained": False, "destinationNames": ["Note.md", "note (1).md"]}, "drop-boundary-or-retention-mismatch")
     require(raw.get("dropTargets") == {"upperExists": True, "lowerExists": True}, "synthetic-drop-targets-missing")
+    require(raw.get("attachmentPolicy") == {"selected": "copy", "readBack": "copy", "method": "PRODUCTION_PREFERENCE_IPC"}, "copy-preference-not-confirmed")
+    trace = raw.get("dropTrace", {})
+    require(trace.get("state") == "OBSERVED" and trace.get("truncated") is False, "native-import-completion-not-observed")
+    records = trace.get("records", [])
+    for stage, count in (("native-import-start", 2), ("native-source-active", 0), ("native-import-ok", 2), ("native-import-failed", 0)):
+        require([record for record in records if record.get("stage") == stage]
+                == [{"stage": stage, "count": count, "overflow": False, "hit": True}], "native-import-completion-not-observed")
+    require(not any(record["stage"].startswith(("native-error-", "native-result-"))
+                    or record["stage"] == "native-import-partial" for record in records), "native-import-reported-failure")
     expected_preview = lambda session: {"session": session, "naturalWidth": 32, "naturalHeight": 24,
         "sampled": 5, "matched": 5, "visible": True, "method": "WEBVIEW_SCREENSHOT_PIXELS"}
     require(raw.get("previews") == [expected_preview(1), expected_preview(2)], "real-preview-pixel-evidence-missing")

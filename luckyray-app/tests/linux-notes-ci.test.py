@@ -34,7 +34,10 @@ class EvidenceTests(unittest.TestCase):
                 "originalCaseSpellingsBothRetained": False, "destinationNames": ["Note.md", "note (1).md"]},
             "dropHit": {"insideNotes": True, "rootTarget": True},
             "dropTargets": {"upperExists": True, "lowerExists": True},
-            "dropTrace": {"state": "NOT_OBSERVED", "readBytes": 0, "truncated": False, "records": []},
+            "dropTrace": {"state": "OBSERVED", "readBytes": 1200, "truncated": False,
+                "records": [{"stage": stage, "count": count, "overflow": False, "hit": True}
+                    for stage, count in (("native-import-start", 2), ("native-source-active", 0), ("native-import-ok", 2), ("native-import-failed", 0))]},
+            "attachmentPolicy": {"selected": "copy", "readBack": "copy", "method": "PRODUCTION_PREFERENCE_IPC"},
             "previews": [{"session": n, "naturalWidth": 32, "naturalHeight": 24, "sampled": 5, "matched": 5,
                 "visible": True, "method": "WEBVIEW_SCREENSHOT_PIXELS"} for n in (1, 2)],
             "clipboard": {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True},
@@ -67,6 +70,10 @@ class EvidenceTests(unittest.TestCase):
             lambda r: r["quitRequests"].append(r["quitRequests"][0]), lambda r: r.update(externalApplicationDisplay="PASS"),
             lambda r: r.update(trimmedFilenameEndToEnd="PASS"), lambda r: r.update(cleanup="UNCONFIRMED")]
         changes.append(lambda r: r["dropTargets"].update(lowerExists=False))
+        changes.append(lambda r: r["attachmentPolicy"].update(readBack=None))
+        changes.extend([lambda r: r["dropTrace"]["records"][2].update(stage="native-import-partial"),
+                        lambda r: r["dropTrace"].update(state="NOT_OBSERVED", records=[]),
+                        lambda r: r["dropTrace"].update(truncated=True)])
         for index, change in enumerate(changes):
             with self.subTest(index=index):
                 raw = copy.deepcopy(self.raw)
@@ -137,6 +144,10 @@ class EvidenceTests(unittest.TestCase):
                     b"[notes-drop] stage=drop count=2 hit=false\n"
                     b"[notes-drop] stage=native-source-active count=0 hit=false\n"
                     b"[notes-drop] stage=native-error-source-inactive count=0 hit=false\n"
+                    b"[notes-drop] stage=native-error-write-unsupported count=0 hit=false\n"
+                    b"[notes-drop] stage=native-error-name-conflict count=0 hit=false\n"
+                    b"[notes-drop] stage=native-error-revision-conflict count=0 hit=false\n"
+                    b"[notes-drop] stage=native-error-permissions-unsupported count=0 hit=false\n"
                     b"[notes-drop] stage=hunter2 count=2 hit=true\n"
                     b"[notes-drop] stage=drop count=999999 hit=true\n"
                     b"error hunter2 /private/personal-file\n"
@@ -144,7 +155,8 @@ class EvidenceTests(unittest.TestCase):
             log.write_bytes(prefix + body)
             report = ci.smoke.read_drop_trace(log, len(prefix))
             self.assertEqual([item["stage"] for item in report["records"]],
-                ["listener-ready", "drop", "native-source-active", "native-error-source-inactive"])
+                ["listener-ready", "drop", "native-source-active", "native-error-source-inactive", "native-error-write-unsupported",
+                 "native-error-name-conflict", "native-error-revision-conflict", "native-error-permissions-unsupported"])
             self.assertNotIn("hunter2", json.dumps(report))
             self.assertNotIn("/private", json.dumps(report))
             self.assertEqual(ci.bounded_drop_trace(report), report)

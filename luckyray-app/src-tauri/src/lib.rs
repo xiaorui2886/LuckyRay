@@ -174,6 +174,8 @@ mod linux_fs;
 #[cfg(target_os = "linux")]
 mod linux_file_store;
 #[cfg(target_os = "linux")]
+mod linux_attachment_store;
+#[cfg(target_os = "linux")]
 mod linux_managed_record;
 #[cfg(target_os = "linux")]
 mod linux_directory;
@@ -651,11 +653,20 @@ fn notes_drop_error_stage(raw: &str) -> &'static str {
     if raw.len() > 4096 { return "native-error-other"; }
     let code = serde_json::from_str::<serde_json::Value>(raw).ok()
         .and_then(|value| value.get("code").and_then(serde_json::Value::as_str).map(str::to_owned));
-    match code.as_deref() {
-        Some("knowledge-source-inactive") => "native-error-source-inactive",
-        Some("knowledge-vault-not-current" | "knowledge-vault-mismatch") => "native-error-vault-denied",
-        Some("knowledge-path-reparse-forbidden" | "knowledge-path-outside-vault") => "native-error-path-denied",
-        Some("knowledge-policy-invalid") => "native-error-policy-denied",
+    notes_drop_error_code_stage(code.as_deref().unwrap_or(""))
+}
+
+#[cfg(debug_assertions)]
+fn notes_drop_error_code_stage(code: &str) -> &'static str {
+    match code {
+        "knowledge-source-inactive" => "native-error-source-inactive",
+        "knowledge-vault-not-current" | "knowledge-vault-mismatch" => "native-error-vault-denied",
+        "knowledge-path-reparse-forbidden" | "knowledge-path-outside-vault" => "native-error-path-denied",
+        "knowledge-policy-invalid" => "native-error-policy-denied",
+        "knowledge-exclusive-write-unsupported" => "native-error-write-unsupported",
+        "knowledge-permissions-unsupported" => "native-error-permissions-unsupported",
+        "knowledge-name-conflict" => "native-error-name-conflict",
+        "knowledge-revision-conflict" => "native-error-revision-conflict",
         _ => "native-error-other",
     }
 }
@@ -673,7 +684,10 @@ fn log_notes_import_result(result: &Result<NotesVaultImportMarkdownResult, Strin
                     "import-readback-failed" => "native-result-readback-failed",
                     "import-readback-changed" => "native-result-readback-changed",
                     "import-partial" => "native-result-partial",
-                    _ => "native-result-other",
+                    code => match notes_drop_error_code_stage(code) {
+                        "native-error-other" => "native-result-other",
+                        stage => stage,
+                    },
                 };
                 log_notes_drop(stage, 0, false);
                 if issue.code == "import-incomplete" { log_notes_drop(notes_drop_error_stage(&issue.message), 0, false); }

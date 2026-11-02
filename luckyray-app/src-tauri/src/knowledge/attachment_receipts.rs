@@ -30,7 +30,7 @@ fn authorization(plan: &AttachmentOperationPlan, key: &[u8; 32]) -> Result<Strin
 }
 
 impl KnowledgeService {
-    fn attachment_receipt_key(&self, create: bool) -> Result<[u8; 32], KnowledgeError> {
+    pub(super) fn attachment_receipt_key(&self, create: bool) -> Result<[u8; 32], KnowledgeError> {
         // This is independent of the service mutation lock, which callers may
         // already hold while creating a native receipt. It serializes first use.
         static KEY_IO: OnceLock<Mutex<()>> = OnceLock::new();
@@ -38,6 +38,24 @@ impl KnowledgeService {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .map_err(|_| error("knowledge-lock-poisoned", "Recovery key lock unavailable"))?;
+        #[cfg(target_os = "linux")]
+        {
+            let directory = crate::linux_fs::Directory::private(&self.app_data_dir, false).map_err(linux_transactions::failure)?;
+            let name = OsStr::new(RECEIPT_KEY_FILE);
+            let mut snapshot = directory.read(name, true, 32).map_err(linux_transactions::failure)?;
+            if snapshot.is_none() && create {
+                let key: [u8; 32] = rand::random();
+                match directory.create_private(name, &key) {
+                    Ok(_) => (),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                    Err(e) => return Err(linux_transactions::failure(e)),
+                }
+                snapshot = directory.read(name, true, 32).map_err(linux_transactions::failure)?;
+            }
+            let snapshot = snapshot.ok_or_else(|| error("knowledge-recovery-key-unavailable", "Recovery key is unavailable"))?;
+            crate::linux_fs::private_file_metadata(&snapshot.file).map_err(linux_transactions::failure)?;
+            return snapshot.bytes.as_slice().try_into().map_err(|_| error("knowledge-recovery-key-invalid", "Invalid recovery key length"));
+        }
         let path = self.app_data_dir.join(RECEIPT_KEY_FILE);
         let anchor = self.app_data_dir.ancestors().last().ok_or_else(|| {
             error(
