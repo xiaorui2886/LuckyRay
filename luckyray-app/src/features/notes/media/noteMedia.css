@@ -111,6 +111,9 @@
   top: 8px;
   right: 8px;
   display: flex;
+  flex-wrap: wrap;
+  width: max-content;
+  box-sizing: border-box;
   gap: 3px;
   padding: 3px;
   border: 1px solid rgba(255,255,255,.18);

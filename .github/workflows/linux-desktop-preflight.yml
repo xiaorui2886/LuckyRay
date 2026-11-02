@@ -38,8 +38,23 @@ jobs:
             luckyray-app/tests/vaultImportSourceActivation.contract.test.cjs \
             luckyray-app/tests/linuxVaultPath.contract.test.cjs \
             luckyray-app/tests/linux-package-config.test.mjs
+      - name: Build the required embedded frontend once
+        id: frontend
+        working-directory: luckyray-app
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@11.3.0 --ignore-scripts --no-audit --no-fund
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Gate the native stage on real reading and Live component layout
+        id: layout
+        timeout-minutes: 7
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: python3 luckyray-app/tests/linux-notes-ci.py layout --work "$WORK_ROOT"
       - name: Install normal dependencies on the disposable runner
         id: dependencies
+        if: ${{ success() && steps.layout.outcome == 'success' }}
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -56,16 +71,9 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.95.0 --profile minimal
           rustup run 1.95.0 cargo test --locked --manifest-path luckyray-app/tests/linux-import-transaction/Cargo.toml
-      - name: Build the required embedded frontend once
-        id: frontend
-        working-directory: luckyray-app
-        run: |
-          set -euo pipefail
-          npm install --global pnpm@11.3.0 --ignore-scripts --no-audit --no-fund
-          pnpm install --frozen-lockfile
-          pnpm build
       - name: Build the actual Main once for the focused product flow
         id: build
+        if: ${{ success() && steps.layout.outcome == 'success' }}
         timeout-minutes: 55
         env:
           WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
@@ -137,6 +145,7 @@ jobs:
           CI_RUST: ${{ steps.rust.outcome }}
           CI_NODE: ${{ steps.node.outcome }}
           CI_FRONTEND: ${{ steps.frontend.outcome }}
+          CI_LAYOUT: ${{ steps.layout.outcome }}
           CI_BUILD: ${{ steps.build.outcome }}
           CI_DRIVER: ${{ steps.driver.outcome }}
           CI_RUNTIME: ${{ steps.runtime.outcome }}

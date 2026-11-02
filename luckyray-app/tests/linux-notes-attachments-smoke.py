@@ -44,13 +44,35 @@ EDITOR_APPEND = "\nSYNTHETIC_UI_SAVED_v1\n"
 ACTIONS = frozenset(("setup", "session-start", "backend-ready", "vault-setup", "notes-ready", "drop-dispatch", "drop-retained",
     "image-copy-check", "image-copy-resolve", "select-note", "source-inspect", "source-toggle", "source-ready", "editor-focus",
     "editor-append", "editor-value-check", "editor-save", "editor-save-readback", "context-open", "context-menu-ready", "context-copy",
-    "clipboard-readback", "preview-toggle", "preview-ready", "preview-geometry", "preview-screenshot", "attachment-open",
+    "clipboard-readback", "preview-toggle", "preview-ready", "preview-geometry", "preview-screenshot", "attachment-hover", "attachment-hit-check", "attachment-open",
     "attachment-ui-ready", "attachment-detail-check", "attachment-system-open", "attachment-receiver", "reopen-value-check",
     "reopen-files", "quit-request", "quit-processes", "session-delete", "unknown"))
 DRIVER_ERRORS = frozenset(("element click intercepted", "element not interactable", "invalid argument", "invalid element state", "invalid selector",
     "invalid session id", "javascript error", "no such element", "no such window", "stale element reference", "script timeout",
     "timeout", "unknown command", "unknown error", "unsupported operation", "unexpected alert open", "move target out of bounds"))
 DRIVER_OPERATIONS = frozenset(("session-start", "session-delete", "timeouts", "execute", "click", "actions", "release-actions", "screenshot", "other"))
+MEDIA_OPEN_FLAGS = ("hoverApplied", "toolbarVisible", "toolbarFullyVisible", "buttonEnabled", "controlsFullyVisible", "buttonCenterHit", "allButtonCentersHit")
+MEDIA_OPEN_PROBE = """
+const button=[...document.querySelectorAll(arguments[0])].find(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0);
+const empty={hoverApplied:false,toolbarVisible:false,toolbarFullyVisible:false,buttonEnabled:false,controlsFullyVisible:false,buttonCenterHit:false,allButtonCentersHit:false};
+if(!button)return empty;
+const media=button.closest('.note-media'),bar=button.closest('.note-media-actions,.lr-live-asset-actions');
+if(!media||!bar)return empty;
+const clip={left:0,top:0,right:Math.min(innerWidth,document.documentElement.clientWidth||innerWidth),bottom:Math.min(innerHeight,document.documentElement.clientHeight||innerHeight)};
+for(let p=bar.parentElement;p;p=p.parentElement){
+ const s=getComputedStyle(p),x=/^(auto|scroll|hidden|clip)$/.test(s.overflowX),y=/^(auto|scroll|hidden|clip)$/.test(s.overflowY);
+ if(!x&&!y)continue;
+ const r=p.getBoundingClientRect(),sx=p.offsetWidth?r.width/p.offsetWidth:1,sy=p.offsetHeight?r.height/p.offsetHeight:1;
+ if(x){clip.left=Math.max(clip.left,r.left+p.clientLeft*sx);clip.right=Math.min(clip.right,r.left+(p.clientLeft+p.clientWidth)*sx);}
+ if(y){clip.top=Math.max(clip.top,r.top+p.clientTop*sy);clip.bottom=Math.min(clip.bottom,r.top+(p.clientTop+p.clientHeight)*sy);}
+}
+const full=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.left>=clip.left-.5&&r.top>=clip.top-.5&&r.right<=clip.right+.5&&r.bottom<=clip.bottom+.5;};
+const hit=e=>{const r=e.getBoundingClientRect(),p=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return p===e||e.contains(p);};
+const buttons=[...bar.querySelectorAll('button')],style=getComputedStyle(bar);
+return {hoverApplied:media.matches(':hover'),toolbarVisible:Number(style.opacity)>.99&&style.pointerEvents!=='none'&&style.visibility==='visible',
+ toolbarFullyVisible:full(bar),buttonEnabled:buttons.length>0&&buttons.every(e=>!e.disabled&&getComputedStyle(e).pointerEvents!=='none'),
+ controlsFullyVisible:buttons.length>0&&buttons.every(full),buttonCenterHit:hit(button),allButtonCentersHit:buttons.length>0&&buttons.every(hit)};
+"""
 CHECKS = ("nativeStartup", "caseDistinctInputContentsRetained", "specialNameImagePreserved",
           "uiSavePersisted", "reopenPersisted", "absolutePathClipboard", "imagePreviewPixels",
           "attachmentSystemHandoff", "quitProcessDisappearance")
@@ -525,8 +547,22 @@ def main():
         phase = "image-preview"
         preview()
         phase = "attachment-open"
+        action = "attachment-hover"
+        preview_image = element('#page-notes .note-preview .note-media[data-kind=image] img')
+        wd("POST", f"/session/{session}/actions", {"actions": [{"type": "pointer", "id": "context", "parameters": {"pointerType": "mouse"},
+            "actions": [{"type": "pointerMove", "origin": {"element-6066-11e4-a52e-4f735466cecf": preview_image}, "x": 0, "y": 0}]}]})
+        open_selector = '#page-notes .note-preview .note-media[data-kind=image] button[aria-label="打开素材详情"]'
+        action = "attachment-hit-check"
+        def open_button_ready():
+            value = execute(MEDIA_OPEN_PROBE, [open_selector])
+            value = value if isinstance(value, dict) else {}
+            report["mediaOpen"] = {"method": "WEBDRIVER_POINTER_MOVE", "clickAttempts": 0,
+                                   **{name: value.get(name) is True for name in MEDIA_OPEN_FLAGS}}
+            return all(report["mediaOpen"][name] for name in MEDIA_OPEN_FLAGS)
+        require(helpers.wait_until(open_button_ready, 5), "attachment-open-not-interactable")
         action = "attachment-open"
-        click('#page-notes .note-preview .note-media[data-kind=image] button[aria-label="打开素材详情"]')
+        report["mediaOpen"]["clickAttempts"] = 1
+        click(open_selector)
         receiver = root / "receiver.json"
         handoff_deadline = time.monotonic() + 15
         detail_selector = ".material-viewer-react.detail[data-material-native-asset]"

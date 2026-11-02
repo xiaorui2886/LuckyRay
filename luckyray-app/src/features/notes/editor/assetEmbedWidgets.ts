@@ -1,4 +1,5 @@
 import { attachNoteImage } from "../media/attachNoteImage";
+import { attachNoteMediaActions } from "../media/noteMediaActions";
 import { releaseImage } from "../media/noteImageResources";
 export { warmRecentImage } from "../media/noteImageResources";
 import { attachmentAccessMessage } from "../../../core/services/vaultAttachmentErrors";
@@ -361,7 +362,8 @@ export class AssetEmbedWidget extends WidgetType {
     let disposeVideo: (() => void) | undefined;
     let disposeImage: (() => void) | undefined;
     let disposeResize: (() => void) | undefined;
-    assetWidgetCleanup.set(root, () => { closeViewer?.(); disposeVideo?.(); disposeImage?.(); disposeResize?.(); });
+    let disposeActions: (() => void) | undefined;
+    assetWidgetCleanup.set(root, () => { closeViewer?.(); disposeVideo?.(); disposeImage?.(); disposeResize?.(); disposeActions?.(); });
     root.dataset.assetTarget = embed.target;
     root.dataset.lrTokenKind = "asset";
     root.dataset.lrTokenFrom = String(from);
@@ -532,6 +534,7 @@ export class AssetEmbedWidget extends WidgetType {
       root.append(caption);
     }
     root.append(actions);
+    if (media) disposeActions = attachNoteMediaActions(root, actions);
     if ((block || expanded) && isImageAsset(asset?.kind)) {
       const resizeHandle = document.createElement("span");
       resizeHandle.className = "lr-live-asset-resize";

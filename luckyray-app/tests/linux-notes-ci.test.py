@@ -25,11 +25,31 @@ ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
 
 
+def component_unit_payload(source, scripts):
+    """Contract input only: never a rendered/native result."""
+    raw = {"schemaVersion": 1, "scope": ci.media_layout.SCOPE, "status": "PASS", "source": source,
+        "attempts": 1, "browserLaunches": 1, "userNamespaceExitCode": 0, "scriptSha256": scripts["layoutAudit"],
+        "fixtureSha256": "a" * 64, "fixtureSourceMatches": True, "mainProductAcceptance": "NOT_RUN", "javascriptError": "NONE",
+        "browser": {"version": "Chromium 156.0.8078.0", "sha256": "b" * 64, "bytes": 526511200, "elf": True},
+        "sandbox": {"status": "PASS", "namespace": "Yes", "pidNamespaces": "Yes", "networkNamespaces": "Yes", "seccompBpf": "Yes",
+            "adequatelySandboxed": True, "securityDisablingFlags": [], "source": "ACTUAL_CHROME_SANDBOX_PAGE"},
+        "cleanup": {"processGone": True, "exitCode": 0, "signal": None}, "observations": [], "observationOverflow": False}
+    for case in ci.media_layout.CASES:
+        for viewport in ci.media_layout.VIEWPORTS:
+            for mode in ci.media_layout.MODES:
+                raw["observations"].append({"case": case, "mode": mode, "viewport": viewport,
+                    "naturalWidth": 32 if case.endswith("small") else 320, "naturalHeight": 24 if case.endswith("small") else 240,
+                    "displaySizeValid": True, "hoverApplied": mode == "hover", "focusWithin": mode == "focus", "controlFocused": mode == "focus",
+                    **{name: True for name in ci.media_layout.FLAGS}, "clickedOnce": True, "clickAttempts": 1})
+    return {"status": "PASS", "source": source, "scripts": scripts, "attempts": 1, "childExitCode": 0,
+            "fixtureSha256": "a" * 64, "observations": raw}
+
+
 class EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.source = {"commit": "1" * 40, "tree": "2" * 40}
         self.build = {"application": {"sha256": "3" * 64}}
-        self.scripts = {"smoke": "4" * 64, "webdriver": "5" * 64}
+        self.scripts = {"smoke": "4" * 64, "webdriver": "5" * 64, "layoutAudit": "6" * 64}
         self.raw = {"schemaVersion": 1, "status": "PASS", "scope": ci.SCOPE, "commit": self.source["commit"],
             "applicationSha256": "3" * 64, "scriptSha256": "4" * 64, "helperSha256": "5" * 64,
             "flowCount": 1, "appSessions": 2, "checks": {name: "PASS" for name in ci.smoke.CHECKS},
@@ -42,6 +62,7 @@ class EvidenceTests(unittest.TestCase):
                 "records": [{"stage": stage, "count": count, "overflow": False, "hit": True}
                     for stage, count in (("native-import-start", 2), ("native-source-active", 0), ("native-import-ok", 2), ("native-import-failed", 0))]},
             "attachmentPolicy": {"selected": "copy", "readBack": "copy", "method": "PRODUCTION_PREFERENCE_IPC"},
+            "mediaOpen": {"method": "WEBDRIVER_POINTER_MOVE", "clickAttempts": 1, **{name: True for name in ci.smoke.MEDIA_OPEN_FLAGS}},
             "imageCopies": [{"session": n, "pngCount": 1, "matchingDigestCount": 1,
                 "pngOverflow": False, "matchingDigestOverflow": False, "scanComplete": True, "nameMatchesPolicy": True,
                 "noteLinkRewritten": True, "sourceImageUnchanged": True, "sourceNotesUnchanged": True, "productionResolved": True} for n in (1, 2)],
@@ -80,6 +101,9 @@ class EvidenceTests(unittest.TestCase):
             lambda r: r.update(trimmedFilenameEndToEnd="PASS"), lambda r: r.update(cleanup="UNCONFIRMED")]
         changes.append(lambda r: r["dropTargets"].update(lowerExists=False))
         changes.append(lambda r: r["attachmentPolicy"].update(readBack=None))
+        changes.extend([lambda r: r["mediaOpen"].update(method="JS_CLICK"), lambda r: r["mediaOpen"].update(clickAttempts=2)])
+        for field in ci.smoke.MEDIA_OPEN_FLAGS:
+            changes.append(lambda r, field=field: r["mediaOpen"].update({field: False}))
         changes.extend([lambda r: r.pop("imageCopies"), lambda r: r["imageCopies"].pop(),
                         lambda r: r["imageCopies"][1].update(session=1)])
         for field in ("pngCount", "matchingDigestCount", "pngOverflow", "matchingDigestOverflow", "scanComplete", "nameMatchesPolicy",
@@ -104,6 +128,8 @@ class EvidenceTests(unittest.TestCase):
         raw["previews"][0]["src"] = canary
         raw["imageCopies"][0]["path"] = canary
         raw["imageCopies"][0]["name"] = canary
+        raw["mediaOpen"]["path"] = canary
+        raw["mediaOpen"]["rectangle"] = canary
         projected = ci.bounded_report(raw)
         self.assertNotIn(canary, json.dumps(projected))
         self.assertEqual(projected["failure"], {"phase": "unknown", "action": "unknown", "code": "unexpected-error"})
@@ -124,7 +150,7 @@ class EvidenceTests(unittest.TestCase):
                         body.update(**self.build, scripts=self.scripts)
                     if name == "notes.json":
                         body.update(attempts=1, flowCount=1, childExitCode=1 if case == "child-failed" else 0,
-                                    observations=ci.bounded_report(self.raw))
+                                    observations=ci.bounded_report(self.raw), componentLayout=component_unit_payload(self.source, self.scripts))
                     ci.write_json(run.evidence / name, body)
                 if case == "extra-artifact":
                     (run.evidence / "private.log").write_text("unit-only")
@@ -146,6 +172,8 @@ class EvidenceTests(unittest.TestCase):
             run = ci.Run.__new__(ci.Run)
             run.private = run.evidence = Path(temporary)
             run.source = lambda: self.source
+            run.scripts = lambda: self.scripts
+            ci.write_json(run.evidence / "notes.json", {"componentLayout": component_unit_payload(self.source, self.scripts)})
             with self.assertRaises(RuntimeError):
                 run.notes()
             with mock.patch.object(ci.subprocess, "run") as process, self.assertRaises(FileExistsError):
@@ -364,6 +392,11 @@ class EvidenceTests(unittest.TestCase):
             with self.assertRaises(ci.smoke.SmokeFailure):
                 ci.smoke.receive_image(config, outside)
 
+    def test_production_media_action_geometry_and_cleanup_contract(self):
+        result = subprocess.run(["node", "--experimental-strip-types", "--test", str(Path(__file__).with_name("noteMediaActions.test.mjs"))],
+                                text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
     def test_setup_failure_is_reported_without_raw_text_or_starting_main(self):
         with tempfile.TemporaryDirectory(prefix="notes-setup-failure-offline-") as temporary:
             root = Path(temporary)
@@ -400,6 +433,7 @@ class EvidenceTests(unittest.TestCase):
                    and isinstance(node.func, ast.Name) and node.func.id in ("execute", "until") and node.args
                    and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)]
         self.assertGreater(len(scripts), 10)
+        scripts.append(ci.smoke.MEDIA_OPEN_PROBE)
         result = subprocess.run(["node", "-e", "for(const s of JSON.parse(require('fs').readFileSync(0,'utf8')))new Function(s)"],
                                 input=json.dumps(scripts), text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -413,8 +447,173 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn("--bin luckyray-native-host", text)
         self.assertNotIn("--no-sandbox", text)
         self.assertEqual(re.findall(r"/evidence/([a-z.]+)", text), list(ci.EXPORTS))
-        for stage in ("init", "binaries", "resources", "notes", "finish"):
+        for stage in ("init", "layout", "binaries", "resources", "notes", "finish"):
             self.assertIn("linux-notes-ci.py " + stage, text)
+        self.assertLess(text.index("        id: frontend"), text.index("        id: layout"))
+        self.assertLess(text.index("        id: layout"), text.index("        id: dependencies"))
+        self.assertLess(text.index("        id: layout"), text.index("        id: build"))
+        self.assertIn("CI_LAYOUT: ${{ steps.layout.outcome }}", text)
+        self.assertEqual(text.count("if: ${{ success() && steps.layout.outcome == 'success' }}"), 2)
+
+
+class ComponentLayoutGateTests(unittest.TestCase):
+    def setUp(self):
+        self.source = {"commit": "1" * 40, "tree": "2" * 40}
+        self.scripts = {"layoutAudit": "3" * 64}
+        self.wrapper = component_unit_payload(self.source, self.scripts)
+
+    def test_complete_component_unit_payload_is_canonical(self):
+        self.assertEqual(self.wrapper["observations"], ci.media_layout.bounded(self.wrapper["observations"]))
+        ci.media_layout.validate(self.wrapper, self.source, self.scripts)
+
+    def test_native_audit_helpers_validate_geometry_short_socket_and_released_keys_without_launch(self):
+        audit = Path(ci.__file__).with_name("linux-media-layout-audit.mjs").as_uri()
+        program = """
+          import assert from 'node:assert/strict';
+          const {displaySizeValid,socketPathBytes,nativeBackTab} = await import(process.argv[1]);
+          assert(displaySizeValid({naturalWidth:32,naturalHeight:24,width:32,height:24},true));
+          assert(!displaySizeValid({naturalWidth:32,naturalHeight:24,width:180,height:135},true));
+          assert(displaySizeValid({naturalWidth:320,naturalHeight:240,width:160,height:120},false));
+          assert(!displaySizeValid({naturalWidth:320,naturalHeight:240,width:160,height:80},false));
+          assert(socketPathBytes('/tmp/lrl-AbC123/tmp')<108);
+          assert.throws(()=>socketPathBytes('/tmp/'+ 'x'.repeat(108)));
+          const sent=[]; await nativeBackTab(async (method,event)=>sent.push({method,...event}));
+          assert.deepEqual(sent.map(e=>e.method),Array(4).fill('Input.dispatchKeyEvent'));
+          assert.deepEqual(sent.map(e=>[e.type,e.key,e.modifiers]),[
+            ['keyDown','Shift',8],['keyDown','Tab',8],['keyUp','Tab',8],['keyUp','Shift',0]]);
+        """
+        result = subprocess.run(["node", "--input-type=module", "-e", program, audit], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_incomplete_dimensions_native_input_hit_identity_or_cleanup_cannot_pass(self):
+        changes = [lambda w: w.update(childExitCode=1), lambda w: w.update(attempts=2), lambda w: w.update(attempts=True),
+            lambda w: w.update(source={}), lambda w: w.update(scripts={}), lambda w: w.update(fixtureSha256="9" * 64),
+            lambda w: w["observations"].update(source={}), lambda w: w["observations"].update(scriptSha256="9" * 64),
+            lambda w: w["observations"].update(fixtureSourceMatches=False), lambda w: w["observations"].update(browserLaunches=2),
+            lambda w: w["observations"].update(userNamespaceExitCode=1), lambda w: w["observations"].update(javascriptError="TypeError"),
+            lambda w: w["observations"].update(mainProductAcceptance="PASS"), lambda w: w["observations"]["browser"].update(elf=False),
+            lambda w: w["observations"]["sandbox"].update(seccompBpf=None), lambda w: w["observations"]["sandbox"].update(securityDisablingFlags=["INVALID"]),
+            lambda w: w["observations"]["cleanup"].update(processGone=False), lambda w: w["observations"]["cleanup"].update(signal="SIGTERM"),
+            lambda w: w["observations"]["observations"].pop(),
+            lambda w: w["observations"]["observations"].append(copy.deepcopy(w["observations"]["observations"][0])),
+            lambda w: w["observations"]["observations"][1].update(mode="hover"),
+            lambda w: w["observations"]["observations"][0].update(viewport=560),
+            lambda w: w["observations"]["observations"][0].update(naturalWidth=320),
+            lambda w: w["observations"]["observations"][0].update(clickAttempts=2)]
+        for key in ("displaySizeValid", "hoverApplied", "clickedOnce", *ci.media_layout.FLAGS):
+            changes.append(lambda w, key=key: w["observations"]["observations"][0].update({key: False}))
+        for key in ("focusWithin", "controlFocused"):
+            changes.append(lambda w, key=key: w["observations"]["observations"][1].update({key: False}))
+        for index, change in enumerate(changes):
+            with self.subTest(index=index):
+                value = copy.deepcopy(self.wrapper)
+                change(value)
+                with self.assertRaises(RuntimeError):
+                    ci.media_layout.validate(value, self.source, self.scripts)
+
+    def test_closed_layout_projection_drops_paths_logs_and_unlabelled_secrets(self):
+        value = copy.deepcopy(self.wrapper["observations"])
+        value.update(error="hunter2", path="/private/hunter2", fixture="hunter2", environment={"x": "hunter2"})
+        value["browser"].update(version="hunter2", path="hunter2")
+        value["cleanup"].update(signal="hunter2", stderr="hunter2")
+        value["observations"][0].update(case="hunter2", rectangle="hunter2", button="hunter2")
+        value["sandbox"].update(evaluation="hunter2", securityDisablingFlags=["hunter2"])
+        value["failure"] = {"phase": "hunter2", "code": "hunter2", "reason": "Failed hunter2"}
+        exported = ci.media_layout.bounded(value)
+        self.assertNotIn("hunter2", json.dumps(exported))
+        self.assertEqual(exported["failure"], {"phase": "unknown", "code": "unknown"})
+        for key in ("browser", "sandbox", "cleanup", "failure"):
+            value[key] = ["hunter2"]
+        self.assertNotIn("hunter2", json.dumps(ci.media_layout.bounded(value)))
+
+    def test_failed_or_missing_layout_stops_main_before_attempt_or_process_launch(self):
+        for wrapper in (None, {"status": "FAIL"}, self.wrapper):
+            with self.subTest(wrapper=wrapper is None), tempfile.TemporaryDirectory(prefix="layout-block-unit-") as temporary:
+                run = ci.Run.__new__(ci.Run)
+                run.private = run.evidence = Path(temporary)
+                run.source = lambda: self.source
+                run.scripts = lambda: self.scripts
+                value = copy.deepcopy(wrapper)
+                if value and value.get("status") == "PASS":
+                    value["observations"]["observations"][1]["allButtonCentersHit"] = False
+                ci.write_json(run.evidence / "notes.json", {"componentLayout": value})
+                with mock.patch.object(ci.subprocess, "run") as launcher, self.assertRaises(RuntimeError):
+                    run.notes()
+                launcher.assert_not_called()
+                self.assertFalse((run.private / "notes.attempt").exists())
+
+    def test_failed_fixture_is_closed_and_never_launches_the_browser_child(self):
+        with tempfile.TemporaryDirectory(prefix="layout-setup-unit-") as temporary:
+            run = ci.Run.__new__(ci.Run)
+            run.private = Path(temporary) / "private"
+            run.evidence = Path(temporary) / "evidence"
+            run.private.mkdir(); run.evidence.mkdir()
+            run.app = Path(ci.__file__).resolve().parents[1]
+            run.args = type("Args", (), {"node": "node"})()
+            run.source = lambda: self.source
+            run.scripts = lambda: self.scripts
+            run.env = lambda: {}
+            with mock.patch.object(ci.subprocess, "run", side_effect=OSError("hunter2")), mock.patch.object(ci.subprocess, "Popen") as launcher:
+                with self.assertRaisesRegex(RuntimeError, "^component-layout-precondition-failed$"):
+                    run.layout()
+            launcher.assert_not_called()
+            report = ci.read_json(run.evidence / "notes.json")
+            self.assertNotIn("hunter2", json.dumps(report))
+            self.assertEqual((report["status"], report["flowCount"], report["attempts"]), ("NOT_RUN", 0, 0))
+            self.assertEqual(report["componentLayout"]["failure"], "fixture-build-failed")
+
+    def test_layout_block_exports_same_five_json_with_native_reports_not_run(self):
+        with tempfile.TemporaryDirectory(prefix="layout-finish-unit-") as temporary:
+            run = ci.Run.__new__(ci.Run)
+            run.evidence = Path(temporary)
+            run.source = lambda: self.source
+            run.scripts = lambda: self.scripts
+            ci.write_json(run.evidence / "source.json", {"status": "PASS", "scope": ci.SCOPE, "source": self.source})
+            ci.write_json(run.evidence / "notes.json", {"status": "NOT_RUN", "scope": ci.SCOPE, "source": self.source,
+                "attempts": 0, "flowCount": 0, "componentLayout": {"status": "FAIL", "failure": "layout-child-failed"}})
+            outcomes = {"CI_" + key: "success" if key in ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND") else "skipped" for key in ci.STEPS}
+            outcomes["CI_LAYOUT"] = "failure"
+            with mock.patch.dict(os.environ, outcomes), self.assertRaises(RuntimeError):
+                run.finish()
+            result = ci.read_json(run.evidence / "result.json")
+            self.assertEqual(set(path.name for path in run.evidence.iterdir()), set(ci.EXPORTS))
+            self.assertEqual(result["reports"], {"source.json": "PASS", "build.json": "NOT_RUN", "resources.json": "NOT_RUN", "notes.json": "NOT_RUN"})
+            self.assertEqual(result["included"], {"notesPngFlows": 0, "componentLayout": "FAIL"})
+            self.assertEqual((result["status"], result["exportPolicy"], result["productAcceptance"]), ("FAIL", "PASS", "NOT_RUN"))
+
+    def test_unavailable_sandbox_browser_or_clipped_controls_stay_closed_and_block_main(self):
+        for phase in ("user-namespace", "browser-identity", "native-focus"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory(prefix="layout-child-unit-") as temporary:
+                run = ci.Run.__new__(ci.Run)
+                run.private, run.evidence = Path(temporary) / "private", Path(temporary) / "evidence"
+                run.private.mkdir(); run.evidence.mkdir()
+                run.app = Path(ci.__file__).resolve().parents[1]
+                run.args = type("Args", (), {"node": "node"})()
+                run.source, run.scripts, run.env = lambda: self.source, lambda: self.scripts, lambda: {}
+                def build_fixture(*args, **kwargs):
+                    (run.private / "component-layout/fixture/index.html").write_text("owned-unit-not-rendered")
+                    return type("Result", (), {"returncode": 0})()
+                def finish_child(*args, **kwargs):
+                    value = copy.deepcopy(self.wrapper["observations"])
+                    value.update(status="FAIL", failure={"phase": phase, "code": phase + "-failed", "reason": "hunter2"}, log="hunter2")
+                    ci.write_json(run.private / "component-layout/report.json", value)
+                    return 1
+                child = mock.Mock()
+                child.wait.side_effect = finish_child
+                with mock.patch.object(ci.subprocess, "run", side_effect=build_fixture), mock.patch.object(ci.subprocess, "Popen", return_value=child) as process:
+                    with self.assertRaisesRegex(RuntimeError, "^component-layout-precondition-failed$"):
+                        run.layout()
+                self.assertEqual(process.call_count, 1)
+                self.assertTrue(process.call_args.kwargs["start_new_session"])
+                saved = ci.read_json(run.evidence / "notes.json")
+                self.assertEqual(saved["componentLayout"]["observations"]["failure"], {"phase": phase, "code": phase + "-failed"})
+                self.assertEqual(saved["componentLayout"]["childExitCode"], 1)
+                self.assertEqual((saved["status"], saved["flowCount"]), ("NOT_RUN", 0))
+                self.assertNotIn("hunter2", json.dumps(saved))
+                with mock.patch.object(ci.subprocess, "run") as launcher, self.assertRaises(RuntimeError):
+                    run.notes()
+                launcher.assert_not_called()
+                self.assertFalse((run.private / "notes.attempt").exists())
 
 
 if __name__ == "__main__":

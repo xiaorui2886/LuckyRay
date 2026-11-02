@@ -1,12 +1,18 @@
 """Source-bound single Main notes/PNG CI; reuse real build/resource collectors."""
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
 import os
 import re
+import shutil
+import signal
+import stat
+import struct
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -21,12 +27,13 @@ def module(name, filename):
 
 runtime = module("notes_runtime_ci", "linux-runtime-ci.py")
 smoke = module("notes_smoke", "linux-notes-attachments-smoke.py")
+media_layout = module("notes_media_layout", "linux-media-layout-evidence.py")
 require, digest, read_json, write_json = runtime.require, runtime.digest, runtime.read_json, runtime.write_json
 SCOPE = smoke.SCOPE
 EXCLUDED = {name: "NOT_RUN" for name in ("chromiumConsent", "nativeMessaging", "nativePointerDrag",
     "externalApplicationDisplay", "trimmedFilenameEndToEnd", "videoCodecMatrix", "personalBrowserHost",
     "installer", "release", "waylandHardware", "oldMatrices", "lshFunctionalFlow")}
-STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "DEPENDENCIES", "RUST", "FRONTEND", "BUILD", "DRIVER", "RUNTIME", "RESOURCES", "NOTES")
+STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENCIES", "RUST", "BUILD", "DRIVER", "RUNTIME", "RESOURCES", "NOTES")
 EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "result.json")
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",
@@ -35,7 +42,7 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "ui-observation-timeout", "drop-target-unavailable", "both-input-notes-not-retained", "case-distinct-content-mismatch",
     "special-name-png-not-retained", "imported-image-resolution-mismatch", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
     "preview-not-visible", "preview-pixels-mismatch", "screenshot-invalid", "screenshot-size-invalid",
-    "image-outside-screenshot", "attachment-open-ui-not-observed", "attachment-detail-target-mismatch", "attachment-open-control-mismatch",
+    "image-outside-screenshot", "attachment-open-not-interactable", "attachment-open-ui-not-observed", "attachment-detail-target-mismatch", "attachment-open-control-mismatch",
     "attachment-receiver-not-observed", "attachment-handoff-mismatch",
     "reopen-file-content-mismatch", "quit-process-remained", "webdriver-command-failed", "editor-not-ready", "editor-input-mismatch", "unexpected-error"))
 
@@ -90,6 +97,10 @@ def bounded_report(raw):
     policy = raw.get("attachmentPolicy") if isinstance(raw.get("attachmentPolicy"), dict) else {}
     result["attachmentPolicy"] = {name: expected if policy.get(name) == expected else None
         for name, expected in (("selected", "copy"), ("readBack", "copy"), ("method", "PRODUCTION_PREFERENCE_IPC"))}
+    opened = raw.get("mediaOpen") if isinstance(raw.get("mediaOpen"), dict) else {}
+    result["mediaOpen"] = {"method": "WEBDRIVER_POINTER_MOVE" if opened.get("method") == "WEBDRIVER_POINTER_MOVE" else "INVALID",
+                           "clickAttempts": opened.get("clickAttempts") if type(opened.get("clickAttempts")) is int and 0 <= opened["clickAttempts"] <= 1 else None,
+                           **{name: opened.get(name) if type(opened.get(name)) is bool else None for name in smoke.MEDIA_OPEN_FLAGS}}
     result["imageCopies"] = []
     for item in raw["imageCopies"] if isinstance(raw.get("imageCopies"), list) and len(raw["imageCopies"]) <= 2 else []:
         if not isinstance(item, dict):
@@ -160,6 +171,8 @@ def validate_notes(raw, build, source, scripts):
             "originalCaseSpellingsBothRetained": False, "destinationNames": ["Note.md", "note (1).md"]}, "drop-boundary-or-retention-mismatch")
     require(raw.get("dropTargets") == {"upperExists": True, "lowerExists": True}, "synthetic-drop-targets-missing")
     require(raw.get("attachmentPolicy") == {"selected": "copy", "readBack": "copy", "method": "PRODUCTION_PREFERENCE_IPC"}, "copy-preference-not-confirmed")
+    require(raw.get("mediaOpen") == {"method": "WEBDRIVER_POINTER_MOVE", "clickAttempts": 1,
+                                      **{name: True for name in smoke.MEDIA_OPEN_FLAGS}}, "real-hover-and-hit-evidence-missing")
     expected_copy = lambda session: {"session": session, "pngCount": 1, "matchingDigestCount": 1,
         "pngOverflow": False, "matchingDigestOverflow": False, "scanComplete": True, "nameMatchesPolicy": True,
         "noteLinkRewritten": True, "sourceImageUnchanged": True, "sourceNotesUnchanged": True, "productionResolved": True}
@@ -193,11 +206,88 @@ class Run(runtime.Run):
         paths = {"collector": "luckyray-app/tests/linux-notes-ci.py", "resourceCollector": "luckyray-app/tests/linux-runtime-ci.py",
                  "smoke": "luckyray-app/tests/linux-notes-attachments-smoke.py", "webdriver": "luckyray-app/tests/linux-desktop-smoke.py",
                  "workflow": ".github/workflows/linux-desktop-preflight.yml", "dropPaths": "luckyray-app/src/features/notes/externalDropPaths.ts",
-                 "notesPage": "luckyray-app/src/features/notes/NotesPage.tsx"}
+                 "notesPage": "luckyray-app/src/features/notes/NotesPage.tsx",
+                 "layoutBuild": "luckyray-app/tests/linux-media-layout-build.mjs",
+                 "layoutAudit": "luckyray-app/tests/linux-media-layout-audit.mjs",
+                 "layoutEvidence": "luckyray-app/tests/linux-media-layout-evidence.py",
+                 "cdpClient": "luckyray-app/tests/browser-extension-runtime/lib/cdp-client.mjs"}
         return {name: digest(self.repo / path) for name, path in paths.items()}
+
+    def publish_notes(self, report):
+        destination = self.evidence / "notes.json"
+        if os.path.lexists(destination):
+            entry = destination.lstat()
+            require(stat.S_ISREG(entry.st_mode) and entry.st_uid == os.geteuid() and entry.st_nlink == 1,
+                    "unsafe-notes-evidence-target")
+        temporary = self.evidence / "notes.pending"
+        with temporary.open("x") as stream:
+            json.dump(report, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        os.replace(temporary, destination)
+
+    def layout(self):
+        source, scripts = self.source(), self.scripts()
+        (self.private / "component-layout.attempt").open("x").close()
+        wrapper = {"status": "FAIL", "source": source, "scripts": scripts, "attempts": 1}
+        report = {"status": "NOT_RUN", "scope": SCOPE, "source": source, "attempts": 0, "flowCount": 0,
+                  "componentLayout": wrapper}
+        phase = "fixture-build"
+        try:
+            node = shutil.which(self.args.node)
+            require(node is not None, "pinned-node-unavailable")
+            root = self.private / "component-layout"
+            root.mkdir(mode=0o700)
+            fixture = root / "fixture"
+            fixture.mkdir(mode=0o700)
+            def png(width, height):
+                def chunk(kind, value):
+                    return struct.pack(">I", len(value)) + kind + value + struct.pack(">I", zlib.crc32(kind + value))
+                return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+                        + chunk(b"IDAT", zlib.compress((b"\0" + bytes(smoke.COLOR) * width) * height)) + chunk(b"IEND", b""))
+            write_json(root / "input.json", {"source": source, "probe": smoke.MEDIA_OPEN_PROBE,
+                       **{name: "data:image/png;base64," + base64.b64encode(png(width, height)).decode("ascii")
+                          for name, width, height in (("tiny", 32, 24), ("regular", 320, 240))}})
+            environment = self.env()
+            with (root / "fixture-build.log").open("xb") as log:
+                built = subprocess.run([node, str(self.app / "tests/linux-media-layout-build.mjs"), str(self.app),
+                    str(fixture), str(root / "input.json")], env=environment, stdout=log, stderr=log, timeout=90)
+            require(built.returncode == 0, "component-fixture-build-failed")
+            wrapper["fixtureSha256"] = digest(fixture / "index.html")
+            phase = "layout-child"
+            with (root / "audit.log").open("xb") as log:
+                child = subprocess.Popen([node, str(self.app / "tests/linux-media-layout-audit.mjs"),
+                    "--html", str(fixture / "index.html"), "--output", str(root / "report.json"),
+                    "--browser", "/usr/bin/chromium", "--source-commit", source["commit"], "--source-tree", source["tree"]],
+                    env=environment, stdout=log, stderr=log, start_new_session=True)
+                try:
+                    code = child.wait(timeout=300)
+                except subprocess.TimeoutExpired:
+                    # Only this single owned child session; never restart a browser or lower its sandbox.
+                    os.killpg(child.pid, signal.SIGTERM)
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(child.pid, signal.SIGKILL)
+                        child.wait(timeout=5)
+                    raise
+            wrapper["childExitCode"] = media_layout.integer(code, -65535, 65535)
+            wrapper["observations"] = media_layout.bounded(read_json(root / "report.json"))
+            phase = "layout-evidence"
+            require(code == 0, "component-layout-child-failed")
+            self.source()
+            wrapper["status"] = "PASS"
+            media_layout.validate(wrapper, source, scripts)
+        except Exception:
+            wrapper["status"] = "FAIL"
+            wrapper["failure"] = phase + "-failed"
+            raise RuntimeError("component-layout-precondition-failed") from None
+        finally:
+            self.publish_notes(report)
 
     def notes(self):
         source = self.source()
+        component = read_json(self.evidence / "notes.json").get("componentLayout")
+        media_layout.validate(component, source, self.scripts())
         (self.private / "notes.attempt").open("x").close()
         build, resources = read_json(self.evidence / "build.json"), read_json(self.evidence / "resources.json")
         layout = read_json(self.private / "layout.json")
@@ -209,6 +299,7 @@ class Run(runtime.Run):
             "/usr/bin/python3", str(self.app / "tests/linux-notes-attachments-smoke.py"),
             "--application", layout["application"], "--driver", str(self.args.driver), "--output", str(self.private / "notes-flow")]
         report = {"status": "FAIL", "scope": SCOPE, "source": source, "attempts": 1, "flowCount": 1,
+                  "componentLayout": component,
                   "driver": {"versionPin": "2.1.0", **runtime.regular_elf(self.args.driver)}}
         try:
             result = subprocess.run(command, env=self.env(), text=True, capture_output=True, timeout=720)
@@ -228,7 +319,7 @@ class Run(runtime.Run):
             report["failure"] = "notes-child-or-evidence-incomplete"
             raise
         finally:
-            write_json(self.evidence / "notes.json", report)
+            self.publish_notes(report)
 
     def finish(self):
         outcomes = {name: os.environ.get("CI_" + name, "missing") for name in STEPS}
@@ -246,30 +337,37 @@ class Run(runtime.Run):
             require(all(body.get("source") == source and body.get("scope") == SCOPE for body in bodies.values()), "stale-report")
             require(bodies["build.json"].get("scripts") == self.scripts(), "build-script-identity-changed")
             notes = bodies["notes.json"]
+            media_layout.validate(notes.get("componentLayout"), source, self.scripts())
             require(notes.get("attempts") == 1 and notes.get("flowCount") == 1 and notes.get("childExitCode") == 0
                     and "failure" not in notes, "missing-or-repeated-flow")
             validate_notes(notes.get("observations"), bodies["build.json"], source, self.scripts())
         except (OSError, ValueError, KeyError, TypeError, RuntimeError):
             passed = False
+        # Keep the same five-file artifact even when a precondition stops native build.
+        for name in EXPORTS[:-1]:
+            if statuses[name] == "NOT_RUN" and not os.path.lexists(self.evidence / name):
+                write_json(self.evidence / name, {"status": "NOT_RUN", "scope": SCOPE, "source": source})
         safe = ({path.name for path in self.evidence.iterdir()} == set(EXPORTS[:-1])
                 and all(path.is_file() and not path.is_symlink() for path in self.evidence.iterdir()))
         passed = passed and safe
         write_json(self.evidence / "result.json", {"status": "PASS" if passed else "FAIL", "scope": SCOPE,
             "source": source, "stepOutcomes": outcomes, "reports": statuses, "artifactAllowlist": list(EXPORTS),
-            "exportPolicy": "PASS" if safe else "FAIL", "included": {"notesPngFlows": 1}, "excluded": EXCLUDED,
+            "exportPolicy": "PASS" if safe else "FAIL", "included": {"notesPngFlows": 1 if bodies.get("notes.json", {}).get("flowCount") == 1 else 0,
+                "componentLayout": bodies.get("notes.json", {}).get("componentLayout", {}).get("status", "NOT_RUN")}, "excluded": EXCLUDED,
             "productAcceptance": "NOTES_PATH_ATTACHMENTS_PASS_ONLY" if passed else "NOT_RUN",
             "limits": ["drop is one declared Tauri event IPC injection; native pointer drag NOT_RUN",
                        "case-distinct input contents retained; existing importer collision rename preserved",
                        "PNG decoded and sampled in Main WebDriver screenshot, not physical-display QA",
                        "owned isolated XDG receiver readback; external application display NOT_RUN",
                        "trailing-whitespace filenames, video codecs, embedded browser and packages NOT_RUN",
-                       "quit IPC and process disappearance; clean exit status NOT_OBSERVED"]})
+                       "quit IPC and process disappearance; clean exit status NOT_OBSERVED",
+                       "component layout is a precondition, not Main product acceptance"]})
         require(passed, "required-notes-product-flow-failed-or-not-run")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("init", "binaries", "resources", "notes", "finish"))
+    parser.add_argument("phase", choices=("init", "layout", "binaries", "resources", "notes", "finish"))
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--driver", type=Path)
     parser.add_argument("--node", default="node")
