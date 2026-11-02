@@ -137,37 +137,64 @@ export async function run(command, args, options = {}) {
     });
   });
 }
-export async function download(input) {
-  await directory(join(BUILD, "cache"));
+export async function download(input, { transfer = run, cacheDirectory = join(BUILD, "cache") } = {}) {
+  await directory(cacheDirectory);
   if (!/^https:\/\//.test(input.url) || !/^[a-f0-9]{64}$/.test(input.sha256)) throw new Error("macos-build-source-unpinned");
-  const output = join(BUILD, "cache", input.sha256);
+  const output = join(cacheDirectory, input.sha256);
   try {
     const cached = await readRegular(output);
     if (sha256(cached) !== input.sha256) throw new Error("macos-build-cache-conflict");
     return output;
   } catch (error) { if (error.code !== "ENOENT") throw error; }
-  const temporary = `${output}.${randomUUID()}.download`;
-  const fd = await open(temporary, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  let verifiedBytes;
-  try {
-    const original = await fd.stat();
-    // Curl writes the already-owned descriptor, never reopens an output path.
-    const httpDiagnostic = process.env.MACOS_INTERNAL_DIAGNOSTICS === "1"
-      ? ["--write-out", "%{stderr}MACOS_HTTP_STATUS:%{http_code}\n"] : [];
-    await run("/usr/bin/curl", ["--fail", "--location", "--silent", "--show-error", "--proto", "=https", "--tlsv1.2", "--max-filesize", "536870912", ...httpDiagnostic, input.url],
-      { stdio: ["ignore", fd.fd, "inherit"], diagnosticStage: "source-download", diagnosticInput: input.sha256 });
-    await fd.sync();
-    const named = await lstat(temporary);
-    if (!named.isFile() || named.dev !== original.dev || named.ino !== original.ino || named.nlink !== 1)
-      throw new Error("macos-build-download-object-changed");
-    const bytes = await readRegular(temporary);
-    if (sha256(bytes) !== input.sha256) throw new Error("macos-build-download-hash-invalid");
-    verifiedBytes = bytes;
-  } finally { await fd.close(); }
-  // O_EXCL publishes only verified bytes without a check/rename overwrite
-  // window. Preserve the temporary version rather than unlink an unknown path.
-  await writeNew(output, verifiedBytes, 0o600);
-  return output;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    // A retry never resumes, truncates or appends to a partial object. Keep
+    // that private version and acquire a fresh O_EXCL/no-follow descriptor.
+    const temporary = `${output}.${randomUUID()}.download`;
+    const fd = await open(temporary, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    let verifiedBytes;
+    try {
+      const original = await fd.stat({ bigint: true });
+      const assertOwnedTemporary = async () => {
+        let held, named;
+        try { held = await fd.stat({ bigint: true }); named = await lstat(temporary, { bigint: true }); }
+        catch { throw new Error("macos-build-download-object-changed"); }
+        if ([original, held, named].some(meta => !meta.isFile() || meta.dev !== original.dev
+            || meta.ino !== original.ino || meta.nlink !== 1n)) {
+          throw new Error("macos-build-download-object-changed");
+        }
+      };
+      await assertOwnedTemporary();
+      const httpDiagnostic = process.env.MACOS_INTERNAL_DIAGNOSTICS === "1"
+        ? ["--write-out", "%{stderr}MACOS_HTTP_STATUS:%{http_code}\n"] : [];
+      try {
+        // Ignore ambient curlrc; preserve HTTPS/TLS/size limits and make the
+        // connection and complete transfer budgets explicit. No curl --retry
+        // option may broaden this to HTTP denials or certificate failures.
+        await transfer("/usr/bin/curl", ["--disable", "--fail", "--location", "--silent", "--show-error",
+          "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2", "--connect-timeout", "20", "--max-time", "180",
+          "--max-filesize", "536870912", ...httpDiagnostic, input.url],
+          { stdio: ["ignore", fd.fd, "inherit"], diagnosticStage: "source-download", diagnosticInput: input.sha256 });
+      } catch (error) {
+        if (error.message === "macos-build-command-failed:/usr/bin/curl:28") {
+          // A timeout does not waive object identity. Preserve any conflicting
+          // name and fail before another request, including on the last try.
+          await assertOwnedTemporary();
+          if (attempt === 0) continue;
+        }
+        throw error;
+      }
+      await fd.sync();
+      await assertOwnedTemporary();
+      const bytes = await readRegular(temporary);
+      if (sha256(bytes) !== input.sha256) throw new Error("macos-build-download-hash-invalid");
+      verifiedBytes = bytes;
+    } finally { await fd.close(); }
+    // O_EXCL publishes only verified bytes. Both partial and successful
+    // temporary objects remain private; no unknown path is unlinked.
+    await writeNew(output, verifiedBytes, 0o600);
+    return output;
+  }
+  throw new Error("macos-build-download-attempts-exhausted");
 }
 export function tarMember(archiveBytes, member, limit = 192 * 1024 * 1024) {
   const result = spawnSync("/usr/bin/tar", ["-xOf", "-", member], { input: archiveBytes, maxBuffer: limit, timeout: 60_000 });
