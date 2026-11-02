@@ -39,6 +39,7 @@ def component_unit_payload(source, scripts):
             for mode in ci.media_layout.MODES:
                 raw["observations"].append({"case": case, "mode": mode, "viewport": viewport,
                     "naturalWidth": 32 if case.endswith("small") else 320, "naturalHeight": 24 if case.endswith("small") else 240,
+                    "displayWidth": 32 if case.endswith("small") else 320, "displayHeight": 24 if case.endswith("small") else 240,
                     "displaySizeValid": True, "hoverApplied": mode == "hover", "focusWithin": mode == "focus", "controlFocused": mode == "focus",
                     **{name: True for name in ci.media_layout.FLAGS}, "clickedOnce": True, "clickAttempts": 1})
     return {"status": "PASS", "source": source, "scripts": scripts, "attempts": 1, "childExitCode": 0,
@@ -465,6 +466,39 @@ class ComponentLayoutGateTests(unittest.TestCase):
     def test_complete_component_unit_payload_is_canonical(self):
         self.assertEqual(self.wrapper["observations"], ci.media_layout.bounded(self.wrapper["observations"]))
         ci.media_layout.validate(self.wrapper, self.source, self.scripts)
+
+    def test_actual_display_dimensions_are_finite_bounded_numbers_only(self):
+        for value in ("hunter2", True, {}, -1, 4097, 10**1000, float("inf"), float("nan")):
+            with self.subTest(value=repr(value)):
+                raw = copy.deepcopy(self.wrapper["observations"])
+                raw["observations"][4].update(displayWidth=value, displayHeight=value)
+                exported = ci.media_layout.bounded(raw)
+                self.assertIsNone(exported["observations"][4]["displayWidth"])
+                self.assertIsNone(exported["observations"][4]["displayHeight"])
+                self.assertNotIn("hunter2", json.dumps(exported))
+        raw = copy.deepcopy(self.wrapper["observations"])
+        raw["observations"][4].update(displayWidth=20, displayHeight=15)
+        self.assertEqual(ci.media_layout.bounded(raw)["observations"][4]["displayWidth"], 20)
+        raw["observations"][4].update(displayWidth=31.984375, displayHeight=23.984375)
+        self.assertEqual(ci.media_layout.bounded(raw)["observations"][4]["displayHeight"], 23.984375)
+
+    def test_reported_success_cannot_hide_small_image_resizing_or_aspect_distortion(self):
+        for width, height in ((20, 15), (32, 15), (180, 135), (0, 0)):
+            with self.subTest(width=width, height=height):
+                value = copy.deepcopy(self.wrapper)
+                small = next(row for row in value["observations"]["observations"] if row["case"] == "live-small")
+                small.update(displayWidth=width, displayHeight=height)
+                self.assertTrue(small["displaySizeValid"])
+                with self.assertRaises(RuntimeError):
+                    ci.media_layout.validate(value, self.source, self.scripts)
+        value = copy.deepcopy(self.wrapper)
+        # Ordinary images may fit a narrower pane without changing aspect.
+        regular = next(row for row in value["observations"]["observations"] if row["case"] == "live-regular")
+        regular.update(displayWidth=160, displayHeight=120)
+        ci.media_layout.validate(value, self.source, self.scripts)
+        regular.update(displayHeight=80)
+        with self.assertRaises(RuntimeError):
+            ci.media_layout.validate(value, self.source, self.scripts)
 
     def test_native_audit_helpers_validate_geometry_short_socket_and_released_keys_without_launch(self):
         audit = Path(ci.__file__).with_name("linux-media-layout-audit.mjs").as_uri()

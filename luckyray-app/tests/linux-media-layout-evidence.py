@@ -5,12 +5,25 @@ VIEWPORTS = (1024, 560)
 MODES = ("hover", "focus")
 FLAGS = ("toolbarVisible", "toolbarFullyVisible", "buttonEnabled", "controlsFullyVisible", "buttonCenterHit", "allButtonCentersHit")
 PHASES = ("ordinary-user", "user-namespace", "browser-identity", "browser-start", "cdp-connect", "sandbox-page", "sandbox-assertion",
-          "fixture-ready", "native-hover", "native-focus", "native-click", "browser-cleanup", "complete", "unknown")
+          "fixture-ready", "native-hover", "native-focus", "display-dimensions", "native-click", "browser-cleanup", "complete", "unknown")
 CODES = tuple(name + "-failed" for name in PHASES) + ("unknown",)
 
 
 def integer(value, low, high):
     return value if type(value) is int and low <= value <= high else None
+
+
+def display_dimension(value):
+    import math
+    return value if type(value) in (int, float) and 0 <= value <= 4096 and math.isfinite(value) else None
+
+
+def display_size_valid(row, small):
+    width, height = display_dimension(row.get("displayWidth")), display_dimension(row.get("displayHeight"))
+    if width is None or height is None or width <= 0 or height <= 0:
+        return False
+    return (abs(width - 32) <= .5 and abs(height - 24) <= .5 if small else
+            width <= 320.5 and height <= 240.5 and abs(width / height - 4 / 3) < .02)
 
 
 def digest(value):
@@ -62,6 +75,7 @@ def bounded(raw):
             "mode": row.get("mode") if row.get("mode") in MODES else "INVALID",
             "viewport": row.get("viewport") if type(row.get("viewport")) is int and row["viewport"] in VIEWPORTS else None,
             "naturalWidth": integer(row.get("naturalWidth"), 1, 320), "naturalHeight": integer(row.get("naturalHeight"), 1, 240),
+            "displayWidth": display_dimension(row.get("displayWidth")), "displayHeight": display_dimension(row.get("displayHeight")),
             **{name: row.get(name) if type(row.get(name)) is bool else None for name in
                ("displaySizeValid", "hoverApplied", "focusWithin", "controlFocused", *FLAGS, "clickedOnce")},
             "clickAttempts": integer(row.get("clickAttempts"), 0, 1)})
@@ -100,7 +114,8 @@ def validate(wrapper, expected_source, scripts):
     for row in rows:
         small = row["case"].endswith("small")
         require(row["naturalWidth"] == (32 if small else 320) and row["naturalHeight"] == (24 if small else 240)
-                and row["displaySizeValid"] is True and row["clickedOnce"] is True and row["clickAttempts"] == 1
+                and row["displaySizeValid"] is True and display_size_valid(row, small)
+                and row["clickedOnce"] is True and row["clickAttempts"] == 1
                 and all(row[name] is True for name in FLAGS))
         require(row["hoverApplied"] is (row["mode"] == "hover") and row["focusWithin"] is (row["mode"] == "focus")
                 and row["controlFocused"] is (row["mode"] == "focus"))

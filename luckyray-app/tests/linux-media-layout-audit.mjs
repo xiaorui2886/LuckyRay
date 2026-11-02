@@ -167,7 +167,7 @@ export async function audit(options) {
       await connection.send('Emulation.setDeviceMetricsOverride', { width: viewport, height: 900, deviceScaleFactor: 1, mobile: false }, session);
       for (const id of CASES) for (const mode of ['hover', 'focus']) {
         phase = mode === 'hover' ? 'native-hover' : 'native-focus';
-        const row = { case: id, mode, viewport, naturalWidth: null, naturalHeight: null, displaySizeValid: false,
+        const row = { case: id, mode, viewport, naturalWidth: null, naturalHeight: null, displayWidth: null, displayHeight: null, displaySizeValid: false,
           hoverApplied: false, focusWithin: false, controlFocused: false, ...Object.fromEntries(FLAGS.map(key => [key, false])),
           clickedOnce: false, clickAttempts: 0 };
         report.observations.push(row);
@@ -183,8 +183,10 @@ export async function audit(options) {
           return FLAGS.every(key => row[key]) && row.hoverApplied === (mode === 'hover')
             && row.focusWithin === (mode === 'focus') && row.controlFocused === (mode === 'focus');
         });
+        phase = 'display-dimensions';
         const dimensions = await read(session, `(()=>{const i=document.querySelector('#${id} .note-media img'),r=i.getBoundingClientRect();return{naturalWidth:i.naturalWidth,naturalHeight:i.naturalHeight,width:r.width,height:r.height}})()`);
         row.naturalWidth = dimensions.naturalWidth; row.naturalHeight = dimensions.naturalHeight;
+        row.displayWidth = dimensions.width; row.displayHeight = dimensions.height;
         row.displaySizeValid = displaySizeValid(dimensions, id.endsWith('small')); assert(row.displaySizeValid);
         phase = 'native-click';
         const before = await read(session, `window.fixtureEvents.filter(id=>id===${JSON.stringify(id)}).length`);
