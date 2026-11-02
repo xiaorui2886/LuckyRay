@@ -235,6 +235,32 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    fn replace_private_fixture(path: &std::path::Path, bytes: &[u8]) {
+        let original = std::fs::metadata(path).unwrap();
+        assert_eq!(original.mode() & 0o777, 0o600);
+        assert_eq!(original.nlink(), 1);
+        let retained = path.with_extension("retained");
+        assert!(!retained.exists());
+        std::fs::rename(path, &retained).unwrap();
+        let mut replacement = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .unwrap();
+        replacement.write_all(bytes).unwrap();
+        replacement.sync_all().unwrap();
+        let actual = replacement.metadata().unwrap();
+        assert_eq!(actual.mode() & 0o777, 0o600);
+        assert_eq!(actual.nlink(), 1);
+        assert_eq!((actual.uid(), actual.gid()), (original.uid(), original.gid()));
+        assert_ne!((actual.dev(), actual.ino()), (original.dev(), original.ino()));
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        assert_eq!(std::fs::read(retained).unwrap(), bytes);
+    }
     fn fixture() -> (tempfile::TempDir, std::path::PathBuf, Directory) {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -256,20 +282,26 @@ mod tests {
             .join(".luckyray/attachment-operations/macos")
             .join(&name);
         let same = std::fs::read(&record).unwrap();
-        std::fs::rename(&record, record.with_extension("retained")).unwrap();
-        std::fs::write(&record, &same).unwrap();
+        replace_private_fixture(&record, &same);
         // A fresh read observes a new valid manifest object, but cannot retarget
         // any piece: every piece remains bound to its stored inode and digest.
         assert_eq!(store.read(&name).unwrap(), bytes);
         let part = record.parent().unwrap().join(format!("{name}.part-000"));
         let data = std::fs::read(&part).unwrap();
-        std::fs::rename(&part, part.with_extension("retained")).unwrap();
-        std::fs::write(&part, data).unwrap();
+        replace_private_fixture(&part, &data);
+        // The replacement passes the real private file policy (including ACL)
+        // before the manifest's stored piece identity is required to reject it.
+        let qualified = store
+            .directory
+            .read_owned(part.file_name().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(qualified.0, data);
         assert!(store.read(&name).is_err());
     }
     #[test]
     fn macos_operation_store_refuses_linked_or_nonprivate_locations_without_chmod() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::os::unix::fs::symlink;
         let (_temp, root, directory) = fixture();
         let store = Store::open(&directory, true).unwrap();
         drop(store);
@@ -277,6 +309,9 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(Store::open(&directory, false).is_err());
         assert_eq!(std::fs::metadata(&path).unwrap().mode() & 0o777, 0o755);
+        // Qualify the target again so the link case cannot fail on mode alone.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        Store::open(&directory, false).unwrap();
         std::fs::rename(&path, path.with_extension("retained")).unwrap();
         symlink(path.with_extension("retained"), &path).unwrap();
         assert!(Store::open(&directory, false).is_err());

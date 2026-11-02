@@ -1,7 +1,8 @@
 //! These call the production service, admission store and recovery path.
 //! They require Darwin; Linux policy checks are not substitutes for them.
 use super::*;
-use std::os::unix::fs::MetadataExt;
+use std::io::Write;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
 fn fixture() -> (
     tempfile::TempDir,
@@ -39,11 +40,27 @@ fn fixture() -> (
 }
 fn replace_same_bytes(path: &Path) -> (PathBuf, u64, Vec<u8>) {
     let bytes = std::fs::read(path).unwrap();
+    let original = std::fs::metadata(path).unwrap();
+    assert_eq!(original.nlink(), 1);
     let held = path.with_file_name(format!("external-held-{:032x}", rand::random::<u128>()));
+    assert!(!held.exists());
     std::fs::rename(path, &held).unwrap();
-    std::fs::write(path, &bytes).unwrap();
-    let inode = std::fs::metadata(path).unwrap().ino();
-    assert_ne!(inode, std::fs::metadata(&held).unwrap().ino());
+    let mut replacement = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(original.mode() & 0o777)
+        .open(path)
+        .unwrap();
+    replacement.write_all(&bytes).unwrap();
+    replacement.sync_all().unwrap();
+    let actual = replacement.metadata().unwrap();
+    assert_eq!(actual.mode() & 0o777, original.mode() & 0o777);
+    assert_eq!(actual.nlink(), 1);
+    assert_eq!((actual.uid(), actual.gid()), (original.uid(), original.gid()));
+    assert_ne!((actual.dev(), actual.ino()), (original.dev(), original.ino()));
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    assert_eq!(std::fs::read(&held).unwrap(), bytes);
+    let inode = actual.ino();
     (held, inode, bytes)
 }
 #[test]

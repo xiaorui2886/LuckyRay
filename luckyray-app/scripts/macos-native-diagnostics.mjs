@@ -12,7 +12,7 @@ export const DIAGNOSTIC_STAGES = Object.freeze([
 ]);
 const COMMANDS = Object.freeze(["node", "pnpm", "cargo", "make", "configure", "perl", "curl", "python3", "python3.11",
   "lipo", "codesign", "otool", "plutil", "git", "deno", "ffmpeg", "swiftc", "screencapture", "luckyray-cli"]);
-const CLASSES = Object.freeze(["rust-compiler", "typescript-compiler", "python-error", "native-compiler", "compiler-error", "header-not-found", "unresolved-name", "type-mismatch",
+const CLASSES = Object.freeze(["rust-compiler", "rust-test-panic", "typescript-compiler", "python-error", "native-compiler", "compiler-error", "header-not-found", "unresolved-name", "type-mismatch",
   "linker-failure", "library-not-found", "compiler-link-probe-failed", "unsupported-option", "invalid-config", "io-error",
   "before-build-failed", "module-not-found", "native-module-load-failed", "architecture-mismatch", "permission-denied",
   "disk-full", "source-download-failed", "pinned-input-rejected", "runtime-minimum-rejected", "project-error", "configure-log-unavailable", "configure-terminal", "quoted-cflag-rejected"]);
@@ -131,6 +131,8 @@ export class DiagnosticCollector {
     if (/\berror:/i.test(line) && line.includes("'-ffile-prefix-map=")
         && /no such file or directory|linker input file not found/i.test(line)) this.add({ class: "quoted-cflag-rejected" });
     const where = location(line, this.files);
+    if (where.file && this.commands.findLast(item => item.status === "started")?.stage === "native-note-data-test"
+        && /\bpanicked at\b/.test(line)) this.add({ class: "rust-test-panic", ...where });
     if (where.file && (/\berror\b|-->/.test(line))) this.add({ class: /\.rs:/.test(line) ? "rust-compiler" : /\.(?:ts|tsx)\(/.test(line) ? "typescript-compiler" : "native-compiler", ...where });
     for (const code of this.codes) if (line.includes(code)) this.add({ class: "project-error", code });
     for (const code of IO_CODES) if (new RegExp(`\\b${code}\\b`).test(line)) this.add({ class: "io-error", code });

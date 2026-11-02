@@ -344,7 +344,8 @@ pub(super) fn restore(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     fn fixture() -> (tempfile::TempDir, PathBuf, Directory) {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().canonicalize().unwrap();
@@ -516,8 +517,21 @@ mod tests {
         );
         assert!(path.join(&journal).is_file());
         assert!(path.join(&backup).is_file());
+        let retained_metadata = std::fs::metadata(path.join(&backup)).unwrap();
         std::fs::rename(path.join(&backup), path.join("original-held")).unwrap();
-        std::fs::write(path.join(&backup), b"original").unwrap();
+        let mut replacement = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(retained_metadata.mode() & 0o777)
+            .open(path.join(&backup))
+            .unwrap();
+        replacement.write_all(b"original").unwrap();
+        replacement.sync_all().unwrap();
+        let replacement_metadata = replacement.metadata().unwrap();
+        assert_eq!(replacement_metadata.mode() & 0o777, retained_metadata.mode() & 0o777);
+        assert_eq!(replacement_metadata.nlink(), 1);
+        assert_ne!((replacement_metadata.dev(), replacement_metadata.ino()),
+            (retained_metadata.dev(), retained_metadata.ino()));
         assert!(copy_version(
             &root,
             &item.record_path,

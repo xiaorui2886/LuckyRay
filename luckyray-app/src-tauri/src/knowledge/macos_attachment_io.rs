@@ -458,7 +458,8 @@ pub(super) fn checkpoint_held(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::io::Write;
+    use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
     fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -510,6 +511,11 @@ mod tests {
         let observed = Observation::read(&path, false).unwrap();
         std::fs::rename(&path, root.join("retained.md")).unwrap();
         std::fs::write(&path, b"unchanged bytes").unwrap();
+        let retained = std::fs::metadata(root.join("retained.md")).unwrap();
+        let replacement = std::fs::metadata(&path).unwrap();
+        assert_eq!(replacement.mode() & 0o777, retained.mode() & 0o777);
+        assert_eq!(replacement.nlink(), 1);
+        assert_ne!((replacement.dev(), replacement.ino()), (retained.dev(), retained.ino()));
         assert!(observed.verify().is_err());
         symlink(root.join("retained.md"), root.join("linked.md")).unwrap();
         assert!(Observation::read(&root.join("linked.md"), false).is_err());
@@ -526,6 +532,8 @@ mod tests {
                 publish_before_rename(&directory, ["new.png".into()], b"new bytes", |_, name| {
                     let path = root.join("attachments").join(name);
                     staging = Some(path.clone());
+                    let original = std::fs::metadata(&path)?;
+                    assert_eq!(original.mode() & 0o777, 0o600);
                     if kind == "hardlink" {
                         std::fs::hard_link(&path, path.with_extension("retained"))?;
                     } else {
@@ -533,7 +541,17 @@ mod tests {
                         if kind == "symlink" {
                             symlink(path.with_extension("retained"), &path)?;
                         } else {
-                            std::fs::write(&path, b"replacement")?;
+                            let mut replacement = std::fs::OpenOptions::new()
+                                .write(true)
+                                .create_new(true)
+                                .mode(0o600)
+                                .open(&path)?;
+                            replacement.write_all(b"new bytes")?;
+                            replacement.sync_all()?;
+                            let actual = replacement.metadata()?;
+                            assert_eq!(actual.mode() & 0o777, original.mode() & 0o777);
+                            assert_eq!(actual.nlink(), 1);
+                            assert_ne!((actual.dev(), actual.ino()), (original.dev(), original.ino()));
                         }
                     }
                     Ok(())
@@ -542,7 +560,7 @@ mod tests {
             assert!(!root.join("attachments/new.png").exists());
             let staging = staging.unwrap();
             if kind == "replacement" {
-                assert_eq!(std::fs::read(&staging).unwrap(), b"replacement");
+                assert_eq!(std::fs::read(&staging).unwrap(), b"new bytes");
             } else if kind == "symlink" {
                 assert!(std::fs::symlink_metadata(&staging)
                     .unwrap()
@@ -580,7 +598,14 @@ mod tests {
 
     #[test]
     fn macos_attachment_blob_limit_does_not_raise_note_or_credential_limits() {
-        let (_temp, root) = fixture();
+        // tempfile's default directory follows umask and may be 0755. This
+        // case also opens a credential directory, whose 0700 policy is strict.
+        let temp = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        assert_eq!(std::fs::metadata(&root).unwrap().mode() & 0o777, 0o700);
         let directory = Directory::open(&root, false, false).unwrap();
         let data = vec![42; crate::macos_fs::MAX_RECORD as usize + 1];
         directory

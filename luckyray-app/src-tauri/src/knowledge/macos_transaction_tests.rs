@@ -221,7 +221,13 @@ fn macos_platform_note_write_conflict_and_recovery() {
     std::fs::rename(&replaced_path,replaced_root.join("external-original-held")).unwrap();
     let replaced_nonce="f".repeat(32);
     let replaced_backup=format!(".lrm-{replaced_nonce}.backup");
-    replaced_dir.create(OsStr::new(&replaced_backup),b"original").unwrap();
+    let foreign_backup=replaced_dir.create(OsStr::new(&replaced_backup),b"original").unwrap();
+    let original_metadata=original_file.metadata().unwrap();
+    foreign_backup.set_permissions(std::fs::Permissions::from_mode(original_metadata.mode() & 0o777)).unwrap();
+    let foreign_metadata=foreign_backup.metadata().unwrap();
+    assert_eq!(foreign_metadata.mode() & 0o777,original_metadata.mode() & 0o777);
+    assert_eq!(foreign_metadata.nlink(),1);
+    assert_ne!((foreign_metadata.dev(),foreign_metadata.ino()),(original_metadata.dev(),original_metadata.ino()));
     journal(&replaced_dir,&replaced_nonce,b"original",b"next",&original_file,None);
     assert!(recover_tree(&replaced_root).is_err());
     assert!(!replaced_path.exists());

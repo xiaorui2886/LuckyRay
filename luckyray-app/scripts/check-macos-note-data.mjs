@@ -50,6 +50,21 @@ export function singleNativeTestPassed(text, exit, signal) {
     && /^running 1 test\r?$/m.test(text)
     && /^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;[^\r\n]*$/m.test(text);
 }
+export function nativeCaseDisposition(execution) {
+  if (execution?.closed !== true || execution.spawnFailed !== false || execution.timedOut !== false
+      || execution.terminationRequested !== false || execution.outputInvalid !== false) return "failed-stop";
+  const { text, exit, signal } = execution;
+  if (singleNativeTestPassed(text, exit, signal)) return "passed";
+  // Only a fully drained, normally exited libtest run of exactly one failed
+  // case may continue. Missing cases, ignored tests and malformed output stop.
+  if (exit === 101 && signal == null && typeof text === "string" && text.length <= 8 * 1024 * 1024
+      && [...text.matchAll(/^running \d+ tests?\r?$/gm)].length === 1
+      && [...text.matchAll(/^test result:[^\r\n]*$/gm)].length === 1
+      && /^running 1 test\r?$/m.test(text)
+      && /^test result: FAILED\. 0 passed; 1 failed; 0 ignored; 0 measured; \d+ filtered out;[^\r\n]*$/m.test(text))
+    return "failed-continue";
+  return "failed-stop";
+}
 export function safeNoteDataExecution(input) {
   if (!input || !["passed", "failed"].includes(input.status) || typeof input.compiled !== "boolean"
       || !Array.isArray(input.cases) || input.cases.length !== NOTE_DATA_CASES.length
@@ -65,38 +80,55 @@ export function safeNoteDataExecution(input) {
   let stopped = false; let failed = 0;
   for (const item of cases) {
     if (stopped && item.status !== "not-run") throw new Error("macos-note-data-result-invalid");
-    if (item.status !== "passed") stopped = true;
+    if (item.status === "not-run" || item.status === "failed" && item.exit !== 101) stopped = true;
     if (item.status === "failed") failed += 1;
   }
   if ((input.status === "passed") !== passed || input.status === "failed" && input.failure === "none"
       || !input.compiled && (cases.some(item => item.status !== "not-run") || !["compile-failed", "artifact-invalid"].includes(input.failure))
-      || input.compiled && input.failure === "compile-failed" || input.failure === "test-failed" && failed !== 1)
+      || input.compiled && input.failure === "compile-failed" || input.failure === "test-failed" && failed < 1)
     throw new Error("macos-note-data-result-invalid");
   return { status: input.status, compiled: input.compiled, failure: input.failure, cases,
     passedCount: cases.filter(item => item.status === "passed").length, total: NOTE_DATA_CASES.length };
 }
-async function nativeCommand(command, args, env, stage, timeout = undefined) {
+export async function nativeCommand(command, args, env, stage, timeout = undefined) {
   const started = Date.now(); const startedId = commandEvent("start", stage, command);
   return new Promise(resolveResult => {
-    const child = spawn(command, args, { cwd: TAURI, env, stdio: ["ignore", "pipe", "pipe"], timeout });
-  let text = ""; let oversized = false; let spawnFailed = false;
+    const child = spawn(command, args, { cwd: TAURI, env, stdio: ["ignore", "pipe", "pipe"] });
+    let text = ""; let oversized = false; let spawnFailed = false; let timedOut = false; let totalBytes = 0; let forceTimer;
+    const terminate = () => {
+      child.kill("SIGTERM");
+      // These fixed IO cases do not launch descendants. A child that ignores
+      // cancellation still must close before collection can return or advance.
+      forceTimer ??= setTimeout(() => child.kill("SIGKILL"), 1000);
+    };
+    const timer = timeout === undefined ? undefined : setTimeout(() => { timedOut = true; terminate(); }, timeout);
+    const observeOutput = bytes => {
+      totalBytes += bytes.length;
+      if (totalBytes > 8 * 1024 * 1024 && !oversized) { oversized = true; text = ""; terminate(); }
+    };
     child.stdout.on("data", bytes => {
       // This function is permitted only inside check-macos-internal's worker.
       // The parent parses bounded typed diagnostics and never prints raw data.
       process.stdout.write(bytes);
-      text += bytes.toString();
-      if (text.length > 8 * 1024 * 1024) { oversized = true; text = ""; child.kill("SIGTERM"); }
+      observeOutput(bytes);
+      if (!oversized) text += bytes.toString();
     });
-    child.stderr.on("data", bytes => process.stderr.write(bytes));
+    child.stderr.on("data", bytes => { process.stderr.write(bytes); observeOutput(bytes); });
     child.once("error", () => {
       spawnFailed = true;
+      clearTimeout(timer);
+      clearTimeout(forceTimer);
       if (startedId) commandEvent("exit", stage, command, { startedId, exit: "SPAWN_ERROR", elapsedMs: Date.now() - started });
-      resolveResult({ text: "", exit: "SPAWN_ERROR", signal: null });
+      resolveResult({ text: "", exit: "SPAWN_ERROR", signal: null, closed: false, spawnFailed: true,
+        timedOut, terminationRequested: child.killed, outputInvalid: oversized });
     });
     child.once("close", (exit, signal) => {
+      clearTimeout(timer);
+      clearTimeout(forceTimer);
       if (spawnFailed) return;
       if (startedId) commandEvent("exit", stage, command, { startedId, exit: exit ?? signal, elapsedMs: Date.now() - started });
-      resolveResult({ text: oversized ? "" : text, exit: exit ?? signal, signal });
+      resolveResult({ text: oversized ? "" : text, exit: exit ?? signal, signal, closed: true, spawnFailed: false,
+        timedOut, terminationRequested: child.killed, outputInvalid: oversized });
     });
   });
 }
@@ -109,7 +141,8 @@ export async function runNativeNoteData(env) {
   // Cargo keeps executable artifact records on stdout and renders compiler
   // diagnostics on stderr for the existing bounded, public-source projection.
   const built = await nativeCommand("cargo", ["test", "--locked", "--target", TARGET, "--lib", "--no-default-features", "--features", "macos-note-flow", "--no-run", NOTE_DATA_MESSAGE_FORMAT], noteDataCompileEnvironment(env), "native-note-data-compile");
-  if (built.exit !== 0 || built.signal != null) return safeNoteDataExecution(result);
+  if (built.exit !== 0 || built.signal != null || !built.closed || built.spawnFailed || built.timedOut
+      || built.terminationRequested || built.outputInvalid) return safeNoteDataExecution(result);
   const artifacts = built.text.split(/\r?\n/).flatMap(line => {
     try { const item = JSON.parse(line); return item.reason === "compiler-artifact" && item.target?.name === "luckyray_app_lib"
       && item.target.src_path === join(TAURI, "src", "lib.rs")
@@ -130,7 +163,8 @@ export async function runNativeNoteData(env) {
         || current.ctimeMs !== identity.ctimeMs || current.mtimeMs !== identity.mtimeMs) throw new Error("macos-note-data-artifact-invalid");
     const execution = await nativeCommand(executable, [NOTE_DATA_CASES[i].test, "--exact", "--test-threads=1", "--quiet"], env,
       "native-note-data-test", NOTE_DATA_TIMEOUT_MS);
-    const passed = singleNativeTestPassed(execution.text, execution.exit, execution.signal);
+    const disposition = nativeCaseDisposition(execution);
+    const passed = disposition === "passed";
     const after = await lstat(executable);
     if (after.dev !== identity.dev || after.ino !== identity.ino || after.size !== identity.size
         || after.ctimeMs !== identity.ctimeMs || after.mtimeMs !== identity.mtimeMs) {
@@ -139,8 +173,13 @@ export async function runNativeNoteData(env) {
       return safeNoteDataExecution(result);
     }
     result.cases[i] = { id: NOTE_DATA_CASES[i].id, status: passed ? "passed" : "failed", exit: execution.exit };
-    if (!passed) return safeNoteDataExecution(result);
+    if (disposition === "failed-stop") {
+      commandEvent("issues", "native-note-data-test", executable, { issues: [{ class: "project-error", code:
+        execution.outputInvalid ? "macos-note-data-output-invalid" : "macos-note-data-execution-abnormal" }] });
+      return safeNoteDataExecution(result);
+    }
   }
+  if (result.cases.some(item => item.status !== "passed")) return safeNoteDataExecution(result);
   result.status = "passed"; result.failure = "none"; return safeNoteDataExecution(result);
 }
 

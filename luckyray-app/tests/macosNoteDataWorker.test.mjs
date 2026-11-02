@@ -5,10 +5,25 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { NOTE_DATA_CASES, NOTE_DATA_MESSAGE_FORMAT, noteDataCompileEnvironment, safeNoteDataExecution, singleNativeTestPassed } from "../scripts/check-macos-note-data.mjs";
+import { NOTE_DATA_CASES, NOTE_DATA_MESSAGE_FORMAT, noteDataCompileEnvironment, nativeCaseDisposition, safeNoteDataExecution, singleNativeTestPassed } from "../scripts/check-macos-note-data.mjs";
 import { DiagnosticCollector, safeDiagnosticSummary } from "../scripts/macos-native-diagnostics.mjs";
 import { APP, directory, download } from "../scripts/macos-build-common.mjs";
 import { PHASES, publishableReport } from "../scripts/check-macos-internal.mjs";
+
+function realNativeCommands(requests) {
+  const module = new URL("../scripts/check-macos-note-data.mjs", import.meta.url).href;
+  const source = `import {nativeCommand,nativeCaseDisposition} from ${JSON.stringify(module)};
+    const results=[];for(const item of ${JSON.stringify(requests)}){
+      const result=await nativeCommand(item.command,item.args,process.env,'native-note-data-test',item.timeout);
+      const disposition=nativeCaseDisposition(result);results.push({result,disposition});
+      if(disposition==='failed-stop')break;
+    }process.stderr.write('\\nMACOS_CASE_RESULTS '+JSON.stringify(results)+'\\n');`;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", source],
+    { encoding: "utf8", timeout: 15000, maxBuffer: 12 * 1024 * 1024 });
+  assert.equal(child.status, 0);assert.equal(child.signal, null);
+  const result = child.stderr.split(/\r?\n/).find(line => line.startsWith("MACOS_CASE_RESULTS "));
+  assert(result);return JSON.parse(result.slice("MACOS_CASE_RESULTS ".length));
+}
 
 test("only the native library compilation receives the fixed empty-resource config", () => {
   const env = Object.freeze({ HOME: "/synthetic-home", PATH: "/synthetic-tools", MACOSX_DEPLOYMENT_TARGET: "15.0" });
@@ -21,7 +36,7 @@ test("only the native library compilation receives the fixed empty-resource conf
   assert.throws(() => noteDataCompileEnvironment({ ...env, TAURI_CONFIG: "{}" }), /macos-note-data-config-override-rejected/);
 });
 
-test("real Cargo retains failing source diagnostics and successful test-artifact JSON", async t => {
+test("real Cargo retains compile and test failure locations plus test-artifact JSON", async t => {
   const cargo = process.env.CARGO ?? "cargo";
   const available = spawnSync(cargo, ["--version"], { encoding: "utf8", timeout: 10000 });
   if (available.error?.code === "ENOENT") return t.skip("Rust toolchain is not installed");
@@ -48,12 +63,78 @@ test("real Cargo retains failing source diagnostics and successful test-artifact
     assert(summary.issues.some(item => item.file === "src/lib.rs" && item.line === 2 && item.column > 0));
     assert(summary.commands.some(item => item.stage === "native-note-data-compile" && item.exit === 101));
     assert(!JSON.stringify(summary).includes(canary));assert(!JSON.stringify(summary).includes(root));
-    await writeFile(join(root, "src/lib.rs"), '#[test]\nfn fixture() { assert_eq!(2 + 2, 4); }\n');
+    await writeFile(join(root, "src/lib.rs"), `#[test]\nfn fixture() { panic!("${canary}"); }\n#[test]\nfn fixture_pass() {}\n`);
     const passed = run();assert.equal(passed.status, 0);assert.equal(passed.signal, null);
     const artifacts = passed.stdout.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line))
       .filter(item => item.reason === "compiler-artifact" && item.target?.name === "luckyray_app_lib" && item.profile?.test === true && typeof item.executable === "string");
     assert.equal(artifacts.length, 1);assert.equal(artifacts[0].target.src_path, join(root, "src/lib.rs"));
+    const executions = realNativeCommands(["fixture", "fixture_pass"].map(name => ({ command: artifacts[0].executable,
+      args: [name, "--exact", "--test-threads=1", "--quiet"], timeout: 3000 })));
+    assert.equal(executions.length, 2, "a normal failed case must not prevent the independent next case");
+    assert.deepEqual(executions.map(x => x.disposition), ["failed-continue", "passed"]);
+    const execution = executions[0].result;
+    assert.equal(execution.exit, 101);assert.equal(execution.signal, null);assert(execution.closed);
+    const tests = new DiagnosticCollector(new Set(), files);
+    tests.feed("stderr", 'MACOS_NATIVE_EVENT {"event":"start","id":"2:1","stage":"native-note-data-test","command":"other"}\n');
+    tests.feed("stdout", execution.text);
+    tests.feed("stderr", 'MACOS_NATIVE_EVENT {"event":"exit","id":"2:2","startedId":"2:1","stage":"native-note-data-test","command":"other","exit":101}\n');
+    const testSummary = safeDiagnosticSummary(tests.summary(), new Set(), files);
+    assert(testSummary.issues.some(item => item.class === "rust-test-panic" && item.file === "src/lib.rs" && item.line === 2 && item.column > 0));
+    assert(testSummary.commands.some(item => item.stage === "native-note-data-test" && item.exit === 101));
+    assert(!JSON.stringify(testSummary).includes(canary));assert(!JSON.stringify(testSummary).includes(root));
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("abnormal real children stop collection before another case", () => {
+  const next = { command: process.execPath, args: ["-e", "process.exit(0)"], timeout: 1000 };
+  for (const [kind, code, timeout] of [
+    ["timeout", "setInterval(()=>{},1000)", 50],
+    ["ignored-timeout", "process.on('SIGTERM',()=>{});process.stdout.write('READY\\n');setInterval(()=>{},1000)", 1000],
+    ["signal", "process.kill(process.pid,'SIGTERM')", 3000],
+    ["stdout-budget", "process.stdout.write(Buffer.alloc(8*1024*1024+1,120))", 5000],
+    ["stderr-budget", "process.stderr.write(Buffer.alloc(8*1024*1024+1,120))", 5000],
+  ]) {
+    const rows = realNativeCommands([{ command: process.execPath, args: ["-e", code], timeout }, next]);
+    assert.equal(rows.length, 1, kind);assert.equal(rows[0].disposition, "failed-stop", kind);
+    assert(rows[0].result.closed, kind);
+    if (kind === "timeout") assert(rows[0].result.timedOut);
+    if (kind === "ignored-timeout") {
+      assert(rows[0].result.timedOut);assert(rows[0].result.text.includes("READY"));
+      assert.equal(rows[0].result.signal, "SIGKILL");
+    }
+    if (kind.endsWith("budget")) assert(rows[0].result.outputInvalid);
+    if (kind === "signal") assert.equal(rows[0].result.signal, "SIGTERM");
+  }
+  const missing = realNativeCommands([{ command: "/synthetic-nonexistent-native-test", args: [], timeout: 1000 }, next]);
+  assert.equal(missing.length, 1);assert.equal(missing[0].disposition, "failed-stop");
+  assert(missing[0].result.spawnFailed);assert.equal(missing[0].result.closed, false);
+});
+
+test("only an exact normal single-case failure may continue", () => {
+  const failed = { text: "running 1 test\nfixture --- FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.01s\n",
+    exit: 101, signal: null, closed: true, spawnFailed: false, timedOut: false, terminationRequested: false, outputInvalid: false };
+  assert.equal(nativeCaseDisposition(failed), "failed-continue");
+  for (const key of ["spawnFailed", "timedOut", "terminationRequested", "outputInvalid"]) {
+    assert.equal(nativeCaseDisposition({ ...failed, [key]: true }), "failed-stop");
+  }
+  for (const row of [{ ...failed, closed: false }, { ...failed, exit: 1 }, { ...failed, signal: "SIGTERM" },
+    { ...failed, text: failed.text + failed.text }, { ...failed, text: failed.text.replace("0 ignored", "1 ignored") },
+    { ...failed, text: "fatal fixture error" }]) assert.equal(nativeCaseDisposition(row), "failed-stop");
+});
+
+test("test panic projection accepts only tracked positions in the native test stage", () => {
+  const files = new Set(["src/lib.rs"]);
+  for (const stage of ["native-note-data-test", "native-note-data-compile"]) {
+    const collector = new DiagnosticCollector(new Set(), files);
+    collector.feed("stderr", `MACOS_NATIVE_EVENT ${JSON.stringify({ event: "start", id: "1:1", stage, command: "cargo" })}\n`);
+    collector.feed("stdout", "thread 'synthetic' panicked at src/lib.rs:9:3:\n");
+    collector.feed("stdout", "thread 'synthetic' panicked at /private/never_publish/src/lib.rs:8:4:\n");
+    collector.feed("stdout", "thread 'synthetic' panicked at src/untracked.rs:7:5:\nprivate message never_publish\n");
+    const result = safeDiagnosticSummary(collector.summary(), new Set(), files);
+    assert.deepEqual(result.issues, stage === "native-note-data-test"
+      ? [{ class: "rust-test-panic", origin: "process-output", stage, file: "src/lib.rs", line: 9, column: 3 }] : []);
+    assert(!JSON.stringify(result).includes("never_publish"));
+  }
 });
 
 test("exact native execution cannot pass with zero matches, ignored cases or a signal", () => {
@@ -75,6 +156,13 @@ test("worker projection requires the complete fixed set and strips unexpected ma
   assert.throws(() => safeNoteDataExecution({ ...complete, cases: complete.cases.map((item, i) => i === 0 ? { ...item, status: "not-run", exit: null } : item) }));
   const failed = { status: "failed", compiled: true, failure: "test-failed", cases: complete.cases.map((item, i) => i === 0 ? { ...item, status: "failed", exit: "SIGTERM" } : { ...item, status: "not-run", exit: null }) };
   assert.equal(safeNoteDataExecution(failed).passedCount, 0);
+  const collected = { ...complete, status: "failed", failure: "test-failed", cases: complete.cases.map((item, i) =>
+    [1, 8].includes(i) ? { ...item, status: "failed", exit: 101 } : item) };
+  const all = safeNoteDataExecution(collected);
+  assert.equal(all.passedCount, 18);assert.equal(all.status, "failed");assert.equal(all.total, 20);
+  assert.throws(() => safeNoteDataExecution({ ...collected, status: "passed" }));
+  assert.throws(() => safeNoteDataExecution({ ...collected, cases: collected.cases.map((item, i) =>
+    i === 1 ? { ...item, exit: "SIGTERM" } : item) }), /macos-note-data-result-invalid/);
   const sourceBlocked = { schemaVersion: 1, mode: "internal-native-validation", binaryExport: false, status: "failed",
     source: { repository: "xiaorui2886/LuckyRay", commit: "a".repeat(40), tree: "b".repeat(40) }, workerExit: 1, workerSignal: null,
     distributionReady: false, build: null, lsh: null, noteData: complete,
