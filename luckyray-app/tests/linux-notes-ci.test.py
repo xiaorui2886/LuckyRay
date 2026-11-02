@@ -1355,11 +1355,17 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("hold_external_dependencies(operation)?", mutations)
         self.assertIn("hold_verified_attachment(&vault.root, relative, digest)", mutations)
         # A rollback must not demand a witness that may already have expired.
-        self.assertIn("let _external_files = if rollback {", mutations)
+        self.assertIn(
+            "let _external_files = if super::attachment_witness::witness_required(rollback) {",
+            mutations)
         observations = self.read("knowledge/attachment_observations.rs")
-        self.assertIn("if state.epoch != source_epoch || state.identity != operation.target_identity {",
-                      observations)
-        self.assertIn("plan.captured.elapsed() < TTL", observations)
+        witness = self.read("knowledge/attachment_witness.rs")
+        # The epoch/identity/TTL rule lives in one pure module and is used here.
+        self.assertIn("witness_scope_is_current(", observations)
+        self.assertIn("witness_is_fresh(", observations)
+        self.assertIn("witness_scope_is_current(", witness)
+        self.assertIn("captured.is_some_and(|age| age < ttl)", witness)
+        self.assertIn("pub(crate) fn witness_required(rollback: bool) -> bool", witness)
 
     def test_recovery_summary_is_read_only_and_registered(self):
         mutations = self.read("knowledge/linux_attachment_mutations.rs")
@@ -1369,8 +1375,15 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                 self.assertNotIn(token, summary)
         self.assertIn('strip_suffix(".removed")', mutations.split("fn is_tombstone_name", 1)[1])
         lib = self.read("lib.rs")
-        self.assertIn("knowledge_attachment_recovery_summary,", lib)
-        self.assertIn("fn knowledge_attachment_recovery_summary(vault_id: String)", lib)
+        # The command only exists where a rename-aside tombstone can exist.
+        self.assertIn('#[cfg(target_os = "linux")]\n            knowledge_attachment_recovery_summary,', lib)
+        self.assertIn('#[cfg(target_os = "linux")]\n#[tauri::command]\n'
+                      'fn knowledge_attachment_recovery_summary', lib)
+        self.assertNotIn("AttachmentRecoverySummary", self.read("knowledge/attachment_operations.rs"))
+        self.assertIn("pub(crate) struct AttachmentRecoverySummary", mutations)
+        self.assertIn("#[cfg(target_os = \"linux\")]\n"
+                      "pub(crate) use linux_attachment_mutations::AttachmentRecoverySummary;",
+                      self.read("knowledge/mod.rs"))
 
     def test_linux_attachment_copy_is_chinese_and_states_no_change(self):
         root = Path(__file__).resolve().parents[1]
@@ -1382,11 +1395,26 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         # The unprovable-rollback message must promise that nothing was written.
         rollback = errors.split('"knowledge-linux-rollback-unprovable":', 1)[1].split("\n", 1)[0]
         self.assertIn("现场已保留", rollback)
-        labels = (root / "src/core/services/vaultAttachmentWorkflow.ts").read_text()
-        self.assertIn('const code = status.split(": ")[0];', labels)
         panel = (root / "src/features/notes/VaultAttachmentsPanel.tsx").read_text()
         self.assertIn("恢复区保留 {tombstones} 个已移除的原件", panel)
         self.assertIn("getAttachmentRecoverySummary(vaultId)", panel)
+
+    def test_attachment_issue_labels_are_closed_to_the_linux_port(self):
+        # The label rule is executable: an offline node test pins that every
+        # pre-existing status keeps its exact label, and that only the codes this
+        # port introduced may be read out of a "code: reason" step status.
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            ["node", "--experimental-strip-types", "--test",
+             str(root / "tests/attachmentIssueLabels.test.mjs")],
+            text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        labels = (root / "src/core/services/attachmentIssueLabels.ts").read_text()
+        # The pure module must stay importable without the Tauri bridge.
+        self.assertNotRegex(labels, r"(?m)^import ")
+        self.assertNotIn("@tauri-apps", labels)
+        workflow = (root / "src/core/services/vaultAttachmentWorkflow.ts").read_text()
+        self.assertIn("resolveAttachmentIssueLabel(status, attachmentAccessMessage(status))", workflow)
 
     def test_attachment_protections_and_status_sets_stay_closed(self):
         store = self.read("linux_attachment_store.rs")

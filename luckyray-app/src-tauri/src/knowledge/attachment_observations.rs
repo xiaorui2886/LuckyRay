@@ -477,7 +477,12 @@ impl KnowledgeService {
             .attachment_observations
             .lock()
             .map_err(|_| unavailable())?;
-        if state.epoch != source_epoch || state.identity != operation.target_identity {
+        if !super::attachment_witness::witness_scope_is_current(
+            state.epoch,
+            source_epoch,
+            &state.identity,
+            &operation.target_identity,
+        ) {
             return Err(unavailable());
         }
         let mut observed_operation=operation.clone();
@@ -486,7 +491,9 @@ impl KnowledgeService {
         let observed = state
             .plans
             .get(&key)
-            .filter(|plan| plan.captured.elapsed() < TTL)
+            .filter(|plan| {
+                super::attachment_witness::witness_is_fresh(Some(plan.captured.elapsed()), TTL)
+            })
             .ok_or_else(unavailable)?;
         let mut guards = Vec::new();
         for (old, new, object) in &observed.moves {
@@ -496,7 +503,10 @@ impl KnowledgeService {
             let witness = state
                 .files
                 .get(old)
-                .filter(|w| w.object == *object && w.captured.elapsed() < TTL)
+                .filter(|w| w.object == *object)
+                .filter(|w| {
+                    super::attachment_witness::witness_is_fresh(Some(w.captured.elapsed()), TTL)
+                })
                 .ok_or_else(unavailable)?;
             guards.push(hold_verified_attachment(&vault.root, new, &witness.digest)?);
             let file = open_witness(&vault.root, new)?;

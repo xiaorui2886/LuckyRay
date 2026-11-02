@@ -118,31 +118,6 @@ pub(crate) struct AttachmentOperationResult {
     pub recovery_path: String,
 }
 
-/// Read-only recovery state of one Vault. A tombstone is the original inode a
-/// `Remove` step renamed aside; nothing is cleaned automatically (D3).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct AttachmentRecoverySummary {
-    pub tombstones: usize,
-}
-
-/// Windows and macOS never create a tombstone: their removal paths do not use
-/// the rename-aside verb, and their recovery journal is enumerated separately.
-#[cfg(not(target_os = "linux"))]
-impl KnowledgeService {
-    pub(crate) fn attachment_recovery_summary(
-        &self,
-        vault_id: &str,
-    ) -> Result<AttachmentRecoverySummary, KnowledgeError> {
-        let (vault, guard, identity) = self.capture_current_target()?;
-        if vault.registration.id != vault_id {
-            return Err(knowledge_target_not_current());
-        }
-        self.verify_current_target(&identity, &guard)?;
-        Ok(AttachmentRecoverySummary { tombstones: 0 })
-    }
-}
-
 fn payload(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }

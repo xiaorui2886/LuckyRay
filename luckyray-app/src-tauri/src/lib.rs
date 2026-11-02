@@ -1027,6 +1027,7 @@ pub fn run() {
             knowledge_recover_attachment_operation,
             knowledge_cancel_attachment_operation,
             knowledge_list_attachment_operations,
+            #[cfg(target_os = "linux")]
             knowledge_attachment_recovery_summary,
             knowledge_activate_ui_source,
             knowledge_activate_current_ui_source,
@@ -2929,6 +2930,8 @@ fn knowledge_list_attachment_operations(vault_id: String) -> Result<Vec<String>,
 
 /// Read-only count of removed originals still held in the Vault. Nothing is
 /// cleaned: the number only tells the user what the recovery area contains.
+/// Only the Linux port renames an original aside, so the command exists there.
+#[cfg(target_os = "linux")]
 #[tauri::command]
 fn knowledge_attachment_recovery_summary(vault_id: String) -> Result<knowledge::AttachmentRecoverySummary, String> {
     knowledge_service()?.attachment_recovery_summary(&vault_id).map_err(knowledge_error)

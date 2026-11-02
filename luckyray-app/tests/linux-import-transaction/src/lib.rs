@@ -11,6 +11,10 @@ mod linux_fs;
 mod linux_file_store;
 #[path = "../../../src-tauri/src/linux_managed_record.rs"]
 mod linux_managed_record;
+// The witness rule is pure by design, so the TTL/epoch decisions can be
+// exercised here without a running knowledge service.
+#[path = "../../../src-tauri/src/knowledge/attachment_witness.rs"]
+mod attachment_witness;
 
 #[cfg(test)]
 mod tests {
@@ -852,5 +856,168 @@ mod tests {
         assert_eq!(failure.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(root.path().join("Note.md")).unwrap(), b"third state");
         assert!(!step_path(root.path(), 1).exists());
+    }
+
+    // --- Witness rule (pure) ---------------------------------------------------------
+
+    #[test]
+    fn witness_expiry_epoch_and_identity_are_decided_by_the_pure_rule() {
+        use super::attachment_witness::{witness_is_fresh, witness_required, witness_scope_is_current};
+        let ttl = std::time::Duration::from_secs(600);
+        // Fresh, same epoch, same plan: usable.
+        assert!(witness_scope_is_current(7, 7, "vault-digest", "vault-digest"));
+        assert!(witness_is_fresh(
+            Some(std::time::Duration::from_secs(1)),
+            ttl
+        ));
+        // Expired (including exactly at the boundary), or never recorded: refused.
+        assert!(!witness_is_fresh(Some(ttl + std::time::Duration::from_secs(1)), ttl));
+        assert!(!witness_is_fresh(Some(ttl), ttl));
+        assert!(!witness_is_fresh(None, ttl));
+        // Another source epoch or another plan identity: refused.
+        assert!(!witness_scope_is_current(7, 8, "vault-digest", "vault-digest"));
+        assert!(!witness_scope_is_current(7, 7, "vault-digest", "other-digest"));
+        // A rollback never consults the witness, so an expired observation cannot
+        // block an undo; a forward run always needs one.
+        assert!(!witness_required(true));
+        assert!(witness_required(false));
+    }
+
+    // --- Step 2: note move keeps the source mode -------------------------------------
+
+    #[test]
+    fn note_move_keeps_the_source_mode_and_rollback_restores_it() {
+        let root = fixture();
+        let store = transaction(root.path());
+        let source = root.path().join("Old.md");
+        fs::write(&source, b"body").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).unwrap();
+        let inode = fs::metadata(&source).unwrap().ino();
+        assert!(!store
+            .install_copying_mode(0, "Old.md", "New.md", b"body", &KEY, || Ok(()))
+            .unwrap());
+        let published = fs::metadata(root.path().join("New.md")).unwrap();
+        assert_eq!(published.permissions().mode() & 0o777, 0o644);
+        store
+            .verify_step(0, "New.md", None, Some(&b"body"[..]), false, &KEY)
+            .unwrap();
+        // The original is renamed aside, not copied, so its inode survives.
+        assert!(!store
+            .install_remove(1, "Old.md", b"body", false, &KEY, || Ok(()))
+            .unwrap());
+        assert!(!source.exists());
+        assert!(!store
+            .restore_removed(1, "Old.md", b"body", false, &KEY, || Ok(()))
+            .unwrap());
+        let restored = fs::metadata(&source).unwrap();
+        assert_eq!(restored.ino(), inode);
+        assert_eq!(restored.permissions().mode() & 0o777, 0o644);
+        assert_eq!(
+            fs::metadata(root.path().join("New.md"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
+        );
+    }
+
+    #[test]
+    fn note_move_refuses_a_source_with_an_extra_attribute() {
+        // A source carrying an ACL (or any other extended attribute) cannot be
+        // republished with the same access rules, so the move refuses before it
+        // writes anything. The attribute is created here; when the filesystem
+        // refuses the synthetic ACL the same gate is exercised with a user
+        // attribute instead - the assertion itself never changes.
+        let root = fixture();
+        let store = transaction(root.path());
+        let source = root.path().join("Old.md");
+        fs::write(&source, b"body").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).unwrap();
+        let name = std::ffi::CString::new(source.as_os_str().as_encoded_bytes()).unwrap();
+        let mut acl = 2u32.to_le_bytes().to_vec();
+        for (tag, permission) in [(1u16, 6u16), (4, 4), (16, 4), (32, 4)] {
+            acl.extend_from_slice(&tag.to_le_bytes());
+            acl.extend_from_slice(&permission.to_le_bytes());
+            acl.extend_from_slice(&u32::MAX.to_le_bytes());
+        }
+        let acl_applied = unsafe {
+            libc::setxattr(
+                name.as_ptr(),
+                c"system.posix_acl_access".as_ptr(),
+                acl.as_ptr().cast(),
+                acl.len(),
+                0,
+            )
+        } == 0;
+        if !acl_applied {
+            assert_eq!(
+                unsafe {
+                    libc::setxattr(
+                        name.as_ptr(),
+                        c"user.synthetic".as_ptr(),
+                        b"x".as_ptr().cast(),
+                        1,
+                        0,
+                    )
+                },
+                0,
+                "attribute fixture unavailable: {}",
+                io::Error::last_os_error()
+            );
+        }
+        let failure = store
+            .install_copying_mode(0, "Old.md", "New.md", b"body", &KEY, || Ok(()))
+            .err()
+            .expect("a source with an extra attribute must not be republished");
+        assert_eq!(failure.kind(), io::ErrorKind::Unsupported);
+        assert!(!root.path().join("New.md").exists());
+        assert!(!step_path(root.path(), 0).exists());
+        assert!(!root
+            .path()
+            .join(format!(".lrk-import-{ID}-0.tmp"))
+            .exists());
+        assert_eq!(fs::read(&source).unwrap(), b"body");
+    }
+
+    #[test]
+    fn occupied_destination_refuses_both_kinds_of_creation() {
+        // A name taken between preview and execution must be refused with zero
+        // writes, for a private attachment copy and for a moved note alike.
+        let root = fixture();
+        fs::create_dir_all(root.path().join("attachments")).unwrap();
+        let store = transaction(root.path());
+        for (target, source_name, shared) in [
+            ("attachments/taken.png", None, false),
+            ("Taken.md", Some("Old.md"), true),
+        ] {
+            let occupied = root.path().join(target);
+            fs::write(&occupied, b"third party").unwrap();
+            fs::set_permissions(&occupied, fs::Permissions::from_mode(0o644)).unwrap();
+            if let Some(source_name) = source_name {
+                fs::write(root.path().join(source_name), b"body").unwrap();
+                fs::set_permissions(
+                    root.path().join(source_name),
+                    fs::Permissions::from_mode(0o644),
+                )
+                .unwrap();
+            }
+            let failure = match source_name {
+                Some(source_name) => store
+                    .install_copying_mode(0, source_name, target, b"body", &KEY, || Ok(()))
+                    .err(),
+                None => store
+                    .install(0, target, b"body", &KEY, || Ok(()))
+                    .err(),
+            }
+            .unwrap_or_else(|| panic!("{target} must not be overwritten"));
+            assert_eq!(failure.kind(), io::ErrorKind::AlreadyExists, "{shared}");
+            assert_eq!(fs::read(&occupied).unwrap(), b"third party");
+            assert!(!step_path(root.path(), 0).exists());
+            assert!(!root
+                .path()
+                .join(format!(".lrk-import-{ID}-0.tmp"))
+                .exists());
+        }
     }
 }

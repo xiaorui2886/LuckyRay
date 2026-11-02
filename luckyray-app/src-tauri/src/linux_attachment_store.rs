@@ -184,14 +184,19 @@ struct Step {
 }
 impl Step {
     /// A published name. The stage is renamed into place, so the identity
-    /// captured here is the identity at the target.
+    /// captured here is the identity at the target. A private target is a 0600
+    /// attachment; a shared target is an ordinary document whose mode was
+    /// copied from the document it replaces.
     fn capture_create(
         relative: &str,
         context: &str,
         stage: &str,
         snapshot: &Snapshot,
+        private: bool,
     ) -> io::Result<Self> {
-        private_file_metadata(&snapshot.file)?;
+        if private {
+            private_file_metadata(&snapshot.file)?;
+        }
         let identity = Identity::of(&snapshot.file)?;
         Ok(Self {
             version: 2,
@@ -318,8 +323,16 @@ impl Step {
         Ok(())
     }
     /// `Create`: the published inode itself, proven by identity and content.
-    fn verify_created(&self, relative: &str, bytes: &[u8], snapshot: &Snapshot) -> io::Result<()> {
-        private_file_metadata(&snapshot.file)?;
+    fn verify_created(
+        &self,
+        relative: &str,
+        bytes: &[u8],
+        snapshot: &Snapshot,
+        private: bool,
+    ) -> io::Result<()> {
+        if private {
+            private_file_metadata(&snapshot.file)?;
+        }
         let identity = Identity::of(&snapshot.file)?;
         if self.verb()? != Verb::Create
             || self.relative != relative
@@ -604,7 +617,8 @@ impl ImportStore {
         let parent = self.parent(&path, false)?;
         let target = private_read(&parent, path.file_name().ok_or_else(conflict)?, MAX_FILE)?
             .ok_or_else(conflict)?;
-        step.verify_created(value, bytes, &target)?;
+        // Imports only ever publish private attachments.
+        step.verify_created(value, bytes, &target, true)?;
         self.verify()
     }
 
@@ -649,8 +663,10 @@ impl ImportStore {
         match step.verb()? {
             Verb::Create => {
                 let content = after.ok_or_else(conflict)?;
-                let target = private_read(&parent, name, MAX_FILE)?.ok_or_else(conflict)?;
-                step.verify_created(value, content, &target)?;
+                let target = self
+                    .read_target(&parent, name, private)?
+                    .ok_or_else(conflict)?;
+                step.verify_created(value, content, &target, private)?;
             }
             Verb::Replace => {
                 if after.is_none() {
@@ -1010,6 +1026,7 @@ impl ImportStore {
         self.verify()?;
         Ok(false)
     }
+    /// Publish a new private attachment (0600, no extra attributes).
     /// true means this transaction's recorded inode was already durably installed.
     pub(crate) fn install(
         &self,
@@ -1017,6 +1034,43 @@ impl ImportStore {
         value: &str,
         bytes: &[u8],
         key: &[u8; 32],
+        admit: impl FnMut() -> io::Result<()>,
+    ) -> io::Result<bool> {
+        self.install_inner(index, value, bytes, key, None, true, admit)
+    }
+
+    /// Publish a new Markdown document that keeps the ordinary mode of the
+    /// document it replaces, so a move never changes who may read the note.
+    /// Refuses before writing anything when the source carries a POSIX ACL,
+    /// another extended attribute or a set-id bit: those cannot be reproduced
+    /// on a new inode, and dropping them silently would change access.
+    /// true means this transaction's recorded inode was already durably installed.
+    pub(crate) fn install_copying_mode(
+        &self,
+        index: usize,
+        source: &str,
+        value: &str,
+        bytes: &[u8],
+        key: &[u8; 32],
+        admit: impl FnMut() -> io::Result<()>,
+    ) -> io::Result<bool> {
+        let path = relative(source)?;
+        let parent = self.parent(&path, false)?;
+        let snapshot = parent
+            .read(path.file_name().ok_or_else(conflict)?, false, MAX_FILE)?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        let mode = shared_mode(&snapshot.file)?;
+        self.install_inner(index, value, bytes, key, Some(mode), false, admit)
+    }
+
+    fn install_inner(
+        &self,
+        index: usize,
+        value: &str,
+        bytes: &[u8],
+        key: &[u8; 32],
+        copied_mode: Option<u32>,
+        private: bool,
         mut admit: impl FnMut() -> io::Result<()>,
     ) -> io::Result<bool> {
         if index >= 1024 || bytes.len() > MAX_FILE {
@@ -1046,10 +1100,13 @@ impl ImportStore {
                 return Err(conflict());
             }
         }
-        if let Some(target) = private_read(&parent, name, MAX_FILE)? {
+        // Any object at the destination occupies the name, whatever its mode;
+        // only evidence that recorded this very object may accept it, and that
+        // evidence is then proved with the private/shared rule.
+        if let Some(target) = parent.read(name, false, MAX_FILE)? {
             // A name this transaction never recorded is someone else's object.
             step.ok_or_else(|| io::Error::from(io::ErrorKind::AlreadyExists))?
-                .verify_created(value, bytes, &target)?;
+                .verify_created(value, bytes, &target, private)?;
             admit()?;
             self.verify()?;
             return Ok(true);
@@ -1057,11 +1114,19 @@ impl ImportStore {
         admit()?;
         let stage_label = format!(".lrk-import-{}-{index}.tmp", self.id);
         let stage_name = OsStr::new(&stage_label);
-        let stage = match private_read(&parent, stage_name, MAX_FILE)? {
+        let stage = match self.read_target(&parent, stage_name, private)? {
             Some(stage) => stage,
             None if step.is_none() => {
-                parent.create_private(stage_name, bytes)?;
-                private_read(&parent, stage_name, MAX_FILE)?.ok_or_else(conflict)?
+                if private {
+                    parent.create_private(stage_name, bytes)?;
+                } else {
+                    let created = parent.create(stage_name, bytes)?;
+                    if let Some(mode) = copied_mode {
+                        apply_mode(&created, mode)?;
+                    }
+                }
+                self.read_target(&parent, stage_name, private)?
+                    .ok_or_else(conflict)?
             }
             None => return Err(conflict()),
         };
@@ -1070,11 +1135,11 @@ impl ImportStore {
         }
         let step = match step {
             Some(step) => {
-                step.verify_created(value, bytes, &stage)?;
+                step.verify_created(value, bytes, &stage, private)?;
                 step
             }
             None => {
-                let step = Step::capture_create(value, &context, &stage_label, &stage)?;
+                let step = Step::capture_create(value, &context, &stage_label, &stage, private)?;
                 self.write_step(index, &step, key)?
             }
         };
@@ -1084,17 +1149,61 @@ impl ImportStore {
         step.verify_created(
             value,
             bytes,
-            &private_read(&parent, stage_name, MAX_FILE)?.ok_or_else(conflict)?,
+            &self
+                .read_target(&parent, stage_name, private)?
+                .ok_or_else(conflict)?,
+            private,
         )?;
         parent.verify_named(stage_name, &stage.file)?;
         parent.rename_new(stage_name, &parent, name)?;
         step.verify_created(
             value,
             bytes,
-            &private_read(&parent, name, MAX_FILE)?.ok_or_else(conflict)?,
+            &self
+                .read_target(&parent, name, private)?
+                .ok_or_else(conflict)?,
+            private,
         )?;
         admit()?;
         self.verify()?;
         Ok(false)
     }
+}
+
+/// The ordinary mode bits of a document that may be republished under a new
+/// name. Extended attributes (a POSIX ACL among them) and set-id bits are
+/// refused: a new inode cannot reproduce them, and losing them silently would
+/// change who may read the file.
+fn shared_mode(file: &File) -> io::Result<u32> {
+    crate::linux_fs::no_attributes(file)?;
+    let mode = file.metadata()?.mode();
+    if mode & 0o7000 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "linux-shared-mode-unsupported",
+        ));
+    }
+    Ok(mode & 0o777)
+}
+
+fn apply_mode(file: &File, mode: u32) -> io::Result<()> {
+    // A default ACL on the parent directory is inherited by the new file; that
+    // is an access rule the source did not have, so it is refused rather than
+    // published as if the mode alone described the file.
+    crate::linux_fs::no_attributes(file)?;
+    if unsafe { libc::fchmod(file.as_raw_fd(), mode as libc::mode_t) } != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "linux-shared-mode-unsupported",
+        ));
+    }
+    file.sync_all()?;
+    if file.metadata()?.mode() & 0o777 != mode {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "linux-shared-mode-unsupported",
+        ));
+    }
+    crate::linux_fs::no_attributes(file)?;
+    Ok(())
 }

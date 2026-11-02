@@ -21,6 +21,15 @@ use std::io;
 /// Result of one forward step; `true` means the step was already durable.
 type StepOutcome = io::Result<bool>;
 
+/// Read-only recovery state of one Vault. A tombstone is the original inode a
+/// `Remove` step renamed aside; nothing is cleaned automatically (D3). Only the
+/// Linux port creates tombstones, so this type is Linux-only too.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentRecoverySummary {
+    pub tombstones: usize,
+}
+
 fn rollback_failure(failure: io::Error) -> KnowledgeError {
     // One code for "not proven", with the specific reason kept in the message
     // and in the reported issue, so no caller can read this as success.
@@ -203,16 +212,17 @@ impl KnowledgeService {
             recovery_path: format!(".luckyray/attachment-operations/{id}.json"),
         };
         // The external witness and its short-lived evidence gate the whole
-        // operation, exactly as on Windows. A rollback re-reads nothing external.
-        let _external_files = if rollback {
-            Vec::new()
-        } else {
+        // operation, exactly as on Windows. A rollback re-reads nothing external,
+        // so an expired witness never blocks an undo.
+        let _external_files = if super::attachment_witness::witness_required(rollback) {
             self.hold_external_plan(vault, operation, source_epoch)?
-        };
-        let _external_locations = if rollback {
-            Vec::new()
         } else {
+            Vec::new()
+        };
+        let _external_locations = if super::attachment_witness::witness_required(rollback) {
             hold_external_dependencies(operation)?
+        } else {
+            Vec::new()
         };
         let ordered: Vec<(usize, &AttachmentFileChange)> = if rollback {
             operation.files.iter().enumerate().rev().collect()
@@ -297,17 +307,47 @@ impl KnowledgeService {
         let after = bytes(&file.after)?;
         let key = self.attachment_receipt_key(false)?;
         let private = step_is_private(&file.relative_path);
+        // A note move publishes the rewritten document under its new name and
+        // keeps the ordinary mode of the document it replaces; the source is the
+        // plan's only removal. Every other creation is a private attachment.
+        let move_source = if operation.kind == "note-move" {
+            operation
+                .files
+                .iter()
+                .find(|other| other.after.is_none())
+                .map(|other| other.relative_path.as_str())
+        } else {
+            None
+        };
         let mut admission_error: Option<KnowledgeError> = None;
         let outcome: StepOutcome = match (before.as_deref(), after.as_deref()) {
-            (None, Some(content)) => store.install(index, &file.relative_path, content, &key, || {
-                self.admit_linux_attachment_step(
-                    vault,
-                    identity,
-                    guard,
-                    cancelled,
-                    &mut admission_error,
-                )
-            }),
+            (None, Some(content)) => match move_source {
+                Some(source) => store.install_copying_mode(
+                    index,
+                    source,
+                    &file.relative_path,
+                    content,
+                    &key,
+                    || {
+                        self.admit_linux_attachment_step(
+                            vault,
+                            identity,
+                            guard,
+                            cancelled,
+                            &mut admission_error,
+                        )
+                    },
+                ),
+                None => store.install(index, &file.relative_path, content, &key, || {
+                    self.admit_linux_attachment_step(
+                        vault,
+                        identity,
+                        guard,
+                        cancelled,
+                        &mut admission_error,
+                    )
+                }),
+            },
             (Some(previous), Some(content)) => {
                 // The attachments this note will point at must still be the
                 // exact object the plan recorded, held for the whole rewrite.
@@ -360,9 +400,23 @@ impl KnowledgeService {
             }
         };
         outcome.map_err(|failure| {
-            admission_error
-                .take()
-                .map_or_else(|| step_failure(failure), |admission| admission)
+            admission_error.take().map_or_else(
+                || {
+                    // A shared creation refuses when the source carries an ACL or
+                    // another attribute that a new inode cannot reproduce. That is
+                    // a capability refusal, not a changed file, and nothing was
+                    // written when it is reported.
+                    if move_source.is_some() && failure.kind() == io::ErrorKind::Unsupported {
+                        error(
+                            "knowledge-linux-fs-unsupported",
+                            "The source note carries an access control entry or another attribute that cannot be reproduced; nothing was written",
+                        )
+                    } else {
+                        step_failure(failure)
+                    }
+                },
+                |admission| admission,
+            )
         })?;
         if !private {
             self.index.mark_document_dirty(&KnowledgeDocumentRef {

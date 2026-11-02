@@ -61,8 +61,11 @@ mod attachment_operations;
 mod attachment_receipts;
 mod attachment_policy;
 mod attachment_observations;
+mod attachment_witness;
 pub(crate) use attachment_observations::ExternalAttachmentUpdate;
-pub(crate) use attachment_operations::{AttachmentOperationIssue, AttachmentOperationPlan, AttachmentOperationResult, AttachmentRecoverySummary};
+pub(crate) use attachment_operations::{AttachmentOperationIssue, AttachmentOperationPlan, AttachmentOperationResult};
+#[cfg(target_os = "linux")]
+pub(crate) use linux_attachment_mutations::AttachmentRecoverySummary;
 #[cfg(test)]
 mod attachment_tests;
 #[cfg(test)]

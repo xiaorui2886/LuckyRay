@@ -1,4 +1,5 @@
 import { attachmentAccessMessage } from "./vaultAttachmentErrors";
+import { resolveAttachmentIssueLabel } from "./attachmentIssueLabels";
 import type { AttachmentOperationPlan, AttachmentOperationResult } from "./vaultAttachments";
 
 export type ImportReceipt = { copiedCount: number; skippedCount?: number; failedCount?: number; conflictRenamedCount: number; errors: { sourcePath: string; code: string; message: string }[] };
@@ -98,27 +99,5 @@ export function createAttachmentWorkflow(port: AttachmentWorkflowPort) {
 }
 
 export function attachmentIssueLabel(status: string) {
-  const known: Record<string, string> = { missing: "找不到来源附件", ambiguous: "存在多个同名附件", "unsupported-reference-style-rewrite": "此引用格式暂不支持改写", "import-partial": "导入中断，可从操作记录恢复", "referenced-note-not-selected": "引用的笔记不在本次选择中", "material-source-unavailable": "素材记录存在，但来源文件不可用", "knowledge-attachment-read-failed": "无法读取来源附件", "knowledge-attachment-size-limit": "来源附件超出大小限制", "knowledge-path-reparse-forbidden": "来源路径不允许访问" };
-  const attachmentManagement: Record<string, string> = {
-    "other-vault-pending": "其他知识库仍有引用，请分别打开处理",
-    "external-attachment-not-approved": "外部文件尚未连接，请定位并确认附件",
-    "material-resolvable": "可从素材库定位，尚未转换为真实文件引用",
-    "attachment-index-pending": "文件已处理，附件索引仍需刷新",
-    "knowledge-revision-conflict": "笔记已变化，请重新检查",
-    "knowledge-export-capacity": "导出超过单次容量限制，请缩小范围",
-    "knowledge-export-write-failed": "导出目标无法写入",
-    "knowledge-export-verification-failed": "导出文件校验未通过，请检查目标目录",
-    "knowledge-export-destination-not-empty": "导出目标不是空文件夹",
-    "knowledge-export-source-overlap": "导出目标不能与原知识库重叠",
-    "knowledge-linux-rollback-unprovable": "回滚未执行，现场已保留",
-    "knowledge-linux-fs-unsupported": "文件系统不支持安全回滚，未做修改",
-    "knowledge-name-conflict": "目标位置已被占用，未覆盖",
-    "knowledge-operation-partial": "未全部完成，可继续或回滚",
-  };
-  // A step failure carries "code: reason". Match the whole status first so
-  // existing labels never change, then fall back to the code alone.
-  const code = status.split(": ")[0];
-  return attachmentAccessMessage(status) || known[status] || attachmentManagement[status]
-    || known[code] || attachmentManagement[code]
-    || "此附件暂未处理，请检查文件位置后重试";
+  return resolveAttachmentIssueLabel(status, attachmentAccessMessage(status));
 }
