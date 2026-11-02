@@ -10,6 +10,9 @@ doctest = false
 [dependencies]
 libc = "=0.2.186"
 hmac = "=0.12.1"
+# linux_file_store.rs is compiled here too and names its journal nonce with
+# rand::random, so the crate needs the same pinned version as src-tauri.
+rand = "=0.8.6"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"
 sha2 = "=0.10.9"

@@ -278,7 +278,7 @@ impl Step {
     }
     fn shape(&self) -> io::Result<()> {
         let digest_valid = |value: &str| value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit());
-        if !digest_valid(&self.digest) {
+        if !digest_valid(self.digest.as_str()) {
             return Err(conflict());
         }
         let shaped = match self.verb()? {
@@ -296,7 +296,7 @@ impl Step {
             return Err(conflict());
         }
         if let Some(before) = &self.before {
-            if !digest_valid(&before.digest) {
+            if !digest_valid(before.digest.as_str()) {
                 return Err(conflict());
             }
         }
