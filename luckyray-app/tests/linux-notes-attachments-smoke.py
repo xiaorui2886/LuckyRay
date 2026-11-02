@@ -283,6 +283,19 @@ def driver_operation(request):
     return "other"
 
 
+def preview_toggle_retriable(observation):
+    """Only an unconfirmed click lost in transport may be reconsidered.
+
+    A transport reset is not an application answer: the request never produced a
+    response, so the click may or may not have been delivered. Everything else
+    (an HTTP error, a different operation, a confirmed response) is final.
+    """
+    return (isinstance(observation, dict)
+            and observation.get("kind") == "TRANSPORT_ERROR"
+            and observation.get("operation") == "click"
+            and observation.get("responseState") == "UNCONFIRMED")
+
+
 def webdriver_command(opener, request, timeout):
     """Never retry a mutation or retain a raw WebDriver response/error message."""
     operation = driver_operation(request)
@@ -700,7 +713,7 @@ def main():
               "helperSha256": digest(Path(__file__).with_name("linux-desktop-smoke.py")),
               "flowCount": 1, "appSessions": 0, "checks": {name: "NOT_RUN" for name in CHECKS},
               "drop": {"transport": "TAURI_EVENT_IPC", "nativePointerDrag": "NOT_RUN", "gestures": 0},
-              "previews": [], "imageCopies": [], "quitRequests": [], "externalApplicationDisplay": "NOT_RUN",
+              "previews": [], "previewToggle": [], "imageCopies": [], "quitRequests": [], "externalApplicationDisplay": "NOT_RUN",
               "trimmedFilenameEndToEnd": "NOT_RUN", "waylandHardware": "NOT_RUN", "installer": "NOT_RUN"}
 
     def wd(method, suffix, body=None, timeout=45):
@@ -775,10 +788,49 @@ def main():
         action = "source-ready"
         until("return [...document.querySelectorAll(arguments[0])].some(e=>e.getBoundingClientRect().width>0&&!e.disabled&&!e.readOnly);", [SOURCE_EDITOR])
 
+    def preview_state():
+        # Read-only probe: is the expected preview image already rendered?
+        return execute("return [...document.querySelectorAll('#page-notes .note-preview .note-media[data-kind=image] img')].some(e=>e.complete&&e.naturalWidth===32&&e.naturalHeight===24&&e.getBoundingClientRect().width>0);")
+
+    def toggle_preview(selector):
+        """Click the status-bar preview toggle, at most twice, and never twice blindly.
+
+        CI 41521642741 lost this single click: the driver answered 1 ms into an
+        established request with a transport reset while the driver, the app and
+        the native driver all stayed alive, so the click was unconfirmed rather
+        than applied. The preview state decides which of the two it was, so a
+        click that landed is never repeated (that would toggle the preview back
+        off) and only a click that provably did not land is retried, once. Each
+        attempt is recorded in the evidence.
+        """
+        nonlocal action
+        attempts = 0
+        while True:
+            attempts += 1
+            action = "preview-toggle"
+            try:
+                click(selector)
+            except DriverFailure as error:
+                observation = error.observation
+                if attempts >= 2 or not preview_toggle_retriable(observation):
+                    raise
+                # Give a delivered click the same time the normal path allows
+                # before deciding it never landed; only then is it repeated.
+                applied = helpers.wait_until(preview_state, 20)
+                report["previewToggle"].append({"attempt": attempts, "transport": observation.get("transport"),
+                    "elapsedMs": observation.get("elapsedMs"),
+                    "stateAfterFailure": "PREVIEW" if applied else "SOURCE"})
+                if applied:
+                    return
+            else:
+                if report["previewToggle"]:
+                    report["previewToggle"].append({"attempt": attempts, "transport": None,
+                        "elapsedMs": None, "stateAfterFailure": None})
+                return
+
     def preview():
         nonlocal action
-        action = "preview-toggle"
-        click("#page-notes .note-editor-area .editor-status-right > button:first-of-type")
+        toggle_preview("#page-notes .note-editor-area .editor-status-right > button:first-of-type")
         action = "preview-ready"
         until("return [...document.querySelectorAll('#page-notes .note-preview .note-media[data-kind=image] img')].some(e=>e.complete&&e.naturalWidth===32&&e.naturalHeight===24&&e.getBoundingClientRect().width>0);")
         action = "preview-geometry"

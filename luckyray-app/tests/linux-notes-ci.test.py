@@ -847,6 +847,52 @@ class TransportEvidenceTests(unittest.TestCase):
             finally:
                 server.shutdown(); server.server_close(); worker.join(timeout=1)
 
+    def test_single_lost_preview_click_is_reconciled_before_any_retry(self):
+        # 41521642741 lost exactly one click at the transport layer: the request
+        # never produced a response, so the click was unconfirmed rather than
+        # applied. Only that shape may be reconsidered, and only after re-reading
+        # the preview state; webdriver_command itself still never replays a POST.
+        retriable = {"kind": "TRANSPORT_ERROR", "operation": "click", "responseState": "UNCONFIRMED",
+                     "transport": "CONNECTION_RESET", "elapsedMs": 1}
+        self.assertTrue(ci.smoke.preview_toggle_retriable(retriable))
+        for key, replacement in (("kind", "HTTP_ERROR"), ("kind", "INVALID_RESPONSE"),
+                                 ("operation", "execute"), ("operation", "actions"),
+                                 ("operation", "element"), ("responseState", "HTTP_ERROR_RECEIVED")):
+            value = dict(retriable); value[key] = replacement
+            self.assertFalse(ci.smoke.preview_toggle_retriable(value), (key, replacement))
+        for missing in ("kind", "operation", "responseState"):
+            value = dict(retriable); value.pop(missing)
+            self.assertFalse(ci.smoke.preview_toggle_retriable(value), missing)
+        self.assertFalse(ci.smoke.preview_toggle_retriable(None))
+        self.assertFalse(ci.smoke.preview_toggle_retriable(["hunter2"]))
+        self.assertFalse(ci.smoke.preview_toggle_retriable("hunter2"))
+
+        # The record is closed, bounded to two attempts and idempotent; no value
+        # from outside the closed sets is exported.
+        raw = [{"attempt": 1, "transport": "CONNECTION_RESET", "elapsedMs": 1, "stateAfterFailure": "SOURCE"},
+               {"attempt": 2, "transport": None, "elapsedMs": None, "stateAfterFailure": None}]
+        self.assertEqual(ci.bounded_preview_toggle(raw), raw)
+        self.assertEqual(ci.bounded_preview_toggle(ci.bounded_preview_toggle(raw)), raw)
+        self.assertEqual(ci.bounded_preview_toggle([{}] * 3), [])
+        self.assertEqual(ci.bounded_preview_toggle([{"attempt": 7, "transport": "hunter2", "elapsedMs": -5,
+                                                     "stateAfterFailure": "hunter2"}]),
+                         [{"attempt": 1, "transport": None, "elapsedMs": None, "stateAfterFailure": None}])
+        self.assertNotIn("hunter2", json.dumps(ci.bounded_report({"previewToggle": [{"transport": "hunter2"}]})))
+        self.assertEqual(ci.bounded_report({"previewToggle": [{"attempt": 1, "transport": "CONNECTION_RESET",
+                                                               "elapsedMs": 1, "stateAfterFailure": "PREVIEW"}]})["previewToggle"],
+                         [{"attempt": 1, "transport": "CONNECTION_RESET", "elapsedMs": 1, "stateAfterFailure": "PREVIEW"}])
+
+        # The retry is bounded to two attempts and the click is still followed by
+        # the preview assertion it always had.
+        source = Path(ci.smoke.__file__).read_text()
+        self.assertIn("if attempts >= 2 or not preview_toggle_retriable(observation):", source)
+        self.assertIn("applied = helpers.wait_until(preview_state, 20)", source)
+        self.assertIn('"previewToggle": []', source)
+        preview = source.split("def preview():", 1)[1].split("def verify_image_copy", 1)[0]
+        self.assertIn("toggle_preview(", preview)
+        self.assertIn('action = "preview-ready"', preview)
+        self.assertIn("e.complete&&e.naturalWidth===32", preview)
+
     def test_single_read_clipboard_probe_is_bounded_readonly_and_never_returns_contents(self):
         expected = "/owned/SyntheticNote.md"
         real_popen = subprocess.Popen
@@ -967,7 +1013,7 @@ class TransportEvidenceTests(unittest.TestCase):
     def test_all_new_transport_process_clipboard_and_cleanup_projections_are_closed(self):
         value = {"kind": "TRANSPORT_ERROR", "transport": "hunter2", "responseState": "hunter2", "elapsedMs": True,
                  "pid": "hunter2", "path": "hunter2", "stdout": "hunter2", "reason": "hunter2"}
-        for project in (ci.bounded_driver, ci.bounded_exit, ci.bounded_processes, ci.bounded_clipboard_probe, ci.bounded_unconfirmed_copy, ci.bounded_cleanup):
+        for project in (ci.bounded_driver, ci.bounded_exit, ci.bounded_processes, ci.bounded_clipboard_probe, ci.bounded_unconfirmed_copy, ci.bounded_cleanup, ci.bounded_preview_toggle):
             self.assertNotIn("hunter2", json.dumps(project(value)))
             self.assertNotIn("hunter2", json.dumps(project(["hunter2"])))
         fixture = EvidenceTests(methodName="runTest"); fixture.setUp()

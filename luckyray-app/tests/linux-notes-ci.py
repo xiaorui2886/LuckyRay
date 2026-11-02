@@ -171,6 +171,26 @@ def bounded_drop_trace(raw):
     return result
 
 
+def bounded_preview_toggle(raw):
+    """Closed projection of the preview-toggle attempts.
+
+    At most two attempts, each either the transport failure that caused a retry
+    or the retry that delivered. Nothing else is exported.
+    """
+    rows = raw if isinstance(raw, list) and len(raw) <= 2 else []
+    result = []
+    for index, item in enumerate(rows):
+        if not isinstance(item, dict):
+            continue
+        attempt, transport, elapsed, state = item.get("attempt"), item.get("transport"), item.get("elapsedMs"), item.get("stateAfterFailure")
+        result.append({
+            "attempt": attempt if type(attempt) is int and attempt == index + 1 else index + 1,
+            "transport": transport if transport in smoke.TRANSPORT_CODES else None,
+            "elapsedMs": elapsed if type(elapsed) is int and 0 <= elapsed <= 60000 else None,
+            "stateAfterFailure": state if state in ("PREVIEW", "SOURCE") else None})
+    return result
+
+
 def bounded_attachment_open_trace(raw):
     """Closed projection of the sanitized attachment-open evidence."""
     raw = raw if isinstance(raw, dict) else {}
@@ -250,6 +270,7 @@ def bounded_report(raw):
                     method="WEBVIEW_SCREENSHOT_PIXELS" if probe.get("method") == "WEBVIEW_SCREENSHOT_PIXELS" else "INVALID")
         result["previews"].append(item)
     clipboard = raw.get("clipboard") if isinstance(raw.get("clipboard"), dict) else {}
+    result["previewToggle"] = bounded_preview_toggle(raw.get("previewToggle"))
     result["clipboard"] = {"source": "REAL_NOTE_CONTEXT_MENU" if clipboard.get("source") == "REAL_NOTE_CONTEXT_MENU" else "INVALID",
                            "systemRead": "XCLIP" if clipboard.get("systemRead") == "XCLIP" else "INVALID",
                            "exactAbsolutePath": clipboard.get("exactAbsolutePath") is True}
