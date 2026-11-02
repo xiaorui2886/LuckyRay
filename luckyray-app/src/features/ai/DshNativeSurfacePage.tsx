@@ -428,7 +428,7 @@ export default function DshNativeSurfacePage({
   }, [attachedAttempt, attempt, error, restarting]);
 
   return (
-    <div className="dsh-native-surface-layout">
+    <div className="dsh-native-surface-layout" data-lsh-attached={!restarting && !error && attachedAttempt === attempt}>
       <div ref={mountRef} className="dsh-native-surface-mount">
         {(restarting || error || attachedAttempt !== attempt) && <div className={`dsh-native-surface-placeholder${error ? " is-error" : ""}`} aria-live="polite">
           <div className="dsh-native-surface-placeholder-content">

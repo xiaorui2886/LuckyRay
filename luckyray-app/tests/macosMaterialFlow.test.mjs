@@ -30,8 +30,8 @@ test("the fixed PNG and internal-only feature preserve normal bundle arguments",
   assert.equal(/const SHA256: &str = "([a-f0-9]{64})"/.exec(rust)?.[1], FIXTURE.sha256);
   assert(!appBuildArguments(false).includes("macos-material-flow"));
   assert(!appBuildArguments(true).includes("macos-material-flow"));
-  assert(appBuildArguments(true).includes("macos-lsh-proof"));
-  assert(!appBuildArguments(false).includes("macos-lsh-proof"));
+  assert(appBuildArguments(true).includes("macos-lsh-surface-flow"));
+  assert(!appBuildArguments(false).includes("macos-lsh-surface-flow"));
   assert(appBuildArguments(true).includes("--locked"));
 });
 

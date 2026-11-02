@@ -1613,7 +1613,22 @@ impl CompanionGateway {
                 while !join.is_finished() && Instant::now() < deadline {
                     thread::sleep(Duration::from_millis(10));
                 }
-                if !join.is_finished() || join.join().is_err() {
+                if !join.is_finished() {
+                    #[cfg(target_os = "macos")]
+                    {
+                        // Mac's committed quit may retry cleanup. Preserve the
+                        // actual listener handle instead of detaching it and
+                        // letting an empty second shutdown pretend settlement.
+                        running.join = Some(join);
+                        let mut lifecycle = self.lifecycle.lock().expect("companion lifecycle mutex");
+                        lifecycle.running = Some(running);
+                        lifecycle.stopping_generation = None;
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    { self.lifecycle.lock().expect("companion lifecycle mutex").stopping_generation = None; }
+                    return Err(GatewayError::new("gateway-stop-timeout", "Companion listener did not stop in time"));
+                }
+                if join.join().is_err() {
                     self.lifecycle.lock().expect("companion lifecycle mutex").stopping_generation = None;
                     return Err(GatewayError::new("gateway-stop-timeout", "Companion listener did not stop in time"));
                 }
@@ -1676,7 +1691,38 @@ impl CompanionGateway {
         self.stop_exclusive().is_ok()
     }
 
+    #[cfg(target_os = "macos")]
+    pub(crate) fn macos_quit_preflight(&self) -> Result<(), &'static str> {
+        if !crate::macos_quit_admission_closed() { return Err("update-gateway-preparing"); }
+        let _transition = self.transition.try_lock().map_err(|_| "update-gateway-preparing")?;
+        if self.pending_controls.load(Ordering::SeqCst) != 0
+            || self.lifecycle.lock().map_err(|_| "update-gateway-preparing")?.stopping_generation.is_some() {
+            return Err("update-gateway-preparing");
+        }
+        // No listener, connection, pairing or persisted configuration changes.
+        // New control/HTTP transitions recheck Main's already-closed quit gate.
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn shutdown_for_macos_quit(&self) -> (bool, bool) {
+        let _transition = self.transition.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let normal = self.stop_exclusive().is_ok();
+        // A previous timeout may have retired the listener but left registered
+        // sockets. Retry their owned cleanup; absence of a listener is not proof.
+        self.connections.lock().expect("companion connections mutex").shutdown_all();
+        let deadline = Instant::now() + STOP_WAIT;
+        while !self.connections.lock().expect("companion connections mutex").entries.is_empty()
+            && Instant::now() < deadline { thread::sleep(Duration::from_millis(10)); }
+        let lifecycle = self.lifecycle.lock().expect("companion lifecycle mutex");
+        let settled = lifecycle.running.is_none() && lifecycle.stopping_generation.is_none()
+            && self.connections.lock().expect("companion connections mutex").entries.is_empty();
+        (normal && settled, settled)
+    }
+
     fn try_transition(&self) -> Result<std::sync::MutexGuard<'_, ()>, GatewayError> {
+        #[cfg(target_os = "macos")]
+        if crate::macos_quit_admission_closed() { return Err(GatewayError::new("gateway-transition-in-progress", "Application quit has reserved this service")); }
         if self.pending_controls.load(Ordering::SeqCst) != 0 {
             diagnostics::reason(diagnostics::Reason::ControlPending);
             return Err(GatewayError::new(
@@ -1685,7 +1731,11 @@ impl CompanionGateway {
             ));
         }
         match self.transition.try_lock() {
-            Ok(guard) if self.pending_controls.load(Ordering::SeqCst) == 0 => Ok(guard),
+            Ok(guard) if self.pending_controls.load(Ordering::SeqCst) == 0 => {
+                #[cfg(target_os = "macos")]
+                if crate::macos_quit_admission_closed() { return Err(GatewayError::new("gateway-transition-in-progress", "Application quit has reserved this service")); }
+                Ok(guard)
+            },
             Ok(_guard) => { diagnostics::reason(diagnostics::Reason::ControlPending); Err(GatewayError::new(
                 "gateway-transition-in-progress",
                 "A Companion Gateway control operation is pending",
@@ -2348,10 +2398,22 @@ impl CompanionGateway {
         // hit that busy timeout while settling its durable receipt.
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         loop {
+            #[cfg(target_os = "macos")]
+            if crate::macos_quit_admission_closed() {
+                self.pending_controls.fetch_sub(1, Ordering::SeqCst);
+                return Err(GatewayError::new("gateway-transition-in-progress", "Application quit has reserved this service"));
+            }
             match self.transition.try_lock() {
-                Ok(guard) => return Ok(ControlTransitionGuard {
+                Ok(guard) => {
+                    #[cfg(target_os = "macos")]
+                    if crate::macos_quit_admission_closed() {
+                        self.pending_controls.fetch_sub(1, Ordering::SeqCst);
+                        return Err(GatewayError::new("gateway-transition-in-progress", "Application quit has reserved this service"));
+                    }
+                    return Ok(ControlTransitionGuard {
                     _guard: guard, pending_controls: &self.pending_controls,
-                }),
+                    });
+                },
                 Err(TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(10));
                 }

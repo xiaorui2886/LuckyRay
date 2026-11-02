@@ -1195,9 +1195,11 @@ export function createNativeSurfaceOwner({
       }
       const node = join(root, "node", process.platform === "darwin" ? "node" : "node.exe");
       const entry = join(root, "host", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
-      await mkdir(home, { recursive: true });
-      await mkdir(join(home, "AppData", "Roaming"), { recursive: true });
-      await mkdir(join(home, "AppData", "Local"), { recursive: true });
+      if (!macos) {
+        await mkdir(home, { recursive: true });
+        await mkdir(join(home, "AppData", "Roaming"), { recursive: true });
+        await mkdir(join(home, "AppData", "Local"), { recursive: true });
+      }
       // Host-owned quarantine guard: applied as the LAST patch overlay on
       // every spawn, so plugin-manager bundle reconciliation or user edits
       // can never resurrect a quarantined loader entry for this boot.

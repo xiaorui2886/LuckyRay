@@ -26,7 +26,7 @@ const SHUTDOWN_FLAGS = ["writeCompleted", "acknowledged", "rootExitedBeforeClean
 const GROUP_STATES = new Set(["settled", "root-running", "root-unavailable", "enumeration-unavailable",
   "enumeration-incomplete", "member-unavailable", "member-running"]);
 
-function safeShutdown(value) {
+export function safeShutdown(value) {
   if (value == null) return null;
   if (SHUTDOWN_FLAGS.some(key => !bool(value[key])) || !GROUP_STATES.has(value.groupState)) invalid();
   return { ...Object.fromEntries(SHUTDOWN_FLAGS.map(key => [key, value[key]])), groupState: value.groupState };

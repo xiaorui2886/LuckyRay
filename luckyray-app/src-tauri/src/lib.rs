@@ -10,6 +10,8 @@
 mod desktop_app_update;
 #[cfg(target_os = "macos")]
 mod macos_fs;
+#[cfg(target_os = "macos")]
+mod quit_transaction;
 #[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
 mod macos_material_flow;
 mod community_mcp_knowledge;
@@ -203,6 +205,95 @@ static DSH_UPDATE_RESTART_ARMED: std::sync::atomic::AtomicBool = std::sync::atom
 static DSH_UPDATE_PREPARED_RECORD: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static NORMAL_QUIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static NORMAL_QUIT_COMPLETED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+static MACOS_QUIT_COMMITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+static MACOS_QUIT: OnceLock<Mutex<Option<quit_transaction::Committed<MacQuitParticipants>>>> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_quit_admission_closed() -> bool {
+    NORMAL_QUIT_REQUESTED.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[cfg(target_os = "macos")]
+struct MacQuitParticipants {
+    // Restore Host admission before dropping the shared generation lease on a
+    // confirmed preflight cancellation. Committed rounds retain both fields.
+    host: Option<dsh_host::DesktopUpdateReservation>,
+    // Retain generation admission through committed failure/cleanup retry.
+    _runs: agent_runs::RunExecutionLease,
+    preparation_unconfirmed: bool,
+}
+#[cfg(target_os = "macos")]
+impl quit_transaction::Participants for MacQuitParticipants {
+    fn stop_saved_surface(&mut self) -> Result<(), &'static str> {
+        if self.preparation_unconfirmed { return Err("macos-quit-stop-unconfirmed"); }
+        if let Some(host) = self.host.as_mut() {
+            host.stop_surface()?;
+            #[cfg(feature = "macos-lsh-surface-flow")]
+            dsh_host::macos_surface_flow::observe_saved_stop();
+        }
+        Ok(())
+    }
+    fn drain(&mut self) -> (bool, bool) {
+        material_native_video::shutdown();
+        let (gateway_normal, gateway_settled) = COMPANION_GATEWAY.get()
+            .map_or((true, true), |gateway| gateway.shutdown_for_macos_quit());
+        let host_normal = DSH_HOST_SERVICE.get().is_none_or(|host| host.shutdown_normally());
+        let host_settled = DSH_HOST_SERVICE.get().is_none_or(|host| host.macos_shutdown_settled());
+        (gateway_normal && host_normal && engine_update_other_runs_quiescent(), gateway_settled && host_settled)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn advance_macos_quit(quit: &mut quit_transaction::Committed<MacQuitParticipants>) -> Result<(), &'static str> {
+    match quit.advance() {
+        quit_transaction::Completion::Normal => Ok(()),
+        quit_transaction::Completion::Recovered => Err("macos-quit-recovered"),
+        quit_transaction::Completion::Pending(code) => Err(code),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn begin_macos_quit(restart: bool) -> Result<(), &'static str> {
+    let backend = backend_services().map_err(|_| "update-task-state-unavailable")?;
+    let runs = backend.agent_runs();
+    // Same actual execution admission as Canvas/notes generation. Query only
+    // after owning it; a later generation cannot race the saved observations.
+    let (admission, host) = quit_transaction::acquire(|| {
+        let admission = runs.acquire_transient("application-quit").map_err(|_| "update-generation-active")?;
+        if runs.has_active_background_run().map_err(|_| "update-task-state-unavailable")? {
+            return Err("update-generation-active");
+        }
+        Ok(admission)
+    }, || COMPANION_GATEWAY.get().map_or(Ok(()), |gateway| gateway.macos_quit_preflight()),
+       || DSH_HOST_SERVICE.get().map(|host| host.reserve_macos_quit()).transpose())?;
+    // Always reserve under operation + startup admission, including cold/idle
+    // hosts. An already admitted open returns busy; a later open is excluded.
+    // Preparation/save failure rolls back here, before ANY service is stopped.
+    let participants = MacQuitParticipants { _runs: admission, host, preparation_unconfirmed: false };
+    let participants = match quit_transaction::prepare(participants,
+        |p| p.host.as_mut().map_or(Ok(()), |host| host.prepare_macos_surface()),
+        |p| p.host.as_mut().is_none_or(|host| host.cancel_macos_preparation())) {
+        quit_transaction::Preparation::Ready(participants) => participants,
+        quit_transaction::Preparation::Cancelled(code) => return Err(code),
+        quit_transaction::Preparation::Retained(mut participants) => {
+            // Uncertain prepare/cancel: preserve every admission and the
+            // frozen editor round, without sending an unprepared stop.
+            participants.preparation_unconfirmed = true; participants
+        },
+    };
+    let mut slot = MACOS_QUIT.get_or_init(|| Mutex::new(None)).lock().unwrap();
+    *slot = Some(quit_transaction::Committed::new(participants, restart));
+    MACOS_QUIT_COMMITTED.store(true, std::sync::atomic::Ordering::Release);
+    advance_macos_quit(slot.as_mut().unwrap())
+}
+
+#[cfg(target_os = "macos")]
+fn resume_macos_quit() -> Result<(), &'static str> {
+    let mut slot = MACOS_QUIT.get_or_init(|| Mutex::new(None)).try_lock().map_err(|_| "update-quit-in-progress")?;
+    advance_macos_quit(slot.as_mut().ok_or("macos-quit-cleanup-pending")?)
+}
 static AI_STREAM_CANCELLATIONS: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -642,6 +733,8 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
     let builder = macos_material_flow::configure(builder);
+    #[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
+    let builder = dsh_host::macos_surface_flow::configure(builder);
     builder
         .on_webview_event(|webview, event| {
             if webview.label() == "main" {
@@ -768,6 +861,8 @@ pub fn run() {
         .invoke_handler(workspace_command_policy::guard(tauri::generate_handler![
             #[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
             macos_material_flow::macos_material_flow_report,
+            #[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
+            dsh_host::macos_surface_flow::macos_lsh_surface_flow_report,
             desktop_app_update::desktop_application_update,
             extension_appearance::publish_extension_appearance,
             extension_packages::manage_extension_packages,
@@ -1063,6 +1158,7 @@ fn prepared_update_record() -> &'static Mutex<Option<String>> {
 /// A full quit is not a window close: the tray keeps the process alive. Drain
 /// outside Tauri's event thread, then request exit only after the update
 /// marker has been safely committed. The next startup rechecks the closure.
+#[cfg(not(target_os = "macos"))]
 fn drain_application_services() -> bool {
         material_native_video::shutdown();
         let started = std::time::Instant::now();
@@ -1100,20 +1196,43 @@ fn with_saved_application_quit(
     if NORMAL_QUIT_REQUESTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return Err("update-quit-in-progress");
     }
-    struct Admission<'a> { app: &'a tauri::AppHandle, completed: bool }
+    struct Admission<'a> {
+        app: &'a tauri::AppHandle,
+        completed: bool,
+        #[cfg(target_os = "macos")]
+        reason: Option<&'static str>,
+    }
     impl Drop for Admission<'_> {
         fn drop(&mut self) {
             if !self.completed {
+                #[cfg(target_os = "macos")]
+                {
+                    if MACOS_QUIT_COMMITTED.load(std::sync::atomic::Ordering::Acquire) {
+                        // Stop has been issued; retain resources, editor freeze
+                        // and quit admission. This is not a cancellation.
+                        workspace_windows::retain_prepared_application_quit(self.app, self.reason);
+                        return;
+                    }
+                    workspace_windows::cancel_prepared_application_quit_with_reason(self.app, self.reason);
+                }
+                #[cfg(not(target_os = "macos"))]
                 workspace_windows::cancel_prepared_application_quit(self.app);
                 NORMAL_QUIT_REQUESTED.store(false, std::sync::atomic::Ordering::Release);
             }
         }
     }
-    let mut admission = Admission { app, completed: false };
+    let mut admission = Admission { app, completed: false,
+        #[cfg(target_os = "macos")]
+        reason: None,
+    };
     if !workspace_windows::prepare_application_quit(app) {
         return Err("update-editors-not-saved");
     }
-    continuation()?;
+    if let Err(code) = continuation() {
+        #[cfg(target_os = "macos")]
+        { admission.reason = Some(code); }
+        return Err(code);
+    }
     NORMAL_QUIT_COMPLETED.store(true, std::sync::atomic::Ordering::Release);
     admission.completed = true;
     Ok(())
@@ -1121,21 +1240,54 @@ fn with_saved_application_quit(
 
 fn request_normal_quit(app: tauri::AppHandle, restart: bool) {
     std::thread::spawn(move || {
-        if let Err(code) = with_saved_application_quit(&app, || {
+        #[cfg(target_os = "macos")]
+        if NORMAL_QUIT_COMPLETED.load(std::sync::atomic::Ordering::Acquire) { return; }
+        #[cfg(target_os = "macos")]
+        let result = if MACOS_QUIT_COMMITTED.load(std::sync::atomic::Ordering::Acquire) {
+            let result = resume_macos_quit();
+            if let Err(code) = result {
+                if code != "update-quit-in-progress" { workspace_windows::retain_prepared_application_quit(&app, Some(code)); }
+            } else { NORMAL_QUIT_COMPLETED.store(true, std::sync::atomic::Ordering::Release); }
+            result
+        } else { with_saved_application_quit(&app, || begin_macos_quit(restart)) };
+        #[cfg(not(target_os = "macos"))]
+        let result = with_saved_application_quit(&app, || {
             eprintln!("[dsh-update-exit] normal quit requested restart={restart}");
             let scheduled = desktop_app_update::scheduled_exit_guard_required(&app)?;
-            let mut lsh_hold = if scheduled {
+            let guard_lsh = scheduled;
+            let mut lsh_hold = if guard_lsh {
                 DSH_HOST_SERVICE.get().map(|host| host.reserve_desktop_update_restart()).transpose()?
             } else { None };
-            if let Some(host) = lsh_hold.as_mut() { host.stop_surface()?; }
+            if let Some(host) = lsh_hold.as_mut() {
+                host.stop_surface()?;
+            }
             let drained = drain_application_services();
             if scheduled && !drained { return Err("update-service-drain-incomplete"); }
             Ok(())
-        }) {
+        });
+        #[cfg(target_os = "macos")]
+        if result == Err("update-quit-in-progress") { return; }
+        #[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
+        if !dsh_host::macos_surface_flow::finish_quit(result, restart) {
+            // Only an active disposable scenario can return false here.
+            app.exit(3);
+            return;
+        }
+        if let Err(code) = result {
+            #[cfg(target_os = "macos")]
+            if code == "macos-quit-recovered" { app.exit(3); return; }
+            #[cfg(target_os = "macos")]
+            if MACOS_QUIT_COMMITTED.load(std::sync::atomic::Ordering::Acquire) {
+                eprintln!("[workspace] quit retained pending confirmation: {code}");
+            } else { eprintln!("[workspace] quit cancelled: {code}"); }
+            #[cfg(not(target_os = "macos"))]
             eprintln!("[workspace] quit cancelled: {code}");
             desktop_app_update::report_scheduled_quit_blocked(&app, code);
             return;
         }
+        #[cfg(target_os = "macos")]
+        let restart = MACOS_QUIT.get().and_then(|slot| slot.lock().ok())
+            .and_then(|slot| slot.as_ref().map(|quit| quit.restart)).unwrap_or(restart);
         if restart { app.request_restart(); } else { app.exit(0); }
     });
 }
@@ -2275,6 +2427,8 @@ fn dsh_native_surface_hide(caller: tauri::Webview) -> Result<(), String> {
         webview
             .hide()
             .map_err(|_| "dsh-native-surface-unavailable".to_owned())?;
+        #[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
+        dsh_host::macos_surface_flow::observe_hidden();
     }
     Ok(())
     }
@@ -2289,6 +2443,10 @@ fn dsh_native_surface_show(
     bounds: DshNativeSurfaceBounds,
 ) -> Result<(), String> {
     require_main_caller(&caller)?;
+    #[cfg(target_os = "macos")]
+    if MACOS_QUIT_COMMITTED.load(std::sync::atomic::Ordering::Acquire) {
+        return Err("dsh-host-shutting-down".into());
+    }
     let (position, size) = checked_surface_bounds(bounds, main_surface_viewport(&caller)?)?;
     let webview = caller
         .app_handle()
@@ -2297,13 +2455,18 @@ fn dsh_native_surface_show(
     #[cfg(all(windows, feature = "lsh-background-surface-preload"))]
     return dsh_native_container::show(&caller.window(), &webview, position, size);
     #[cfg(not(all(windows, feature = "lsh-background-surface-preload")))]
+    {
     webview
         .set_bounds(tauri::Rect {
             position: position.into(),
             size: size.into(),
         })
         .and_then(|_| webview.show())
-        .map_err(|_| "dsh-native-surface-unavailable".to_owned())
+        .map_err(|_| "dsh-native-surface-unavailable".to_owned())?;
+    #[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
+    dsh_host::macos_surface_flow::observe_shown();
+    Ok(())
+    }
 }
 
 #[tauri::command]

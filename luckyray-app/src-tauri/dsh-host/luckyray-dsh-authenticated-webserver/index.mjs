@@ -846,6 +846,13 @@ export function renderIndexInjections(html, rows) {
 
 // A short, reversible hold over the existing official Agent/Session owners.
 // No shadow session store: every decision and flush reads those live services.
+// A Mac prepare NACK may restore admission only if this exact carrier has
+// actually released its browser pause. Reasons alone do not prove rollback.
+export function macosPrepareResult(kind, result, paused, platform = process.platform) {
+  return platform === "darwin" && kind === "update-prepare" && result?.ready === false
+    ? { ...result, rollbackSafe: paused === false } : result;
+}
+
 export function createDesktopUpdateLifecycle(ctx, browser, { timeoutMs = 8_000 } = {}) {
   let round = null;
   const fail = code => { throw new Error(code); };
@@ -1793,6 +1800,7 @@ export async function apply(ctx, config = {}) {
           result = { ready: false, reason: /^update-lsh-[a-z-]+$/.test(error?.message ?? "")
             ? error.message : "update-lsh-exit-failed" };
         }
+        result = macosPrepareResult(frame.type, result, updatePaused);
         writePrivateFrame({ type: `${frame.type}-result`, seq: frame.seq, outcome: "accepted",
           payload: Buffer.from(JSON.stringify(result)).toString("base64url") });
         if (result.stopped === true && result.saved === true) {

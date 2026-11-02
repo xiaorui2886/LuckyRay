@@ -1,5 +1,5 @@
-// Disposable real LSH validation. Only the projected JSON report leaves the
-// runner. Previously accepted material/window flows are not repeated here.
+// Disposable visible LSH lifecycle. Only the projected JSON and this app's own
+// window image leave the runner. Previously accepted materials are not repeated.
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdir, realpath } from "node:fs/promises";
@@ -7,11 +7,12 @@ import { spawn } from "node:child_process";
 import { APP, TAURI, BUILD, TARGET, SIDECARS, directory, readRegular, jsonNew,
   run, requireNative } from "./macos-build-common.mjs";
 import { appBuildArguments, buildMacosApp } from "./build-macos.mjs";
-import { runLshProof, safeLshExecution, knownProofSignal, PROOF_TIMEOUT_MS, PROOF_CLEANUP_MS } from "./check-macos-lsh-proof.mjs";
+import { knownProofSignal } from "./check-macos-lsh-proof.mjs";
+import { runLshSurfaceFlow, safeSurfaceExecution, SURFACE_TIMEOUT_MS, SURFACE_CLEANUP_MS } from "./check-macos-lsh-surface-flow.mjs";
 import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary } from "./macos-native-diagnostics.mjs";
 
-export const PHASES = Object.freeze(["install-frozen-frontend", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-lsh-proof"]);
-export const EVIDENCE_FILES = Object.freeze(["report.json"]);
+export const PHASES = Object.freeze(["install-frozen-frontend", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-lsh-surface-flow"]);
+export const EVIDENCE_FILES = Object.freeze(["report.json", "LuckyRay-lsh-surface.png"]);
 const EVIDENCE = join(BUILD, "internal-validation-evidence");
 const digest = value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const count = value => Number.isSafeInteger(value) && value >= 0;
@@ -21,6 +22,10 @@ const SAFE_CODES = Object.freeze([
   "macos-arm64-build-required", "macos-internal-ci-required", "macos-internal-temp-worktree-required",
   "macos-internal-source-identity-invalid", "macos-internal-unexpected-bundle-export", "macos-internal-package-manager-mismatch",
   "macos-internal-build-override-rejected",
+  "macos-lsh-surface-flow-context-invalid", "macos-lsh-surface-flow-result-invalid", "macos-lsh-surface-flow-spawn-failed",
+  "macos-lsh-surface-flow-timeout", "macos-lsh-surface-flow-cancelled", "macos-lsh-surface-flow-forced-termination",
+  "macos-lsh-surface-flow-exit-failed", "macos-lsh-surface-flow-scenario-failed", "macos-lsh-surface-flow-window-failed",
+  "macos-lsh-surface-flow-quit-failed", "macos-lsh-surface-flow-driver-unavailable",
   "macos-lsh-proof-context-invalid", "macos-lsh-proof-result-invalid", "macos-lsh-proof-spawn-failed",
   "macos-lsh-proof-timeout", "macos-lsh-proof-cancelled", "macos-lsh-proof-forced-termination",
   "macos-lsh-proof-output-invalid", "macos-lsh-proof-exit-failed", "macos-lsh-proof-rejected",
@@ -89,10 +94,11 @@ export async function internalPlan() {
     distributionGate: "incomplete source remains ineligible for distribution; supplied bytes remain verified",
     binaryExport: false, dmg: false, applicationArchive: false, binaryUpload: false, release: false,
     rawOutput: "streamed into bounded typed command/error summaries, then discarded", nativeExecution: "not-run-by-plan",
-    lshProof: { buildFeature: "macos-lsh-proof", entry: "LuckyRay.app/Contents/MacOS/luckyray-app --macos-lsh-proof",
-      timeoutMs: PROOF_TIMEOUT_MS, cleanupGraceMs: PROOF_CLEANUP_MS,
-      stages: ["installed-resources", "real-dsh-probe", "authenticated-parent", "normal-shutdown"],
-      provider: "deterministic-loopback-provider-with-real-official-dsh", materialFlow: "not-run", guiInteraction: "not-run" } };
+    lshSurfaceFlow: { buildFeature: "macos-lsh-surface-flow", entry: "LuckyRay.app/Contents/MacOS/luckyray-app --macos-lsh-surface-flow <fixed-disposable-root>",
+      timeoutMs: SURFACE_TIMEOUT_MS, cleanupGraceMs: SURFACE_CLEANUP_MS,
+      stages: ["real-surface-attach", "hide-and-show-same-binding", "official-saved-stop", "normal-shutdown"],
+      provider: "real-official-dsh-with-no-model-account", materialFlow: "not-run", guiInteraction: "application-dom-automation",
+      systemPointerInput: "not-run", screenshotVisualReview: "required" } };
 }
 async function requireInternalContext() {
   requireNative();
@@ -134,9 +140,9 @@ async function worker() {
     const result = await buildMacosApp({ internalValidation: true,
       onStage: phase => process.send({ type: "phase", phase }) });
     process.send({ type: "built", result });
-    process.send({ type: "phase", phase: "real-lsh-proof" });
-    const execution = await runLshProof(result.app, internalWorkerEnvironment(process.env));
-    process.send({ type: "lsh-proof", execution });
+    process.send({ type: "phase", phase: "real-lsh-surface-flow" });
+    const execution = await runLshSurfaceFlow(result.app, internalWorkerEnvironment(process.env), EVIDENCE);
+    process.send({ type: "lsh-surface-flow", execution });
     if (execution.status !== "passed") process.exitCode = execution.exitCode || 1;
   } catch (error) {
     process.send({ type: "failed", failure: failureSummary(error) });
@@ -164,8 +170,8 @@ export async function validateInternal() {
         console.log(`macos-internal-phase:${message.phase}`);
       } else if (message?.type === "built" && phases.length === PHASES.length - 1 && !build) {
         build = summarizeBuildResult(message.result);
-      } else if (message?.type === "lsh-proof" && phases.length === PHASES.length && build && !lsh) {
-        lsh = safeLshExecution(message.execution);
+      } else if (message?.type === "lsh-surface-flow" && phases.length === PHASES.length && build && !lsh) {
+        lsh = safeSurfaceExecution(message.execution);
       } else if (message?.type === "failed" && !failure) {
         const f = message.failure;
         if (!SAFE_CODES.includes(f?.code) && !["native-command-failed", "native-validation-failed"].includes(f?.code))
@@ -195,8 +201,9 @@ export async function validateInternal() {
     workerExit: exited.code, workerSignal: exited.signal,
     diagnostics: safeDiagnosticSummary(diagnostics.summary(), vocabulary, files), rawOutput: "discarded-not-retained",
     artifacts: EVIDENCE_FILES,
-    limitations: { frontendInteraction: "not-run", materialFlow: "not-run", guiInteraction: "not-run", modelAccount: "not-configured",
-      lshConnection: success ? "real-bundled-probe-authentication-and-normal-shutdown" : "not-completed", notesRecovery: "not-run",
+    limitations: { frontendInteraction: lsh?.ui ? "application-dom-automation" : "not-run", materialFlow: "not-run",
+      guiInteraction: lsh?.ui ? "application-dom-automation" : "not-run", modelAccount: "not-configured",
+      lshConnection: success ? "real-surface-hide-show-saved-stop-and-normal-shutdown" : "not-completed", notesRecovery: "not-run",
       nativeHostBrowserSession: "not-run", mcpSession: "not-run", installIntoApplications: "not-run",
       notarization: "not-requested", release: "not-published" } };
   // Save the same strict projection that the workflow can publish. No raw
@@ -213,7 +220,7 @@ export function publishableReport(record, vocabulary = new Set(), files = new Se
       || record.phases.some((item, i) => item.phase !== PHASES[i] || !["passed", "failed", "not-run"].includes(item.status))
       || record.status === "passed" && (record.workerExit !== 0 || record.workerSignal != null || record.phases.some(item => item.status !== "passed")))
     throw new Error("macos-internal-result-invalid");
-  const lsh = record.lsh == null ? null : safeLshExecution(record.lsh);
+  const lsh = record.lsh == null ? null : safeSurfaceExecution(record.lsh);
   const build = record.build == null ? null : summarizeStoredBuild(record.build);
   if (record.distributionReady !== (build?.distribution.readyToPackage ?? false)
       || record.status === "passed" && (!build || lsh?.status !== "passed" || record.failure != null))
@@ -229,8 +236,9 @@ export function publishableReport(record, vocabulary = new Set(), files = new Se
     build,
     diagnostics: safeDiagnosticSummary(record.diagnostics, vocabulary, files), lsh, binaryExport: false,
     distributionReady: record.distributionReady === true, rawOutput: "not-published",
-    coverage: { lsh: record.status === "passed" ? "real-official-dsh-probe-authentication-and-normal-shutdown" : "not-completed",
-      materialFlow: "not-run", guiInteraction: "not-run", modelAccount: "not-configured" } };
+    coverage: { lsh: record.status === "passed" ? "real-official-dsh-surface-hide-show-saved-stop-and-normal-shutdown" : "not-completed",
+      materialFlow: "not-run", guiInteraction: lsh?.ui ? "application-dom-automation" : "not-run", modelAccount: "not-configured",
+      systemPointerInput: "not-run", screenshotVisualReview: lsh?.screenshotCaptured ? "required" : "not-captured" } };
 }
 function summarizeStoredBuild(value) {
   const ids = value?.distribution?.missingRequirementIds;

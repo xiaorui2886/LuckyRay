@@ -55,7 +55,7 @@ test("shutdown facts cannot turn forced cleanup or an unknown group into normal 
   assert.equal(safeLshProof(failed).shutdown.forcedCleanup, true);
 });
 
-test("saved and re-published reports require LSH and preserve closed build/source facts", () => {
+test("a previous headless-only report cannot claim the new visible-lifecycle stage", () => {
   const build = summarizeBuildResult({ version: "1.9.9", target: "aarch64-apple-darwin",
     sidecars: ["luckyray-native-host", "luckyray-cli", "luckyray-mcp"], mediaFiles: 1, dshFiles: 35556,
     distribution: { sourceInputsSha256: "a".repeat(64), readyToPackage: false, providedSourceInputs: 26,
@@ -64,13 +64,7 @@ test("saved and re-published reports require LSH and preserve closed build/sourc
     workerSignal: null, source: { repository: "xiaorui2886/LuckyRay", commit: "a".repeat(40), tree: "b".repeat(40), path: canary },
     phases: PHASES.map(phase => ({ phase, status: "passed" })), build, lsh: { ...execution(), env: canary },
     distributionReady: false, raw: canary };
-  const saved = publishableReport(input);
-  const published = publishableReport(JSON.parse(JSON.stringify(saved)));
-  assert.deepEqual(published, saved);
-  assert(!JSON.stringify(published).includes(canary));
-  assert.equal(published.lsh.proof.normalHostShutdown, true);
-  assert.equal(published.distributionReady, false);
-  assert.deepEqual(published.build.distribution.missingRequirementIds, ["missing-source"]);
+  assert.throws(() => publishableReport(input), /result-invalid/);
   assert.throws(() => publishableReport({ ...input, lsh: null }), /result-invalid/);
   assert.throws(() => publishableReport({ ...input, workerExit: 3 }), /result-invalid/);
   assert.throws(() => publishableReport({ ...input, workerSignal: "SIGTERM" }), /result-invalid/);

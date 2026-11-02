@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDesktopUpdateLifecycle } from "../src-tauri/dsh-host/luckyray-dsh-authenticated-webserver/index.mjs";
+import { createDesktopUpdateLifecycle, macosPrepareResult } from "../src-tauri/dsh-host/luckyray-dsh-authenticated-webserver/index.mjs";
 import surfaceState from "../src-tauri/dsh-host/luckyray-dsh-native-surface-state/client.js";
 
 function harness(options) {
   const events = [];
   const listeners = new Map();
   const session = { id: "synthetic-session", seq: 3 };
-  let busy = false;
+  let busy = false, paused = false;
   const agent = { session, id: session.id, status: "idle", inbox: { hasPending: false },
     runMaintenance(operation) {
       if (busy || this.status !== "idle") throw Error("agent-not-idle");
@@ -27,12 +27,42 @@ function harness(options) {
   let clientResult = { ready: true };
   const lifecycle = createDesktopUpdateLifecycle(ctx, {
     checkClient: async () => clientResult,
-    setPaused: paused => events.push(paused ? "hold" : "resume"),
+    setPaused: value => { paused = value; events.push(value ? "hold" : "resume"); },
     retireConnections: () => events.push("connections-retired"),
   }, options);
   return { lifecycle, events, services, agent, session, listeners, ctx,
-    setClient: result => { clientResult = result; }, busy: () => busy };
+    setClient: result => { clientResult = result; }, busy: () => busy, paused: () => paused };
 }
+
+test("Mac prepare rollback evidence follows real pause release, not a failure reason", async () => {
+  for (const kind of ["save", "draft", "task"]) {
+    const h = harness();
+    if (kind === "save") h.services.sessionPersistence.flush = async () => { throw Error("write-failed"); };
+    if (kind === "draft") h.setClient({ ready: false, reason: "update-lsh-draft-pending" });
+    if (kind === "task") h.agent.status = "running";
+    await assert.rejects(h.lifecycle.prepare("mac-rejected"), /update-lsh-/);
+    assert.equal(h.paused(), false); assert.equal(h.busy(), false);
+    const nack = { ready: false, reason: "update-lsh-save-failed" };
+    assert.equal(macosPrepareResult("update-prepare", nack, h.paused(), "darwin").rollbackSafe, true);
+    assert.equal(h.events.includes("disposed"), false); assert.equal(h.events.includes("connections-retired"), false);
+    h.services.sessionPersistence.flush = async () => {}; h.setClient({ ready: true }); h.agent.status = "idle";
+    await h.lifecycle.prepare("next-live-round");
+    assert.equal(h.paused(), true);
+    // An earlier/existing prepared round remains paused even if a new request
+    // receives a NACK. That reason cannot authorize a working-state rollback.
+    assert.equal(macosPrepareResult("update-prepare", nack, h.paused(), "darwin").rollbackSafe, false);
+    await h.lifecycle.cancel("next-live-round"); assert.equal(h.paused(), false);
+  }
+});
+
+test("rollback metadata does not change Windows responses or authorize unknown pause state", () => {
+  const result = { ready: false, reason: "update-lsh-preparing" };
+  assert.equal(macosPrepareResult("update-prepare", result, false, "win32"), result);
+  for (const kind of ["update-stop", "update-cancel"])
+    assert.equal(macosPrepareResult(kind, result, false, "darwin"), result);
+  for (const paused of [true, undefined, null, 0, "false"])
+    assert.equal(macosPrepareResult("update-prepare", result, paused, "darwin").rollbackSafe, false);
+});
 
 test("an open but idle official session obtains real durability confirmation and a reversible maintenance hold", async () => {
   const h = harness();

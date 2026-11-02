@@ -281,9 +281,39 @@ pub(crate) fn prepare_application_quit(app:&tauri::AppHandle) -> bool {
 }
 
 pub(crate) fn cancel_prepared_application_quit(app:&tauri::AppHandle){
+    cancel_prepared_application_quit_inner(app,None);
+}
+
+#[cfg(target_os="macos")]
+pub(crate) fn cancel_prepared_application_quit_with_reason(app:&tauri::AppHandle,reason:Option<&'static str>){
+    cancel_prepared_application_quit_inner(app,reason);
+}
+
+#[cfg(target_os="macos")]
+pub(crate) fn retain_prepared_application_quit(app:&tauri::AppHandle,reason:Option<&'static str>){
+    // Main's DOM inert flag cannot freeze a separate native child WebView.
+    // Hide (do not destroy) it so uncertain client drafts remain in memory.
+    if let Some(surface)=app.get_webview(crate::DSH_NATIVE_SURFACE_WEBVIEW_LABEL) {
+        if surface.hide().is_err() {
+            if let Some(main)=app.get_webview_window("main"){let _=main.hide();}
+        }
+    }
+    let registry=app.state::<WorkspaceWindows>();
+    let quit=registry.quit.lock().unwrap_or_else(|error|error.into_inner());
+    if let Some(round)=quit.as_ref().filter(|round|round.responses.values().all(|v|*v==Some(true))) {
+        let reason=if reason==Some("macos-quit-stop-unconfirmed") {"stop-unconfirmed"} else {"cleanup-pending"};
+        for label in round.responses.keys(){let _=app.emit_to(label,"luckyray:workspace-quit-blocked",serde_json::json!({"id":round.id,"reason":reason}));}
+    }
+}
+
+fn cancel_prepared_application_quit_inner(app:&tauri::AppHandle,reason:Option<&'static str>){
     let registry=app.state::<WorkspaceWindows>();
     let round=registry.quit.lock().unwrap_or_else(|error|error.into_inner()).take();
-    if let Some(round)=round {for label in round.responses.keys(){let _=app.emit_to(label,"luckyray:workspace-quit-cancelled",serde_json::json!({"id":round.id}));}}
+    if let Some(round)=round {
+        let mut payload=serde_json::json!({"id":round.id});
+        if let Some(reason)=reason {payload["reason"]=reason.into();}
+        for label in round.responses.keys(){let _=app.emit_to(label,"luckyray:workspace-quit-cancelled",&payload);}
+    }
 }
 
 #[cfg(all(debug_assertions, feature="workspace-runtime-fixture"))]

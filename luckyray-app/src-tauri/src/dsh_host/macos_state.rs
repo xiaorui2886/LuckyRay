@@ -116,8 +116,18 @@ pub(super) fn environment(
     Directory::open(state, false, true).map_err(|_| ())?;
     Directory::open(surface, false, true).map_err(|_| ())?;
     let home = state.join("home");
-    for part in ["", ".config", ".local/share", ".cache", ".tmp"] {
-        Directory::open(&home.join(part), true, true).map_err(|_| ())?;
+    let mut homes = Vec::new();
+    // The wrapper and official web carrier have separate HOME roots. Prepare
+    // both with the same no-follow/owner/mode/ACL rules before spawning; the
+    // Mac carrier must not rely on Windows AppData folders or follow a link
+    // while recursively creating its TMPDIR/configuration directories.
+    for root in [home.as_path(), surface] {
+        for part in ["", ".config", ".local/share", ".cache", ".tmp"] {
+            homes.push(Directory::open(&root.join(part), true, true).map_err(|_| ())?);
+        }
+    }
+    for directory in &homes {
+        directory.current().map_err(|_| ())?;
     }
     let path = std::env::join_paths([
         runtime.join("node"),

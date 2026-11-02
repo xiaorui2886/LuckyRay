@@ -42,7 +42,7 @@ async function harness({initialInert = false, ack} = {}) {
   await module.exports.installWorkspaceLifecycle();
   const settle = async () => {for (let i = 0; i < 30; i++) await Promise.resolve();};
   return {...module.exports, root, statuses, history, acknowledgements, errors, timers, settle,
-    event: (name, id) => native.get(`luckyray:workspace-quit-${name}`)?.({payload: {id}}),
+    event: (name, id, reason) => native.get(`luckyray:workspace-quit-${name}`)?.({payload: {id, reason}}),
     composition: active => domEvents.get(active ? 'compositionstart' : 'compositionend')(),
     async advance(ms) {
       const end = now + ms;
@@ -56,6 +56,46 @@ async function harness({initialInert = false, ack} = {}) {
   };
 }
 function deferred() {let resolve, reject; const promise = new Promise((yes, no) => {resolve = yes; reject = no;}); return {promise, resolve, reject};}
+
+test('native LSH cancellation restores the editor and gives a bounded recovery message', async () => {
+  for (const reason of ['update-lsh-preparing', 'update-lsh-not-quiescent', 'update-service-drain-incomplete', {raw:'private-canary'}, undefined]) {
+    const h = await harness(); h.registerWorkspaceFlush(async () => true, () => false);
+    await h.event('prepare', 'mac-quit'); h.event('draining', 'mac-quit'); await h.advance(500);
+    h.event('cancelled', 'mac-quit', reason);
+    assert.equal(h.root.inert, false); assert.equal(h.statuses.length, 0); assert.equal(h.timers.size, 0);
+    const message = h.errors.at(-1).detail;
+    assert(!message.includes('private-canary')); assert(!message.includes('update-'));
+    assert.equal(message, reason === 'update-service-drain-incomplete' ? '后台进程尚未确认退出，请稍后重试。'
+      : typeof reason === 'string' ? '退出已取消：请返回 LightSeek 检查任务和未保存内容，待界面准备完成后再退出。'
+        : '退出已取消：请处理未保存内容或版本冲突后重试。');
+  }
+});
+
+test('generation or gateway preflight cancellation restores the editor without claiming a drain', async () => {
+  for (const reason of ['update-generation-active','update-task-state-unavailable','update-gateway-preparing']) {
+    const h = await harness(); h.registerWorkspaceFlush(async () => true, () => false);
+    await h.event('prepare','busy'); h.event('cancelled','busy',reason);
+    assert.equal(h.root.inert,false); assert.equal(h.statuses.length,0);
+    assert.match(h.errors.at(-1).detail,reason==='update-gateway-preparing'?/手机连接服务/:/生成任务/);
+    assert(!h.errors.at(-1).detail.includes(reason));
+    await h.event('prepare','retry'); assert.equal(h.acknowledgements.at(-1).saved,true);
+  }
+});
+
+test('committed failure keeps the exact editor round frozen and ignores late cancel or ACK rejection', async () => {
+  for (const reason of ['cleanup-pending','stop-unconfirmed',{raw:'private-canary'}]) {
+    const ack=deferred(),h=await harness({ack:()=>ack.promise});
+    h.registerWorkspaceFlush(async()=>true,()=>false);
+    const prepare=h.event('prepare','committed'); await h.settle();
+    h.event('draining','committed');h.event('blocked','committed',reason);
+    assert.equal(h.root.inert,true); assert.equal(h.statuses[0].attributes.role,'alert');
+    assert.match(h.statuses[0].textContent,/保持退出状态/);assert(!h.statuses[0].textContent.includes('private-canary'));
+    h.event('cancelled','committed');h.event('blocked','old','cleanup-pending');
+    ack.reject(Error('late native reply lost'));await prepare; await h.advance(20000);
+    assert.equal(h.root.inert,true);assert.equal(h.statuses.length,1);assert.equal(h.timers.size,0);
+    assert.equal(h.errors.length,0,'a committed close must not pretend the app has resumed');
+  }
+});
 
 for (const route of ['materials', 'canvas', 'LSH', 'notes']) {
   test(`clean ${route} exit is silent but still runs the hidden editor barrier`, async () => {

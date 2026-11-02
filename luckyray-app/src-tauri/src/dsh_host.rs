@@ -37,7 +37,7 @@ const MAX_OPEN_INTENT_FILE_BYTES: u64 = 200 * 1024 * 1024;
 const RESOURCE_RESULT_CHUNK_BYTES: usize = 180 * 1024;
 const MAX_HOST_SCRIPT_BYTES: usize = 128 * 1024;
 const HOST_SCRIPT_SHA256: &str =
-    "a33944b206283f4de26059f241c566a1d0c2ebc17c49c2ee5357498270c8eda8";
+    "a4a685251c169b57ed6921329cde2e0fc49d01d8b3b51db8953f32c42a6467e7";
 #[cfg(target_os = "macos")]
 const MACOS_HOST_SUPPORT: &str = "luckyray-dsh-macos.mjs";
 #[cfg(target_os = "macos")]
@@ -60,7 +60,7 @@ fn verify_host_compat_script(host_script: &Path) -> Result<(), ()> {
     Ok(())
 }
 const SURFACE_PLUGIN_SHA256: &str =
-    "c61767ce9c54abfde8360e0a39d178e5930319ef4f31e81b538b8eef6657ce86";
+    "be79d96baeb8eb68521c26681552f91b913d433ad71dadc80fd916b9fc73ad71";
 const CANVAS_AGENT_SHA256: &str =
     "33a88964c2aedd9eb5c00a6a9201bd50a5ae475d9f722984e5f353817185a2d0";
 const CANVAS_PROJECTION_SHA256: &str =
@@ -424,6 +424,9 @@ mod installation;
 #[cfg(all(target_os = "macos", feature = "macos-lsh-proof"))]
 #[path = "dsh_host/macos_proof.rs"]
 pub(crate) mod macos_proof;
+#[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
+#[path = "dsh_host/macos_surface_flow.rs"]
+pub(crate) mod macos_surface_flow;
 #[cfg(target_os = "macos")]
 #[path = "dsh_host/macos_shutdown.rs"]
 mod macos_shutdown;
@@ -2513,6 +2516,8 @@ impl HostHandle {
             stdout_closed, stderr_closed, group_state };
         self.normal_shutdown.store(facts.normal(), Ordering::Release);
         if let Ok(mut slot) = self.shutdown_facts.lock() { *slot = Some(facts); }
+        #[cfg(feature = "macos-lsh-surface-flow")]
+        macos_surface_flow::observe_shutdown(self.generation, facts);
         facts.settled()
     }
 }
@@ -2862,6 +2867,10 @@ impl DshHostService {
         let mut reservation = DesktopUpdateReservation {
             service: Arc::clone(self), generation, host_generation, stage,
             warm_id: warm.then_some(id.clone()), surface_process_id: None, stopped: false,
+            #[cfg(target_os = "macos")]
+            macos_rollback: None,
+            #[cfg(target_os = "macos")]
+            macos_prepared: true,
         };
         if warm {
             let result = host.as_mut().ok_or("update-lsh-state-unavailable")?.update_request("update-prepare", &id);
@@ -2887,6 +2896,46 @@ impl DshHostService {
                 result.get("sessionCount").and_then(|v| v.as_u64()).unwrap());
         }
         Ok(reservation)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn reserve_macos_quit(self: &Arc<Self>) -> Result<DesktopUpdateReservation, &'static str> {
+        let (_operation, _admission) = crate::quit_transaction::reserve_operation(
+            &self.operation, &self.start_admission, &self.shutting_down)?;
+        if !self.last_teardown_settled.load(Ordering::Acquire)
+            || !update_remote_policy::permits_update_reservation(
+                self.desired_remote_authority.lock().unwrap().is_some(),
+                self.surface_binding_generation.load(Ordering::Acquire) != 0,
+                self.remote_authority_active.load(Ordering::Acquire)) {
+            return Err("update-lsh-not-quiescent");
+        }
+        let generation = self.generation.load(Ordering::Acquire);
+        let stage = self.status().stage;
+        let surface = self.surface_status().stage;
+        let host = self.host.lock().unwrap();
+        let cold = self.surface_host_generation.load(Ordering::Acquire) == 0
+            && self.surface_binding_generation.load(Ordering::Acquire) == 0
+            && matches!(surface, DshNativeSurfaceStage::Closed | DshNativeSurfaceStage::Unavailable)
+            && match host.as_ref() {
+                None => self.active_job.lock().unwrap().is_none(),
+                Some(host) => stage == DshHostStage::ProbeCompleted && host.diagnostic_only(generation),
+            };
+        let warm = self.surface_host_generation.load(Ordering::Acquire) == generation
+            && self.surface_binding_generation.load(Ordering::Acquire) > 0
+            && matches!(surface, DshNativeSurfaceStage::ClientReady | DshNativeSurfaceStage::SessionOpen)
+            && host.as_ref().is_some_and(|host| host.generation() == generation && host.is_running());
+        if !cold && !warm { return Err("update-lsh-not-quiescent"); }
+        let host_generation = host.as_ref().map(HostHandle::generation);
+        self.shutting_down.store(true, Ordering::Release);
+        let mut nonce = [0u8; 16];
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        let id = format!("application-quit-{}-{}-{}", generation,
+            self.surface_binding_generation.load(Ordering::Acquire), encode_hex(&nonce));
+        // No protocol request yet: the caller owns this exact admission before
+        // asking for reversible save preparation or committing an actual stop.
+        Ok(DesktopUpdateReservation { service: Arc::clone(self), generation, host_generation, stage,
+            warm_id: warm.then_some(id), surface_process_id: None, stopped: false,
+            macos_rollback: Some(true), macos_prepared: !warm })
     }
 
     pub(crate) fn surface_status(&self) -> DshNativeSurfaceStatusView {
@@ -4451,7 +4500,7 @@ impl DshHostService {
         });
     }
 
-    #[cfg(all(target_os = "macos", feature = "macos-lsh-proof"))]
+    #[cfg(all(target_os = "macos", any(feature = "macos-lsh-proof", feature = "macos-lsh-surface-flow")))]
     fn cancel_and_shutdown(&self) -> bool {
         {
             let _admission = self.start_admission.lock().unwrap();
@@ -4466,6 +4515,29 @@ impl DshHostService {
         let job = self.active_job.lock().unwrap().as_ref().cloned();
         if let Some(job) = job { job.terminate(); }
         self.shutdown()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn macos_shutdown_settled(&self) -> bool {
+        self.last_teardown_settled.load(Ordering::Acquire)
+            && self.host.lock().unwrap().is_none() && self.active_job.lock().unwrap().is_none()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn shutdown_normally(&self) -> bool {
+        {
+            let _admission = self.start_admission.lock().unwrap();
+            self.shutting_down.store(true, Ordering::Release);
+            self.publish(DshHostStage::ShuttingDown, 0, None);
+        }
+        self.initialization_ready.notify_all();
+        // Stop admission and wait for any admitted operation before observing
+        // this generation. A later spawn cannot replace the marker being read.
+        let _operation = self.operation.lock().unwrap();
+        let normal = self.host.lock().unwrap().as_ref().map(|host| host.normal_shutdown.clone());
+        let settled = self.terminate_current_checked();
+        self.publish(DshHostStage::Unavailable, 0, None);
+        settled && normal.is_none_or(|value| value.load(Ordering::Acquire))
     }
 
     pub(crate) fn shutdown(&self) -> bool {
@@ -4494,6 +4566,10 @@ pub(crate) struct DesktopUpdateReservation {
     warm_id: Option<String>,
     surface_process_id: Option<u32>,
     stopped: bool,
+    #[cfg(target_os = "macos")]
+    macos_rollback: Option<bool>,
+    #[cfg(target_os = "macos")]
+    macos_prepared: bool,
 }
 fn update_lsh_failure(reason: Option<&str>) -> &'static str {
     match reason {
@@ -4513,6 +4589,45 @@ fn update_lsh_failure(reason: Option<&str>) -> &'static str {
     }
 }
 impl DesktopUpdateReservation {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn prepare_macos_surface(&mut self) -> Result<(), &'static str> {
+        let Some(id) = self.warm_id.as_deref() else { return Ok(()); };
+        let mut host = self.service.host.lock().map_err(|_| "update-lsh-state-unavailable")?;
+        let host = host.as_mut().filter(|host| host.generation() == self.generation)
+            .ok_or("update-lsh-identity-changed")?;
+        self.macos_rollback = Some(false);
+        let result = host.update_request("update-prepare", id)?;
+        if result.get("ready").and_then(|v| v.as_bool()) != Some(true)
+            || result.get("saved").and_then(|v| v.as_bool()) != Some(true)
+            || result.get("sessionCount").and_then(|v| v.as_u64()).is_none() {
+            // Require the pinned carrier's actual post-release pause state,
+            // not just a NACK reason (an older round may still be paused).
+            if result.get("ready").and_then(|v| v.as_bool()) == Some(false)
+                && result.get("saved").and_then(|v| v.as_bool()) != Some(true)
+                && result.get("rollbackSafe").and_then(|v| v.as_bool()) == Some(true) {
+                self.macos_rollback = Some(true);
+            }
+            return Err(update_lsh_failure(result.get("reason").and_then(|v| v.as_str())));
+        }
+        self.surface_process_id = result.get("carrierProcessId").and_then(|v| v.as_u64())
+            .and_then(|pid| u32::try_from(pid).ok()).filter(|pid| *pid > 0);
+        if self.surface_process_id.is_none() { return Err("update-lsh-identity-changed"); }
+        self.macos_prepared = true;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn cancel_macos_preparation(&mut self) -> bool {
+        if self.macos_rollback == Some(true) { return true; }
+        let Some(id) = self.warm_id.as_deref() else { return false; };
+        let Ok(mut host) = self.service.host.lock() else { return false; };
+        let Some(host) = host.as_mut().filter(|host| host.generation() == self.generation) else { return false; };
+        let confirmed = host.update_request("update-cancel", id).is_ok_and(|result| {
+            result.get("cancelled").and_then(|v| v.as_bool()) == Some(true)
+        });
+        if confirmed { self.macos_rollback = Some(true); }
+        confirmed
+    }
     /// Only the owned handle from this still-reserved diagnostic generation.
     pub(crate) fn reserved_processes(&self) -> Option<(u32, Option<u32>)> {
         let host = self.service.host.lock().ok()?;
@@ -4525,6 +4640,8 @@ impl DesktopUpdateReservation {
     }
 
     pub(crate) fn stop_surface(&mut self) -> Result<(), &'static str> {
+        #[cfg(target_os = "macos")]
+        if self.macos_rollback.is_some() && !self.macos_prepared { return Err("update-lsh-state-unavailable"); }
         let Some(id) = self.warm_id.as_deref() else { return Ok(()); };
         let mut host = self.service.host.lock().map_err(|_| "update-lsh-state-unavailable")?;
         let host = host.as_mut().ok_or("update-lsh-state-unavailable")?;
@@ -4541,6 +4658,8 @@ impl DesktopUpdateReservation {
 }
 impl Drop for DesktopUpdateReservation {
     fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        if self.macos_rollback.is_some() && (self.macos_rollback != Some(true) || self.stopped) { return; }
         let service = &self.service;
         let _admission = service.start_admission.lock().unwrap_or_else(|e| e.into_inner());
         // Restore admission only for this unchanged lifecycle, never a real
@@ -4550,7 +4669,11 @@ impl Drop for DesktopUpdateReservation {
         if service.generation.load(Ordering::Acquire) == self.generation
             && service.status().stage == self.stage
             && same_host {
-            if !self.stopped {
+            #[cfg(target_os = "macos")]
+            let legacy_cancel = self.macos_rollback.is_none();
+            #[cfg(not(target_os = "macos"))]
+            let legacy_cancel = true;
+            if !self.stopped && legacy_cancel {
                 if let Some(id) = self.warm_id.as_deref() {
                     if let Some(host) = service.host.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
                         let _ = host.update_request("update-cancel", id);
