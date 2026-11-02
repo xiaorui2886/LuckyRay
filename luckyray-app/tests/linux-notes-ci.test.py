@@ -438,12 +438,13 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(all(0 < value <= .1 for value in sleeps))
 
     def test_status_probe_has_one_attempt_and_invalid_schema_fails_closed(self):
-        request = urllib.request.Request("http://127.0.0.1/status", method="GET")
-        opener = mock.Mock(); opener.open.side_effect = http.client.RemoteDisconnected("hunter2")
-        with self.assertRaises(ci.smoke.DriverFailure) as raised:
-            ci.smoke.webdriver_command(opener, request, .25)
-        opener.open.assert_called_once_with(request, timeout=.25)
-        self.assertEqual(raised.exception.observation["transport"], "REMOTE_DISCONNECT")
+        for method in ("GET", "POST", "DELETE"):
+            request = urllib.request.Request("http://127.0.0.1/status", method=method)
+            opener = mock.Mock(); opener.open.side_effect = http.client.RemoteDisconnected("hunter2")
+            with self.assertRaises(ci.smoke.DriverFailure) as raised:
+                ci.smoke.webdriver_command(opener, request, .25)
+            opener.open.assert_called_once_with(request, timeout=.25)
+            self.assertEqual(raised.exception.observation["transport"], "REMOTE_DISCONNECT")
         driver = mock.Mock(); driver.poll.return_value = None
         for value in (None, [], {}, {"ready": "true"}, {"ready": 1}):
             wd = mock.Mock(return_value=value)
@@ -451,6 +452,71 @@ class EvidenceTests(unittest.TestCase):
                 ci.smoke.wait_driver_ready(wd, driver)
             self.assertEqual(raised.exception.observation["kind"], "INVALID_RESPONSE")
             self.assertEqual(wd.call_count, 1)
+
+    def test_startup_upstream_refusal_requires_one_exact_untruncated_typed_cause(self):
+        trace = {"state": "OBSERVED", "readBytes": 248, "truncated": False, "legacy": [],
+                 "typed": [{"connect": True, "hyper": "NONE", "io": "CONNECTION_REFUSED", "depth": 3, "truncated": False}]}
+        def failure(value):
+            error = ci.smoke.DriverFailure("TRANSPORT_ERROR", "other", transport="REMOTE_DISCONNECT")
+            error.observation["forwarding"] = value
+            return error
+        self.assertTrue(ci.smoke.startup_refusal(failure(trace)))
+        changes = [lambda v: v.update(state="NOT_OBSERVED"), lambda v: v.update(readBytes=0),
+                   lambda v: v.update(readBytes=True), lambda v: v.update(truncated=True),
+                   lambda v: v.update(legacy=["SEND_REQUEST"]), lambda v: v.update(typed=[]),
+                   lambda v: v["typed"].append(copy.deepcopy(v["typed"][0]))]
+        for key, value in (("connect", False), ("connect", 1), ("hyper", "OTHER"), ("io", "CONNECTION_RESET"),
+                           ("depth", 4), ("depth", 3.0), ("truncated", True), ("reason", "hunter2")):
+            changes.append(lambda v, key=key, value=value: v["typed"][0].update({key: value}))
+        driver = mock.Mock(); driver.poll.return_value = None
+        for change in changes:
+            value = copy.deepcopy(trace); change(value); error = failure(value)
+            self.assertFalse(ci.smoke.startup_refusal(error))
+            wd = mock.Mock(side_effect=error)
+            with self.assertRaises(ci.smoke.DriverFailure) as raised:
+                ci.smoke.wait_driver_ready(wd, driver, .25)
+            self.assertIs(raised.exception, error)
+            self.assertEqual(wd.call_count, 1)
+
+    def test_stale_prefix_or_different_current_hyper_cannot_make_status_retryable(self):
+        prefix = b"[luckyray-forward-v1] connect=true hyper=NONE io=CONNECTION_REFUSED depth=3 truncated=false\n"
+        different = b"[luckyray-forward-v1] connect=false hyper=INCOMPLETE_MESSAGE io=NONE depth=2 truncated=false\n"
+        with tempfile.TemporaryDirectory(prefix="status-offset-unit-") as temporary:
+            path = Path(temporary) / "owned.log"
+            for current in (b"", different):
+                path.write_bytes(prefix + current); path.chmod(0o600)
+                trace = ci.smoke.read_forwarding_trace(path, len(prefix))
+                self.assertEqual(trace["readBytes"], len(current))
+                error = ci.smoke.DriverFailure("TRANSPORT_ERROR", "other", transport="REMOTE_DISCONNECT")
+                error.observation["forwarding"] = trace
+                self.assertFalse(ci.smoke.startup_refusal(error))
+            path.write_bytes(prefix + prefix)
+            error.observation["forwarding"] = ci.smoke.read_forwarding_trace(path, len(prefix))
+            self.assertEqual(len(error.observation["forwarding"]["typed"]), 1)
+            self.assertTrue(ci.smoke.startup_refusal(error))
+
+    def test_startup_native_identity_is_held_and_exit_or_replacement_stops_wait(self):
+        anchors = {"driver": None, "app": {}, "nativeDriver": {}}
+        fresh = {"driver": "held-driver", "app": {}, "nativeDriver": {"456": "held-native"}}
+        driver = mock.Mock(pid=123); driver.poll.return_value = None
+        def identity(pid):
+            return {"123": "held-driver", "456": "held-native"}[str(pid)]
+        with mock.patch.object(ci.smoke, "capture_processes", return_value=fresh), \
+             mock.patch.object(ci.smoke.helpers, "live_identity", side_effect=identity):
+            self.assertTrue(ci.smoke.startup_processes_alive(driver, Path("/owned/no-main"), anchors))
+        self.assertEqual(anchors, fresh)
+        replacement = {"driver": "held-driver", "app": {}, "nativeDriver": {"789": "new-native"}}
+        for current in (None, "changed-native"):
+            def changed(pid):
+                return "held-driver" if str(pid) == "123" else current
+            with mock.patch.object(ci.smoke, "capture_processes", return_value=replacement), \
+                 mock.patch.object(ci.smoke.helpers, "live_identity", side_effect=changed):
+                self.assertFalse(ci.smoke.startup_processes_alive(driver, Path("/owned/no-main"), anchors))
+            self.assertEqual(anchors["nativeDriver"], {"456": "held-native"})
+        native_alive = mock.Mock(side_effect=[True, False])
+        wd = mock.Mock(return_value={"ready": False})
+        self.assertFalse(ci.smoke.wait_driver_ready(wd, driver, 20, native_alive=native_alive))
+        self.assertEqual(wd.call_count, 1)
 
     def test_failure_action_and_protocol_projection_reject_arbitrary_fields(self):
         raw = copy.deepcopy(self.raw)

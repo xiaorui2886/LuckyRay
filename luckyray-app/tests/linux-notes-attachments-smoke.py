@@ -282,31 +282,57 @@ def webdriver_command(opener, request, timeout):
         raise DriverFailure("INVALID_RESPONSE", operation, elapsed=elapsed()) from None
 
 
-def wait_driver_ready(wd, driver, seconds=20):
-    """Only startup GET/status connection refusal is temporarily not ready."""
+def startup_refusal(error):
+    """The two known not-listening cases, for the current GET/status only."""
+    value = error.observation
+    if (value["kind"] != "TRANSPORT_ERROR" or value["operation"] != "other"
+            or value["responseState"] != "UNCONFIRMED"):
+        return False
+    if value["transport"] == "CONNECTION_REFUSED":
+        return True
+    if value["transport"] != "REMOTE_DISCONNECT":
+        return False
+    trace = value.get("forwarding")
+    if (not isinstance(trace, dict) or trace.get("state") != "OBSERVED"
+            or trace.get("truncated") is not False or type(trace.get("readBytes")) is not int
+            or not 0 < trace["readBytes"] <= 65536 or trace.get("legacy") not in ([], ["CONNECT"])):
+        return False
+    typed = trace.get("typed")
+    if not isinstance(typed, list) or len(typed) != 1 or not isinstance(typed[0], dict):
+        return False
+    tag = typed[0]
+    return (set(tag) == {"connect", "hyper", "io", "depth", "truncated"}
+            and tag["connect"] is True and tag["hyper"] == "NONE" and tag["io"] == "CONNECTION_REFUSED"
+            and type(tag["depth"]) is int and tag["depth"] == 3 and tag["truncated"] is False)
+
+
+def wait_driver_ready(wd, driver, seconds=20, native_alive=None):
+    """Only known direct/typed upstream startup refusal is temporarily not ready."""
+    def alive():
+        return driver.poll() is None and (native_alive is None or native_alive())
     deadline = time.monotonic() + seconds
-    while driver.poll() is None:
+    while True:
+        if time.monotonic() >= deadline or not alive():
+            return False
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
         try:
             value = wd("GET", "/status", timeout=min(1, remaining))
         except DriverFailure as error:
-            if (error.observation["kind"] != "TRANSPORT_ERROR"
-                    or error.observation["operation"] != "other"
-                    or error.observation["transport"] != "CONNECTION_REFUSED"
-                    or error.observation["responseState"] != "UNCONFIRMED"):
+            if not startup_refusal(error):
                 raise
         else:
             if not isinstance(value, dict) or type(value.get("ready")) is not bool:
                 raise DriverFailure("INVALID_RESPONSE", "other")
             if value["ready"]:
-                return driver.poll() is None and time.monotonic() < deadline
+                return alive() and time.monotonic() < deadline
+        if not alive():
+            return False
         remaining = deadline - time.monotonic()
-        if remaining <= 0 or driver.poll() is not None:
+        if remaining <= 0:
             return False
         time.sleep(min(.1, remaining))
-    return False
 
 
 def process_exit(code):
@@ -368,6 +394,20 @@ def observe_processes(driver, anchors):
     except OSError:
         pass
     return {"driver": state, **{name: group(anchors[name]) for name in ("app", "nativeDriver")}}
+
+
+def startup_processes_alive(driver, binary, anchors):
+    # Reuse owned process identities, retaining the first native identity even
+    # if it exits. Missing discovery is not evidence that native has exited.
+    fresh = capture_processes(driver, binary)
+    if anchors["driver"] is None:
+        anchors["driver"] = fresh["driver"]
+    if not anchors["nativeDriver"]:
+        anchors["nativeDriver"].update(fresh["nativeDriver"])
+    state = observe_processes(driver, anchors)
+    native = state["nativeDriver"]
+    return (state["driver"]["state"] not in ("EXITED", "SIGNALED", "IDENTITY_CHANGED")
+            and not native["gone"] and not native["identityChanged"] and not native["unobserved"] and not native["overflow"])
 
 
 def clipboard_read_once(environment, expected, timeout=3):
@@ -760,7 +800,8 @@ def main():
         driver = subprocess.Popen([str(driver_binary), "--port", str(port), "--native-port", str(native_port),
                                    "--native-driver", "/usr/bin/WebKitWebDriver"], env=env, stdout=log,
                                   stderr=subprocess.STDOUT, start_new_session=True)
-        require(wait_driver_ready(wd, driver, 20), "driver-not-ready")
+        require(wait_driver_ready(wd, driver, 20,
+                native_alive=lambda: startup_processes_alive(driver, binary, process_anchors)), "driver-not-ready")
         phase = "main-start"
         start()
         action = "vault-setup"
