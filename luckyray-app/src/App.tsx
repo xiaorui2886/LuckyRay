@@ -28,6 +28,7 @@ import {
   setActiveKnowledgeDocumentTags,
 } from "./core/services/knowledge";
 import { readActiveKnowledgeWriteSource } from "./core/services/knowledgeSource";
+import { diagnoseNotesDrop } from "./features/notes/useVaultFileDrop";
 import { MATERIAL_CHANGE_LOCAL_EVENT, type MaterialChange } from "./core/services/materialChangeProtocol";
 import {
   resolveVideoThumbnailBackfillInput,
@@ -834,15 +835,22 @@ async function ensureNotesVaultImportSource(vault: BridgeVaultMetadata, source: 
   const requireCurrent = () => {
     if (!source || readActiveKnowledgeWriteSource() !== source
         || source.vaultId !== vault.id || source.rootPath !== vault.rootPath) {
+      diagnoseNotesDrop("source-stale", 0, false);
       throw new KnowledgeServiceError("knowledge-source-inactive", "The import no longer targets the active Vault");
     }
   };
   requireCurrent();
-  const activation = await ensureActiveKnowledgeUiSource();
+  diagnoseNotesDrop("activation-start");
+  const activation = await ensureActiveKnowledgeUiSource().catch(error => {
+    diagnoseNotesDrop("activation-error", 0, false);
+    throw error;
+  });
   requireCurrent();
   if (activation.vaultId !== vault.id) {
+    diagnoseNotesDrop("source-stale", 0, false);
     throw new KnowledgeServiceError("knowledge-source-inactive", "The import activation belongs to another Vault");
   }
+  diagnoseNotesDrop("activation-ready", 1);
   return requireCurrent;
 }
 

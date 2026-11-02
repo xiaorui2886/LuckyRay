@@ -627,6 +627,7 @@ fn log_notes_drop(stage: &str, count: usize, hit: bool) {
     {
         static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 80 {
+            let count = count.min(100_000);
             eprintln!("[notes-drop] stage={stage} count={count} hit={hit}");
         }
     }
@@ -637,10 +638,51 @@ fn log_notes_drop(stage: &str, count: usize, hit: bool) {
 #[tauri::command]
 fn notes_drop_diagnostic(caller: tauri::Webview, stage: String, count: usize, hit: bool) -> Result<(), String> {
     require_main_caller(&caller)?;
-    if matches!(stage.as_str(), "listener-ready" | "listener-failed" | "enter" | "drop" | "classified" | "import" | "failed") {
+    if matches!(stage.as_str(), "listener-ready" | "listener-failed" | "listener-disabled" | "enter" | "drop" | "classified" | "import" | "failed"
+        | "classify-start" | "classified-files" | "classified-dirs" | "owner-stale" | "import-route-start" | "import-route-complete"
+        | "drop-rejected" | "source-stale" | "activation-start" | "activation-error" | "activation-ready") {
         log_notes_drop(&stage, count.min(100_000), hit);
     }
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn notes_drop_error_stage(raw: &str) -> &'static str {
+    if raw.len() > 4096 { return "native-error-other"; }
+    let code = serde_json::from_str::<serde_json::Value>(raw).ok()
+        .and_then(|value| value.get("code").and_then(serde_json::Value::as_str).map(str::to_owned));
+    match code.as_deref() {
+        Some("knowledge-source-inactive") => "native-error-source-inactive",
+        Some("knowledge-vault-not-current" | "knowledge-vault-mismatch") => "native-error-vault-denied",
+        Some("knowledge-path-reparse-forbidden" | "knowledge-path-outside-vault") => "native-error-path-denied",
+        Some("knowledge-policy-invalid") => "native-error-policy-denied",
+        _ => "native-error-other",
+    }
+}
+
+fn log_notes_import_result(result: &Result<NotesVaultImportMarkdownResult, String>) {
+    #[cfg(debug_assertions)]
+    match result {
+        Ok(value) => {
+            let complete = value.failed_count == 0 && value.errors.is_empty();
+            log_notes_drop(if complete { "native-import-ok" } else { "native-import-partial" }, value.copied_count, complete);
+            log_notes_drop("native-import-failed", value.failed_count, complete);
+            if let Some(issue) = value.errors.first() {
+                let stage = match issue.code.as_str() {
+                    "import-incomplete" => "native-result-incomplete",
+                    "import-readback-failed" => "native-result-readback-failed",
+                    "import-readback-changed" => "native-result-readback-changed",
+                    "import-partial" => "native-result-partial",
+                    _ => "native-result-other",
+                };
+                log_notes_drop(stage, 0, false);
+                if issue.code == "import-incomplete" { log_notes_drop(notes_drop_error_stage(&issue.message), 0, false); }
+            }
+        }
+        Err(error) => log_notes_drop(notes_drop_error_stage(error), 0, false),
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = result;
 }
 
 /// Prepare the validated desktop profile before any credential or Tauri I/O.
@@ -6199,8 +6241,16 @@ fn import_notes_vault_markdown_files(
     source_paths: Vec<String>,
     target_parent_relative_path: String,
 ) -> Result<NotesVaultImportMarkdownResult, String> {
-    notes_vault_metadata_checked_root(&vault)?;
-    import_markdown_files_with_service(&knowledge_service()?, &backend_services()?.material_catalog(), &vault, source_paths, target_parent_relative_path)
+    log_notes_drop("native-import-start", source_paths.len(), true);
+    let result = (|| {
+        notes_vault_metadata_checked_root(&vault)?;
+        let service = knowledge_service()?;
+        #[cfg(debug_assertions)]
+        log_notes_drop("native-source-active", 0, service.active_ui_source_identity().map(|active| active.vault_id == vault.id).unwrap_or(false));
+        import_markdown_files_with_service(&service, &backend_services()?.material_catalog(), &vault, source_paths, target_parent_relative_path)
+    })();
+    log_notes_import_result(&result);
+    result
 }
 
 fn import_markdown_files_with_service(service: &knowledge::KnowledgeService, catalog: &materials::MaterialCatalog, vault: &NotesVaultMetadata, source_paths: Vec<String>, target_parent_relative_path: String) -> Result<NotesVaultImportMarkdownResult, String> {

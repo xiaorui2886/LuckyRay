@@ -2,14 +2,19 @@ import { useEffect, useRef, type DragEvent } from "react";
 import { dedupeDroppedLocalPaths } from "./externalDropPaths";
 
 let diagnosticCount = 0;
-const diagnose = (stage: string, count = 0, hit = true) => {
-  if (!import.meta.env.DEV || diagnosticCount++ >= 40) return;
+export const diagnoseNotesDrop = (stage: string, count = 0, hit = true) => {
+  let enabled = import.meta.env.DEV;
+  try {
+    enabled ||= typeof sessionStorage !== "undefined" && sessionStorage.getItem("luckyray-notes-drop-diagnostic") === "1";
+  } catch {}
+  if (!enabled || diagnosticCount++ >= 40) return;
   void import("@tauri-apps/api/core")
     .then(({ invoke }) =>
       invoke("notes_drop_diagnostic", { stage, count, hit }),
     )
     .catch(() => {});
 };
+const diagnose = diagnoseNotesDrop;
 
 type DropOptions = {
   enabled: boolean;
@@ -40,7 +45,7 @@ export function useVaultFileDrop(options: DropOptions) {
   const nativeActive = useRef(false),
     nativeDelivered = useRef(false);
   useEffect(() => {
-    if (!options.enabled) return;
+    if (!options.enabled) { diagnose("listener-disabled", 0, false); return; }
     let disposed = false,
       unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/webview")
@@ -79,19 +84,25 @@ export function useVaultFileDrop(options: DropOptions) {
           const own = current.current,
             owner = own.owner;
           const parent = parentAt(element, own.defaultParent);
+          diagnose("classify-start", payload.paths.length);
           void own
             .classify(dedupeDroppedLocalPaths(payload.paths))
             .then(async (items) => {
-              if (disposed || current.current.owner !== owner) return;
+              if (disposed || current.current.owner !== owner) { diagnose("owner-stale", 0, false); return; }
               diagnose("classified", items.length);
+              diagnose("classified-files", items.filter(item => item.isFile).length);
+              diagnose("classified-dirs", items.filter(item => item.isDir).length);
               const notes = items.filter(
                 (item) => item.isDir || (item.isFile && markdown(item.path)),
               );
-              if (notes.length)
+              if (notes.length) {
+                diagnose("import-route-start", notes.length);
                 await own.importPaths(
                   parent,
                   notes.map((item) => item.path),
                 );
+                diagnose("import-route-complete", notes.length);
+              }
               if (disposed || current.current.owner !== owner) return;
               const media = items.filter(
                 (item) => item.isFile && !markdown(item.path),
@@ -113,6 +124,7 @@ export function useVaultFileDrop(options: DropOptions) {
               }
             })
             .catch((error) => {
+              diagnose("drop-rejected", 0, false);
               if (!disposed && current.current.owner === owner)
                 own.rejected(
                   error instanceof Error ? error.message : "无法读取拖入文件。",

@@ -32,6 +32,7 @@ function fixture(options = {}) {
     afterHelperResolved: () => state.afterHelperResolved(),
     isTauri: () => state.native !== false,
     readActiveKnowledgeWriteSource: () => state.source,
+    diagnoseNotesDrop: () => {},
     KnowledgeServiceError: class extends Error {
       constructor(code, message) { super(message); this.code = code; }
     },

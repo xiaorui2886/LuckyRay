@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -32,6 +33,54 @@ COLOR = (32, 128, 192)
 CHECKS = ("nativeStartup", "caseDistinctInputContentsRetained", "specialNameImagePreserved",
           "uiSavePersisted", "reopenPersisted", "absolutePathClipboard", "imagePreviewPixels",
           "attachmentSystemHandoff", "quitProcessDisappearance")
+DROP_STAGES = frozenset(("listener-ready", "listener-failed", "listener-disabled", "enter", "drop", "classified", "import", "failed",
+    "classify-start", "classified-files", "classified-dirs", "owner-stale", "import-route-start", "import-route-complete", "drop-rejected",
+    "source-stale", "activation-start", "activation-error", "activation-ready", "native-import-start", "native-source-active",
+    "native-import-ok", "native-import-partial", "native-import-failed", "native-error-source-inactive", "native-error-vault-denied",
+    "native-error-path-denied", "native-error-policy-denied", "native-error-other", "native-result-incomplete", "native-result-readback-failed",
+    "native-result-readback-changed", "native-result-partial", "native-result-other"))
+
+
+def read_drop_trace(path, offset):
+    """At most 64 KiB from the owned log's notes-reload boundary; no raw text."""
+    report = {"state": "UNAVAILABLE", "readBytes": 0, "truncated": False, "records": []}
+    if type(offset) is not int or offset < 0:
+        return report
+    try:
+        with path.open("rb") as stream:
+            size = stream.seek(0, 2)
+            if offset > size:
+                return report
+            stream.seek(offset)
+            data = stream.read(65536)
+    except OSError:
+        return report
+    report.update(state="NOT_OBSERVED", readBytes=len(data), truncated=size - offset > len(data))
+    for line in data.decode("utf8", errors="replace").splitlines(keepends=True):
+        if not line.endswith("\n"):
+            continue
+        line = line.rstrip("\r\n")
+        match = re.fullmatch(r"\[notes-drop\] stage=([a-z-]{1,48}) count=([0-9]{1,6}) hit=(true|false)", line)
+        if not match or match[1] not in DROP_STAGES or int(match[2]) > 100000:
+            continue
+        if len(report["records"]) == 32:
+            report["truncated"] = True
+            break
+        count = int(match[2])
+        report["records"].append({"stage": match[1], "count": min(count, 2), "overflow": count > 2, "hit": match[3] == "true"})
+    if report["records"]:
+        report["state"] = "OBSERVED"
+    return report
+
+
+def drop_targets(vault):
+    result = {}
+    for key, name in (("upperExists", "Note.md"), ("lowerExists", "note (1).md")):
+        try:
+            result[key] = (vault / name).is_file()
+        except OSError:
+            result[key] = None
+    return result
 
 
 class SmokeFailure(RuntimeError):
@@ -122,7 +171,7 @@ def main():
         require(sys.platform == "linux" and stream.read(4) == b"\x7fELF", "real-linux-main-required")
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
-    socket_root = log = driver = None
+    socket_root = log = driver = trace_offset = vault = None
     http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     session, phase = None, "synthetic-setup"
     report = {"schemaVersion": 1, "status": "FAIL", "scope": SCOPE, "commit": os.environ.get("GITHUB_SHA"),
@@ -241,21 +290,28 @@ def main():
         invoke("create_notes_vault", {"rootPath": str(vault)})
         # Reload discards any pre-bootstrap frontend snapshot. The real app
         # then activates its persisted vault through the normal startup path.
-        execute("location.hash='#notes';location.reload();return true;")
+        trace_offset = (output / "driver.log").stat().st_size
+        execute("sessionStorage.setItem('luckyray-notes-drop-diagnostic','1');location.hash='#notes';location.reload();return true;")
         until("return !!document.querySelector('#page-notes .notes-vault-entry');", seconds=45)
         until("return document.querySelector('#page-notes .notes-vault-meta')?.textContent===arguments[0];", [str(vault)])
         report["checks"]["nativeStartup"] = "PASS"
         phase = "drop-import"
-        position = execute("const e=document.querySelector('#page-notes .notes-index-folder-section');const r=e.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+Math.min(30,r.height/2);return {x:x*devicePixelRatio,y:y*devicePixelRatio};")
+        position = execute("const e=document.querySelector('#page-notes .notes-index-folder-section');const r=e.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+Math.min(30,r.height/2),hit=document.elementFromPoint(x,y),root=document.getElementById('page-notes');return {x:x*devicePixelRatio,y:y*devicePixelRatio,insideNotes:!!hit&&!!root?.contains(hit),rootTarget:hit?.closest('[data-folder-drop-id]')?.dataset.folderDropId==='__root__'};")
+        report["dropHit"] = {name: position.get(name) is True for name in ("insideNotes", "rootTarget")}
         require(position["x"] > 0 and position["y"] > 0, "drop-target-unavailable")
         execute("return new Promise(resolve=>setTimeout(resolve,500));")
+        report["drop"]["inputNotes"] = len(originals)
         for kind in ("enter", "drop"):
             execute("return window.__TAURI__.event.emitTo({kind:'Webview',label:'main'},arguments[0],arguments[1]);",
-                    ["tauri://drag-" + kind, {"paths": [str(incoming / name) for name in originals], "position": position}])
+                    ["tauri://drag-" + kind, {"paths": [str(incoming / name) for name in originals], "position": {name: position[name] for name in ("x", "y")}}])
             if kind == "enter":
                 execute("return new Promise(resolve=>setTimeout(resolve,100));")
         report["drop"]["gestures"] = 1
-        require(helpers.wait_until(lambda: (vault / "Note.md").is_file() and (vault / "note (1).md").is_file(), 30), "both-input-notes-not-retained")
+        targets_ready = helpers.wait_until(lambda: (vault / "Note.md").is_file() and (vault / "note (1).md").is_file(), 30)
+        report["dropTargets"] = drop_targets(vault)
+        values = report["dropTargets"].values()
+        report["drop"]["retainedNotes"] = sum(values) if all(type(value) is bool for value in values) else None
+        require(targets_ready, "both-input-notes-not-retained")
         upper, lower = vault / "Note.md", vault / "note (1).md"
         require("SYNTHETIC_UPPER_v1" in upper.read_text() and lower.read_text() == originals["note.md"], "case-distinct-content-mismatch")
         report["drop"].update(inputNotes=2, retainedNotes=2, collisionRenameObserved=True,
@@ -326,6 +382,11 @@ def main():
                 stop()
             except Exception:
                 report["cleanup"] = "UNCONFIRMED"
+        if vault is not None:
+            report["dropTargets"] = drop_targets(vault)
+            values = report["dropTargets"].values()
+            report["drop"]["retainedNotes"] = sum(values) if all(type(value) is bool for value in values) else None
+        report["dropTrace"] = read_drop_trace(output / "driver.log", trace_offset)
         (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         if driver is not None:
             try:

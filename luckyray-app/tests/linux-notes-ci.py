@@ -39,6 +39,26 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "reopen-file-content-mismatch", "quit-process-remained", "unexpected-error"))
 
 
+def bounded_drop_trace(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    count = raw.get("readBytes")
+    result = {"state": "UNAVAILABLE" if raw.get("state") == "UNAVAILABLE" else "NOT_OBSERVED",
+              "readBytes": count if type(count) is int and 0 <= count <= 65536 else 0,
+              "truncated": raw.get("truncated") is True, "records": []}
+    for item in raw["records"][:32] if isinstance(raw.get("records"), list) else []:
+        if (not isinstance(item, dict) or not isinstance(item.get("stage"), str)
+                or item["stage"] not in smoke.DROP_STAGES or type(item.get("count")) is not int
+                or not 0 <= item["count"] <= 100000 or type(item.get("hit")) is not bool):
+            continue
+        result["records"].append({"stage": item["stage"], "count": min(item["count"], 2),
+                                  "overflow": item.get("overflow") is True or item["count"] > 2, "hit": item["hit"]})
+    if result["records"]:
+        result["state"] = "OBSERVED"
+    if isinstance(raw.get("records"), list) and len(raw["records"]) > 32:
+        result["truncated"] = True
+    return result
+
+
 def bounded_report(raw):
     """Closed projection. No child text, path, clipboard value, log or environment."""
     raw = raw if isinstance(raw, dict) else {}
@@ -62,6 +82,10 @@ def bounded_report(raw):
     for name in ("collisionRenameObserved", "originalCaseSpellingsBothRetained"):
         result["drop"][name] = drop.get(name) if type(drop.get(name)) is bool else None
     result["drop"]["destinationNames"] = ["Note.md", "note (1).md"] if drop.get("destinationNames") == ["Note.md", "note (1).md"] else []
+    for name, keys in (("dropHit", ("insideNotes", "rootTarget")), ("dropTargets", ("upperExists", "lowerExists"))):
+        value = raw.get(name) if isinstance(raw.get(name), dict) else {}
+        result[name] = {key: value.get(key) if type(value.get(key)) is bool else None for key in keys}
+    result["dropTrace"] = bounded_drop_trace(raw.get("dropTrace"))
     result["previews"] = []
     for probe in raw["previews"] if isinstance(raw.get("previews"), list) and len(raw["previews"]) <= 2 else []:
         if not isinstance(probe, dict):
@@ -111,6 +135,7 @@ def validate_notes(raw, build, source, scripts):
     require(raw.get("drop") == {"transport": "TAURI_EVENT_IPC", "nativePointerDrag": "NOT_RUN", "gestures": 1,
             "inputNotes": 2, "retainedNotes": 2, "collisionRenameObserved": True,
             "originalCaseSpellingsBothRetained": False, "destinationNames": ["Note.md", "note (1).md"]}, "drop-boundary-or-retention-mismatch")
+    require(raw.get("dropTargets") == {"upperExists": True, "lowerExists": True}, "synthetic-drop-targets-missing")
     expected_preview = lambda session: {"session": session, "naturalWidth": 32, "naturalHeight": 24,
         "sampled": 5, "matched": 5, "visible": True, "method": "WEBVIEW_SCREENSHOT_PIXELS"}
     require(raw.get("previews") == [expected_preview(1), expected_preview(2)], "real-preview-pixel-evidence-missing")

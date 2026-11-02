@@ -32,6 +32,9 @@ class EvidenceTests(unittest.TestCase):
             "drop": {"transport": "TAURI_EVENT_IPC", "nativePointerDrag": "NOT_RUN", "gestures": 1,
                 "inputNotes": 2, "retainedNotes": 2, "collisionRenameObserved": True,
                 "originalCaseSpellingsBothRetained": False, "destinationNames": ["Note.md", "note (1).md"]},
+            "dropHit": {"insideNotes": True, "rootTarget": True},
+            "dropTargets": {"upperExists": True, "lowerExists": True},
+            "dropTrace": {"state": "NOT_OBSERVED", "readBytes": 0, "truncated": False, "records": []},
             "previews": [{"session": n, "naturalWidth": 32, "naturalHeight": 24, "sampled": 5, "matched": 5,
                 "visible": True, "method": "WEBVIEW_SCREENSHOT_PIXELS"} for n in (1, 2)],
             "clipboard": {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True},
@@ -63,6 +66,7 @@ class EvidenceTests(unittest.TestCase):
             lambda r: r["handoff"].update(kind="OPENER_RETURNED_OK"), lambda r: r["handoff"].pop("sha256"),
             lambda r: r["quitRequests"].append(r["quitRequests"][0]), lambda r: r.update(externalApplicationDisplay="PASS"),
             lambda r: r.update(trimmedFilenameEndToEnd="PASS"), lambda r: r.update(cleanup="UNCONFIRMED")]
+        changes.append(lambda r: r["dropTargets"].update(lowerExists=False))
         for index, change in enumerate(changes):
             with self.subTest(index=index):
                 raw = copy.deepcopy(self.raw)
@@ -124,6 +128,51 @@ class EvidenceTests(unittest.TestCase):
             with mock.patch.object(ci.subprocess, "run") as process, self.assertRaises(FileExistsError):
                 run.notes()
             process.assert_not_called()
+
+    def test_drop_log_projection_is_closed_and_never_exports_free_text(self):
+        with tempfile.TemporaryDirectory(prefix="notes-trace-offline-") as temporary:
+            log = Path(temporary) / "owned-driver.log"
+            prefix = b"hunter2 /private/not-a-trace\n"
+            body = (b"[notes-drop] stage=listener-ready count=0 hit=true\n"
+                    b"[notes-drop] stage=drop count=2 hit=false\n"
+                    b"[notes-drop] stage=native-source-active count=0 hit=false\n"
+                    b"[notes-drop] stage=native-error-source-inactive count=0 hit=false\n"
+                    b"[notes-drop] stage=hunter2 count=2 hit=true\n"
+                    b"[notes-drop] stage=drop count=999999 hit=true\n"
+                    b"error hunter2 /private/personal-file\n"
+                    b"[notes-drop] stage=drop count=2 hit=true")
+            log.write_bytes(prefix + body)
+            report = ci.smoke.read_drop_trace(log, len(prefix))
+            self.assertEqual([item["stage"] for item in report["records"]],
+                ["listener-ready", "drop", "native-source-active", "native-error-source-inactive"])
+            self.assertNotIn("hunter2", json.dumps(report))
+            self.assertNotIn("/private", json.dumps(report))
+            self.assertEqual(ci.bounded_drop_trace(report), report)
+            raw = copy.deepcopy(self.raw)
+            raw["dropTrace"] = {**report, "path": "hunter2", "records": report["records"] + [{"stage": "hunter2", "count": 0, "hit": True}]}
+            raw["dropHit"]["arbitrary"] = "hunter2"
+            raw["dropTargets"]["path"] = "hunter2"
+            self.assertNotIn("hunter2", json.dumps(ci.bounded_report(raw)))
+
+    def test_drop_trace_read_and_record_counts_are_bounded(self):
+        with tempfile.TemporaryDirectory(prefix="notes-trace-limit-offline-") as temporary:
+            log = Path(temporary) / "owned-driver.log"
+            log.write_bytes(b"[notes-drop] stage=classified count=100000 hit=true\n" * 2000)
+            report = ci.smoke.read_drop_trace(log, 0)
+            self.assertEqual(report["readBytes"], 65536)
+            self.assertEqual(len(report["records"]), 32)
+            self.assertTrue(report["truncated"])
+            self.assertTrue(all(item["count"] == 2 and item["overflow"] for item in report["records"]))
+            self.assertEqual(ci.smoke.read_drop_trace(log, None)["state"], "UNAVAILABLE")
+            self.assertEqual(ci.smoke.read_drop_trace(log, -1)["state"], "UNAVAILABLE")
+
+    def test_drop_target_probe_reads_only_the_two_owned_targets(self):
+        with tempfile.TemporaryDirectory(prefix="notes-targets-offline-") as temporary:
+            vault = Path(temporary)
+            (vault / "Note.md").write_text("synthetic")
+            self.assertEqual(ci.smoke.drop_targets(vault), {"upperExists": True, "lowerExists": False})
+            (vault / "note (1).md").write_text("synthetic lower")
+            self.assertEqual(ci.smoke.drop_targets(vault), {"upperExists": True, "lowerExists": True})
 
     def test_owned_receiver_checks_the_exact_png_and_rejects_other_files(self):
         with tempfile.TemporaryDirectory(prefix="notes-receiver-offline-") as temporary:
