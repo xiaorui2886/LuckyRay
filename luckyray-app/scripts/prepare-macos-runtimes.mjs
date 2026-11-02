@@ -1,3 +1,4 @@
+import { verifyPreparedLsh } from "./macos-lsh-seal.mjs";
 import { cpus } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -176,6 +177,7 @@ async function prepareDsh(scratch, node, home) {
   commandEvent("checkpoint", "dsh-materials", "node");
   const distribution = await prepareDshDistribution({ dshRoot: dsh, audit, packageRoots: roots,
     nodeLicense: await readRegular(join(node, "../LICENSE")) });
+  await verifyPreparedLsh(dsh);
   await jsonNew(join(dsh, "macos-build.json"), { schemaVersion: 1, platform: "darwin", architecture: "arm64",
     node: NODE_INPUT, runtimePackage: authority.runtimePackage, lockfileSha256: sha256(lockfile),
     nativeModuleLoadProbe: { status: "passed", modules }, versionProbe: version, audit, reconciliation, distribution, minimumSystem,

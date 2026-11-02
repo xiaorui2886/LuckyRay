@@ -458,7 +458,23 @@
         "sourceUrl": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/onnxruntime-osx-arm64-1.28.2.zip",
         "sourcePath": "onnxruntime-osx-arm64-1.28.2/LICENSE"
       }
-    ]
+    ],
+    "source": {
+      "repository": "https://github.com/microsoft/onnxruntime",
+      "commit": "33ca9628233dc8f002435e868d4c2e9f82766ca1",
+      "sourceInputId": "onnxruntime-1-28-2-source",
+      "binaryArchiveCommitMember": "onnxruntime-osx-arm64-1.28.2/GIT_COMMIT_ID",
+      "binaryArchiveVersionMember": "onnxruntime-osx-arm64-1.28.2/VERSION_NUMBER",
+      "binaryBuildInfo": "ORT Build Info: git-branch=HEAD, git-commit-id=33ca962, fp8-kv-cache=1, build type=Release",
+      "recipePath": "recipes/onnxruntime-macos-shared.yaml",
+      "recipeRepositoryCommit": "5cc3d2e84d9eade2562cf29a93fa3a520a75ca57",
+      "dependencyList": {
+        "path": "onnxruntime-33ca9628233dc8f002435e868d4c2e9f82766ca1/cmake/deps.txt",
+        "sha256": "894bd3f342b9fa570301f1a62830751e50657ec98a22b210d176b7dbb354ccc2",
+        "bytes": 7279
+      },
+      "scope": "Core source and publisher recipe supplied. Git submodules and downloaded build dependencies are not supplied by this archive; sherpa-gpl-combined-runtime-source remains unresolved. No bit-reproducibility claim."
+    }
   },
   "sourceInputs": [
     {
@@ -1366,6 +1382,25 @@
           "sourceKind": "original notice in exact source input",
           "sourceUrl": "https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip",
           "sourcePath": "piper-phonemize-f3ff95afc03640bc1399e113e83361192a2fafb4/LICENSE.md"
+        }
+      ]
+    },
+    {
+      "id": "onnxruntime-1-28-2-source",
+      "url": "https://codeload.github.com/microsoft/onnxruntime/tar.gz/33ca9628233dc8f002435e868d4c2e9f82766ca1",
+      "sha256": "889281e9b54b65664b1628fa28bab05b1238f388ad30c179dbe5bc15655a7532",
+      "bytes": 278704023,
+      "required": true,
+      "kind": "source-archive",
+      "archiveName": "onnxruntime-33ca9628233dc8f002435e868d4c2e9f82766ca1.tar.gz",
+      "notices": [
+        {
+          "path": "bodies/2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c.txt",
+          "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+          "bytes": 1073,
+          "sourceKind": "original notice in exact source input",
+          "sourceUrl": "https://codeload.github.com/microsoft/onnxruntime/tar.gz/33ca9628233dc8f002435e868d4c2e9f82766ca1",
+          "sourcePath": "onnxruntime-33ca9628233dc8f002435e868d4c2e9f82766ca1/LICENSE"
         }
       ]
     }
@@ -2402,6 +2437,12 @@
       "sha256": "cf38c8d828d8ac1cdf7f06f037118f272ad700e46507f7f05f82d50d2ad3d812",
       "bytes": 33420,
       "sourceUrl": "https://raw.githubusercontent.com/LibreOffice/core/bce0998afefdbc355585ca324285661a2170ba77/download.lst"
+    },
+    {
+      "path": "recipes/onnxruntime-macos-shared.yaml",
+      "bytes": 10300,
+      "sha256": "b40b541b56f207aeffcdedc97487fc58cb4e1522f60376eaa82d21d0fa9cf8bc",
+      "sourceUrl": "https://raw.githubusercontent.com/csukuangfj/onnxruntime-libs/5cc3d2e84d9eade2562cf29a93fa3a520a75ca57/.github/workflows/macos-shared.yaml"
     }
   ],
   "origin": "Exact npm inputs and pinned upstream source recipe; contents are product license/source materials, not a qualification report."

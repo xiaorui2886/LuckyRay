@@ -25,6 +25,8 @@ browser-host-poc = ["browser-host-runtime"]
 browser-host-poc-fixture = ["browser-host-poc"]
 # Fixed, disposable macOS UI scenario; never enabled by distributable builds.
 macos-material-flow = []
+# Fixed real bundled LSH proof, enabled only for disposable native validation.
+macos-lsh-proof = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

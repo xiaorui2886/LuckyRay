@@ -160,6 +160,24 @@ impl Drop for OwnedJob {
 
 pub(crate) struct OwnedProcess(Arc<Group>);
 impl OwnedProcess {
+    pub(crate) fn matches_code_directory_hash(&self, expected: &[String]) -> bool {
+        unsafe extern "C" {
+            fn csops(pid: libc::pid_t, operation: u32, data: *mut libc::c_void, size: usize) -> i32;
+        }
+        // WNOWAIT retains this child's PID anchor across both kernel queries.
+        // Failure or loss of the anchor never grants identity to a recycled PID.
+        if !matches!(self.0.exit_status(), Ok(None)) { return false; }
+        let mut flags = 0u32;
+        let mut digest = [0u8; 20];
+        let valid = unsafe {
+            csops(self.0.pid, 0, (&mut flags as *mut u32).cast(), std::mem::size_of_val(&flags)) == 0
+                && flags & 1 != 0
+                && csops(self.0.pid, 5, digest.as_mut_ptr().cast(), digest.len()) == 0
+        };
+        let value = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        valid && expected.iter().any(|expected| expected == &value)
+            && matches!(self.0.exit_status(), Ok(None))
+    }
     pub(crate) fn process_id(&self) -> u32 {
         self.0.pid as u32
     }

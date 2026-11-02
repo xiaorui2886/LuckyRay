@@ -30,8 +30,9 @@ const IO_CODES = Object.freeze(["ENOENT", "EACCES", "EPERM", "ENOSPC", "EIO", "E
 const SIGNALS = Object.freeze(["SIGABRT", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGPIPE", "SIGQUIT", "SIGSEGV", "SIGTERM", "SIGTRAP", "SIGXCPU", "SIGXFSZ"]);
 const PREFIX = "MACOS_NATIVE_EVENT ";
 const SOURCES = Object.freeze(["macos-build-common.mjs", "macos-dsh-distribution.mjs", "prepare-macos-build.mjs",
+  "macos-lsh-seal.mjs",
   "prepare-macos-runtimes.mjs", "prepare-macos-sidecars.mjs", "prepare-macos-node-input.mjs", "prepare-macos-deno-input.mjs",
-  "check-macos-media-sources.mjs", "dsh-supply-chain.mjs", "build-macos.mjs", "check-macos-internal.mjs", "check-macos-material-flow.mjs"]);
+  "check-macos-media-sources.mjs", "dsh-supply-chain.mjs", "build-macos.mjs", "check-macos-internal.mjs", "check-macos-material-flow.mjs", "check-macos-lsh-proof.mjs"]);
 const count = value => Number.isSafeInteger(value) && value >= 0 && value <= 10000000;
 export const safeExit = value => Number.isInteger(value) && value >= 0 && value <= 255 || SIGNALS.includes(value) || value === "SPAWN_ERROR";
 export async function diagnosticVocabulary(readScript) {

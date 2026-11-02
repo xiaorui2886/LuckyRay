@@ -260,7 +260,20 @@ fn revalidate_locked_object(
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+#[path = "dsh_runtime_seal/macos_file.rs"]
+mod macos_file;
+#[cfg(target_os = "macos")]
+#[path = "dsh_runtime_seal/macos_runtime.rs"]
+mod macos_runtime;
+#[cfg(target_os = "macos")]
+pub(crate) use macos_runtime::verify_closure as verify_macos_runtime_closure;
+#[cfg(target_os = "macos")]
+pub(crate) use macos_runtime::verify_node_process as verify_macos_node_process;
+
 pub(crate) struct StableFileLease {
+    #[cfg(target_os = "macos")]
+    macos: macos_file::Lease,
     #[cfg(windows)]
     object: LockedRuntimeObject,
 }
@@ -273,7 +286,9 @@ impl StableFileLease {
             let control = RuntimeSealControl::new(&cancelled);
             revalidate_locked_object(&self.object, &control)
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        { return self.macos.revalidate(); }
+        #[cfg(not(any(windows, target_os = "macos")))]
         {
             Err(())
         }
@@ -287,7 +302,9 @@ pub(crate) fn acquire_stable_file(path: &Path) -> Result<StableFileLease, ()> {
             object: lock_runtime_object(path, true, false, true)?,
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    { return Ok(StableFileLease { macos: macos_file::Lease::acquire(path)? }); }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = path;
         Err(())
@@ -311,11 +328,9 @@ fn verify_record_seal(control: &RuntimeSealControl<'_>) -> Result<(), ()> {
     Ok(())
 }
 
-// macOS does not yet have a qualified equivalent of the Windows sealed-tree
-// lease or platform records. Keep the runtime closed until both are available.
 #[cfg(target_os = "macos")]
-fn verify_record_seal(_control: &RuntimeSealControl<'_>) -> Result<(), ()> {
-    Err(())
+fn verify_record_seal(control: &RuntimeSealControl<'_>) -> Result<(), ()> {
+    macos_runtime::verify_embedded(control)
 }
 
 fn normalize_tracked_record(bytes: &[u8]) -> Result<Vec<u8>, ()> {
@@ -349,6 +364,7 @@ fn exact_hex64(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn runtime_identity_from_records() -> Result<RuntimeIdentity, ()> {
     let launch: serde_json::Value = serde_json::from_slice(LAUNCH_BYTES).map_err(|_| ())?;
     let runtime: serde_json::Value = serde_json::from_slice(RUNTIME_BYTES).map_err(|_| ())?;
@@ -379,6 +395,16 @@ fn runtime_identity_from_records() -> Result<RuntimeIdentity, ()> {
     })
 }
 
+#[cfg(target_os = "macos")]
+fn runtime_identity_from_records() -> Result<RuntimeIdentity, ()> { macos_runtime::launch_identity() }
+
+#[cfg(target_os = "macos")]
+pub(crate) fn bundled_runtime_version() -> Option<String> {
+    let cancelled = AtomicBool::new(false);
+    verify_record_seal(&RuntimeSealControl::new(&cancelled)).ok()?;
+    runtime_identity_from_records().ok().map(|identity| identity.package_version)
+}
+
 #[cfg(windows)]
 pub(crate) fn bundled_runtime_version() -> Option<String> {
     let cancelled = AtomicBool::new(false);
@@ -387,7 +413,7 @@ pub(crate) fn bundled_runtime_version() -> Option<String> {
     runtime_identity_from_records().ok().map(|identity| identity.package_version)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn bundled_runtime_version() -> Option<String> { None }
 
 /// The desktop installer, not a locally editable update pointer, supplies this
@@ -437,9 +463,18 @@ fn identity_path(root: &Path, relative: &str) -> Result<PathBuf, ()> {
 
 /// One descriptor's critical launch identity. Handles pin the fixed ancestor
 /// chain and critical files until the descriptor is dropped. Reuse checks file
-/// IDs and link counts, not timestamps. This does NOT authenticate secondary
-/// dependencies or prevent their modification after install-time admission.
+/// IDs and link counts, not timestamps. On macOS the additional snapshot and
+/// full source-pinned closure are rechecked at use boundaries; descriptor
+/// ownership detects conflicts but does not exclude other writers.
 pub(crate) struct RuntimeIdentityLease {
+    #[cfg(target_os = "macos")]
+    macos_directories: Vec<macos_runtime::DirectoryLease>,
+    #[cfg(target_os = "macos")]
+    macos_root: PathBuf,
+    #[cfg(target_os = "macos")]
+    macos_record: StableFileLease,
+    #[cfg(target_os = "macos")]
+    macos_snapshot: macos_runtime::Snapshot,
     directories: Vec<StableFileLease>,
     node: StableFileLease,
     entry: StableFileLease,
@@ -462,6 +497,7 @@ impl RuntimeIdentityLease {
 
     /// The caller supplies an identity from embedded records or an already
     /// signature/compatibility-verified installed envelope, never local JSON.
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn acquire_identity(
         root: &Path,
         identity: &RuntimeIdentity,
@@ -522,6 +558,10 @@ impl RuntimeIdentityLease {
         result
     }
 
+    #[cfg(target_os = "macos")]
+    pub(crate) fn acquire_identity(root: &Path, identity: &RuntimeIdentity, control: &RuntimeSealControl<'_>)
+        -> Result<Self, RuntimeSealError> { macos_runtime::acquire(root, identity, control) }
+
     fn revalidate_inner(&self, control: &RuntimeSealControl<'_>) -> Result<(), ()> {
         control.check()?;
         #[cfg(windows)]
@@ -534,7 +574,9 @@ impl RuntimeIdentityLease {
             revalidate_locked_object(&self.entry.object, control)?;
             control.check()
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        { macos_runtime::revalidate(self, control) }
+        #[cfg(not(any(windows, target_os = "macos")))]
         { Err(()) }
     }
 
@@ -551,6 +593,9 @@ pub(crate) fn verify_runtime_identity(
     root: &Path,
     control: &RuntimeSealControl<'_>,
 ) -> Result<RuntimeIdentity, RuntimeSealError> {
+    #[cfg(target_os = "macos")]
+    { macos_runtime::verify_closure(root, control)?; return control.finish(macos_runtime::launch_identity()); }
+    #[cfg(not(target_os = "macos"))]
     let run = || -> Result<RuntimeIdentity, ()> {
         verify_record_seal(control)?;
         let identity = runtime_identity_from_records()?;
@@ -566,6 +611,7 @@ pub(crate) fn verify_runtime_identity(
         }
         Ok(identity)
     };
+    #[cfg(not(target_os = "macos"))]
     control.finish(run())
 }
 
@@ -584,7 +630,10 @@ fn regular_file_has_one_link(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn regular_file_has_one_link(path: &Path) -> bool { macos_file::Lease::acquire(path).is_ok() }
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn regular_file_has_one_link(_path: &Path) -> bool {
     false
 }
@@ -606,8 +655,8 @@ fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn is_link_or_reparse(_metadata: &fs::Metadata) -> bool {
-    true
+fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 fn hash_file(path: &Path, control: &RuntimeSealControl<'_>) -> Result<String, ()> {

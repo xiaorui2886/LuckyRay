@@ -25,6 +25,8 @@ import {
 import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 
+const macos = process.platform === "darwin" ? await import("./luckyray-dsh-macos.mjs") : null;
+
 export const DSH_HOST_PROTOCOL = 1;
 export const DSH_HOST_MAX_FRAME_BYTES = 3 * 1024 * 1024;
 export const CANVAS_AGENT_MAX_JSON_BYTES = 2 * 1024 * 1024;
@@ -842,6 +844,7 @@ export function minimalDshEnvironment(home, launchEnvironment = process.env) {
     && launchEnvironment.DEEPSEEK_API_KEY.length > 0
     ? launchEnvironment.DEEPSEEK_API_KEY
     : undefined;
+  if (macos) return macos.environment(home, deepSeekSearchCredential);
   return {
     SystemRoot: systemRoot,
     WINDIR: systemRoot,
@@ -885,6 +888,8 @@ async function killOwnedChildTree(child, waitMs = 8_000) {
   if (!child || child.pid === undefined || child.pid === null) {
     return { confirmed: true, sweep: "no-child" };
   }
+  if (macos) return macos.stopDirectChild(child, waitMs);
+
   const stillAlive = child.exitCode === null;
   if (stillAlive) {
     const exited = new Promise((resolveExit) => {
@@ -1188,7 +1193,7 @@ export function createNativeSurfaceOwner({
           carrierGeneration: 0,
         });
       }
-      const node = join(root, "node", "node.exe");
+      const node = join(root, "node", process.platform === "darwin" ? "node" : "node.exe");
       const entry = join(root, "host", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
       await mkdir(home, { recursive: true });
       await mkdir(join(home, "AppData", "Roaming"), { recursive: true });
@@ -1496,7 +1501,7 @@ export function createNativeSurfaceOwner({
 export async function runBaselineSurfaceTrial({ runtimeRoot, timeoutMs = 90_000 }) {
   const { mkdtemp } = await import("node:fs/promises");
   const root = resolve(runtimeRoot);
-  const node = join(root, "node", "node.exe");
+  const node = join(root, "node", process.platform === "darwin" ? "node" : "node.exe");
   const entry = join(root, "host", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
   const home = await mkdtemp(join(tmpdir(), "luckyray-compat-trial-"));
   let child = null;
@@ -2568,18 +2573,22 @@ function runChild(executable, args, options, onSpawned = null) {
 export async function runNativeDshProbe({ runtimeRoot, stateRoot, observeEvents = null }) {
   const startedAt = performance.now();
   const root = resolve(runtimeRoot);
-  const node = join(root, "node", "node.exe");
+  const node = join(root, "node", process.platform === "darwin" ? "node" : "node.exe");
   const entry = join(root, "host", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
   const home = resolve(stateRoot);
   if (typeof stateRoot !== "string" || !isAbsolute(stateRoot) || home !== stateRoot) throw probeFailure();
   const workspace = join(home, "workspace");
-  const probePatch = join(home, "luckyray-native-probe.patch.yml");
+  const probePatch = process.platform === "darwin"
+    ? join(home, "managed-probe", "luckyray-native-probe.patch.yml")
+    : join(home, "luckyray-native-probe.patch.yml");
   const { server, evidence } = createDeterministicProvider();
   let timeout;
   let probeChild = null;
   try {
     await mkdir(home, { recursive: true });
     await mkdir(workspace, { recursive: true });
+    if (macos) await macos.readProbePatch(probePatch, DSH_NATIVE_PROBE_PATCH);
+    else {
     try {
       await writeFile(probePatch, DSH_NATIVE_PROBE_PATCH, { encoding: "utf8", flag: "wx" });
     } catch (error) {
@@ -2592,13 +2601,14 @@ export async function runNativeDshProbe({ runtimeRoot, stateRoot, observeEvents 
       }
     }
     if (await readFile(probePatch, "utf8") !== DSH_NATIVE_PROBE_PATCH) throw probeFailure();
+    }
     const roaming = join(home, "AppData", "Roaming");
     const local = join(home, "AppData", "Local");
     await mkdir(roaming, { recursive: true });
     await mkdir(local, { recursive: true });
     const port = await listen(server);
     const priorSessionLogs = new Set(await listSessionLogs(join(home, "sessions")));
-    const environment = {
+    let environment = {
       SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
       WINDIR: process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
       TEMP: process.env.TEMP ?? tmpdir(),
@@ -2615,6 +2625,9 @@ export async function runNativeDshProbe({ runtimeRoot, stateRoot, observeEvents 
       DEEPSEEK_API_KEY: "luckyray-local-probe",
       DEEPSEEK_BASE_URL: `http://127.0.0.1:${port}`,
     };
+    if (macos) environment = await macos.probeEnvironment(home, root, environment);
+
+
 
     const childResult = await Promise.race([
       runChild(node, [entry, "--profile", "headless", "--patch", probePatch, DSH_NATIVE_PROBE_TEXT], {

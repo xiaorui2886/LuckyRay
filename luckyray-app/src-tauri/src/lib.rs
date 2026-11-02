@@ -65,11 +65,20 @@ mod dsh_native_container;
 mod dsh_engine_update;
 mod dsh_resource_broker;
 mod dsh_runtime_seal;
+#[cfg(target_os = "macos")]
+mod macos_lsh_resource_path;
+#[cfg(all(target_os = "macos", feature = "macos-lsh-proof"))]
+pub fn run_macos_lsh_proof() -> bool { dsh_host::macos_proof::run() }
 
 /// Installer-only read-only admission. No Tauri app, profile, DB, writer lock,
 /// identity, extension, process or model is initialized on this path.
 pub fn verify_installed_lsh() -> Result<(), &'static str> {
     let executable = std::env::current_exe().map_err(|_| "dsh-installation-executable-unavailable")?;
+    #[cfg(target_os = "macos")]
+    let resource_directory = macos_lsh_resource_path::resource_directory(&executable)?;
+    #[cfg(target_os = "macos")]
+    let directory = resource_directory.as_path();
+    #[cfg(not(target_os = "macos"))]
     let directory = executable.parent().ok_or("dsh-installation-directory-unavailable")?;
     dsh_host::verify_installation(directory)
 }

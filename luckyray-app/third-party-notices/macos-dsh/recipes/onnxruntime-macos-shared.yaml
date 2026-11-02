@@ -1,0 +1,292 @@
+name: macos-shared
+
+on:
+  push:
+    branches:
+      - release-v1.27.1-2
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version information (e.g., 1.27.1)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  ONNXRUNTIME_VERSION:
+    |- # Enter release tag name or version name in workflow_dispatch. Appropriate version if not specified
+    ${{ github.event.release.tag_name || github.event.inputs.version || '1.27.1' }}
+
+jobs:
+  macos-shared:
+    if: true
+    name: ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-15-intel
+            arch: universal2
+          - os: macos-15-intel
+            arch: x86_64
+
+    steps:
+      - name: Cache build result for ${{ env.ONNXRUNTIME_VERSION }}
+        id: cache-build-result
+        uses: actions/cache@v4
+        with:
+          path: onnxruntime-osx-${{ matrix.arch }}-${{ env.ONNXRUNTIME_VERSION }}
+          key: onnxruntime-osx-${{ matrix.arch }}-${{ env.ONNXRUNTIME_VERSION }}-cache-v1
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.os }}-${{ matrix.arch }}
+
+      - name: Checkout v${{ env.ONNXRUNTIME_VERSION }}
+        if: steps.cache-build-result.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/onnxruntime
+          submodules: true
+          ref: v${{ env.ONNXRUNTIME_VERSION }}
+
+      - name: Install dependencies on macos
+        if: steps.cache-build-result.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          brew install ninja
+          cmake --version
+          brew install tree
+          tree --version
+
+      - name: Build onnxruntime ${{ env.ONNXRUNTIME_VERSION }} for macOS ${{ matrix.arch }}
+        if: steps.cache-build-result.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          export CMAKE_CXX_COMPILER_LAUNCHER=ccache
+          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+          cmake --version
+
+          extra_opt=""
+
+          build_dir=./build-macos/${{ matrix.arch }}
+          arch=${{ matrix.arch }}
+          if [[ $arch == universal2 ]]; then
+            extra_opt="--no_kleidiai"
+          fi
+
+          sed -i.bak -E '/SOVERSION|VERSION \$/d' ./cmake/onnxruntime.cmake
+
+          git diff
+
+          if [[ $arch == universal2 ]]; then
+            # Build arm64 and x86_64 separately, then lipo to create universal binary.
+            # This avoids x86-specific AVX512 flags being applied to arm64 targets.
+            for sub_arch in arm64 x86_64; do
+              echo "=== Building $sub_arch ==="
+              sub_build_dir=./build-macos/$sub_arch
+              python3 ./tools/ci_build/build.py \
+                --build_dir $sub_build_dir \
+                --config Release \
+                --cmake_generator 'Ninja' \
+                --update \
+                --build \
+                --use_xcode \
+                --build_shared_lib \
+                --compile_no_warning_as_error \
+                --cmake_extra_defines onnxruntime_BUILD_UNIT_TESTS=OFF \
+                --cmake_extra_defines CMAKE_INSTALL_PREFIX=$sub_build_dir/install/ \
+                --cmake_extra_defines CMAKE_OSX_ARCHITECTURES="$sub_arch" \
+                --cmake_extra_defines CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+                --apple_sysroot macosx \
+                --target install \
+                --parallel \
+                --skip_tests \
+                --apple_deploy_target '10.15' \
+                $extra_opt \
+                --use_coreml
+            done
+
+            # Combine into universal binary
+            arm64_install=./build-macos/arm64/Release/build-macos/arm64/install
+            x86_64_install=./build-macos/x86_64/Release/build-macos/x86_64/install
+            mkdir -p $build_dir/Release/$build_dir/install/lib $build_dir/Release/$build_dir/install/include
+            lipo -create \
+              $arm64_install/lib/libonnxruntime.dylib \
+              $x86_64_install/lib/libonnxruntime.dylib \
+              -output $build_dir/Release/$build_dir/install/lib/libonnxruntime.dylib
+            cp -r $arm64_install/include/* $build_dir/Release/$build_dir/install/include/
+          else
+            python3 ./tools/ci_build/build.py \
+              --build_dir $build_dir \
+              --config Release \
+              --cmake_generator 'Ninja' \
+              --update \
+              --build \
+              --use_xcode \
+              --build_shared_lib \
+              --compile_no_warning_as_error \
+              --cmake_extra_defines onnxruntime_BUILD_UNIT_TESTS=OFF \
+              --cmake_extra_defines CMAKE_INSTALL_PREFIX=$build_dir/install/ \
+              --cmake_extra_defines CMAKE_OSX_ARCHITECTURES="$arch" \
+              --cmake_extra_defines CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+              --apple_sysroot macosx \
+              --target install \
+              --parallel \
+              --skip_tests \
+              --apple_deploy_target '10.15' \
+              $extra_opt \
+              --use_coreml
+          fi
+            # see  https://github.com/microsoft/onnxruntime/pull/24194/files
+            # for why to use --no_kleidiai
+
+      - name: Collect results
+        if: steps.cache-build-result.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          build_dir=./build-macos/${{ matrix.arch }}
+
+          ls -lh $build_dir
+
+          version=${{ env.ONNXRUNTIME_VERSION }}
+          config=${{ matrix.config }}
+          artifact=onnxruntime-osx-${{ matrix.arch }}-$version
+
+          tag=$(git rev-parse HEAD)
+          echo "tag: $tag"
+
+          current=$PWD
+
+          if true; then
+            ls -lh build-macos/${{ matrix.arch }}/Release/build-macos/${{ matrix.arch }}/install/lib/libonnxruntime.dylib
+            mkdir -p $build_dir/Release
+
+            ARTIFACT_NAME=$artifact
+            LIB_NAME=libonnxruntime.dylib
+            SOURCE_DIR=$PWD
+            COMMIT_ID=$(git rev-parse HEAD)
+
+            BINARY_DIR=build-macos/${{ matrix.arch }}/Release/build-macos/${{ matrix.arch }}
+
+            # BINARY_DIR=$build_dir
+            cd "$BINARY_DIR"
+            mkdir -p $ARTIFACT_NAME/include
+
+            mv -v install/include/onnxruntime/* $ARTIFACT_NAME/include/
+
+            mkdir -p $ARTIFACT_NAME/lib
+            cp -v install/lib/libonnxruntime.dylib $ARTIFACT_NAME/lib
+
+            pushd $ARTIFACT_NAME/lib
+
+            # Strip debug symbols
+            strip -S libonnxruntime.dylib
+
+            # Re-sign with ad-hoc signature after stripping (strip invalidates the signature)
+            codesign --force --sign - --timestamp=none \
+              --preserve-metadata=identifier,entitlements,flags,runtime libonnxruntime.dylib
+            codesign --verify --strict --verbose=2 libonnxruntime.dylib
+
+            popd
+
+            cp -v $SOURCE_DIR/include/onnxruntime/core/providers/coreml/coreml_provider_factory.h  $ARTIFACT_NAME/include
+
+            cp -v $SOURCE_DIR/README.md $ARTIFACT_NAME/README.md
+            cp -v $SOURCE_DIR/docs/Privacy.md $ARTIFACT_NAME/Privacy.md
+            cp -v $SOURCE_DIR/LICENSE $ARTIFACT_NAME/LICENSE
+            cp -v $SOURCE_DIR/ThirdPartyNotices.txt $ARTIFACT_NAME/ThirdPartyNotices.txt
+            cp -v $SOURCE_DIR/VERSION_NUMBER $ARTIFACT_NAME/VERSION_NUMBER
+
+            echo $COMMIT_ID > $ARTIFACT_NAME/GIT_COMMIT_ID
+
+            mv -v $ARTIFACT_NAME $current/
+            cd $current
+            echo "---"
+            ls -lh
+            echo "---"
+            ls -lh $ARTIFACT_NAME
+            echo "---"
+            ls -lh $ARTIFACT_NAME/lib
+            tree $ARTIFACT_NAME
+          fi
+
+          if false; then
+            cp -v build-macos/${{ matrix.arch }}/Release/build-macos/${{ matrix.arch }}/install/lib/libonnxruntime.dylib $build_dir/Release
+
+            ./tools/ci_build/github/linux/copy_strip_binary.sh \
+              -r $build_dir \
+              -a $artifact \
+              -c Release \
+              -l libonnxruntime.dylib \
+              -s $PWD/ \
+              -t "$(git rev-parse HEAD)"
+
+            mv $build_dir/$artifact ./
+          fi
+
+          which tree
+
+          tree ./$artifact
+
+          zip -ry ${artifact}.zip ./$artifact
+
+      - name: Upload artifact
+        if: steps.cache-build-result.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnxruntime-osx-${{ matrix.arch }}-${{ env.ONNXRUNTIME_VERSION }}
+          path: onnxruntime-osx-${{ matrix.arch }}-${{ env.ONNXRUNTIME_VERSION }}
+
+      - name: Upload v${{ env.ONNXRUNTIME_VERSION }}
+        if: steps.cache-build-result.outputs.cache-hit != 'true'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file_glob: true
+          file: "./*.zip"
+          overwrite: false
+          tag: v${{ env.ONNXRUNTIME_VERSION }}
+
+      # https://huggingface.co/docs/hub/spaces-github-actions
+      - name: Publish to huggingface
+        if: github.repository_owner == 'csukuangfj' && steps.cache-build-result.outputs.cache-hit != 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 20
+          timeout_seconds: 200
+          shell: bash
+          command: |
+            rm -rf huggingface
+
+            ls -lh
+            version=${{ env.ONNXRUNTIME_VERSION }}
+            arch=${{ matrix.arch }}
+            artifact=onnxruntime-osx-$arch-$version
+
+            tree ./$artifact
+
+            git config --global user.email "csukuangfj@gmail.com"
+            git config --global user.name "Fangjun Kuang"
+
+            export GIT_CLONE_PROTECTION_ACTIVE=false
+            rm -rf huggingface
+            GIT_LFS_SKIP_SMUDGE=1 git clone https://csukuangfj2:$HF_TOKEN@huggingface.co/csukuangfj2/onnxruntime-libs huggingface
+
+            cd huggingface
+            mkdir -p $version
+
+            cp -v ../onnxruntime-osx*.zip ./$version
+            git status
+            git lfs track "*.zip"
+
+            git add .
+
+            git commit -m "upload $artifact"
+            git push https://csukuangfj2:$HF_TOKEN@huggingface.co/csukuangfj2/onnxruntime-libs main

@@ -4,15 +4,22 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { internalPlan, diagnosticSummary, failureSummary, summarizeBuildResult, internalWorkerEnvironment } from "../scripts/check-macos-internal.mjs";
 
-test("internal plan uses the full app with locked inputs and only two evidence files", async () => {
+test("internal LSH plan uses the full locked app and only JSON evidence", async () => {
   const plan = await internalPlan();
   assert.deepEqual(plan.sidecars, ["luckyray-native-host", "luckyray-cli", "luckyray-mcp"]);
-  assert.deepEqual(plan.evidenceFiles, ["report.json", "LuckyRay-real-app.png"]);
+  assert.deepEqual(plan.evidenceFiles, ["report.json"]);
   assert.equal(plan.minimumSystemVersion, "15.0");
   assert.equal(plan.appBuild[plan.appBuild.indexOf("--bundles") + 1], "app");
   assert.deepEqual(JSON.parse(plan.appBuild[plan.appBuild.indexOf("--config") + 1]), { bundle: { createUpdaterArtifacts: false } });
   assert(plan.appBuild.includes("--locked"));
   assert(plan.appBuild.includes("browser-host-runtime"));
+  assert(plan.appBuild.includes("macos-lsh-proof"));
+  assert(!plan.appBuild.includes("macos-material-flow"));
+  assert.equal(plan.phases.at(-1), "real-lsh-proof");
+  assert.equal(plan.lshProof.entry, "LuckyRay.app/Contents/MacOS/luckyray-app --macos-lsh-proof");
+  assert.equal(plan.lshProof.timeoutMs, 1200000);
+  assert.equal(plan.lshProof.cleanupGraceMs, 90000);
+  assert.equal(plan.lshProof.materialFlow, "not-run");
   assert.equal(plan.appBuild[plan.appBuild.indexOf("--bin") + 1], "luckyray-app");
   for (const key of ["binaryExport", "dmg", "applicationArchive", "binaryUpload", "release"]) assert.equal(plan[key], false);
   assert.equal(plan.nativeExecution, "not-run-by-plan");

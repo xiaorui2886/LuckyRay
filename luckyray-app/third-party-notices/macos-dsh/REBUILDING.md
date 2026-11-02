@@ -79,6 +79,27 @@ instructions do not claim that this native replacement check has already run.
 
 ## Other source and licensing scopes
 
+The frozen `sherpa-onnx-darwin-arm64@1.13.8` ONNX Runtime dylib is mapped to
+Microsoft ONNX Runtime commit `33ca9628233dc8f002435e868d4c2e9f82766ca1`.
+The publisher's exact `onnxruntime-osx-arm64-1.28.2.zip` contains that full
+`GIT_COMMIT_ID` and `VERSION_NUMBER`; its dylib's embedded build information
+agrees. `INDEX.json` pins the archive and the actual packaged dylib separately.
+The source archive and original MIT license are retained and hash indexed.
+
+`recipes/onnxruntime-macos-shared.yaml` is the unmodified publisher recipe at
+`csukuangfj/onnxruntime-libs` commit
+`5cc3d2e84d9eade2562cf29a93fa3a520a75ca57`. It records the arm64 Release,
+shared-library, CoreML and CMake options, the source edit to the CMake
+version/SOVERSION declarations, stripping and ad-hoc signing. Preserve those
+steps when preparing a replacement. The recipe's `10.15` deployment option
+does not establish the minimum macOS version of the complete frozen DSH.
+
+The core archive includes `cmake/deps.txt` and `.gitmodules`, which describe
+additional build inputs. Those references are not supplied dependency source;
+the complete combined Sherpa runtime source requirement remains unresolved.
+The publisher recipe also uses caches and unpinned toolchain inputs, so this
+mapping does not assert a byte-reproducible build or close that requirement.
+
 The LibreOffice engine includes its own MPL source revision, modification
 patches and build helper sources. Its preferred adapter source and embedded
 component sources must be mapped to the exact published build; a merely

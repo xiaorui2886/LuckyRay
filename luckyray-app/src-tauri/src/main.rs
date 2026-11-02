@@ -2,6 +2,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    #[cfg(all(target_os = "macos", feature = "macos-lsh-proof"))]
+    if std::env::args().nth(1).as_deref() == Some("--macos-lsh-proof") {
+        std::process::exit(if luckyray_app_lib::run_macos_lsh_proof() { 0 } else { 3 });
+    }
+    #[cfg(all(target_os = "macos", not(feature = "macos-lsh-proof")))]
+    if std::env::args().nth(1).as_deref() == Some("--macos-lsh-proof") {
+        eprintln!("macos-lsh-proof-unavailable");
+        std::process::exit(2);
+    }
     #[cfg(all(target_os = "macos", not(feature = "macos-material-flow")))]
     if std::env::args().nth(1).as_deref() == Some("--macos-material-flow") {
         eprintln!("macos-material-flow-unavailable");

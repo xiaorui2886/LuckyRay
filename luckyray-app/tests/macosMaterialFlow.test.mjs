@@ -29,7 +29,9 @@ test("the fixed PNG and internal-only feature preserve normal bundle arguments",
   const rust = await readFile(new URL("../src-tauri/src/macos_material_flow.rs", import.meta.url), "utf8");
   assert.equal(/const SHA256: &str = "([a-f0-9]{64})"/.exec(rust)?.[1], FIXTURE.sha256);
   assert(!appBuildArguments(false).includes("macos-material-flow"));
-  assert.equal(appBuildArguments(true).filter(value => value === "macos-material-flow").length, 1);
+  assert(!appBuildArguments(true).includes("macos-material-flow"));
+  assert(appBuildArguments(true).includes("macos-lsh-proof"));
+  assert(!appBuildArguments(false).includes("macos-lsh-proof"));
   assert(appBuildArguments(true).includes("--locked"));
 });
 
@@ -60,7 +62,9 @@ test("projection requires real backend flags, both normal exits and retained ide
   const published = { schemaVersion: 1, mode: "internal-native-validation", status: "passed", binaryExport: false,
     source: { repository: "xiaorui2886/LuckyRay", commit: "a".repeat(40), tree: "b".repeat(40) },
     workerExit: 0, phases: PHASES.map(phase => ({ phase, status: "passed" })), materialFlow: passedFlow() };
-  assert.equal(publishableReport(published).materialFlow.status, "passed");
+  // The next internal job requires LSH evidence. An older successful material
+  // scenario must not be accepted as an LSH result.
+  assert.throws(() => publishableReport(published), /result-invalid/);
   assert.throws(() => publishableReport({ ...published, materialFlow: null }), /result-invalid/);
 });
 

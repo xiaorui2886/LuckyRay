@@ -1,18 +1,17 @@
-// Disposable native development validation. Only a projected JSON report and
-// the freshly launched app's own window may leave the runner. No export path.
+// Disposable real LSH validation. Only the projected JSON report leaves the
+// runner. Previously accepted material/window flows are not repeated here.
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdir, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { APP, TAURI, BUILD, TARGET, SIDECARS, directory, readRegular, writeNew, jsonNew,
-  sha256, run, requireNative } from "./macos-build-common.mjs";
+import { APP, TAURI, BUILD, TARGET, SIDECARS, directory, readRegular, jsonNew,
+  run, requireNative } from "./macos-build-common.mjs";
 import { appBuildArguments, buildMacosApp } from "./build-macos.mjs";
-import { checkStartup } from "./check-macos-app-startup.mjs";
-import { safeMaterialFlow } from "./check-macos-material-flow.mjs";
+import { runLshProof, safeLshExecution, knownProofSignal, PROOF_TIMEOUT_MS, PROOF_CLEANUP_MS } from "./check-macos-lsh-proof.mjs";
 import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary } from "./macos-native-diagnostics.mjs";
 
-export const PHASES = Object.freeze(["install-frozen-frontend", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-app-window"]);
-export const EVIDENCE_FILES = Object.freeze(["report.json", "LuckyRay-real-app.png"]);
+export const PHASES = Object.freeze(["install-frozen-frontend", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-lsh-proof"]);
+export const EVIDENCE_FILES = Object.freeze(["report.json"]);
 const EVIDENCE = join(BUILD, "internal-validation-evidence");
 const digest = value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const count = value => Number.isSafeInteger(value) && value >= 0;
@@ -22,6 +21,11 @@ const SAFE_CODES = Object.freeze([
   "macos-arm64-build-required", "macos-internal-ci-required", "macos-internal-temp-worktree-required",
   "macos-internal-source-identity-invalid", "macos-internal-unexpected-bundle-export", "macos-internal-package-manager-mismatch",
   "macos-internal-build-override-rejected",
+  "macos-lsh-proof-context-invalid", "macos-lsh-proof-result-invalid", "macos-lsh-proof-spawn-failed",
+  "macos-lsh-proof-timeout", "macos-lsh-proof-cancelled", "macos-lsh-proof-forced-termination",
+  "macos-lsh-proof-output-invalid", "macos-lsh-proof-exit-failed", "macos-lsh-proof-rejected",
+  "macos-lsh-source-closure-mismatch", "macos-lsh-seal-directory-invalid", "macos-lsh-seal-file-invalid",
+  "macos-lsh-seal-linked-entry", "macos-lsh-seal-path-invalid", "macos-lsh-seal-row-invalid", "macos-lsh-seal-capacity",
   "macos-app-version-mismatch", "macos-app-sidecar-bytes-changed", "macos-app-media-manifest-changed",
   "macos-app-media-bytes-changed", "macos-app-dsh-record-invalid", "macos-app-dsh-bytes-changed",
   "macos-app-distribution-index-changed", "macos-app-cli-contract-mismatch", "macos-app-node-version-invalid",
@@ -85,9 +89,10 @@ export async function internalPlan() {
     distributionGate: "incomplete source remains ineligible for distribution; supplied bytes remain verified",
     binaryExport: false, dmg: false, applicationArchive: false, binaryUpload: false, release: false,
     rawOutput: "streamed into bounded typed command/error summaries, then discarded", nativeExecution: "not-run-by-plan",
-    materialFlow: { buildFeature: "macos-material-flow", interaction: "application-dom-automation",
-      stages: ["choose-managed-mode", "import-fixed-image", "decode-real-preview", "normal-quit", "reopen-same-profile", "verify-persistence"],
-      nativeFilePicker: "not-run", systemPointerInput: "not-run" } };
+    lshProof: { buildFeature: "macos-lsh-proof", entry: "LuckyRay.app/Contents/MacOS/luckyray-app --macos-lsh-proof",
+      timeoutMs: PROOF_TIMEOUT_MS, cleanupGraceMs: PROOF_CLEANUP_MS,
+      stages: ["installed-resources", "real-dsh-probe", "authenticated-parent", "normal-shutdown"],
+      provider: "deterministic-loopback-provider-with-real-official-dsh", materialFlow: "not-run", guiInteraction: "not-run" } };
 }
 async function requireInternalContext() {
   requireNative();
@@ -111,7 +116,7 @@ async function requireInternalContext() {
 async function diagnosticContext() {
   const vocabulary = await diagnosticVocabulary(file => readRegular(join(APP, "scripts", file), 4 * 1024 * 1024));
   // Source positions are allowed only for tracked public app source paths.
-  const tracked = await run("git", ["ls-files", "-z", "--", "src-tauri/src", "src-tauri/build.rs", "src"],
+  const tracked = await run("git", ["ls-files", "-z", "--", "src-tauri/src", "src-tauri/build.rs", "src-tauri/build", "src"],
     { capture: true, stdio: ["ignore", "pipe", "ignore"] });
   const files = new Set(tracked.split("\0").filter(file => file.startsWith("src-tauri/") && file.endsWith(".rs")
     || file.startsWith("src/") && /\.(?:ts|tsx)$/.test(file)).map(file => file.startsWith("src-tauri/") ? file.slice("src-tauri/".length) : file));
@@ -129,12 +134,10 @@ async function worker() {
     const result = await buildMacosApp({ internalValidation: true,
       onStage: phase => process.send({ type: "phase", phase }) });
     process.send({ type: "built", result });
-    process.send({ type: "phase", phase: "real-app-window" });
-    const window = await checkStartup({ onFlow: result => process.send({ type: "material-flow", result }) });
-    const bytes = await readRegular(join(window.artifactDirectory, "LuckyRay-real-app.png"), 32 * 1024 * 1024);
-    await writeNew(join(EVIDENCE, "own-window.pending"), bytes, 0o600);
-    process.send({ type: "window", pid: window.pid, windowID: window.windowID,
-      width: window.width, height: window.height, screenshotSha256: sha256(bytes) });
+    process.send({ type: "phase", phase: "real-lsh-proof" });
+    const execution = await runLshProof(result.app, internalWorkerEnvironment(process.env));
+    process.send({ type: "lsh-proof", execution });
+    if (execution.status !== "passed") process.exitCode = execution.exitCode || 1;
   } catch (error) {
     process.send({ type: "failed", failure: failureSummary(error) });
     process.exitCode = 1;
@@ -148,11 +151,9 @@ export async function validateInternal() {
   await mkdir(EVIDENCE, { mode: 0o700 }); await directory(EVIDENCE);
   const { vocabulary, files } = await diagnosticContext();
   const diagnostics = new DiagnosticCollector(vocabulary, files);
-  // The workflow supplies the pinned package manager on PATH. Launch Node
-  // directly so the private IPC channel belongs to this worker, not npm.
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--worker"],
     { cwd: APP, env: internalWorkerEnvironment(process.env), stdio: ["ignore", "pipe", "pipe", "ipc"] });
-  let build; let window; let materialFlow; let failure; let protocolInvalid = false;
+  let build; let lsh; let failure; let protocolInvalid = false;
   const phases = [];
   child.stdout.on("data", bytes => diagnostics.feed("stdout", bytes));
   child.stderr.on("data", bytes => diagnostics.feed("stderr", bytes));
@@ -163,15 +164,8 @@ export async function validateInternal() {
         console.log(`macos-internal-phase:${message.phase}`);
       } else if (message?.type === "built" && phases.length === PHASES.length - 1 && !build) {
         build = summarizeBuildResult(message.result);
-      } else if (message?.type === "material-flow" && phases.length === PHASES.length && build && !window) {
-        materialFlow = safeMaterialFlow(message.result);
-      } else if (message?.type === "window" && phases.length === PHASES.length && build && !window
-          && count(message.pid) && message.pid > 0 && count(message.windowID) && message.windowID > 0
-          && Number.isFinite(message.width) && message.width >= 1000 && message.width <= 32768
-          && Number.isFinite(message.height) && message.height >= 600 && message.height <= 32768
-          && digest(message.screenshotSha256)) {
-        window = { pid: message.pid, windowID: message.windowID, width: message.width, height: message.height,
-          screenshotSha256: message.screenshotSha256 };
+      } else if (message?.type === "lsh-proof" && phases.length === PHASES.length && build && !lsh) {
+        lsh = safeLshExecution(message.execution);
       } else if (message?.type === "failed" && !failure) {
         const f = message.failure;
         if (!SAFE_CODES.includes(f?.code) && !["native-command-failed", "native-validation-failed"].includes(f?.code))
@@ -180,6 +174,8 @@ export async function validateInternal() {
         if (f.code === "native-command-failed" && knownExit(f.exit)) failure.exit = f.exit;
       } else throw new Error("invalid-worker-message");
     } catch {
+      // During the proof the worker turns this signal into private-pipe
+      // cancellation, allowing Rust's retained handles to perform cleanup.
       protocolInvalid = true; child.kill("SIGTERM");
     }
   });
@@ -187,29 +183,26 @@ export async function validateInternal() {
     child.once("error", () => resolveExit({ code: null, signal: null }));
     child.once("close", (code, signal) => resolveExit({ code, signal }));
   });
-  let success = exited.code === 0 && !protocolInvalid && !failure && !!build && !!window && materialFlow?.status === "passed" && phases.length === PHASES.length;
-  if (success) {
-    const bytes = await readRegular(join(EVIDENCE, "own-window.pending"), 32 * 1024 * 1024);
-    if (bytes.length < 1024 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
-        || sha256(bytes) !== window.screenshotSha256) {
-      success = false; failure = { code: "macos-real-app-capture-invalid" };
-    } else await writeNew(join(EVIDENCE, EVIDENCE_FILES[1]), bytes);
-  }
+  const success = exited.code === 0 && !protocolInvalid && !failure && !!build
+    && lsh?.status === "passed" && phases.length === PHASES.length;
   const report = { schemaVersion: 1, mode: "internal-native-validation", source,
     status: success ? "passed" : "failed", minimumSystemVersion: plan.minimumSystemVersion, binaryExport: false,
     distributionReady: build?.distribution.readyToPackage ?? false, distributionAssessment: build ? "verified" : "not-reached",
     phases: PHASES.map((phase, index) => ({ phase,
       status: success || index < phases.length - 1 ? "passed" : index < phases.length ? "failed" : "not-run" })),
-    build: build ?? null, window: success ? window : null, materialFlow: materialFlow ?? null,
-    failure: success ? null : failure ?? { code: protocolInvalid ? "invalid-worker-protocol" : "native-worker-failed" },
-    workerExit: exited.code, diagnostics: safeDiagnosticSummary(diagnostics.summary(), vocabulary, files), rawOutput: "discarded-not-retained",
-    artifacts: success ? EVIDENCE_FILES : [EVIDENCE_FILES[0]],
-    limitations: { frontendInteraction: success ? "application-dom-automation" : "not-completed", nativeFilePicker: "not-run", systemPointerInput: "not-run", lshConnection: "not-run", notesRecovery: "not-run",
+    build: build ?? null, lsh: lsh ?? null,
+    failure: success ? null : failure ?? { code: protocolInvalid ? "invalid-worker-protocol" : lsh?.failure ?? "native-worker-failed" },
+    workerExit: exited.code, workerSignal: exited.signal,
+    diagnostics: safeDiagnosticSummary(diagnostics.summary(), vocabulary, files), rawOutput: "discarded-not-retained",
+    artifacts: EVIDENCE_FILES,
+    limitations: { frontendInteraction: "not-run", materialFlow: "not-run", guiInteraction: "not-run", modelAccount: "not-configured",
+      lshConnection: success ? "real-bundled-probe-authentication-and-normal-shutdown" : "not-completed", notesRecovery: "not-run",
       nativeHostBrowserSession: "not-run", mcpSession: "not-run", installIntoApplications: "not-run",
-      screenshotVisualReview: "required", notarization: "not-requested", release: "not-published" } };
-  await jsonNew(join(EVIDENCE, EVIDENCE_FILES[0]), report);
-  console.log(JSON.stringify(report));
-  if (!success) process.exitCode = 1;
+      notarization: "not-requested", release: "not-published" } };
+  // Save the same strict projection that the workflow can publish. No raw
+  // build result, path, exception, bootstrap challenge or environment is saved.
+  await jsonNew(join(EVIDENCE, EVIDENCE_FILES[0]), publishableReport(report, vocabulary, files));
+  if (!success) process.exitCode = exited.code || 1;
   return report;
 }
 export function publishableReport(record, vocabulary = new Set(), files = new Set()) {
@@ -218,18 +211,32 @@ export function publishableReport(record, vocabulary = new Set(), files = new Se
       || !/^[a-f0-9]{40}$/.test(record.source.commit) || !/^[a-f0-9]{40}$/.test(record.source.tree)
       || !Array.isArray(record.phases) || record.phases.length !== PHASES.length
       || record.phases.some((item, i) => item.phase !== PHASES[i] || !["passed", "failed", "not-run"].includes(item.status))
-      || record.status === "passed" && (record.workerExit !== 0 || record.phases.some(item => item.status !== "passed")))
+      || record.status === "passed" && (record.workerExit !== 0 || record.workerSignal != null || record.phases.some(item => item.status !== "passed")))
     throw new Error("macos-internal-result-invalid");
-  const materialFlow = record.materialFlow == null ? null : safeMaterialFlow(record.materialFlow);
-  if (record.status === "passed" && materialFlow?.status !== "passed") throw new Error("macos-internal-result-invalid");
+  const lsh = record.lsh == null ? null : safeLshExecution(record.lsh);
+  const build = record.build == null ? null : summarizeStoredBuild(record.build);
+  if (record.distributionReady !== (build?.distribution.readyToPackage ?? false)
+      || record.status === "passed" && (!build || lsh?.status !== "passed" || record.failure != null))
+    throw new Error("macos-internal-result-invalid");
   const failureCodes = [...SAFE_CODES, "native-command-failed", "native-validation-failed", "native-worker-failed", "invalid-worker-protocol"];
   const failure = failureCodes.includes(record.failure?.code) ? { code: record.failure.code } : null;
   if (failure && knownExit(record.failure.exit)) failure.exit = record.failure.exit;
   return { schemaVersion: 1, mode: "internal-native-validation", status: record.status,
     source: { repository: "xiaorui2886/LuckyRay", commit: record.source.commit, tree: record.source.tree },
     phases: record.phases.map(item => ({ phase: item.phase, status: item.status })), failure,
-    diagnostics: safeDiagnosticSummary(record.diagnostics, vocabulary, files), materialFlow, binaryExport: false,
-    distributionReady: record.distributionReady === true, rawOutput: "not-published" };
+    workerExit: Number.isInteger(record.workerExit) && record.workerExit >= 0 && record.workerExit <= 255 ? record.workerExit : null,
+    workerSignal: knownProofSignal(record.workerSignal) ? record.workerSignal : null,
+    build,
+    diagnostics: safeDiagnosticSummary(record.diagnostics, vocabulary, files), lsh, binaryExport: false,
+    distributionReady: record.distributionReady === true, rawOutput: "not-published",
+    coverage: { lsh: record.status === "passed" ? "real-official-dsh-probe-authentication-and-normal-shutdown" : "not-completed",
+      materialFlow: "not-run", guiInteraction: "not-run", modelAccount: "not-configured" } };
+}
+function summarizeStoredBuild(value) {
+  const ids = value?.distribution?.missingRequirementIds;
+  if (!Array.isArray(ids) || ids.length > 128) throw new Error("macos-internal-result-invalid");
+  return summarizeBuildResult({ ...value, distribution: { ...value.distribution,
+    missingRequirements: ids.map(id => ({ id })) } });
 }
 async function printReportSummary() {
   // Generated output is ignored by Git. Keep the same clean-source and exact

@@ -39,18 +39,35 @@ pub(crate) fn verify_installation(resource_dir: &Path) -> Result<(), &'static st
     if !safe_regular_file(&wrapper) || hash_normalized_host_script(&wrapper).ok().as_deref() != Some(HOST_SCRIPT_SHA256) {
         return Err("dsh-installation-wrapper-invalid");
     }
+    #[cfg(target_os = "macos")]
+    if !safe_regular_file(&host.join(MACOS_HOST_SUPPORT))
+        || exact_file_sha256(&host.join(MACOS_HOST_SUPPORT)).ok().as_deref() != Some(MACOS_HOST_SUPPORT_SHA256) {
+        return Err("dsh-installation-macos-support-invalid");
+    }
     verify_host_compat_script(&wrapper).map_err(|_| "dsh-installation-compat-invalid")?;
     verify_surface_assets(&surface_assets(&host)).map_err(|_| "dsh-installation-surface-invalid")?;
     verify_host_tree(&host).map_err(|_| "dsh-installation-host-tree-invalid")?;
-    let identity = crate::dsh_runtime_seal::bundled_runtime_identity().map_err(|_| "dsh-installation-authority-invalid")?;
-    crate::dsh_engine_update::verify_bundled_runtime_closure(&identity, &runtime)
-        .map_err(|_| "dsh-installation-closure-invalid")
+    #[cfg(target_os = "macos")]
+    {
+        let cancelled = AtomicBool::new(false);
+        crate::dsh_runtime_seal::verify_macos_runtime_closure(&runtime,
+            &crate::dsh_runtime_seal::RuntimeSealControl::new(&cancelled))
+            .map_err(|_| "dsh-installation-closure-invalid")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let identity = crate::dsh_runtime_seal::bundled_runtime_identity().map_err(|_| "dsh-installation-authority-invalid")?;
+        crate::dsh_engine_update::verify_bundled_runtime_closure(&identity, &runtime)
+            .map_err(|_| "dsh-installation-closure-invalid")
+    }
 }
 
 pub(super) fn verify_host_tree(host: &Path) -> Result<(), ()> {
     let mut expected: std::collections::BTreeSet<_> = surface_assets(host).into_iter().collect();
     expected.insert(host.join("luckyray-dsh-host.mjs"));
     expected.insert(host.join(HOST_COMPAT_SCRIPT));
+    #[cfg(target_os = "macos")]
+    expected.insert(host.join(MACOS_HOST_SUPPORT));
     let mut directories: std::collections::BTreeSet<_> = expected.iter().filter_map(|path| path.parent().map(Path::to_path_buf)).collect();
     directories.insert(host.to_path_buf());
     let mut pending = vec![host.to_path_buf()];
@@ -92,6 +109,8 @@ mod tests {
         let host = root.path();
         let mut files = surface_assets(host).to_vec();
         files.extend([host.join("luckyray-dsh-host.mjs"), host.join(HOST_COMPAT_SCRIPT)]);
+        #[cfg(target_os = "macos")]
+        files.push(host.join(MACOS_HOST_SUPPORT));
         for file in &files { std::fs::create_dir_all(file.parent().unwrap()).unwrap(); std::fs::write(file, b"synthetic-structure-only").unwrap(); }
         assert!(verify_host_tree(host).is_ok());
         std::fs::write(host.join("legacy.mjs"), b"synthetic").unwrap();

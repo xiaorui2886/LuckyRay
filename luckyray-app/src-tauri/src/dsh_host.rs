@@ -37,7 +37,12 @@ const MAX_OPEN_INTENT_FILE_BYTES: u64 = 200 * 1024 * 1024;
 const RESOURCE_RESULT_CHUNK_BYTES: usize = 180 * 1024;
 const MAX_HOST_SCRIPT_BYTES: usize = 128 * 1024;
 const HOST_SCRIPT_SHA256: &str =
-    "ff1f65ad0cf81c24630c4d0c37f7266bafd90dd402c016c5daf1128431a4d08d";
+    "a33944b206283f4de26059f241c566a1d0c2ebc17c49c2ee5357498270c8eda8";
+#[cfg(target_os = "macos")]
+const MACOS_HOST_SUPPORT: &str = "luckyray-dsh-macos.mjs";
+#[cfg(target_os = "macos")]
+const MACOS_HOST_SUPPORT_SHA256: &str = "90941dcdb910d11c1cbf21fe9f37639030bbd9033152b9eea8c8b4f0ec60426a";
+
 const HOST_COMPAT_SCRIPT: &str = "luckyray-dsh-plugin-compat.mjs";
 const HOST_COMPAT_SCRIPT_SHA256: &str =
     "667322ba0a798db057bcf5152a5fcf0b7664b57d0041045beaa011fd296e40d1";
@@ -104,7 +109,7 @@ fn monitor_restart_allowed(teardown_settled: bool, launched_with_probe: bool) ->
     teardown_settled && launched_with_probe
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 fn take_mutex_value<T>(slot: &Mutex<Option<T>>) -> Option<T> {
     slot.lock().unwrap().take()
 }
@@ -416,6 +421,9 @@ mod bundled_install_proof;
 
 #[path = "dsh_host/installation.rs"]
 mod installation;
+#[cfg(all(target_os = "macos", feature = "macos-lsh-proof"))]
+#[path = "dsh_host/macos_proof.rs"]
+pub(crate) mod macos_proof;
 pub(crate) use installation::verify_installation;
 
 #[derive(Debug)]
@@ -446,10 +454,30 @@ struct RuntimeUseLease {
     surface_patch: crate::dsh_runtime_seal::StableFileLease,
     #[allow(dead_code)]
     surface_module_files: Vec<crate::dsh_runtime_seal::StableFileLease>,
+    #[cfg(target_os = "macos")]
+    compat_script: crate::dsh_runtime_seal::StableFileLease,
+    #[cfg(target_os = "macos")]
+    probe_patch: crate::dsh_runtime_seal::StableFileLease,
+    #[cfg(target_os = "macos")]
+    macos_support: crate::dsh_runtime_seal::StableFileLease,
 }
 
 impl RuntimeDescriptor {
     fn resolve(resource_dir: &Path, app_data_dir: &Path) -> Result<Self, ()> {
+        #[cfg(target_os = "macos")]
+        {
+            let resource_anchor = macos_state::resource_anchor(resource_dir)?;
+            installation::verify_installation(resource_dir).map_err(|_| ())?;
+            macos_state::refuse_foreign_update_selection(app_data_dir)?;
+            let (root, host) = installation::resource_roots(resource_dir)?;
+            let (state_root, surface_state_root) = prepare_dsh_state_roots(app_data_dir)?;
+            let descriptor = Self::from_verified_root(root, host.join("luckyray-dsh-host.mjs"),
+                state_root, surface_state_root, installation::surface_assets(&host))?;
+            resource_anchor.current().map_err(|_| ())?;
+            return Ok(descriptor);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
         // Tauri may surface the development resource directory using a
         // Windows verbatim prefix (`\\?\C:\...`). The runtime seal opens the
         // same trusted files through Win32 APIs that reject that spelling in
@@ -508,6 +536,7 @@ impl RuntimeDescriptor {
             surface_state_root,
             installation::surface_assets(&host_dir),
         )
+            }
     }
 
     fn from_verified_root(
@@ -545,6 +574,8 @@ impl RuntimeDescriptor {
             return Err(());
         }
         verify_host_compat_script(&host_script)?;
+        #[cfg(target_os = "macos")]
+        macos_state::prepare_probe_patch(&state_root)?;
         verify_surface_assets(&surface_assets)?;
         let (surface_patch, surface_patch_sha256) =
             materialize_surface_patch(&surface_state_root, &surface_assets)?;
@@ -607,12 +638,32 @@ impl RuntimeDescriptor {
         {
             surface_module_files.push(acquire_verified_exact_file(path, digest)?);
         }
+        #[cfg(target_os = "macos")]
+        let compat_script = crate::dsh_runtime_seal::acquire_stable_file(
+            &self.host_script.parent().ok_or(crate::dsh_runtime_seal::RuntimeSealError::Invalid)?.join(HOST_COMPAT_SCRIPT))
+            .map_err(|_| crate::dsh_runtime_seal::RuntimeSealError::Invalid)?;
+        #[cfg(target_os = "macos")]
+        { verify_surface_assets(&self.surface_assets).and_then(|_| verify_host_compat_script(&self.host_script))
+            .map_err(|_| crate::dsh_runtime_seal::RuntimeSealError::Invalid)?; }
+        #[cfg(target_os = "macos")]
+        let macos_support = acquire_verified_exact_file(
+            &self.host_script.parent().ok_or(crate::dsh_runtime_seal::RuntimeSealError::Invalid)?.join(MACOS_HOST_SUPPORT),
+            MACOS_HOST_SUPPORT_SHA256)?;
+        #[cfg(target_os = "macos")]
+        let probe_patch = acquire_verified_exact_file(&self.state_root.join("managed-probe/luckyray-native-probe.patch.yml"),
+            &format!("{:x}", Sha256::digest(macos_state::PROBE_PATCH)))?;
         self.runtime_identity.revalidate(control)?;
         Ok(RuntimeUseLease {
             host_script,
             surface_assets,
             surface_patch,
             surface_module_files,
+            #[cfg(target_os = "macos")]
+            compat_script,
+            #[cfg(target_os = "macos")]
+            probe_patch,
+            #[cfg(target_os = "macos")]
+            macos_support,
         })
     }
 }
@@ -747,8 +798,17 @@ fn materialize_surface_patch(root: &Path, assets: &[PathBuf; 16]) -> Result<(Pat
     if rendered.contains("__LUCKYRAY") || rendered.contains("!!js") || rendered.len() > 64 * 1024 {
         return Err(());
     }
+    #[cfg(target_os = "macos")]
+    let target = { let managed = root.join("managed-patches");
+        crate::macos_fs::Directory::open(&managed, true, true).map_err(|_| ())?;
+        managed.join("luckyray-dsh-native-surface.generated.patch.yml") };
+    #[cfg(not(target_os = "macos"))]
     let target = root.join("luckyray-dsh-native-surface.generated.patch.yml");
     let expected_digest = format!("{:x}", Sha256::digest(rendered.as_bytes()));
+    #[cfg(target_os = "macos")]
+    { macos_state::publish(&target, rendered.as_bytes())?; return Ok((target, expected_digest)); }
+    #[cfg(not(target_os = "macos"))]
+    {
     let temporary = root.join(".luckyray-dsh-native-surface.generated.patch.tmp");
     let _ = std::fs::remove_file(&temporary);
     {
@@ -774,6 +834,7 @@ fn materialize_surface_patch(root: &Path, assets: &[PathBuf; 16]) -> Result<(Pat
         return Err(());
     }
     Ok((target, expected_digest))
+    }
 }
 
 fn materialize_surface_modules(
@@ -815,6 +876,9 @@ fn materialize_surface_modules(
             .join("node_modules")
             .join("@luckyray")
             .join(package);
+        #[cfg(target_os = "macos")]
+        crate::macos_fs::Directory::open(&directory, true, true).map_err(|_| ())?;
+        #[cfg(not(target_os = "macos"))]
         std::fs::create_dir_all(&directory).map_err(|_| ())?;
         if !safe_directory(&directory) {
             return Err(());
@@ -833,6 +897,10 @@ fn materialize_surface_modules(
             return Err(());
         }
         let target = &targets[index];
+        #[cfg(target_os = "macos")]
+        macos_state::publish(target, &source)?;
+        #[cfg(not(target_os = "macos"))]
+        {
         let temporary = target.with_extension(format!("luckyray-tmp-{}", std::process::id()));
         let _ = std::fs::remove_file(&temporary);
         {
@@ -854,6 +922,7 @@ fn materialize_surface_modules(
         } else {
             std::fs::rename(&temporary, target).map_err(|_| ())?;
         }
+        }
         if !safe_regular_file(target) || std::fs::read(target).map_err(|_| ())? != source {
             return Err(());
         }
@@ -862,6 +931,7 @@ fn materialize_surface_modules(
     Ok((targets, digests))
 }
 
+#[cfg(not(target_os = "macos"))]
 fn prepare_dsh_state_roots(app_data_dir: &Path) -> Result<(PathBuf, PathBuf), ()> {
     if !app_data_dir.is_absolute() {
         return Err(());
@@ -912,6 +982,7 @@ fn prepare_dsh_state_roots(app_data_dir: &Path) -> Result<(PathBuf, PathBuf), ()
     ))
 }
 
+#[cfg(not(target_os = "macos"))]
 fn safe_directory(path: &Path) -> bool {
     std::fs::symlink_metadata(path)
         .map(|metadata| {
@@ -937,10 +1008,14 @@ fn is_reparse(metadata: &std::fs::Metadata) -> bool {
     metadata.file_attributes() & 0x400 != 0
 }
 
-#[cfg(not(windows))]
-fn is_reparse(_metadata: &std::fs::Metadata) -> bool {
-    true
-}
+#[cfg(target_os = "macos")]
+fn safe_directory(path: &Path) -> bool { crate::macos_fs::Directory::open_trusted(path).is_ok() }
+
+#[cfg(target_os = "macos")]
+fn is_reparse(metadata: &std::fs::Metadata) -> bool { metadata.file_type().is_symlink() }
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn is_reparse(_metadata: &std::fs::Metadata) -> bool { true }
 
 fn hash_normalized_host_script(path: &Path) -> Result<String, ()> {
     let bytes = std::fs::read(path).map_err(|_| ())?;
@@ -1543,7 +1618,7 @@ fn strict_line_reader(
     challenge: [u8; 32],
     generation: u64,
     service: Weak<DshHostService>,
-    #[cfg(all(windows, feature = "browser-host-runtime"))] parent: Arc<Mutex<ParentChannel>>,
+    #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))] parent: Arc<Mutex<ParentChannel>>,
 ) -> (mpsc::Receiver<Result<ChildFrame, ()>>, JoinHandle<()>) {
     let (sender, receiver) = mpsc::sync_channel(16);
     let join = thread::spawn(move || {
@@ -1617,7 +1692,7 @@ fn strict_line_reader(
                                 let _ = sender.send(Err(()));
                                 break;
                             }
-                            #[cfg(all(windows, feature = "browser-host-runtime"))]
+                            #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
                             {
                                 let Some(service) = service.upgrade() else {
                                     let _ = sender.send(Err(()));
@@ -1639,7 +1714,7 @@ fn strict_line_reader(
                                 }
                                 continue;
                             }
-                            #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+                            #[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
                             {
                                 // There is no authenticated parent channel on
                                 // this platform, so do not process the request.
@@ -1755,7 +1830,7 @@ fn stderr_drain(mut stderr: File) -> JoinHandle<()> {
     })
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 struct ParentChannel {
     stdin: File,
     challenge: [u8; 32],
@@ -1763,7 +1838,7 @@ struct ParentChannel {
     outbound_seq: u64,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 impl ParentChannel {
     fn write(
         &mut self,
@@ -1839,7 +1914,7 @@ impl ParentChannel {
     }
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 struct HostHandle {
     process: Arc<crate::owned_process::OwnedProcess>,
     job: Arc<crate::owned_process::OwnedJob>,
@@ -1856,9 +1931,11 @@ struct HostHandle {
     canvas_agent_index: u64,
     expired_canvas_requests: ExpiredCanvasRequests,
     surface_binding_generation: u64,
+    #[cfg(target_os = "macos")]
+    normal_shutdown: Arc<AtomicBool>,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 impl HostHandle {
     fn process_id(&self) -> Option<u32> { Some(self.process.process_id()).filter(|pid| *pid != 0) }
     fn diagnostic_only(&self, generation: u64) -> bool {
@@ -1901,6 +1978,8 @@ impl HostHandle {
     }
 
     fn validate_host(&mut self) -> bool {
+        #[cfg(target_os = "macos")]
+        if crate::dsh_runtime_seal::verify_macos_node_process(&self.process).is_err() { return false; }
         if !self.is_running() || self.write("ping", None).is_err() {
             return false;
         }
@@ -2392,11 +2471,14 @@ impl HostHandle {
         drop(std::mem::replace(&mut self.frames, empty));
         let readers_quiescent = self.stdout_join.take().is_none_or(|join| bounded_reader_join(join))
             && self.stderr_join.take().is_none_or(|join| bounded_reader_join(join));
+        #[cfg(target_os = "macos")]
+        self.normal_shutdown.store(graceful_process_exit && self.process.succeeded()
+            && tree_quiescent && process_quiescent && readers_quiescent, Ordering::Release);
         tree_quiescent && process_quiescent && readers_quiescent
     }
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 impl Drop for HostHandle {
     fn drop(&mut self) {
         self.job.terminate();
@@ -2408,7 +2490,7 @@ impl Drop for HostHandle {
     }
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 fn bounded_reader_join(join: JoinHandle<()>) -> bool {
     let deadline = Instant::now() + Duration::from_secs(1);
     while !join.is_finished() && Instant::now() < deadline {
@@ -2416,12 +2498,6 @@ fn bounded_reader_join(join: JoinHandle<()>) -> bool {
     }
     join.is_finished() && join.join().is_ok()
 }
-
-#[cfg(target_os = "macos")]
-#[path = "dsh_host/macos_closed.rs"]
-mod macos_closed;
-#[cfg(target_os = "macos")]
-use macos_closed::HostHandle;
 
 #[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
 struct HostHandle;
@@ -2449,11 +2525,13 @@ impl HostHandle {
 
 pub(crate) struct DshHostService {
     initialization_finished: AtomicBool,
+    #[cfg(target_os = "macos")]
+    macos_launch_step: Mutex<&'static str>,
     initialization_gate: Mutex<()>,
     initialization_ready: Condvar,
     status: Mutex<DshHostStatusView>,
     host: Mutex<Option<HostHandle>>,
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
     active_job: Mutex<Option<Arc<crate::owned_process::OwnedJob>>>,
     compat_auto_attempted: AtomicBool,
     surface_compat_mode: AtomicBool,
@@ -2591,11 +2669,13 @@ impl DshHostService {
         Arc::new(Self {
             descriptor: descriptor_cell,
             initialization_finished: AtomicBool::new(initialization_finished),
+            #[cfg(target_os = "macos")]
+            macos_launch_step: Mutex::new("not-started"),
             initialization_gate: Mutex::new(()),
             initialization_ready: Condvar::new(),
             status: Mutex::new(status),
             host: Mutex::new(None),
-            #[cfg(all(windows, feature = "browser-host-runtime"))]
+            #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
             active_job: Mutex::new(None),
             compat_auto_attempted: AtomicBool::new(false),
             surface_compat_mode: AtomicBool::new(false),
@@ -2878,6 +2958,10 @@ impl DshHostService {
                 Some(jit_started.elapsed().as_millis().min(u64::MAX as u128) as u64),
             )
         };
+        #[cfg(target_os = "macos")]
+        if self.revalidate_macos_use(descriptor, &lease).is_err() {
+            return self.fail_surface_generation("dsh-host-unavailable");
+        }
         let started = Instant::now();
         let bootstrap_result = {
             let mut host_guard = self.host.lock().unwrap();
@@ -2943,6 +3027,10 @@ impl DshHostService {
                 }
             }
         };
+        #[cfg(target_os = "macos")]
+        if self.revalidate_macos_use(descriptor, &lease).is_err() {
+            return self.fail_surface_generation("dsh-host-unavailable");
+        }
         self.surface_host_generation
             .store(bootstrap.host_generation, Ordering::Release);
         self.surface_binding_generation
@@ -3344,7 +3432,7 @@ impl DshHostService {
         ) {
             return Err("lightseek-model-sync-not-ready".to_owned());
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
         let result = {
             let mut host = self.host.lock().unwrap();
             match host.as_mut() {
@@ -3358,7 +3446,7 @@ impl DshHostService {
                 _ => Err(()),
             }
         };
-        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        #[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
         let result: Result<DshModelSyncProjection, ()> = Err(());
         result.or_else(|_| self.fail_surface_generation("lightseek-model-sync-unavailable"))
     }
@@ -3378,7 +3466,7 @@ impl DshHostService {
         ) {
             return Err("dsh-open-intent-not-ready".to_owned());
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
         let result = {
             let mut host = self.host.lock().unwrap();
             match host.as_mut() {
@@ -3392,7 +3480,7 @@ impl DshHostService {
                 _ => Err(()),
             }
         };
-        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        #[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
         let result: Result<(), ()> = Err(());
         result.or_else(|_| self.fail_surface_generation("dsh-open-intent-unavailable"))
     }
@@ -3407,7 +3495,7 @@ impl DshHostService {
         if !matches!(self.surface_status().stage,
             DshNativeSurfaceStage::ClientReady | DshNativeSurfaceStage::SessionOpen)
         { return Err("canvas-agent-not-ready".to_owned()); }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
         {
             let canvas_id = request.get("canvasId").and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "canvas-agent-invalid-request".to_owned())?;
@@ -3418,7 +3506,7 @@ impl DshHostService {
             // fail_surface_generation (which would kill unrelated LSH work).
             host.canvas_agent_dispatch(&payload, canvas_id)
         }
-        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        #[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
         { let _ = payload; Err("canvas-agent-unavailable".to_owned()) }
     }
 
@@ -3430,7 +3518,7 @@ impl DshHostService {
         if self.shutting_down.load(Ordering::Acquire) {
             return Err("dsh-host-shutting-down".to_owned());
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
         let result = {
             let mut host = self.host.lock().unwrap();
             match host.as_mut() {
@@ -3444,7 +3532,7 @@ impl DshHostService {
                 _ => Err(()),
             }
         };
-        #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+        #[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
         let result: Result<String, ()> = Err(());
         result.or_else(|_| self.fail_surface_generation("dsh-open-intent-status-unavailable"))
     }
@@ -3629,7 +3717,7 @@ impl DshHostService {
         if host_alive {
             return true;
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
         {
             if let Some(job) = self.active_job.lock().unwrap().as_ref() {
                 // A still-present job is settled only when it verifiably
@@ -3845,6 +3933,13 @@ impl DshHostService {
                     let started = Instant::now();
                     self.publish(DshHostStage::Starting, 0, None);
                     let probe_result = self.run_probe_on_host(&mut host, 0, started);
+                    #[cfg(target_os = "macos")]
+                    if self.revalidate_macos_use(descriptor, &use_lease).is_err() {
+                        host.shutdown();
+                        self.terminate_current();
+                        self.publish(DshHostStage::Unavailable, 0, None);
+                        return Err("dsh-host-unavailable".to_owned());
+                    }
                     drop(use_lease);
                     match probe_result {
                         Ok(status) => {
@@ -3961,21 +4056,25 @@ impl DshHostService {
     /// each stage exactly once: session-ready -> turn-accepted, followed by
     /// the single probe-completed result. Waiting for any stage twice would
     /// consume the next producer frame and block ProbeCompleted.
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
     const PROBE_STAGE_SEQUENCE: &[(&str, Duration)] = &[
         ("session-ready", PROBE_TIMEOUT),
         ("turn-accepted", Duration::from_secs(5)),
     ];
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
     fn run_probe_on_host(
         &self,
         host: &mut HostHandle,
         retry_attempt: u8,
         started: Instant,
     ) -> Result<DshHostStatusView, ()> {
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("probe-request");
         let request_id = host.begin_native_probe()?;
         for (stage, timeout) in Self::PROBE_STAGE_SEQUENCE {
+            #[cfg(target_os = "macos")]
+            self.mark_macos_launch(if *stage == "session-ready" { "probe-session" } else { "probe-turn" });
             host.expect_probe_stage(&request_id, stage, *timeout)?;
             self.publish(
                 match *stage {
@@ -3986,6 +4085,8 @@ impl DshHostService {
                 None,
             );
         }
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("probe-result");
         host.expect_probe_completed(&request_id)?;
         let duration = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
         if self.shutting_down.load(Ordering::Acquire) {
@@ -3995,17 +4096,7 @@ impl DshHostService {
         Ok(self.status())
     }
 
-    #[cfg(target_os = "macos")]
-    fn run_probe_on_host(
-        &self,
-        _host: &mut HostHandle,
-        _retry_attempt: u8,
-        _started: Instant,
-    ) -> Result<DshHostStatusView, ()> {
-        Err(())
-    }
-
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
     fn launch_and_probe(
         self: &Arc<Self>,
         descriptor: &RuntimeDescriptor,
@@ -4014,7 +4105,7 @@ impl DshHostService {
         self.launch_authenticated_host(descriptor, retry_attempt, true)
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
     fn launch_authenticated_host(
         self: &Arc<Self>,
         descriptor: &RuntimeDescriptor,
@@ -4026,6 +4117,8 @@ impl DshHostService {
         // checked on a worker. Publish Starting before admission so observers
         // can distinguish an in-progress launch from an unavailable host.
         self.publish(DshHostStage::Starting, retry_attempt, None);
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("runtime-use");
         let use_lease = self.acquire_runtime_use(descriptor)?;
         let jit_ms = jit_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
         #[cfg(test)]
@@ -4043,6 +4136,8 @@ impl DshHostService {
             .file_name()
             .ok_or(LaunchFailure::HostFailed)?
             .to_os_string();
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("private-environment");
         let environment = minimal_environment(
             &descriptor.root,
             &descriptor.state_root,
@@ -4052,7 +4147,12 @@ impl DshHostService {
         .map_err(|_| LaunchFailure::HostFailed)?;
         #[cfg(test)]
         self.spawn_attempts.fetch_add(1, Ordering::AcqRel);
+        #[cfg(target_os = "macos")]
+        let node_path = descriptor.root.join("node/node");
+        #[cfg(not(target_os = "macos"))]
         let node_path = descriptor.root.join("node").join("node.exe");
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("spawn-owned");
         let spawned = crate::owned_process::spawn_in_owned_job(
             &node_path,
             &[script_name],
@@ -4067,6 +4167,12 @@ impl DshHostService {
         let process = Arc::new(spawned.process);
         let job = Arc::new(spawned.job);
         *self.active_job.lock().unwrap() = Some(job.clone());
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("node-image");
+        #[cfg(target_os = "macos")]
+        if crate::dsh_runtime_seal::verify_macos_node_process(&process).is_err() {
+            job.terminate(); process.terminate(); return Err(LaunchFailure::RuntimeSealInvalid);
+        }
         if self.shutting_down.load(Ordering::Acquire) {
             job.terminate();
             process.terminate();
@@ -4104,8 +4210,12 @@ impl DshHostService {
             canvas_agent_index: 0,
             expired_canvas_requests: ExpiredCanvasRequests::default(),
             surface_binding_generation: 0,
+            #[cfg(target_os = "macos")]
+            normal_shutdown: Arc::new(AtomicBool::new(false)),
         };
         self.publish(DshHostStage::ProcessAlive, retry_attempt, None);
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("bootstrap-write");
         let bootstrap = serde_json::json!({
             "type": "bootstrap", "protocol": PROTOCOL, "generation": generation,
             "challenge": challenge_hex(&challenge)
@@ -4123,6 +4233,8 @@ impl DshHostService {
                 .flush()
                 .map_err(|_| LaunchFailure::HostFailed)?;
         }
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("authenticated-hello");
         let hello = host
             .read(Duration::from_secs(5))
             .map_err(|_| LaunchFailure::HostFailed)?;
@@ -4130,20 +4242,26 @@ impl DshHostService {
             return Err(LaunchFailure::HostFailed);
         }
         self.publish(DshHostStage::ProtocolAuthenticated, retry_attempt, None);
+        #[cfg(target_os = "macos")]
+        { self.mark_macos_launch("source-revalidate"); self.revalidate_macos_use(descriptor, &use_lease)?; }
         let status = if run_probe {
             self.run_probe_on_host(&mut host, retry_attempt, started)
                 .map_err(|_| LaunchFailure::HostFailed)?
         } else {
             self.status()
         };
+        #[cfg(target_os = "macos")]
+        self.revalidate_macos_use(descriptor, &use_lease)?;
         *self.surface_lease.lock().unwrap() = Some(use_lease);
         *self.surface_preheat_ms.lock().unwrap() = Some(jit_ms);
         *self.host.lock().unwrap() = Some(host);
+        #[cfg(target_os = "macos")]
+        self.mark_macos_launch("ready");
         self.monitor_generation(generation, process, run_probe);
         Ok(status)
     }
 
-    #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+    #[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
     fn launch_and_probe(
         self: &Arc<Self>,
         _descriptor: &RuntimeDescriptor,
@@ -4152,7 +4270,7 @@ impl DshHostService {
         Err(LaunchFailure::HostFailed)
     }
 
-    #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+    #[cfg(not(any(target_os = "macos", all(windows, feature = "browser-host-runtime"))))]
     fn launch_authenticated_host(
         self: &Arc<Self>,
         _descriptor: &RuntimeDescriptor,
@@ -4194,7 +4312,7 @@ impl DshHostService {
             }
             settled = host.shutdown();
         }
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
         // Take through a helper so the MutexGuard is guaranteed to be dropped
         // before the body may re-lock the slot to retain an unsettled Job.
         if let Some(job) = take_mutex_value(&self.active_job) {
@@ -4220,7 +4338,7 @@ impl DshHostService {
         let _ = self.terminate_current_checked();
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
     fn monitor_generation(
         self: &Arc<Self>,
         generation: u64,
@@ -4397,7 +4515,7 @@ fn current_process_handle_count() -> Option<u32> {
     None
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 fn project_deepseek_search_credential(
     environment: &mut Vec<(OsString, OsString)>,
     value: Option<OsString>,
@@ -4452,6 +4570,40 @@ fn minimal_environment(
     ];
     project_deepseek_search_credential(&mut environment, std::env::var_os("DEEPSEEK_API_KEY"));
     Ok(environment)
+}
+
+
+#[cfg(target_os = "macos")]
+#[path = "dsh_host/macos_state.rs"]
+mod macos_state;
+#[cfg(target_os = "macos")]
+fn prepare_dsh_state_roots(app_data_dir: &Path) -> Result<(PathBuf, PathBuf), ()> { macos_state::prepare(app_data_dir) }
+#[cfg(target_os = "macos")]
+fn minimal_environment(runtime: &Path, state: &Path, surface: &Path, patch: &Path) -> Result<Vec<(OsString, OsString)>, ()> {
+    macos_state::environment(runtime, state, surface, patch)
+}
+#[cfg(target_os = "macos")]
+impl DshHostService {
+    fn mark_macos_launch(&self, step: &'static str) {
+        if let Ok(mut value) = self.macos_launch_step.lock() { *value = step; }
+    }
+    fn revalidate_macos_use(&self, descriptor: &RuntimeDescriptor, lease: &RuntimeUseLease) -> Result<(), LaunchFailure> {
+        let control = crate::dsh_runtime_seal::RuntimeSealControl::new(&self.shutting_down);
+        descriptor.runtime_identity.revalidate(&control).map_err(|error| match error {
+            crate::dsh_runtime_seal::RuntimeSealError::Cancelled => LaunchFailure::ShutdownCancelled,
+            _ => LaunchFailure::RuntimeSealInvalid,
+        })?;
+        for file in std::iter::once(&lease.host_script).chain(lease.surface_assets.iter())
+            .chain(std::iter::once(&lease.surface_patch)).chain(lease.surface_module_files.iter()) {
+            file.revalidate().map_err(|_| LaunchFailure::RuntimeSealInvalid)?;
+        }
+        lease.compat_script.revalidate().map_err(|_| LaunchFailure::RuntimeSealInvalid)?;
+        lease.probe_patch.revalidate().map_err(|_| LaunchFailure::RuntimeSealInvalid)?;
+        lease.macos_support.revalidate().map_err(|_| LaunchFailure::RuntimeSealInvalid)?;
+        installation::verify_host_tree(descriptor.host_script.parent().ok_or(LaunchFailure::RuntimeSealInvalid)?)
+            .map_err(|_| LaunchFailure::RuntimeSealInvalid)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

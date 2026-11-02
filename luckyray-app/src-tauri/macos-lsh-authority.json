@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin",
+  "architecture": "arm64",
+  "runtimePackage": {
+    "name": "@deepseek-ai/dsh",
+    "version": "0.2.1-rc.3",
+    "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.1-rc.3.tgz",
+    "registryIntegrity": "sha512-H+E9HLnHf7fJqzen84Z9Bq8ggb5xbrcbyhZjXTJLE9NabHr3zteGvTRvdvGkxPl4ov80is4WLglFmSo+/olJjg==",
+    "registrySha1": "ccc527065b9f736ea299a1f78150a21143d961aa",
+    "sha256": "9a8f9493bfab8218215a8ca38ab8821e76dff63dc4fcb65841ef87c0aa277141",
+    "size": 25130,
+    "license": "MIT"
+  },
+  "executable": "node/node",
+  "entryPoint": "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
+  "nodeInput": {
+    "version": "22.19.0",
+    "archive": "node-v22.19.0-darwin-arm64.tar.gz",
+    "url": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-darwin-arm64.tar.gz",
+    "sha256": "c59006db713c770d6ec63ae16cb3edc11f49ee093b5c415d667bb4f436c6526d",
+    "licenseSha256": "e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49"
+  },
+  "lockfileSha256": "0faaa6a7163bf2248735883e69e6051825b45fafb253a42432b4b6ee5a3bbbea",
+  "frozenPackageClosure": {
+    "packageCount": 564,
+    "treeFileCount": 35170,
+    "treeContentSha256": "6088432fa0e3d7a3576729ad6d76b1ff4b07d77c7694fdef4550386994c729da"
+  },
+  "closure": {
+    "format": "luckyray-macos-lsh-tree-v1",
+    "sha256": "989db56c3bfde1992a9137fd79b3dd86067e0fa4164452de2aad1eee5b754783",
+    "fileCount": 35556,
+    "directoryCount": 3954,
+    "byteCount": 1415033584
+  },
+  "criticalFiles": [
+    {
+      "kind": "file",
+      "path": "node/node",
+      "size": 110712624,
+      "executable": true,
+      "sha256": "0d005c18e095027ca8f9fe1cc1126f767ee4ad7b004f4d6fb781ec4228a7c5d1"
+    },
+    {
+      "kind": "file",
+      "path": "node/LICENSE",
+      "size": 143299,
+      "executable": false,
+      "sha256": "e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49"
+    },
+    {
+      "kind": "file",
+      "path": "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
+      "size": 11772,
+      "executable": true,
+      "sha256": "80112efe368efb1a39720c7ada0af00442e5131fb2744edaaff8a3e8bb499e6f"
+    },
+    {
+      "kind": "file",
+      "path": "host/node_modules/@deepseek-ai/dsh/package.json",
+      "size": 7989,
+      "executable": false,
+      "sha256": "11831849c0a40031562e07b6b650e6b417bf4741d15bac896f73397cf8606a91"
+    }
+  ],
+  "buildReceipt": {
+    "path": "macos-build.json",
+    "authority": "separately pinned into the compiled app after native preparation; never a source of launch authority"
+  },
+  "sourceMaterialIndexSha256": "9891732c9e71182a81d2228f22eb324d87b3f43402526b1ce656dff0cd282b98",
+  "provenance": "Read-only data projection of frozen public npm inputs and the exact official Darwin arm64 Node archive. No native execution is asserted. File and directory names, file bytes and execute bits use the stated canonical tree digest; all actual objects are rechecked at launch/use boundaries.",
+  "nodeCodeDirectoryHashes": [
+    "348bf6d84161a4342654c4cbbe669e0d927806d5"
+  ]
+}

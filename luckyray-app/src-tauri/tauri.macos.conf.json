@@ -12,6 +12,13 @@
     "macOS": {
       "minimumSystemVersion": "15.0",
       "signingIdentity": null
+    },
+    "resources": {
+      "dsh/": "lr-lsh/199-1/deepseek-harness/",
+      "dsh-host/": "lr-lsh/199-1/dsh-host/",
+      "media-engine/": "media-engine/",
+      "../third-party-notices/": "third-party-notices/",
+      "macos-lsh/host-support.mjs": "lr-lsh/199-1/dsh-host/luckyray-dsh-macos.mjs"
     }
   }
 }
