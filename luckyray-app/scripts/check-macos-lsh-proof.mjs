@@ -20,18 +20,33 @@ const SIGNALS = new Set(["SIGABRT", "SIGALRM", "SIGBUS", "SIGCHLD", "SIGCONT", "
 export const knownProofSignal = value => SIGNALS.has(value);
 const invalid = () => { throw new Error("macos-lsh-proof-result-invalid"); };
 const bool = value => typeof value === "boolean";
+const SHUTDOWN_FLAGS = ["writeCompleted", "acknowledged", "rootExitedBeforeCleanup", "rootSucceeded",
+  "groupSettledBeforeCleanup", "forcedCleanup", "groupSettledAfterCleanup", "rootExitedAfterCleanup",
+  "stdoutClosed", "stderrClosed"];
+const GROUP_STATES = new Set(["settled", "root-running", "root-unavailable", "enumeration-unavailable",
+  "enumeration-incomplete", "member-unavailable", "member-running"]);
+
+function safeShutdown(value) {
+  if (value == null) return null;
+  if (SHUTDOWN_FLAGS.some(key => !bool(value[key])) || !GROUP_STATES.has(value.groupState)) invalid();
+  return { ...Object.fromEntries(SHUTDOWN_FLAGS.map(key => [key, value[key]])), groupState: value.groupState };
+}
 
 export function safeLshProof(value) {
+  const shutdown = safeShutdown(value?.shutdown);
+  const normal = shutdown !== null && shutdown.groupState === "settled"
+    && SHUTDOWN_FLAGS.every(key => shutdown[key] === (key !== "forcedCleanup"));
   if (value?.schemaVersion !== 1 || value.mode !== "macos-lsh-native-proof"
       || !["passed", "failed"].includes(value.status) || !STAGES.has(value.stage) || !STEPS.has(value.launchStep)
       || FLAGS.some(key => !bool(value[key])) || !bool(value.cancelled)
       || value.guiInteraction !== "not-run" || value.modelAccount !== "not-configured"
+      || value.normalHostShutdown && !normal
       || value.status === "passed" && (value.stage !== "complete" || value.launchStep !== "ready"
         || value.cancelled || FLAGS.some(key => !value[key]))
       || value.status === "failed" && value.stage === "complete"
       || value.cancelled !== (value.stage === "cancelled")) invalid();
   return { schemaVersion: 1, mode: value.mode, status: value.status, stage: value.stage, launchStep: value.launchStep,
-    ...Object.fromEntries(FLAGS.map(key => [key, value[key]])), cancelled: value.cancelled,
+    ...Object.fromEntries(FLAGS.map(key => [key, value[key]])), shutdown, cancelled: value.cancelled,
     guiInteraction: "not-run", modelAccount: "not-configured" };
 }
 

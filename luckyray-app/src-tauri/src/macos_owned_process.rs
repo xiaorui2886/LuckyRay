@@ -59,8 +59,16 @@ impl Group {
     }
 
     fn settled(&self) -> bool {
-        if !matches!(self.exit_status(), Ok(Some(_))) {
-            return false;
+        self.settlement_state() == "settled"
+    }
+
+    // Fixed, non-identifying reasons for a failed bounded sweep. No PID,
+    // command, path, environment or arbitrary OS error enters the proof.
+    fn settlement_state(&self) -> &'static str {
+        match self.exit_status() {
+            Ok(Some(_)) => {},
+            Ok(None) => return "root-running",
+            Err(_) => return "root-unavailable",
         }
         // Inspect only this anchored group, never a system-wide kill list.
         const PROC_PGRP_ONLY: u32 = 2;
@@ -76,11 +84,12 @@ impl Group {
                 (pids.len() * std::mem::size_of::<i32>()) as i32,
             )
         };
-        if bytes < 0
-            || (bytes == 0 && std::io::Error::last_os_error().raw_os_error() != Some(0))
-            || bytes as usize >= pids.len() * std::mem::size_of::<i32>()
-        {
-            return false;
+        if bytes < 0 || (bytes == 0 && std::io::Error::last_os_error().raw_os_error() != Some(0)) {
+            return "enumeration-unavailable";
+        }
+        if bytes as usize >= pids.len() * std::mem::size_of::<i32>()
+            || bytes as usize % std::mem::size_of::<i32>() != 0 {
+            return "enumeration-incomplete";
         }
         for pid in pids
             .into_iter()
@@ -100,20 +109,20 @@ impl Group {
                 )
             };
             if read as usize != std::mem::size_of_val(&info) {
-                return false;
+                return "member-unavailable";
             }
             // SZOMB=5. A group member still executing keeps settlement false.
             if info.pbi_pgid == self.pid as u32 && info.pbi_status != 5 {
-                return false;
+                return "member-running";
             }
         }
-        true
+        "settled"
     }
 }
 
 impl Drop for Group {
     fn drop(&mut self) {
-        self.signal();
+        if !self.settled() { self.signal(); }
         if let Ok(slot) = self.child.get_mut() {
             if let Some(mut child) = slot.take() {
                 // Reap without blocking a UI destructor on an unresponsive
@@ -136,25 +145,30 @@ impl OwnedJob {
     pub(crate) fn settled(&self) -> bool {
         self.0.settled()
     }
+    pub(crate) fn settlement_state(&self) -> &'static str {
+        self.0.settlement_state()
+    }
+    pub(crate) fn wait_for_settlement(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.0.settled() { return true; }
+            if Instant::now() >= deadline { return false; }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     pub(crate) fn terminate_and_wait(&self, timeout: Duration) -> bool {
+        // An already verified empty group needs no signal. Retain the child
+        // anchor until every handle is dropped, including natural exits.
+        if self.0.settled() { return true; }
         if !self.0.signal() {
             return false;
         }
-        let deadline = Instant::now() + timeout;
-        loop {
-            if self.0.settled() {
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        self.wait_for_settlement(timeout)
     }
 }
 impl Drop for OwnedJob {
     fn drop(&mut self) {
-        self.terminate();
+        if !self.settled() { self.terminate(); }
     }
 }
 
@@ -288,6 +302,37 @@ pub(crate) fn spawn_in_owned_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn macos_platform_natural_group_exit_keeps_anchor_with_concurrent_observer() {
+        use std::io::BufRead;
+        let AtomicSpawn { process, job, stdin, stdout, .. } = spawn_in_owned_job(
+            Path::new("/bin/sh"),
+            &["-c".into(), "exec 3<&0; (cat <&3 >/dev/null) & echo ready; exit 0".into()],
+            Path::new("/"),
+            vec![("PATH".into(), "/usr/bin:/bin".into())],
+            false,
+        ).unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(&stdout).read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "ready");
+        std::thread::scope(|scope| {
+            let observer = scope.spawn(|| process.wait_for(Duration::from_secs(3)));
+            assert!(process.wait_for(Duration::from_secs(3)));
+            assert!(process.succeeded());
+            // The root is a retained zombie, but its live cat still owns the
+            // inherited input. Root exit alone must not settle the group.
+            assert!(!job.wait_for_settlement(Duration::ZERO));
+            drop(stdin);
+            assert!(job.wait_for_settlement(Duration::from_secs(3)));
+            assert_eq!(job.settlement_state(), "settled");
+            assert!(observer.join().unwrap());
+        });
+        assert!(process.succeeded());
+        // Even a later cleanup request must preserve the anchor and the zero
+        // status; no execution remains to signal.
+        assert!(job.terminate_and_wait(Duration::from_secs(3)));
+        assert!(process.succeeded());
+    }
     #[test]
     fn macos_platform_process_group_lifecycle() {
         use std::io::BufRead;

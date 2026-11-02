@@ -424,6 +424,9 @@ mod installation;
 #[cfg(all(target_os = "macos", feature = "macos-lsh-proof"))]
 #[path = "dsh_host/macos_proof.rs"]
 pub(crate) mod macos_proof;
+#[cfg(target_os = "macos")]
+#[path = "dsh_host/macos_shutdown.rs"]
+mod macos_shutdown;
 pub(crate) use installation::verify_installation;
 
 #[derive(Debug)]
@@ -1933,6 +1936,8 @@ struct HostHandle {
     surface_binding_generation: u64,
     #[cfg(target_os = "macos")]
     normal_shutdown: Arc<AtomicBool>,
+    #[cfg(target_os = "macos")]
+    shutdown_facts: Arc<Mutex<Option<macos_shutdown::ShutdownFacts>>>,
 }
 
 #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
@@ -2449,6 +2454,7 @@ impl HostHandle {
         }
     }
 
+    #[cfg(windows)]
     fn shutdown(mut self) -> bool {
         let _ = self.write("shutdown", None);
         let acknowledged = self
@@ -2471,18 +2477,56 @@ impl HostHandle {
         drop(std::mem::replace(&mut self.frames, empty));
         let readers_quiescent = self.stdout_join.take().is_none_or(|join| bounded_reader_join(join))
             && self.stderr_join.take().is_none_or(|join| bounded_reader_join(join));
-        #[cfg(target_os = "macos")]
-        self.normal_shutdown.store(graceful_process_exit && self.process.succeeded()
-            && tree_quiescent && process_quiescent && readers_quiescent, Ordering::Release);
         tree_quiescent && process_quiescent && readers_quiescent
+    }
+
+    #[cfg(target_os = "macos")]
+    fn shutdown(mut self) -> bool {
+        use macos_shutdown::ShutdownFacts;
+        let write_completed = self.write("shutdown", None).is_ok();
+        let acknowledged = write_completed && self.read(SHUTDOWN_TIMEOUT).is_ok_and(|frame| {
+            frame.kind == "shutdown-ack" && frame.stage.as_deref() == Some("shutting-down")
+        });
+        // Observe the exit even after a missing ACK. It remains a failed normal
+        // shutdown, but need not be signalled again if it has already exited.
+        let root_exited_before_cleanup = self.process.wait_for(SHUTDOWN_TIMEOUT);
+        let root_succeeded = root_exited_before_cleanup && self.process.succeeded();
+        // Give every owned group member a bounded opportunity to exit. A
+        // shutdown ACK alone is not an exit, and killing a remaining child is
+        // recovery rather than a normal shutdown.
+        let group_settled_before_cleanup = root_exited_before_cleanup
+            && self.job.wait_for_settlement(SHUTDOWN_TIMEOUT);
+        let forced_cleanup = !group_settled_before_cleanup;
+        let group_settled_after_cleanup = group_settled_before_cleanup
+            || self.job.terminate_and_wait(SHUTDOWN_TIMEOUT);
+        let root_exited_after_cleanup = self.process.wait_for(SHUTDOWN_TIMEOUT);
+        let group_state = self.job.settlement_state();
+        let (_tx, empty) = mpsc::channel();
+        drop(std::mem::replace(&mut self.frames, empty));
+        // Join both readers even if the first one fails; a short-circuit must
+        // not leave stderr cleanup implicit in the destructor.
+        let stdout_closed = self.stdout_join.take().is_none_or(bounded_reader_join);
+        let stderr_closed = self.stderr_join.take().is_none_or(bounded_reader_join);
+        let facts = ShutdownFacts { write_completed, acknowledged, root_exited_before_cleanup,
+            root_succeeded, group_settled_before_cleanup, forced_cleanup,
+            group_settled_after_cleanup, root_exited_after_cleanup,
+            stdout_closed, stderr_closed, group_state };
+        self.normal_shutdown.store(facts.normal(), Ordering::Release);
+        if let Ok(mut slot) = self.shutdown_facts.lock() { *slot = Some(facts); }
+        facts.settled()
     }
 }
 
 #[cfg(any(target_os = "macos", all(windows, feature = "browser-host-runtime")))]
 impl Drop for HostHandle {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        {
         self.job.terminate();
         self.process.terminate();
+        }
+        #[cfg(target_os = "macos")]
+        if !self.job.settled() { self.job.terminate(); }
         let (_tx, empty) = mpsc::channel();
         drop(std::mem::replace(&mut self.frames, empty));
         if let Some(join) = self.stdout_join.take() { let _ = bounded_reader_join(join); }
@@ -4212,6 +4256,8 @@ impl DshHostService {
             surface_binding_generation: 0,
             #[cfg(target_os = "macos")]
             normal_shutdown: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "macos")]
+            shutdown_facts: Arc::new(Mutex::new(None)),
         };
         self.publish(DshHostStage::ProcessAlive, retry_attempt, None);
         #[cfg(target_os = "macos")]
@@ -4403,6 +4449,23 @@ impl DshHostService {
             }
             service.publish(DshHostStage::Unavailable, 3, None);
         });
+    }
+
+    #[cfg(all(target_os = "macos", feature = "macos-lsh-proof"))]
+    fn cancel_and_shutdown(&self) -> bool {
+        {
+            let _admission = self.start_admission.lock().unwrap();
+            self.shutting_down.store(true, Ordering::Release);
+        }
+        self.initialization_ready.notify_all();
+        // A probe holds the Host mutex while awaiting its reply. Cancellation
+        // must revoke the retained group before waiting for that mutex, rather
+        // than consume the entire probe timeout before cleanup can even start.
+        // Admission is already closed; a concurrent admitted spawn checks the
+        // same flag after publishing its owned Job and tears itself down.
+        let job = self.active_job.lock().unwrap().as_ref().cloned();
+        if let Some(job) = job { job.terminate(); }
+        self.shutdown()
     }
 
     pub(crate) fn shutdown(&self) -> bool {

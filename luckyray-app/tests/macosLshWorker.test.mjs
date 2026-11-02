@@ -10,7 +10,11 @@ const canary = "private_worker_canary_never_publish";
 function proof() {
   return { schemaVersion: 1, mode: "macos-lsh-native-proof", status: "passed", stage: "complete", launchStep: "ready",
     installedManifest: true, realProbeCompleted: true, processImageMatched: true, authenticatedParentPing: true,
-    normalHostShutdown: true, ownedGroupSettled: true, cancelled: false, guiInteraction: "not-run", modelAccount: "not-configured" };
+    normalHostShutdown: true, ownedGroupSettled: true,
+    shutdown: { writeCompleted: true, acknowledged: true, rootExitedBeforeCleanup: true, rootSucceeded: true,
+      groupSettledBeforeCleanup: true, forcedCleanup: false, groupSettledAfterCleanup: true,
+      rootExitedAfterCleanup: true, stdoutClosed: true, stderrClosed: true, groupState: "settled" },
+    cancelled: false, guiInteraction: "not-run", modelAccount: "not-configured" };
 }
 function execution() {
   return { status: "passed", proof: proof(), exitCode: 0, signal: null, timedOut: false, cancelRequested: false,
@@ -35,6 +39,20 @@ test("LSH projection requires every native assertion and discards private extras
   assert.throws(() => safeLshExecution({ ...execution(), timedOut: true }), /result-invalid/);
   const failedProof = { ...proof(), status: "failed", stage: "normal-shutdown", normalHostShutdown: false };
   assert.equal(safeLshExecution({ ...execution(), proof: failedProof, status: "failed", failure: "macos-lsh-proof-rejected" }).exitCode, 0);
+});
+
+test("shutdown facts cannot turn forced cleanup or an unknown group into normal exit", () => {
+  const value = proof();
+  assert(!JSON.stringify(safeLshProof({ ...value, shutdown: { ...value.shutdown, raw: canary } })).includes(canary));
+  for (const key of Object.keys(value.shutdown).filter(key => key !== "groupState")) {
+    assert.throws(() => safeLshProof({ ...value, shutdown: { ...value.shutdown, [key]: !value.shutdown[key] } }), /result-invalid/);
+  }
+  for (const groupState of ["member-running", "member-unavailable", "enumeration-incomplete", "root-unavailable", canary])
+    assert.throws(() => safeLshProof({ ...value, shutdown: { ...value.shutdown, groupState } }), /result-invalid/);
+  assert.throws(() => safeLshProof({ ...value, shutdown: null }), /result-invalid/);
+  const failed = { ...value, status: "failed", stage: "normal-shutdown", normalHostShutdown: false,
+    shutdown: { ...value.shutdown, groupSettledBeforeCleanup: false, forcedCleanup: true } };
+  assert.equal(safeLshProof(failed).shutdown.forcedCleanup, true);
 });
 
 test("saved and re-published reports require LSH and preserve closed build/source facts", () => {

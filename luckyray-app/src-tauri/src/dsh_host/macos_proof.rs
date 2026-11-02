@@ -23,7 +23,7 @@ impl Cancellation {
             control.requested.store(true, Ordering::Release);
             let service = control.service.lock().ok().and_then(|slot| slot.clone());
             if let Some(service) = service {
-                let _ = service.shutdown();
+                let _ = service.cancel_and_shutdown();
             }
         });
         state
@@ -45,9 +45,10 @@ pub(crate) fn run() -> bool {
     let mut report = serde_json::json!({"schemaVersion":1,"mode":"macos-lsh-native-proof",
         "status":"failed","stage":"context","launchStep":"not-started","installedManifest":false,"realProbeCompleted":false,
         "processImageMatched":false,"authenticatedParentPing":false,"normalHostShutdown":false,
-        "ownedGroupSettled":false,"cancelled":false,"guiInteraction":"not-run","modelAccount":"not-configured"});
+        "ownedGroupSettled":false,"shutdown":null,"cancelled":false,"guiInteraction":"not-run","modelAccount":"not-configured"});
     let mut service = None;
     let mut normal = None;
+    let mut shutdown_facts = None;
     let mut cancellation = None;
     let result = (|| -> Result<(), ()> {
         if std::env::args().len() != 2
@@ -116,6 +117,7 @@ pub(crate) fn run() -> bool {
         }
         report["authenticatedParentPing"] = true.into();
         normal = Some(host.normal_shutdown.clone());
+        shutdown_facts = Some(host.shutdown_facts.clone());
         drop(slot);
         report["stage"] = "normal-shutdown".into();
         Ok(())
@@ -128,6 +130,15 @@ pub(crate) fn run() -> bool {
     // Every created generation gets a bounded cleanup path, including failures.
     let settled = service.as_ref().is_some_and(|service| service.shutdown());
     let normal = normal.is_some_and(|value| value.load(Ordering::Acquire));
+    if let Some(facts) = shutdown_facts.and_then(|slot| slot.lock().ok().and_then(|slot| *slot)) {
+        report["shutdown"] = serde_json::json!({
+            "writeCompleted":facts.write_completed,"acknowledged":facts.acknowledged,
+            "rootExitedBeforeCleanup":facts.root_exited_before_cleanup,"rootSucceeded":facts.root_succeeded,
+            "groupSettledBeforeCleanup":facts.group_settled_before_cleanup,"forcedCleanup":facts.forced_cleanup,
+            "groupSettledAfterCleanup":facts.group_settled_after_cleanup,"rootExitedAfterCleanup":facts.root_exited_after_cleanup,
+            "stdoutClosed":facts.stdout_closed,"stderrClosed":facts.stderr_closed,"groupState":facts.group_state,
+        });
+    }
     report["ownedGroupSettled"] = settled.into();
     report["normalHostShutdown"] = normal.into();
     let cancelled = cancellation.is_some_and(|state| state.requested.load(Ordering::Acquire));
