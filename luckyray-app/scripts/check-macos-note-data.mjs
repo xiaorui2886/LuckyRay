@@ -36,6 +36,13 @@ export const NOTE_DATA_CASES = Object.freeze([
   ["operation-resume-rollback", operation + "macos_recovery_resumes_and_rolls_back_only_the_durably_bound_objects"],
 ].map(([id, test]) => Object.freeze({ id, test })));
 export const NOTE_DATA_TIMEOUT_MS = 120000;
+export const NOTE_DATA_MESSAGE_FORMAT = "--message-format=json-render-diagnostics";
+export function noteDataCompileEnvironment(env) {
+  if (Object.hasOwn(env, "TAURI_CONFIG")) throw new Error("macos-note-data-config-override-rejected");
+  // Library tests run before runtime/sidecar preparation. This fixed child-only
+  // override does not enter the later complete app build or its resource gate.
+  return { ...env, TAURI_CONFIG: JSON.stringify({ bundle: { externalBin: [], resources: [] } }) };
+}
 export function singleNativeTestPassed(text, exit, signal) {
   return exit === 0 && signal == null && typeof text === "string" && text.length <= 8 * 1024 * 1024
     && [...text.matchAll(/^running \d+ tests?\r?$/gm)].length === 1
@@ -99,7 +106,9 @@ export async function runNativeNoteData(env) {
     throw new Error("macos-note-data-worker-required");
   const result = { status: "failed", compiled: false, failure: "compile-failed",
     cases: NOTE_DATA_CASES.map(({ id }) => ({ id, status: "not-run", exit: null })) };
-  const built = await nativeCommand("cargo", ["test", "--locked", "--target", TARGET, "--lib", "--no-default-features", "--features", "macos-note-flow", "--no-run", "--message-format=json"], env, "native-note-data-compile");
+  // Cargo keeps executable artifact records on stdout and renders compiler
+  // diagnostics on stderr for the existing bounded, public-source projection.
+  const built = await nativeCommand("cargo", ["test", "--locked", "--target", TARGET, "--lib", "--no-default-features", "--features", "macos-note-flow", "--no-run", NOTE_DATA_MESSAGE_FORMAT], noteDataCompileEnvironment(env), "native-note-data-compile");
   if (built.exit !== 0 || built.signal != null) return safeNoteDataExecution(result);
   const artifacts = built.text.split(/\r?\n/).flatMap(line => {
     try { const item = JSON.parse(line); return item.reason === "compiler-artifact" && item.target?.name === "luckyray_app_lib"
