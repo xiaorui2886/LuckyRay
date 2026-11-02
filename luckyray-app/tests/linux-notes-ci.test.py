@@ -38,10 +38,14 @@ class EvidenceTests(unittest.TestCase):
                 "records": [{"stage": stage, "count": count, "overflow": False, "hit": True}
                     for stage, count in (("native-import-start", 2), ("native-source-active", 0), ("native-import-ok", 2), ("native-import-failed", 0))]},
             "attachmentPolicy": {"selected": "copy", "readBack": "copy", "method": "PRODUCTION_PREFERENCE_IPC"},
+            "imageCopies": [{"session": n, "pngCount": 1, "matchingDigestCount": 1,
+                "pngOverflow": False, "matchingDigestOverflow": False, "scanComplete": True, "nameMatchesPolicy": True,
+                "noteLinkRewritten": True, "sourceImageUnchanged": True, "sourceNotesUnchanged": True, "productionResolved": True} for n in (1, 2)],
             "previews": [{"session": n, "naturalWidth": 32, "naturalHeight": 24, "sampled": 5, "matched": 5,
                 "visible": True, "method": "WEBVIEW_SCREENSHOT_PIXELS"} for n in (1, 2)],
             "clipboard": {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True},
             "handoff": {"kind": "OWNED_XDG_RECEIVER_READBACK", "exactExpectedFile": True,
+                "uiRoute": "NOTE_PREVIEW_OPEN",
                 "bytes": len(ci.smoke.png_bytes()), "sha256": hashlib.sha256(ci.smoke.png_bytes()).hexdigest(),
                 "externalApplicationDisplay": "NOT_RUN"},
             "quitRequests": [{"ipcReplyObserved": True, "priorProcessIdentitiesGone": True, "exitStatus": "NOT_OBSERVED"}] * 2,
@@ -67,10 +71,16 @@ class EvidenceTests(unittest.TestCase):
             lambda r: r["drop"].update(retainedNotes=1), lambda r: r["drop"].update(originalCaseSpellingsBothRetained=True),
             lambda r: r["previews"][0].update(matched=0), lambda r: r["previews"].append(r["previews"][0]),
             lambda r: r["handoff"].update(kind="OPENER_RETURNED_OK"), lambda r: r["handoff"].pop("sha256"),
+            lambda r: r["handoff"].update(uiRoute="INSPECTOR_OPENED_ONLY"),
             lambda r: r["quitRequests"].append(r["quitRequests"][0]), lambda r: r.update(externalApplicationDisplay="PASS"),
             lambda r: r.update(trimmedFilenameEndToEnd="PASS"), lambda r: r.update(cleanup="UNCONFIRMED")]
         changes.append(lambda r: r["dropTargets"].update(lowerExists=False))
         changes.append(lambda r: r["attachmentPolicy"].update(readBack=None))
+        changes.extend([lambda r: r.pop("imageCopies"), lambda r: r["imageCopies"].pop(),
+                        lambda r: r["imageCopies"][1].update(session=1)])
+        for field in ("pngCount", "matchingDigestCount", "pngOverflow", "matchingDigestOverflow", "scanComplete", "nameMatchesPolicy",
+                      "noteLinkRewritten", "sourceImageUnchanged", "sourceNotesUnchanged", "productionResolved"):
+            changes.append(lambda r, field=field: r["imageCopies"][0].update({field: None}))
         changes.extend([lambda r: r["dropTrace"]["records"][2].update(stage="native-import-partial"),
                         lambda r: r["dropTrace"].update(state="NOT_OBSERVED", records=[]),
                         lambda r: r["dropTrace"].update(truncated=True)])
@@ -88,6 +98,8 @@ class EvidenceTests(unittest.TestCase):
         raw["clipboard"]["value"] = canary
         raw["handoff"]["path"] = canary
         raw["previews"][0]["src"] = canary
+        raw["imageCopies"][0]["path"] = canary
+        raw["imageCopies"][0]["name"] = canary
         projected = ci.bounded_report(raw)
         self.assertNotIn(canary, json.dumps(projected))
         self.assertEqual(projected["failure"], {"phase": "unknown", "code": "unexpected-error"})
@@ -185,6 +197,49 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(ci.smoke.drop_targets(vault), {"upperExists": True, "lowerExists": False})
             (vault / "note (1).md").write_text("synthetic lower")
             self.assertEqual(ci.smoke.drop_targets(vault), {"upperExists": True, "lowerExists": True})
+
+    def test_image_copy_probe_distinguishes_missing_duplicate_digest_name_and_link_failures(self):
+        for case in ("complete", "missing", "duplicate", "different-extra", "digest", "name", "link", "source"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="notes-image-copy-offline-") as temporary:
+                root = Path(temporary)
+                vault, incoming = root / "vault", root / "incoming"
+                (vault / "attachments").mkdir(parents=True)
+                incoming.mkdir()
+                source = incoming / ci.smoke.SOURCE_IMAGE_NAME
+                source.write_bytes(ci.smoke.png_bytes())
+                copied = vault / ci.smoke.COPIED_IMAGE_RELATIVE
+                copied.write_bytes(ci.smoke.png_bytes())
+                expected = "SYNTHETIC_UPPER_v1\n\n" + ci.smoke.COPIED_IMAGE_REFERENCE + "\n"
+                actual = expected
+                if case == "missing":
+                    copied.unlink()
+                elif case in ("duplicate", "different-extra"):
+                    copied.with_name("duplicate.png").write_bytes(ci.smoke.png_bytes() if case == "duplicate" else b"other")
+                elif case == "digest":
+                    copied.write_bytes(b"changed")
+                elif case == "name":
+                    copied.rename(copied.with_name(ci.smoke.SOURCE_IMAGE_NAME))
+                elif case == "link":
+                    actual = expected.replace(ci.smoke.COPIED_IMAGE_REFERENCE, ci.smoke.SOURCE_IMAGE_REFERENCE)
+                elif case == "source":
+                    source.write_bytes(b"source changed")
+                observed = ci.smoke.image_copy_probe(vault, source, actual, expected)
+                observed["sourceNotesUnchanged"] = True
+                self.assertEqual(ci.smoke.image_copy_retained(observed), case == "complete")
+                if case == "missing":
+                    self.assertEqual((observed["pngCount"], observed["matchingDigestCount"]), (0, 0))
+                elif case == "duplicate":
+                    self.assertEqual((observed["pngCount"], observed["matchingDigestCount"]), (2, 2))
+                elif case == "different-extra":
+                    self.assertEqual((observed["pngCount"], observed["matchingDigestCount"]), (2, 1))
+                elif case == "digest":
+                    self.assertEqual((observed["pngCount"], observed["matchingDigestCount"]), (1, 0))
+                elif case == "name":
+                    self.assertFalse(observed["nameMatchesPolicy"])
+                elif case == "link":
+                    self.assertFalse(observed["noteLinkRewritten"])
+                elif case == "source":
+                    self.assertFalse(observed["sourceImageUnchanged"])
 
     def test_owned_receiver_checks_the_exact_png_and_rejects_other_files(self):
         with tempfile.TemporaryDirectory(prefix="notes-receiver-offline-") as temporary:

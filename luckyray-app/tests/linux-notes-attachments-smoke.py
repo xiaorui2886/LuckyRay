@@ -30,6 +30,13 @@ helpers = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helpers)
 SCOPE = "real-main-notes-paths-and-png-attachments-only"
 COLOR = (32, 128, 192)
+# The fixed Windows v1.9.9 copy policy normalizes '#' to '_'. Keep the
+# difficult source spelling and URI encoding; verify the exact policy output.
+SOURCE_IMAGE_NAME = "素材 图 #100%.png"
+COPIED_IMAGE_RELATIVE = "attachments/素材 图 _100%.png"
+SOURCE_IMAGE_REFERENCE = "![synthetic PNG](<" + urllib.parse.quote(SOURCE_IMAGE_NAME) + ">)"
+COPIED_IMAGE_TARGET = "./" + urllib.parse.quote(COPIED_IMAGE_RELATIVE)
+COPIED_IMAGE_REFERENCE = "![synthetic PNG](<" + COPIED_IMAGE_TARGET + ">)"
 CHECKS = ("nativeStartup", "caseDistinctInputContentsRetained", "specialNameImagePreserved",
           "uiSavePersisted", "reopenPersisted", "absolutePathClipboard", "imagePreviewPixels",
           "attachmentSystemHandoff", "quitProcessDisappearance")
@@ -109,6 +116,33 @@ def digest(path):
     return value.hexdigest()
 
 
+def image_copy_probe(vault, source_image, note_content, expected_note_content):
+    """Only fixed counts/booleans leave this owned synthetic filesystem probe."""
+    result = {"pngCount": 0, "pngOverflow": False, "matchingDigestCount": 0, "matchingDigestOverflow": False,
+              "scanComplete": False, "nameMatchesPolicy": False, "noteLinkRewritten": False, "sourceImageUnchanged": False}
+    expected_sha = hashlib.sha256(png_bytes()).hexdigest()
+    try:
+        images = [path for path in vault.rglob("*.png") if path.is_file() and not path.is_symlink()]
+        matching = [path for path in images if digest(path) == expected_sha]
+        result.update(pngCount=min(len(images), 2), pngOverflow=len(images) > 2,
+                      matchingDigestCount=min(len(matching), 2), matchingDigestOverflow=len(matching) > 2,
+                      scanComplete=True, nameMatchesPolicy=len(images) == 1 and images[0] == vault / COPIED_IMAGE_RELATIVE,
+                      noteLinkRewritten=note_content == expected_note_content
+                          and note_content.count(COPIED_IMAGE_REFERENCE) == 1 and SOURCE_IMAGE_REFERENCE not in note_content,
+                      sourceImageUnchanged=source_image.read_bytes() == png_bytes())
+    except OSError:
+        pass
+    return result
+
+
+def image_copy_retained(observation):
+    return (type(observation.get("pngCount")) is int and observation["pngCount"] == 1
+            and type(observation.get("matchingDigestCount")) is int and observation["matchingDigestCount"] == 1
+            and observation.get("pngOverflow") is False and observation.get("matchingDigestOverflow") is False
+            and all(observation.get(name) is True for name in
+                    ("scanComplete", "nameMatchesPolicy", "noteLinkRewritten", "sourceImageUnchanged", "sourceNotesUnchanged")))
+
+
 def receive_image(config_path, target):
     """An isolated desktop association, not an opener or application mock."""
     config_path, target = Path(config_path), Path(target)
@@ -175,12 +209,13 @@ def main():
     socket_root = log = driver = trace_offset = vault = None
     http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     session, phase = None, "synthetic-setup"
+    image_identity = {"materialAssetId": None}
     report = {"schemaVersion": 1, "status": "FAIL", "scope": SCOPE, "commit": os.environ.get("GITHUB_SHA"),
               "applicationSha256": digest(binary), "scriptSha256": digest(Path(__file__)),
               "helperSha256": digest(Path(__file__).with_name("linux-desktop-smoke.py")),
               "flowCount": 1, "appSessions": 0, "checks": {name: "NOT_RUN" for name in CHECKS},
               "drop": {"transport": "TAURI_EVENT_IPC", "nativePointerDrag": "NOT_RUN", "gestures": 0},
-              "previews": [], "quitRequests": [], "externalApplicationDisplay": "NOT_RUN",
+              "previews": [], "imageCopies": [], "quitRequests": [], "externalApplicationDisplay": "NOT_RUN",
               "trimmedFilenameEndToEnd": "NOT_RUN", "waylandHardware": "NOT_RUN", "installer": "NOT_RUN"}
 
     def wd(method, suffix, body=None, timeout=45):
@@ -243,16 +278,32 @@ def main():
         report["previews"].append({"session": report["appSessions"], "naturalWidth": rect["naturalWidth"],
                                    "naturalHeight": rect["naturalHeight"], "visible": True, **probe})
 
+    def verify_image_copy(expected_note_content):
+        observation = image_copy_probe(vault, image, upper.read_text(), expected_note_content)
+        observation.update(session=report["appSessions"],
+                           sourceNotesUnchanged=all((incoming / name).read_text() == content for name, content in originals.items()),
+                           productionResolved=False)
+        report["imageCopies"].append(observation)
+        require(image_copy_retained(observation), "special-name-png-not-retained")
+        target = vault / COPIED_IMAGE_RELATIVE
+        resolved = invoke("knowledge_resolve_attachment", {"documentRef": {"vaultId": created_vault["id"], "relativePath": "Note.md"},
+                                                            "destination": COPIED_IMAGE_TARGET, "wiki": False})
+        observation["productionResolved"] = (isinstance(resolved, dict) and resolved.get("status") == "resolved"
+            and resolved.get("relativePath") == COPIED_IMAGE_RELATIVE and resolved.get("absolutePath") == str(target.resolve(strict=True))
+            and resolved.get("fragment") == "")
+        require(observation["productionResolved"], "imported-image-resolution-mismatch")
+        image_identity["materialAssetId"] = resolved.get("materialAssetId")
+        return target
+
     try:
         root = Path(tempfile.mkdtemp(prefix="notes-", dir=output))
         socket_root = Path(tempfile.mkdtemp(prefix="lrn-", dir="/tmp"))
         home, vault, incoming = root / "profile", root / "Vault 中文 #100%", root / "incoming"
         for directory in (home, vault, incoming, home / "config", home / "data", home / "cache"):
             directory.mkdir(mode=0o700)
-        image = incoming / "素材 图 #100%.png"
+        image = incoming / SOURCE_IMAGE_NAME
         image.write_bytes(png_bytes())
-        reference = "![synthetic PNG](<" + urllib.parse.quote(image.name) + ">)"
-        originals = {"Note.md": "SYNTHETIC_UPPER_v1\n\n" + reference + "\n", "note.md": "SYNTHETIC_LOWER_v1\n"}
+        originals = {"Note.md": "SYNTHETIC_UPPER_v1\n\n" + SOURCE_IMAGE_REFERENCE + "\n", "note.md": "SYNTHETIC_LOWER_v1\n"}
         for name, content in originals.items():
             (incoming / name).write_text(content)
         env = {key: value for key, value in os.environ.items() if key in
@@ -328,10 +379,10 @@ def main():
         report["drop"].update(inputNotes=2, retainedNotes=2, collisionRenameObserved=True,
                               originalCaseSpellingsBothRetained=False, destinationNames=["Note.md", "note (1).md"])
         report["checks"]["caseDistinctInputContentsRetained"] = "PASS"
-        images = [path for path in vault.rglob("*.png") if not path.is_symlink() and digest(path) == digest(image)]
-        require(len(images) == 1 and all(char in images[0].name for char in ("素材", " ", "#", "%")), "special-name-png-not-retained")
+        imported_content = originals["Note.md"].replace(SOURCE_IMAGE_REFERENCE, COPIED_IMAGE_REFERENCE)
+        copied_image = verify_image_copy(imported_content)
         with config.open("x") as stream:
-            json.dump({"expected": str(images[0].resolve())}, stream)
+            json.dump({"expected": str(copied_image.resolve())}, stream)
         report["checks"]["specialNameImagePreserved"] = "PASS"
         phase = "edit-save"
         until("return !!document.querySelector(arguments[0]);", [note_selector("Note.md")])
@@ -362,9 +413,28 @@ def main():
         phase = "attachment-open"
         click('#page-notes .note-preview .note-media[data-kind=image] button[aria-label="打开素材详情"]')
         receiver = root / "receiver.json"
-        require(helpers.wait_until(receiver.is_file, 15), "attachment-receiver-not-observed")
+        handoff_deadline = time.monotonic() + 15
+        detail_selector = ".material-viewer-react.detail[data-material-native-asset]"
+        # A catalog-backed note preview opens the real material inspector. Its
+        # Open action performs the system handoff; opening the inspector alone
+        # does not. An uncatalogued note reference opens the file directly.
+        require(helpers.wait_until(lambda: receiver.is_file() or execute(
+            "const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [detail_selector]), 15),
+            "attachment-open-ui-not-observed")
+        route = "NOTE_PREVIEW_OPEN"
+        if not receiver.is_file():
+            observed_asset = execute("return document.querySelector(arguments[0])?.dataset.materialNativeAsset||null;", [detail_selector])
+            require(isinstance(image_identity["materialAssetId"], str) and observed_asset == image_identity["materialAssetId"],
+                    "attachment-detail-target-mismatch")
+            opener_selector = detail_selector + " .detail-action-grid-react > button:first-child"
+            require(execute("return ['打开','Open'].includes(document.querySelector(arguments[0])?.textContent.trim());", [opener_selector]),
+                    "attachment-open-control-mismatch")
+            click(opener_selector)
+            route = "MATERIAL_DETAIL_OPEN"
+        require(helpers.wait_until(receiver.is_file, max(0, handoff_deadline - time.monotonic())), "attachment-receiver-not-observed")
         handoff = json.loads(receiver.read_text())
         require(handoff.get("sha256") == digest(image) and handoff.get("exactExpectedFile") is True, "attachment-handoff-mismatch")
+        handoff["uiRoute"] = route
         report["handoff"] = handoff
         report["checks"]["attachmentSystemHandoff"] = "PASS"
         phase = "reopen"
@@ -375,7 +445,8 @@ def main():
         click(note_selector("Note.md"))
         source_mode()
         until("return [...document.querySelectorAll('#page-notes .note-editor-area textarea')].some(e=>e.getBoundingClientRect().width>0&&e.value===arguments[0]);", [expected])
-        require(upper.read_text() == expected and lower.read_text() == originals["note.md"] and digest(images[0]) == digest(image), "reopen-file-content-mismatch")
+        require(upper.read_text() == expected and lower.read_text() == originals["note.md"], "reopen-file-content-mismatch")
+        verify_image_copy(expected)
         report["checks"]["reopenPersisted"] = "PASS"
         preview()
         report["checks"]["imagePreviewPixels"] = "PASS"

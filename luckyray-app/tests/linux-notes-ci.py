@@ -33,9 +33,10 @@ PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "m
                     "image-preview", "attachment-open", "reopen", "quit", "unknown"))
 FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready", "backend-not-ready", "production-ipc-rejected", "visible-control-missing",
     "ui-observation-timeout", "drop-target-unavailable", "both-input-notes-not-retained", "case-distinct-content-mismatch",
-    "special-name-png-not-retained", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
+    "special-name-png-not-retained", "imported-image-resolution-mismatch", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
     "preview-not-visible", "preview-pixels-mismatch", "screenshot-invalid", "screenshot-size-invalid",
-    "image-outside-screenshot", "attachment-receiver-not-observed", "attachment-handoff-mismatch",
+    "image-outside-screenshot", "attachment-open-ui-not-observed", "attachment-detail-target-mismatch", "attachment-open-control-mismatch",
+    "attachment-receiver-not-observed", "attachment-handoff-mismatch",
     "reopen-file-content-mismatch", "quit-process-remained", "unexpected-error"))
 
 
@@ -89,6 +90,16 @@ def bounded_report(raw):
     policy = raw.get("attachmentPolicy") if isinstance(raw.get("attachmentPolicy"), dict) else {}
     result["attachmentPolicy"] = {name: expected if policy.get(name) == expected else None
         for name, expected in (("selected", "copy"), ("readBack", "copy"), ("method", "PRODUCTION_PREFERENCE_IPC"))}
+    result["imageCopies"] = []
+    for item in raw["imageCopies"] if isinstance(raw.get("imageCopies"), list) and len(raw["imageCopies"]) <= 2 else []:
+        if not isinstance(item, dict):
+            continue
+        observed = {name: item.get(name) if type(item.get(name)) is int and 0 <= item[name] <= 2 else None
+                    for name in ("session", "pngCount", "matchingDigestCount")}
+        observed.update({name: item.get(name) if type(item.get(name)) is bool else None
+                         for name in ("pngOverflow", "matchingDigestOverflow", "scanComplete", "nameMatchesPolicy", "noteLinkRewritten",
+                                      "sourceImageUnchanged", "sourceNotesUnchanged", "productionResolved")})
+        result["imageCopies"].append(observed)
     result["previews"] = []
     for probe in raw["previews"] if isinstance(raw.get("previews"), list) and len(raw["previews"]) <= 2 else []:
         if not isinstance(probe, dict):
@@ -105,6 +116,7 @@ def bounded_report(raw):
     handoff = raw.get("handoff") if isinstance(raw.get("handoff"), dict) else {}
     expected_sha = hashlib.sha256(smoke.png_bytes()).hexdigest()
     result["handoff"] = {"kind": "OWNED_XDG_RECEIVER_READBACK" if handoff.get("kind") == "OWNED_XDG_RECEIVER_READBACK" else "INVALID",
+                         "uiRoute": handoff.get("uiRoute") if handoff.get("uiRoute") in ("NOTE_PREVIEW_OPEN", "MATERIAL_DETAIL_OPEN") else "INVALID",
                          "exactExpectedFile": handoff.get("exactExpectedFile") is True,
                          "bytes": handoff.get("bytes") if type(handoff.get("bytes")) is int and handoff["bytes"] == len(smoke.png_bytes()) else None,
                          "sha256": expected_sha if handoff.get("sha256") == expected_sha else None,
@@ -140,6 +152,10 @@ def validate_notes(raw, build, source, scripts):
             "originalCaseSpellingsBothRetained": False, "destinationNames": ["Note.md", "note (1).md"]}, "drop-boundary-or-retention-mismatch")
     require(raw.get("dropTargets") == {"upperExists": True, "lowerExists": True}, "synthetic-drop-targets-missing")
     require(raw.get("attachmentPolicy") == {"selected": "copy", "readBack": "copy", "method": "PRODUCTION_PREFERENCE_IPC"}, "copy-preference-not-confirmed")
+    expected_copy = lambda session: {"session": session, "pngCount": 1, "matchingDigestCount": 1,
+        "pngOverflow": False, "matchingDigestOverflow": False, "scanComplete": True, "nameMatchesPolicy": True,
+        "noteLinkRewritten": True, "sourceImageUnchanged": True, "sourceNotesUnchanged": True, "productionResolved": True}
+    require(raw.get("imageCopies") == [expected_copy(1), expected_copy(2)], "copied-image-retention-and-resolution-not-confirmed")
     trace = raw.get("dropTrace", {})
     require(trace.get("state") == "OBSERVED" and trace.get("truncated") is False, "native-import-completion-not-observed")
     records = trace.get("records", [])
@@ -154,6 +170,7 @@ def validate_notes(raw, build, source, scripts):
     require(raw.get("clipboard") == {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True}, "real-clipboard-evidence-missing")
     handoff = raw.get("handoff", {})
     require(handoff.get("kind") == "OWNED_XDG_RECEIVER_READBACK" and handoff.get("exactExpectedFile") is True
+            and handoff.get("uiRoute") in ("NOTE_PREVIEW_OPEN", "MATERIAL_DETAIL_OPEN")
             and handoff.get("bytes") == len(smoke.png_bytes())
             and handoff.get("sha256") == hashlib.sha256(smoke.png_bytes()).hexdigest()
             and handoff.get("externalApplicationDisplay") == "NOT_RUN", "os-handoff-readback-missing")
