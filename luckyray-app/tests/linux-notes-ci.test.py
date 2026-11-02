@@ -1261,5 +1261,85 @@ class ComponentLayoutGateTests(unittest.TestCase):
                 self.assertFalse((run.private / "notes.attempt").exists())
 
 
+class AttachmentMutationSourceTests(unittest.TestCase):
+    """Source-level invariants for the Linux replace/remove/rollback engine.
+
+    These are offline proofs about the code that ships, not a substitute for the
+    Rust filesystem tests (which run in the dedicated `rust` step) or for the
+    native flow. A PASS here means only that the shape is closed.
+    """
+
+    source = Path(__file__).resolve().parents[1] / "src-tauri" / "src"
+
+    def read(self, relative):
+        return (self.source / relative).read_text()
+
+    def test_attachment_mutation_sources_never_unlink_a_user_object(self):
+        files = ("linux_attachment_store.rs", "knowledge/linux_attachment_mutations.rs",
+                 "knowledge/linux_attachment_import.rs")
+        banned = ("remove_file(", "remove_dir(", "fs::remove_", "unlinkat(", "libc::unlink",
+                  "RENAME_EXCHANGE", "shutil.")
+        for name in files:
+            text = self.read(name)
+            for token in banned:
+                with self.subTest(file=name, token=token):
+                    self.assertNotIn(token, text)
+        store = self.read("linux_attachment_store.rs")
+        # The only two inverses the engine may use: a no-replace rename in both
+        # directions, and the tombstone name that keeps the original inode.
+        self.assertIn("rename_new", store)
+        self.assertIn('format!(".lrk-{}-{index}.removed", self.id)', store)
+        self.assertIn("RENAME_NOREPLACE", self.read("linux_fs.rs"))
+
+    def test_attachment_kind_whitelist_is_closed_and_rollback_is_routed(self):
+        admit = self.read("knowledge/linux_attachment_import.rs")
+        self.assertEqual(sorted(set(re.findall(r'"([a-z-]+)" =>', admit))),
+                         ["attachment-rename", "import"])
+        self.assertIn("_ => Err(linux_knowledge_write_unavailable())", admit)
+        mutations = self.read("knowledge/linux_attachment_mutations.rs")
+        execute = mutations.split("fn execute_linux_attachment_operation_unlocked", 1)[1].split(
+            "fn recover_linux_attachment_operation_unlocked", 1)[0]
+        self.assertIn('"import" => self.execute_linux_attachment_import_unlocked', execute)
+        self.assertIn('"attachment-rename" =>', execute)
+        self.assertIn("_ => Err(linux_knowledge_write_unavailable())", execute)
+        # Rollback is passed through, not flattened to a refusal.
+        recover = mutations.split("fn recover_linux_attachment_operation_unlocked", 1)[1]
+        self.assertIn("rollback,", recover)
+        self.assertIn("self.run_linux_attachment_mutation(", recover)
+        operations = self.read("knowledge/attachment_operations.rs")
+        self.assertIn("self.execute_linux_attachment_operation_unlocked(&vault, operation, cancelled)",
+                      operations)
+        self.assertIn("self.recover_linux_attachment_operation_unlocked(&vault, id, rollback, cancelled)",
+                      operations)
+
+    def test_attachment_protections_and_status_sets_stay_closed(self):
+        store = self.read("linux_attachment_store.rs")
+        for arm in ("Verb::Create =>", "Verb::Replace =>", "Verb::Remove =>"):
+            self.assertIn(arm, store)
+        # A record written before the verbs existed must still verify.
+        self.assertIn('b"luckyray-linux-import-step-v1\\0"', store)
+        self.assertIn('b"luckyray-linux-import-step-v2\\0"', store)
+        self.assertIn("skip_serializing_if", store)
+        projection = self.read("knowledge/linux_attachment_import.rs")
+        for status in ('"complete"', '"complete-with-unresolved"', '"partial"', '"rolled-back"'):
+            self.assertIn(status, projection)
+        # Sealing, the sealed digest and the target identity remain mandatory.
+        self.assertIn("self.seal_attachment_receipt(operation)?", projection)
+        self.assertIn("self.verify_attachment_receipt(&sealed)?", projection)
+        self.assertIn("self.assert_expected_target_unlocked(vault, Some(identity), Some(guard))?",
+                      projection)
+        mutations = self.read("knowledge/linux_attachment_mutations.rs")
+        self.assertIn("self.assert_expected_target_unlocked(vault, Some(identity), Some(guard))",
+                      mutations)
+        self.assertEqual(
+            sorted(set(re.findall(r'"(knowledge-linux-[a-z-]+)"', mutations))),
+            ["knowledge-linux-fs-unsupported", "knowledge-linux-rollback-unprovable"])
+        # The removal step is still gated on a fresh whole-Vault reference scan.
+        self.assertIn("hold_unreferenced_attachment(&vault.root, &file.relative_path)?",
+                      mutations)
+        # Tombstones and stages stay in the reserved family the inventory skips.
+        self.assertIn('name.starts_with(".lrk-")', self.read("knowledge/index.rs"))
+
+
 if __name__ == "__main__":
     unittest.main()

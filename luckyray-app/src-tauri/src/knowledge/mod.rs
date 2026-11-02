@@ -18,6 +18,8 @@ mod linux_transactions;
 #[cfg(target_os = "linux")]
 mod linux_attachment_import;
 #[cfg(target_os = "linux")]
+mod linux_attachment_mutations;
+#[cfg(target_os = "linux")]
 use linux_transactions::{open as open_exclusive_document, read as read_exclusive_document,
     recover as recover_pending_document_writes, rename_open as rename_open_file, delete_open as delete_open_file};
 mod saved_scopes;

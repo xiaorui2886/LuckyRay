@@ -42,6 +42,44 @@ pub(crate) fn write(
     fail_before: bool,
     interrupt_after_backup: bool,
 ) -> io::Result<Snapshot> {
+    write_inner(
+        dir,
+        name,
+        expected,
+        bytes,
+        private,
+        fail_before,
+        interrupt_after_backup,
+        true,
+    )
+}
+
+/// The caller already holds this directory's cooperating-writer lock.
+/// The Linux attachment store takes the Vault lease before a step runs, and a
+/// second flock on the same file from the same process fails instead of
+/// excluding anyone, so the attachment path reuses the lock it already holds.
+/// Everything else (expected-state proof, retained backup, journal, rename) is
+/// identical to `write`.
+pub(crate) fn write_locked(
+    dir: &Directory,
+    name: &OsStr,
+    expected: Option<&Snapshot>,
+    bytes: &[u8],
+    private: bool,
+) -> io::Result<Snapshot> {
+    write_inner(dir, name, expected, bytes, private, false, false, false)
+}
+
+fn write_inner(
+    dir: &Directory,
+    name: &OsStr,
+    expected: Option<&Snapshot>,
+    bytes: &[u8],
+    private: bool,
+    fail_before: bool,
+    interrupt_after_backup: bool,
+    lock: bool,
+) -> io::Result<Snapshot> {
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(conflict());
     }
@@ -58,7 +96,7 @@ pub(crate) fn write(
         .as_ref()
         .map(|old| crate::linux_fs::Permissions::capture(&old.file))
         .transpose()?;
-    let _lock = dir.lock()?;
+    let _lock = if lock { Some(dir.lock()?) } else { None };
     let current = dir.read(name, private, MAX_RECORD_BYTES)?;
     if !same(preflight.as_ref(), current.as_ref()) {
         return Err(conflict());

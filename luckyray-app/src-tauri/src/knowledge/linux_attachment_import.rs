@@ -1,12 +1,32 @@
-//! Linux admission for new-file imports only. Other attachment mutations and
-//! rollback remain refused: Linux cannot conditionally unlink a named inode.
+//! Linux admission and execution for the attachment kinds that are open:
+//! new-file imports and in-Vault attachment renames. Every other kind is still
+//! refused, because Linux cannot yet conditionally remove a named inode for
+//! them (conversion, note move, external reference updates, real file moves).
 use super::attachment_operations::{bytes, validate_plan, AttachmentOperationIssue};
 use super::*;
 use crate::linux_attachment_store::{Dependency, ImportStore, MAX_FILE, MAX_INTENT};
 
-fn admit(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
-    if operation.kind != "import"
-        || operation.files.is_empty()
+/// Durable intent of one admitted Linux attachment operation.
+pub(super) struct LinuxAttachmentIntent {
+    pub(super) store: ImportStore,
+    pub(super) id: String,
+    pub(super) plan: AttachmentOperationPlan,
+}
+
+/// Kind-dispatch admission. The import rule is unchanged; `attachment-rename`
+/// is the only newly admitted kind and it has its own closed shape below.
+pub(super) fn admit_linux_attachment_operation(
+    operation: &AttachmentOperationPlan,
+) -> Result<(), KnowledgeError> {
+    match operation.kind.as_str() {
+        "import" => admit_import(operation),
+        "attachment-rename" => admit_rename(operation),
+        _ => Err(linux_knowledge_write_unavailable()),
+    }
+}
+
+fn admit_import(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
+    if operation.files.is_empty()
         || operation.material_relocation.is_some()
         || operation.material_revision.is_some()
         || operation.material_original_path.is_some()
@@ -51,6 +71,89 @@ fn admit(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
     Ok(())
 }
 
+/// A rename is exactly: one new attachment, any number of rewritten Markdown
+/// notes, and the old attachment removed last. Anything else - including a
+/// second removal, a Markdown removal, or an in-place attachment rewrite - is
+/// refused rather than approximated.
+fn admit_rename(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
+    if operation.files.len() < 2
+        || operation.files.len() > 1024
+        || operation.material_relocation.is_some()
+        || operation.material_revision.is_some()
+        || operation.material_original_path.is_some()
+        || operation.material_file_move.is_some()
+        || !operation.external_paths.is_empty()
+        || !operation.external_dependencies.is_empty()
+    {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    let first = &operation.files[0];
+    let last = &operation.files[operation.files.len() - 1];
+    if first.before.is_some()
+        || first.after.is_none()
+        || last.after.is_some()
+        || last.before.is_none()
+    {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    let mut total = 0usize;
+    let mut created = 0usize;
+    let mut removed = 0usize;
+    for file in &operation.files {
+        let before = bytes(&file.before)?;
+        let after = bytes(&file.after)?;
+        let markdown = file.relative_path.to_ascii_lowercase().ends_with(".md");
+        let charge = match (before.as_deref(), after.as_deref()) {
+            (None, Some(content)) => {
+                // The published attachment is never Markdown: that path is a
+                // note move, which is not admitted yet.
+                if markdown {
+                    return Err(linux_knowledge_write_unavailable());
+                }
+                created += 1;
+                content.len()
+            }
+            (Some(previous), Some(content)) => {
+                // An in-place rewrite is only ever the Markdown link update.
+                if !markdown {
+                    return Err(linux_knowledge_write_unavailable());
+                }
+                previous.len() + content.len()
+            }
+            (Some(previous), None) => {
+                if markdown {
+                    return Err(linux_knowledge_write_unavailable());
+                }
+                removed += 1;
+                previous.len()
+            }
+            (None, None) => return Err(linux_knowledge_write_unavailable()),
+        };
+        if charge > 2 * MAX_FILE {
+            return Err(linux_knowledge_write_unavailable());
+        }
+        total = total
+            .checked_add(charge)
+            .ok_or_else(linux_knowledge_write_unavailable)?;
+        if total > 128 * 1024 * 1024 {
+            return Err(linux_knowledge_write_unavailable());
+        }
+    }
+    if created != 1 || removed != 1 {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    for (path, digest) in &operation.attachment_dependencies {
+        if !operation.files.iter().any(|file| {
+            &file.relative_path == path
+                && file.before.is_none()
+                && file.after_revision.as_ref() == Some(digest)
+        }) {
+            return Err(linux_knowledge_write_unavailable());
+        }
+    }
+    Ok(())
+}
+
 impl KnowledgeService {
     pub(super) fn read_linux_attachment_operation_plan(
         &self,
@@ -58,13 +161,13 @@ impl KnowledgeService {
         id: &str,
         guard: &FilesystemDirectoryIdentityGuard,
     ) -> Result<AttachmentOperationPlan, KnowledgeError> {
-        let (_, plan) = self.load_linux_import_store(vault, id, guard)?;
+        let (_, plan) = self.load_linux_attachment_store(vault, id, guard)?;
         let identity = knowledge_target_identity(vault, guard.identity())?;
         self.verify_current_target(&identity, guard)?;
         Ok(plan)
     }
 
-    fn load_linux_import_store(
+    pub(super) fn load_linux_attachment_store(
         &self,
         vault: &TrustedVault,
         id: &str,
@@ -77,13 +180,13 @@ impl KnowledgeService {
         }
         let plan: AttachmentOperationPlan =
             serde_json::from_slice(&store.read_intent().map_err(linux_transactions::failure)?)
-                .map_err(|_| error("knowledge-recovery-invalid", "Invalid Linux import intent"))?;
+                .map_err(|_| error("knowledge-recovery-invalid", "Invalid Linux attachment intent"))?;
         validate_plan(vault, &plan)?;
-        admit(&plan)?;
+        admit_linux_attachment_operation(&plan)?;
         if plan.receipt_authorization.is_empty() {
             return Err(error(
                 "knowledge-recovery-untrusted",
-                "Linux import requires sealed recovery evidence",
+                "Linux attachment recovery requires sealed evidence",
             ));
         }
         self.verify_attachment_receipt(&plan)?;
@@ -97,12 +200,12 @@ impl KnowledgeService {
         guard: &FilesystemDirectoryIdentityGuard,
         result: &AttachmentOperationResult,
     ) -> Result<(), KnowledgeError> {
-        let (store, plan) = self.load_linux_import_store(vault, &result.operation_id, guard)?;
+        let (store, plan) = self.load_linux_attachment_store(vault, &result.operation_id, guard)?;
         if result.total_files != plan.files.len()
             || result.completed_files > result.total_files
             || !matches!(
                 result.status.as_str(),
-                "complete" | "complete-with-unresolved" | "partial"
+                "complete" | "complete-with-unresolved" | "partial" | "rolled-back"
             )
             || result.recovery_path
                 != format!(
@@ -112,26 +215,47 @@ impl KnowledgeService {
         {
             return Err(error(
                 "knowledge-recovery-invalid",
-                "Projection does not match the admitted import",
+                "Projection does not match the admitted operation",
             ));
         }
         if result.status != "partial" {
             if result.completed_files != result.total_files {
                 return Err(error(
                     "knowledge-recovery-invalid",
-                    "Incomplete import cannot have a completed projection",
+                    "Incomplete operation cannot have a completed projection",
                 ));
             }
             let key = self.attachment_receipt_key(false)?;
             for (index, file) in plan.files.iter().enumerate() {
-                store
-                    .verify_installed(
-                        index,
-                        &file.relative_path,
-                        &bytes(&file.after)?.ok_or_else(linux_knowledge_write_unavailable)?,
-                        &key,
-                    )
-                    .map_err(linux_transactions::failure)?;
+                let before = bytes(&file.before)?;
+                let after = bytes(&file.after)?;
+                if result.status == "rolled-back" {
+                    // A retained creation is not asserted: it stays on purpose.
+                    if let Some(previous) = before.as_deref() {
+                        store
+                            .verify_before_state(index, &file.relative_path, previous, &key)
+                            .map_err(linux_transactions::failure)?;
+                    }
+                } else if plan.kind == "import" {
+                    store
+                        .verify_installed(
+                            index,
+                            &file.relative_path,
+                            &after.ok_or_else(linux_knowledge_write_unavailable)?,
+                            &key,
+                        )
+                        .map_err(linux_transactions::failure)?;
+                } else {
+                    store
+                        .verify_step(
+                            index,
+                            &file.relative_path,
+                            before.as_deref(),
+                            after.as_deref(),
+                            &key,
+                        )
+                        .map_err(linux_transactions::failure)?;
+                }
             }
         }
         let identity = knowledge_target_identity(vault, guard.identity())?;
@@ -147,20 +271,18 @@ impl KnowledgeService {
             .map_err(linux_transactions::failure)
     }
 
-    pub(super) fn execute_linux_attachment_import_unlocked(
+    /// Publish the sealed intent before any mutation. Every created name is
+    /// proven vacant first, then `before_commit` runs (admission dependencies
+    /// are held before the record becomes durable), and the target epoch is
+    /// re-checked immediately before the record is written.
+    pub(super) fn prepare_linux_attachment_operation(
         &self,
         vault: &TrustedVault,
         operation: &AttachmentOperationPlan,
-        cancelled: &AtomicBool,
-    ) -> Result<AttachmentOperationResult, KnowledgeError> {
-        admit(operation)?;
-        let guard = filesystem_directory_identity_guard(&vault.root)
-            .map_err(map_filesystem_identity_error)?;
-        let identity = knowledge_target_identity(vault, guard.identity())?;
-        if identity.identity_digest != operation.target_identity {
-            return Err(knowledge_target_not_current());
-        }
-        self.assert_expected_target_unlocked(vault, Some(&identity), Some(&guard))?;
+        guard: &FilesystemDirectoryIdentityGuard,
+        identity: &KnowledgeTargetIdentity,
+        before_commit: impl FnOnce(&AttachmentOperationPlan) -> Result<(), KnowledgeError>,
+    ) -> Result<LinuxAttachmentIntent, KnowledgeError> {
         let id = format!("{:032x}", rand::random::<u128>());
         let store =
             ImportStore::open(&vault.root, &id, true).map_err(linux_transactions::failure)?;
@@ -168,58 +290,61 @@ impl KnowledgeService {
             return Err(knowledge_target_not_current());
         }
         for file in &operation.files {
-            store
-                .require_vacant(&file.relative_path)
-                .map_err(linux_transactions::failure)?;
+            if file.before.is_none() {
+                // An occupied destination is a name conflict, not a revision
+                // conflict: nothing of this transaction was ever written there.
+                store
+                    .require_vacant(&file.relative_path)
+                    .map_err(linux_transactions::failure)?;
+            }
         }
         let sealed = self.seal_attachment_receipt(operation)?;
         self.verify_attachment_receipt(&sealed)?;
         let encoded = serde_json::to_vec(&sealed)
-            .map_err(|_| error("knowledge-recovery-invalid", "Cannot encode import intent"))?;
+            .map_err(|_| error("knowledge-recovery-invalid", "Cannot encode attachment intent"))?;
         if encoded.len() > MAX_INTENT {
             return Err(linux_knowledge_write_unavailable());
         }
-        // Admission dependencies are checked before the durable intent and again
-        // around every publication. The immutable, sealed payload is authoritative.
-        let dependencies = import_dependencies(&sealed)?;
-        self.assert_expected_target_unlocked(vault, Some(&identity), Some(&guard))?;
+        before_commit(&sealed)?;
+        self.assert_expected_target_unlocked(vault, Some(identity), Some(guard))?;
         store
             .write_intent(&encoded)
             .map_err(linux_transactions::failure)?;
-        self.run_linux_attachment_import(
-            vault,
-            &sealed,
-            &id,
-            &store,
-            &guard,
-            &identity,
-            &dependencies,
-            cancelled,
-        )
+        Ok(LinuxAttachmentIntent {
+            store,
+            id,
+            plan: sealed,
+        })
     }
 
-    pub(super) fn recover_linux_attachment_import_unlocked(
+    pub(super) fn execute_linux_attachment_import_unlocked(
         &self,
         vault: &TrustedVault,
-        id: &str,
-        rollback: bool,
+        operation: &AttachmentOperationPlan,
         cancelled: &AtomicBool,
     ) -> Result<AttachmentOperationResult, KnowledgeError> {
-        // Preserve every object. A safe conditional unlink/rollback is not
-        // provided by the Linux primitive; never emulate Windows exclusion.
-        if rollback {
-            return Err(linux_knowledge_write_unavailable());
-        }
+        admit_linux_attachment_operation(operation)?;
         let guard = filesystem_directory_identity_guard(&vault.root)
             .map_err(map_filesystem_identity_error)?;
         let identity = knowledge_target_identity(vault, guard.identity())?;
-        let (store, operation) = self.load_linux_import_store(vault, id, &guard)?;
-        let dependencies = import_dependencies(&operation)?;
+        if identity.identity_digest != operation.target_identity {
+            return Err(knowledge_target_not_current());
+        }
+        self.assert_expected_target_unlocked(vault, Some(&identity), Some(&guard))?;
+        // Admission dependencies are held before the durable intent and verified
+        // again around every publication. The sealed payload is authoritative;
+        // the caller's copy is never re-read.
+        let mut dependencies = Vec::new();
+        let intent =
+            self.prepare_linux_attachment_operation(vault, operation, &guard, &identity, |sealed| {
+                dependencies = import_dependencies(sealed)?;
+                Ok(())
+            })?;
         self.run_linux_attachment_import(
             vault,
-            &operation,
-            id,
-            &store,
+            &intent.plan,
+            &intent.id,
+            &intent.store,
             &guard,
             &identity,
             &dependencies,
@@ -227,7 +352,7 @@ impl KnowledgeService {
         )
     }
 
-    fn run_linux_attachment_import(
+    pub(super) fn run_linux_attachment_import(
         &self,
         vault: &TrustedVault,
         operation: &AttachmentOperationPlan,
@@ -333,7 +458,7 @@ impl KnowledgeService {
     }
 }
 
-fn import_dependencies(
+pub(super) fn import_dependencies(
     operation: &AttachmentOperationPlan,
 ) -> Result<Vec<Dependency>, KnowledgeError> {
     operation

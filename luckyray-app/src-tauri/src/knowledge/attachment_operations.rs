@@ -774,7 +774,7 @@ impl KnowledgeService {
         let vault = self.current_vault_unlocked()?;
         validate_plan(&vault, operation)?;
         #[cfg(target_os = "linux")]
-        return self.execute_linux_attachment_import_unlocked(&vault, operation, cancelled);
+        return self.execute_linux_attachment_operation_unlocked(&vault, operation, cancelled);
         let _external_files = self.hold_external_plan(&vault, operation, source_epoch)?;
         let _external_locations = hold_external_dependencies(operation)?;
         // Validate every before-state before publishing the durable intent.
@@ -819,7 +819,7 @@ impl KnowledgeService {
             ));
         }
         #[cfg(target_os = "linux")]
-        return self.recover_linux_attachment_import_unlocked(&vault, id, rollback, cancelled);
+        return self.recover_linux_attachment_operation_unlocked(&vault, id, rollback, cancelled);
         let directory = recovery_directory(&vault.root)?;
         let path = directory.join(format!("{id}.json"));
         if has_reparse_point(&path)? {
@@ -1327,7 +1327,7 @@ impl KnowledgeService {
     }
 }
 
-fn hold_unreferenced_attachment(
+pub(super) fn hold_unreferenced_attachment(
     root: &Path,
     old: &str,
 ) -> Result<Vec<super::attachments::AttachmentReadGuard>, KnowledgeError> {
