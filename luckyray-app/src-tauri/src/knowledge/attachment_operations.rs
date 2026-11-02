@@ -118,6 +118,31 @@ pub(crate) struct AttachmentOperationResult {
     pub recovery_path: String,
 }
 
+/// Read-only recovery state of one Vault. A tombstone is the original inode a
+/// `Remove` step renamed aside; nothing is cleaned automatically (D3).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentRecoverySummary {
+    pub tombstones: usize,
+}
+
+/// Windows and macOS never create a tombstone: their removal paths do not use
+/// the rename-aside verb, and their recovery journal is enumerated separately.
+#[cfg(not(target_os = "linux"))]
+impl KnowledgeService {
+    pub(crate) fn attachment_recovery_summary(
+        &self,
+        vault_id: &str,
+    ) -> Result<AttachmentRecoverySummary, KnowledgeError> {
+        let (vault, guard, identity) = self.capture_current_target()?;
+        if vault.registration.id != vault_id {
+            return Err(knowledge_target_not_current());
+        }
+        self.verify_current_target(&identity, &guard)?;
+        Ok(AttachmentRecoverySummary { tombstones: 0 })
+    }
+}
+
 fn payload(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
@@ -429,6 +454,12 @@ impl KnowledgeService {
         for file in &operation.files {
             require_file_state(&vault.root, file, false)?;
         }
+        // The Linux runner seals this plan and writes its own recovery record;
+        // `recovery_directory` is the Windows journal and does not exist here.
+        // The rewritten bytes were computed above, so execution writes exactly
+        // what this move decided.
+        #[cfg(target_os = "linux")]
+        return self.execute_linux_note_move_unlocked(vault, &operation);
         let directory = recovery_directory(&vault.root)?;
         let id = format!("{:032x}", rand::random::<u128>());
         write_new_synced(
@@ -774,7 +805,12 @@ impl KnowledgeService {
         let vault = self.current_vault_unlocked()?;
         validate_plan(&vault, operation)?;
         #[cfg(target_os = "linux")]
-        return self.execute_linux_attachment_operation_unlocked(&vault, operation, cancelled);
+        return self.execute_linux_attachment_operation_unlocked(
+            &vault,
+            operation,
+            source_epoch,
+            cancelled,
+        );
         let _external_files = self.hold_external_plan(&vault, operation, source_epoch)?;
         let _external_locations = hold_external_dependencies(operation)?;
         // Validate every before-state before publishing the durable intent.
@@ -819,7 +855,13 @@ impl KnowledgeService {
             ));
         }
         #[cfg(target_os = "linux")]
-        return self.recover_linux_attachment_operation_unlocked(&vault, id, rollback, cancelled);
+        return self.recover_linux_attachment_operation_unlocked(
+            &vault,
+            id,
+            source_epoch,
+            rollback,
+            cancelled,
+        );
         let directory = recovery_directory(&vault.root)?;
         let path = directory.join(format!("{id}.json"));
         if has_reparse_point(&path)? {
@@ -1354,7 +1396,7 @@ pub(super) fn hold_unreferenced_attachment(
     Ok(guards)
 }
 
-fn hold_external_dependencies(operation:&AttachmentOperationPlan)->Result<Vec<super::attachments::AttachmentReadGuard>,KnowledgeError> {
+pub(super) fn hold_external_dependencies(operation:&AttachmentOperationPlan)->Result<Vec<super::attachments::AttachmentReadGuard>,KnowledgeError> {
     operation.external_dependencies.iter().map(|(path,digest)| {
         let mut source=Path::new(path);
         if !source.exists() {if let Some(movement)=&operation.material_file_move {if path==&movement.original_path {source=Path::new(&movement.destination_path);}}}

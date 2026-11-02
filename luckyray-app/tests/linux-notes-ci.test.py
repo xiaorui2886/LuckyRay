@@ -1294,23 +1294,99 @@ class AttachmentMutationSourceTests(unittest.TestCase):
     def test_attachment_kind_whitelist_is_closed_and_rollback_is_routed(self):
         admit = self.read("knowledge/linux_attachment_import.rs")
         self.assertEqual(sorted(set(re.findall(r'"([a-z-]+)" =>', admit))),
-                         ["attachment-rename", "import"])
+                         ["attachment-rename", "conversion", "external-reference-update",
+                          "import", "note-move"])
         self.assertIn("_ => Err(linux_knowledge_write_unavailable())", admit)
         mutations = self.read("knowledge/linux_attachment_mutations.rs")
         execute = mutations.split("fn execute_linux_attachment_operation_unlocked", 1)[1].split(
             "fn recover_linux_attachment_operation_unlocked", 1)[0]
         self.assertIn('"import" => self.execute_linux_attachment_import_unlocked', execute)
-        self.assertIn('"attachment-rename" =>', execute)
+        for kind in ("attachment-rename", "conversion", "note-move", "external-reference-update"):
+            self.assertIn('"{}"'.format(kind), execute)
+        self.assertIn(".execute_linux_attachment_mutation_unlocked(", execute)
         self.assertIn("_ => Err(linux_knowledge_write_unavailable())", execute)
         # Rollback is passed through, not flattened to a refusal.
         recover = mutations.split("fn recover_linux_attachment_operation_unlocked", 1)[1]
         self.assertIn("rollback,", recover)
         self.assertIn("self.run_linux_attachment_mutation(", recover)
         operations = self.read("knowledge/attachment_operations.rs")
-        self.assertIn("self.execute_linux_attachment_operation_unlocked(&vault, operation, cancelled)",
-                      operations)
-        self.assertIn("self.recover_linux_attachment_operation_unlocked(&vault, id, rollback, cancelled)",
-                      operations)
+        for name in ("execute_linux_attachment_operation_unlocked",
+                     "recover_linux_attachment_operation_unlocked"):
+            with self.subTest(call=name):
+                args = operations.split("self." + name + "(", 1)[1].split(");", 1)[0]
+                self.assertIn("source_epoch", args)
+        self.assertIn("_ => Err(linux_knowledge_write_unavailable())",
+                      self.read("knowledge/linux_attachment_import.rs"))
+
+    def test_step_two_kinds_keep_their_closed_shapes(self):
+        admit = self.read("knowledge/linux_attachment_import.rs")
+        conversion = admit.split("fn admit_conversion", 1)[1].split("fn admit_note_move", 1)[0]
+        # Copies first, never a rewrite before the copy it points at, no removal.
+        self.assertIn("if markdown || rewriting {", conversion)
+        self.assertIn("(Some(_), None) | (None, None) => return Err(", conversion)
+        self.assertIn("if created == 0 {", conversion)
+        note_move = admit.split("fn admit_note_move", 1)[1].split(
+            "fn admit_external_reference_update", 1)[0]
+        self.assertIn("if operation.files.len() != 2", note_move)
+        self.assertIn("|| published.before.is_some()", note_move)
+        self.assertIn("|| removed.after.is_some()", note_move)
+        self.assertIn("!operation.attachment_dependencies.is_empty()", note_move)
+        external = admit.split("fn admit_external_reference_update", 1)[1]
+        self.assertIn('if !file.relative_path.to_ascii_lowercase().ends_with(".md") {', external)
+        self.assertIn("!operation.external_paths.is_empty()", external)
+
+    def test_note_move_uses_the_sealed_runner_not_the_windows_journal(self):
+        operations = self.read("knowledge/attachment_operations.rs")
+        move = operations.split("fn move_note_with_attachments_unlocked", 1)[1].split(
+            "fn moved_note_bytes_unlocked", 1)[0]
+        # The rewritten bytes are computed before any step runs.
+        self.assertIn("let after = self.moved_note_bytes_unlocked(vault, input, destination, original)?;",
+                      move)
+        self.assertIn("return self.execute_linux_note_move_unlocked(vault, &operation);", move)
+        self.assertIn("pub(super) fn execute_linux_note_move_unlocked(",
+                      self.read("knowledge/linux_attachment_mutations.rs"))
+        # The Windows recovery journal still refuses to exist on Linux.
+        self.assertIn("return Err(linux_knowledge_write_unavailable());",
+                      operations.split("fn recovery_directory", 1)[1])
+
+    def test_external_witness_and_dependency_holds_are_wired(self):
+        mutations = self.read("knowledge/linux_attachment_mutations.rs")
+        self.assertIn("self.hold_external_plan(vault, operation, source_epoch)?", mutations)
+        self.assertIn("hold_external_dependencies(operation)?", mutations)
+        self.assertIn("hold_verified_attachment(&vault.root, relative, digest)", mutations)
+        # A rollback must not demand a witness that may already have expired.
+        self.assertIn("let _external_files = if rollback {", mutations)
+        observations = self.read("knowledge/attachment_observations.rs")
+        self.assertIn("if state.epoch != source_epoch || state.identity != operation.target_identity {",
+                      observations)
+        self.assertIn("plan.captured.elapsed() < TTL", observations)
+
+    def test_recovery_summary_is_read_only_and_registered(self):
+        mutations = self.read("knowledge/linux_attachment_mutations.rs")
+        summary = mutations.split("fn count_tombstones", 1)[1]
+        for token in ("create(", "rename_new(", "remove_file", "sync_all(", "write("):
+            with self.subTest(token=token):
+                self.assertNotIn(token, summary)
+        self.assertIn('strip_suffix(".removed")', mutations.split("fn is_tombstone_name", 1)[1])
+        lib = self.read("lib.rs")
+        self.assertIn("knowledge_attachment_recovery_summary,", lib)
+        self.assertIn("fn knowledge_attachment_recovery_summary(vault_id: String)", lib)
+
+    def test_linux_attachment_copy_is_chinese_and_states_no_change(self):
+        root = Path(__file__).resolve().parents[1]
+        errors = (root / "src/core/services/vaultAttachmentErrors.ts").read_text()
+        self.assertIn('"knowledge-exclusive-write-unsupported": "该操作在 Linux 上暂不可用，未做任何修改。"',
+                      errors)
+        self.assertIn('"knowledge-linux-rollback-unprovable"', errors)
+        self.assertIn('"knowledge-linux-fs-unsupported"', errors)
+        # The unprovable-rollback message must promise that nothing was written.
+        rollback = errors.split('"knowledge-linux-rollback-unprovable":', 1)[1].split("\n", 1)[0]
+        self.assertIn("现场已保留", rollback)
+        labels = (root / "src/core/services/vaultAttachmentWorkflow.ts").read_text()
+        self.assertIn('const code = status.split(": ")[0];', labels)
+        panel = (root / "src/features/notes/VaultAttachmentsPanel.tsx").read_text()
+        self.assertIn("恢复区保留 {tombstones} 个已移除的原件", panel)
+        self.assertIn("getAttachmentRecoverySummary(vaultId)", panel)
 
     def test_attachment_protections_and_status_sets_stay_closed(self):
         store = self.read("linux_attachment_store.rs")

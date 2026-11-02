@@ -7,15 +7,20 @@
 //! unlinked here, and a state that cannot be proven stops the operation with a
 //! report rather than being "made safe" by deleting something.
 use super::attachment_operations::{
-    bytes, hold_unreferenced_attachment, AttachmentFileChange, AttachmentOperationIssue,
+    bytes, hold_external_dependencies, hold_unreferenced_attachment, AttachmentFileChange,
+    AttachmentOperationIssue,
 };
-use super::linux_attachment_import::{admit_linux_attachment_operation, import_dependencies};
+use super::attachments::hold_verified_attachment;
+use super::linux_attachment_import::{
+    admit_linux_attachment_operation, import_dependencies, step_is_private,
+};
 use super::*;
 use crate::linux_attachment_store::ImportStore;
 use std::io;
 
 /// Result of one forward step; `true` means the step was already durable.
 type StepOutcome = io::Result<bool>;
+
 fn rollback_failure(failure: io::Error) -> KnowledgeError {
     // One code for "not proven", with the specific reason kept in the message
     // and in the reported issue, so no caller can read this as success.
@@ -44,29 +49,52 @@ fn step_failure(failure: io::Error) -> KnowledgeError {
     linux_transactions::failure(failure)
 }
 
+/// A tombstone this Vault's own removals leave behind: `.lrk-<id>-<index>.removed`.
+fn is_tombstone_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(".lrk-") else {
+        return false;
+    };
+    let Some((id, rest)) = rest.split_once('-') else {
+        return false;
+    };
+    let Some(index) = rest.strip_suffix(".removed") else {
+        return false;
+    };
+    id.len() == 32
+        && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && !index.is_empty()
+        && index.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 impl KnowledgeService {
     /// Single Linux execution entry; `admit` already restricted the kind.
     pub(super) fn execute_linux_attachment_operation_unlocked(
         &self,
         vault: &TrustedVault,
         operation: &AttachmentOperationPlan,
+        source_epoch: u64,
         cancelled: &AtomicBool,
     ) -> Result<AttachmentOperationResult, KnowledgeError> {
         match operation.kind.as_str() {
             "import" => self.execute_linux_attachment_import_unlocked(vault, operation, cancelled),
-            "attachment-rename" => {
-                self.execute_linux_attachment_rename_unlocked(vault, operation, cancelled)
-            }
+            "attachment-rename" | "conversion" | "note-move" | "external-reference-update" => self
+                .execute_linux_attachment_mutation_unlocked(
+                    vault,
+                    operation,
+                    source_epoch,
+                    cancelled,
+                ),
             _ => Err(linux_knowledge_write_unavailable()),
         }
     }
 
     /// Single Linux recovery entry. `rollback` is passed through: an import has
-    /// no removal to undo, a rename can prove both of its inverse actions.
+    /// no removal to undo, a mutation can prove both of its inverse actions.
     pub(super) fn recover_linux_attachment_operation_unlocked(
         &self,
         vault: &TrustedVault,
         id: &str,
+        source_epoch: u64,
         rollback: bool,
         cancelled: &AtomicBool,
     ) -> Result<AttachmentOperationResult, KnowledgeError> {
@@ -92,24 +120,27 @@ impl KnowledgeService {
                     cancelled,
                 )
             }
-            "attachment-rename" => self.run_linux_attachment_mutation(
-                vault,
-                &operation,
-                id,
-                &store,
-                &guard,
-                &identity,
-                rollback,
-                cancelled,
-            ),
+            "attachment-rename" | "conversion" | "note-move" | "external-reference-update" => self
+                .run_linux_attachment_mutation(
+                    vault,
+                    &operation,
+                    id,
+                    &store,
+                    &guard,
+                    &identity,
+                    source_epoch,
+                    rollback,
+                    cancelled,
+                ),
             _ => Err(linux_knowledge_write_unavailable()),
         }
     }
 
-    fn execute_linux_attachment_rename_unlocked(
+    fn execute_linux_attachment_mutation_unlocked(
         &self,
         vault: &TrustedVault,
         operation: &AttachmentOperationPlan,
+        source_epoch: u64,
         cancelled: &AtomicBool,
     ) -> Result<AttachmentOperationResult, KnowledgeError> {
         admit_linux_attachment_operation(operation)?;
@@ -134,13 +165,16 @@ impl KnowledgeService {
             &intent.store,
             &guard,
             &identity,
+            source_epoch,
             false,
             cancelled,
         )
     }
 
-    /// Order matters: the creation runs first and the removal last, so an
-    /// interruption never leaves Markdown pointing at a missing attachment.
+    /// Order matters: a creation runs before the rewrites that point at it and
+    /// the removal runs last, so an interruption never leaves Markdown pointing
+    /// at a missing attachment.
+    #[allow(clippy::too_many_arguments)]
     fn run_linux_attachment_mutation(
         &self,
         vault: &TrustedVault,
@@ -149,6 +183,7 @@ impl KnowledgeService {
         store: &ImportStore,
         guard: &FilesystemDirectoryIdentityGuard,
         identity: &KnowledgeTargetIdentity,
+        source_epoch: u64,
         rollback: bool,
         cancelled: &AtomicBool,
     ) -> Result<AttachmentOperationResult, KnowledgeError> {
@@ -167,6 +202,18 @@ impl KnowledgeService {
             issues: operation.issues.clone(),
             recovery_path: format!(".luckyray/attachment-operations/{id}.json"),
         };
+        // The external witness and its short-lived evidence gate the whole
+        // operation, exactly as on Windows. A rollback re-reads nothing external.
+        let _external_files = if rollback {
+            Vec::new()
+        } else {
+            self.hold_external_plan(vault, operation, source_epoch)?
+        };
+        let _external_locations = if rollback {
+            Vec::new()
+        } else {
+            hold_external_dependencies(operation)?
+        };
         let ordered: Vec<(usize, &AttachmentFileChange)> = if rollback {
             operation.files.iter().enumerate().rev().collect()
         } else {
@@ -183,9 +230,13 @@ impl KnowledgeService {
                 break;
             }
             let outcome = if rollback {
-                self.rollback_linux_attachment_step(vault, file, index, store, guard, identity, cancelled)
+                self.rollback_linux_attachment_step(
+                    vault, file, index, store, guard, identity, cancelled,
+                )
             } else {
-                self.apply_linux_attachment_step(vault, file, index, store, guard, identity, cancelled)
+                self.apply_linux_attachment_step(
+                    vault, file, index, operation, store, guard, identity, cancelled,
+                )
             };
             match outcome {
                 Ok(()) => result.completed_files += 1,
@@ -230,11 +281,13 @@ impl KnowledgeService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_linux_attachment_step(
         &self,
         vault: &TrustedVault,
         file: &AttachmentFileChange,
         index: usize,
+        operation: &AttachmentOperationPlan,
         store: &ImportStore,
         guard: &FilesystemDirectoryIdentityGuard,
         identity: &KnowledgeTargetIdentity,
@@ -243,6 +296,7 @@ impl KnowledgeService {
         let before = bytes(&file.before)?;
         let after = bytes(&file.after)?;
         let key = self.attachment_receipt_key(false)?;
+        let private = step_is_private(&file.relative_path);
         let mut admission_error: Option<KnowledgeError> = None;
         let outcome: StepOutcome = match (before.as_deref(), after.as_deref()) {
             (None, Some(content)) => store.install(index, &file.relative_path, content, &key, || {
@@ -254,28 +308,44 @@ impl KnowledgeService {
                     &mut admission_error,
                 )
             }),
-            (Some(previous), Some(content)) => store.install_replace(
-                index,
-                &file.relative_path,
-                previous,
-                content,
-                &key,
-                || {
-                    self.admit_linux_attachment_step(
-                        vault,
-                        identity,
-                        guard,
-                        cancelled,
-                        &mut admission_error,
-                    )
-                },
-            ),
+            (Some(previous), Some(content)) => {
+                // The attachments this note will point at must still be the
+                // exact object the plan recorded, held for the whole rewrite.
+                let _attachments = operation
+                    .attachment_dependencies
+                    .iter()
+                    .map(|(relative, digest)| {
+                        hold_verified_attachment(&vault.root, relative, digest)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                store.install_replace(
+                    index,
+                    &file.relative_path,
+                    previous,
+                    content,
+                    &key,
+                    || {
+                        self.admit_linux_attachment_step(
+                            vault,
+                            identity,
+                            guard,
+                            cancelled,
+                            &mut admission_error,
+                        )
+                    },
+                )
+            }
             (Some(previous), None) => {
                 // Preview is not a snapshot of future references: no Markdown may
-                // still resolve here, and every inspected note stays held.
-                let _references =
-                    hold_unreferenced_attachment(&vault.root, &file.relative_path)?;
-                store.install_remove(index, &file.relative_path, previous, &key, || {
+                // still resolve to an attachment this step removes, and every
+                // inspected note stays held. A note move removes a document, not
+                // an attachment, so there is no attachment reference to rescan.
+                let _references = if private {
+                    hold_unreferenced_attachment(&vault.root, &file.relative_path)?
+                } else {
+                    Vec::new()
+                };
+                store.install_remove(index, &file.relative_path, previous, private, &key, || {
                     self.admit_linux_attachment_step(
                         vault,
                         identity,
@@ -294,7 +364,7 @@ impl KnowledgeService {
                 .take()
                 .map_or_else(|| step_failure(failure), |admission| admission)
         })?;
-        if file.relative_path.to_ascii_lowercase().ends_with(".md") {
+        if !private {
             self.index.mark_document_dirty(&KnowledgeDocumentRef {
                 vault_id: vault.registration.id.clone(),
                 relative_path: file.relative_path.clone(),
@@ -305,6 +375,7 @@ impl KnowledgeService {
 
     /// Reverse direction of the same engine. A created name is retained and
     /// reported, never deleted: later notes may already reference it.
+    #[allow(clippy::too_many_arguments)]
     fn rollback_linux_attachment_step(
         &self,
         vault: &TrustedVault,
@@ -322,6 +393,7 @@ impl KnowledgeService {
             None => return Ok(()),
         };
         let key = self.attachment_receipt_key(false)?;
+        let private = step_is_private(&file.relative_path);
         let mut admission_error: Option<KnowledgeError> = None;
         let outcome: StepOutcome = match after.as_deref() {
             Some(_) => store.restore_replaced(index, &file.relative_path, previous, &key, || {
@@ -333,22 +405,29 @@ impl KnowledgeService {
                     &mut admission_error,
                 )
             }),
-            None => store.restore_removed(index, &file.relative_path, previous, &key, || {
-                self.admit_linux_attachment_step(
-                    vault,
-                    identity,
-                    guard,
-                    cancelled,
-                    &mut admission_error,
-                )
-            }),
+            None => store.restore_removed(
+                index,
+                &file.relative_path,
+                previous,
+                private,
+                &key,
+                || {
+                    self.admit_linux_attachment_step(
+                        vault,
+                        identity,
+                        guard,
+                        cancelled,
+                        &mut admission_error,
+                    )
+                },
+            ),
         };
         outcome.map_err(|failure| {
             admission_error
                 .take()
                 .map_or_else(|| rollback_failure(failure), |admission| admission)
         })?;
-        if file.relative_path.to_ascii_lowercase().ends_with(".md") {
+        if !private {
             self.index.mark_document_dirty(&KnowledgeDocumentRef {
                 vault_id: vault.registration.id.clone(),
                 relative_path: file.relative_path.clone(),
@@ -356,4 +435,89 @@ impl KnowledgeService {
         }
         Ok(())
     }
+
+    /// A note move reaches this engine only after the rewritten bytes were
+    /// computed by the move preview, so execution writes exactly those bytes.
+    /// A partial result is reported as the same `knowledge-operation-partial`
+    /// the Windows runner produces.
+    pub(super) fn execute_linux_note_move_unlocked(
+        &self,
+        vault: &TrustedVault,
+        operation: &AttachmentOperationPlan,
+    ) -> Result<(), KnowledgeError> {
+        let result = self.execute_linux_attachment_operation_unlocked(
+            vault,
+            operation,
+            operation.source_epoch,
+            &AtomicBool::new(false),
+        )?;
+        if result.status == "partial" {
+            return Err(error(
+                "knowledge-operation-partial",
+                format!(
+                    "Note move is partial; recover operation {} in Vault attachments",
+                    result.operation_id
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Read-only count of the tombstones this Vault's own removals left behind.
+    /// Nothing is cleaned, moved or opened for writing.
+    pub(crate) fn attachment_recovery_summary(
+        &self,
+        vault_id: &str,
+    ) -> Result<AttachmentRecoverySummary, KnowledgeError> {
+        let (vault, guard, identity) = self.capture_current_target()?;
+        if vault.registration.id != vault_id {
+            return Err(knowledge_target_not_current());
+        }
+        let tombstones = count_tombstones(&vault.root)?;
+        self.verify_current_target(&identity, &guard)?;
+        Ok(AttachmentRecoverySummary { tombstones })
+    }
+}
+
+fn count_tombstones(root: &Path) -> Result<usize, KnowledgeError> {
+    let mut pending = vec![PathBuf::new()];
+    let mut count = 0usize;
+    let mut visited = 0usize;
+    while let Some(relative) = pending.pop() {
+        let directory = safe_existing_directory(root, &relative)?;
+        let entries = std::fs::read_dir(&directory).map_err(|_| {
+            error("knowledge-recovery-read-failed", "Cannot inspect the Vault")
+        })?;
+        for entry in entries {
+            visited += 1;
+            if visited > 100_000 {
+                return Err(error(
+                    "knowledge-recovery-read-failed",
+                    "Vault exceeds the recovery inspection limit",
+                ));
+            }
+            let entry = entry.map_err(|_| {
+                error("knowledge-recovery-read-failed", "Cannot inspect the Vault")
+            })?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if [".luckyray", ".obsidian", ".git"]
+                .iter()
+                .any(|reserved| name.eq_ignore_ascii_case(reserved))
+            {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|_| {
+                error("knowledge-recovery-read-failed", "Cannot inspect the Vault")
+            })?;
+            if kind.is_dir() {
+                pending.push(relative.join(name));
+            } else if kind.is_file() && is_tombstone_name(name) {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
 }

@@ -241,14 +241,20 @@ impl Step {
             stage: None,
         }
     }
-    /// An attachment moved aside to its tombstone name.
+    /// An attachment moved aside to its tombstone name. A private target must
+    /// still be a 0600 file with no extra attributes; a Markdown document is an
+    /// ordinary user file, and since `Remove` only renames it, its attributes
+    /// travel with the inode and nothing is reconstructed.
     fn capture_remove(
         relative: &str,
         context: &str,
         tombstone: &str,
         snapshot: &Snapshot,
+        private: bool,
     ) -> io::Result<Self> {
-        private_file_metadata(&snapshot.file)?;
+        if private {
+            private_file_metadata(&snapshot.file)?;
+        }
         let identity = Identity::of(&snapshot.file)?;
         let digest = hash(&snapshot.bytes);
         Ok(Self {
@@ -604,12 +610,29 @@ impl ImportStore {
 
     /// Prove one executed step of any verb. `Remove` proves the tombstone, not
     /// the now-vacant original name.
+    /// Read one target name. Attachments are private files (0600, no ACL) and
+    /// are proved as such; Markdown documents are ordinary user files and are
+    /// proved only as single-link regular files.
+    fn read_target(
+        &self,
+        parent: &Directory,
+        name: &OsStr,
+        private: bool,
+    ) -> io::Result<Option<Snapshot>> {
+        if private {
+            private_read(parent, name, MAX_FILE)
+        } else {
+            parent.read(name, false, MAX_FILE)
+        }
+    }
+
     pub(crate) fn verify_step(
         &self,
         index: usize,
         value: &str,
         before: Option<&[u8]>,
         after: Option<&[u8]>,
+        private: bool,
         key: &[u8; 32],
     ) -> io::Result<()> {
         self.verify()?;
@@ -650,9 +673,10 @@ impl ImportStore {
                 if step.digest != previous {
                     return Err(conflict());
                 }
-                let tomb = private_read(&parent, OsStr::new(tombstone), MAX_FILE)?
+                let tomb = self
+                    .read_target(&parent, OsStr::new(tombstone), private)?
                     .ok_or_else(conflict)?;
-                step.verify_before(value, &tomb, Verb::Remove, true)?;
+                step.verify_before(value, &tomb, Verb::Remove, private)?;
             }
         }
         self.verify()
@@ -665,6 +689,7 @@ impl ImportStore {
         index: usize,
         value: &str,
         before: &[u8],
+        private: bool,
         key: &[u8; 32],
     ) -> io::Result<()> {
         self.verify()?;
@@ -688,8 +713,10 @@ impl ImportStore {
                 }
             }
             Verb::Remove => {
-                let target = private_read(&parent, name, MAX_FILE)?.ok_or_else(conflict)?;
-                step.verify_before(value, &target, Verb::Remove, true)?;
+                let target = self
+                    .read_target(&parent, name, private)?
+                    .ok_or_else(conflict)?;
+                step.verify_before(value, &target, Verb::Remove, private)?;
             }
         }
         self.verify()
@@ -793,6 +820,7 @@ impl ImportStore {
         index: usize,
         value: &str,
         before: &[u8],
+        private: bool,
         key: &[u8; 32],
         mut admit: impl FnMut() -> io::Result<()>,
     ) -> io::Result<bool> {
@@ -815,19 +843,25 @@ impl ImportStore {
                 return Err(conflict());
             }
         }
-        let step = match private_read(&parent, name, MAX_FILE)? {
+        let step = match self.read_target(&parent, name, private)? {
             Some(target) => {
                 if target.bytes != before {
                     return Err(conflict());
                 }
                 match existing {
                     Some(step) => {
-                        step.verify_before(value, &target, Verb::Remove, true)?;
+                        step.verify_before(value, &target, Verb::Remove, private)?;
                         step
                     }
                     None => {
                         let context = self.context(index)?;
-                        let step = Step::capture_remove(value, &context, &tombstone_label, &target)?;
+                        let step = Step::capture_remove(
+                            value,
+                            &context,
+                            &tombstone_label,
+                            &target,
+                            private,
+                        )?;
                         self.write_step(index, &step, key)?
                     }
                 }
@@ -839,8 +873,10 @@ impl ImportStore {
                 if step.digest != before_digest {
                     return Err(conflict());
                 }
-                let tomb = private_read(&parent, tombstone, MAX_FILE)?.ok_or_else(conflict)?;
-                step.verify_before(value, &tomb, Verb::Remove, true)?;
+                let tomb = self
+                    .read_target(&parent, tombstone, private)?
+                    .ok_or_else(conflict)?;
+                step.verify_before(value, &tomb, Verb::Remove, private)?;
                 admit()?;
                 self.verify()?;
                 return Ok(true);
@@ -848,17 +884,24 @@ impl ImportStore {
         };
         admit()?;
         self.verify()?;
-        let recheck = private_read(&parent, name, MAX_FILE)?.ok_or_else(conflict)?;
-        step.verify_before(value, &recheck, Verb::Remove, true)?;
+        let recheck = self
+            .read_target(&parent, name, private)?
+            .ok_or_else(conflict)?;
+        step.verify_before(value, &recheck, Verb::Remove, private)?;
         // A tombstone name that already holds another object is a conflict:
         // both objects are preserved and neither is overwritten.
-        if private_read(&parent, tombstone, MAX_FILE)?.is_some() {
+        if self
+            .read_target(&parent, tombstone, private)?
+            .is_some()
+        {
             return Err(conflict());
         }
         parent.verify_named(name, &recheck.file)?;
         parent.rename_new(name, &parent, tombstone)?;
-        let moved = private_read(&parent, tombstone, MAX_FILE)?.ok_or_else(conflict)?;
-        step.verify_before(value, &moved, Verb::Remove, true)?;
+        let moved = self
+            .read_target(&parent, tombstone, private)?
+            .ok_or_else(conflict)?;
+        step.verify_before(value, &moved, Verb::Remove, private)?;
         admit()?;
         self.verify()?;
         Ok(false)
@@ -873,6 +916,7 @@ impl ImportStore {
         index: usize,
         value: &str,
         before: &[u8],
+        private: bool,
         key: &[u8; 32],
         mut admit: impl FnMut() -> io::Result<()>,
     ) -> io::Result<bool> {
@@ -891,7 +935,7 @@ impl ImportStore {
         let tombstone = OsStr::new(&tombstone_label);
         if let Some(current) = parent.read(name, false, MAX_FILE)? {
             if step
-                .verify_before(value, &current, Verb::Remove, true)
+                .verify_before(value, &current, Verb::Remove, private)
                 .is_err()
             {
                 return Err(io::Error::from(io::ErrorKind::AlreadyExists));
@@ -900,15 +944,18 @@ impl ImportStore {
             self.verify()?;
             return Ok(true);
         }
-        let tomb = private_read(&parent, tombstone, MAX_FILE)?
+        let tomb = self
+            .read_target(&parent, tombstone, private)?
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-        step.verify_before(value, &tomb, Verb::Remove, true)?;
+        step.verify_before(value, &tomb, Verb::Remove, private)?;
         admit()?;
         self.verify()?;
         parent.verify_named(tombstone, &tomb.file)?;
         parent.rename_new(tombstone, &parent, name)?;
-        let restored = private_read(&parent, name, MAX_FILE)?.ok_or_else(conflict)?;
-        step.verify_before(value, &restored, Verb::Remove, true)?;
+        let restored = self
+            .read_target(&parent, name, private)?
+            .ok_or_else(conflict)?;
+        step.verify_before(value, &restored, Verb::Remove, private)?;
         admit()?;
         self.verify()?;
         Ok(false)

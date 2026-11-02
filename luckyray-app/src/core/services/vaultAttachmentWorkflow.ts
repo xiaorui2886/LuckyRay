@@ -110,6 +110,15 @@ export function attachmentIssueLabel(status: string) {
     "knowledge-export-verification-failed": "导出文件校验未通过，请检查目标目录",
     "knowledge-export-destination-not-empty": "导出目标不是空文件夹",
     "knowledge-export-source-overlap": "导出目标不能与原知识库重叠",
+    "knowledge-linux-rollback-unprovable": "回滚未执行，现场已保留",
+    "knowledge-linux-fs-unsupported": "文件系统不支持安全回滚，未做修改",
+    "knowledge-name-conflict": "目标位置已被占用，未覆盖",
+    "knowledge-operation-partial": "未全部完成，可继续或回滚",
   };
-  return attachmentAccessMessage(status) || known[status] || attachmentManagement[status] || "此附件暂未处理，请检查文件位置后重试";
+  // A step failure carries "code: reason". Match the whole status first so
+  // existing labels never change, then fall back to the code alone.
+  const code = status.split(": ")[0];
+  return attachmentAccessMessage(status) || known[status] || attachmentManagement[status]
+    || known[code] || attachmentManagement[code]
+    || "此附件暂未处理，请检查文件位置后重试";
 }

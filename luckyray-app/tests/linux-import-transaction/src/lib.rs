@@ -380,7 +380,7 @@ mod tests {
     fn run_plan(store: &ImportStore, fault: &mut Fault) -> io::Result<()> {
         store.install(0, NEW, b"old-png", &KEY, || fault.tick())?;
         store.install_replace(1, "Note.md", b"old link", b"new link", &KEY, || fault.tick())?;
-        store.install_remove(2, OLD, b"old-png", &KEY, || fault.tick())?;
+        store.install_remove(2, OLD, b"old-png", true, &KEY, || fault.tick())?;
         Ok(())
     }
 
@@ -408,12 +408,12 @@ mod tests {
         run_plan(&store, &mut Fault::none()).unwrap();
         assert_forward_state(root.path(), old_inode);
         store
-            .verify_step(0, NEW, None, Some(&b"old-png"[..]), &KEY)
+            .verify_step(0, NEW, None, Some(&b"old-png"[..]), true, &KEY)
             .unwrap();
         store
-            .verify_step(1, "Note.md", Some(&b"old link"[..]), Some(&b"new link"[..]), &KEY)
+            .verify_step(1, "Note.md", Some(&b"old link"[..]), Some(&b"new link"[..]), true, &KEY)
             .unwrap();
-        store.verify_step(2, OLD, Some(&b"old-png"[..]), None, &KEY).unwrap();
+        store.verify_step(2, OLD, Some(&b"old-png"[..]), None, true, &KEY).unwrap();
         // The published copy and the tombstone are both private.
         assert_eq!(
             fs::metadata(root.path().join(NEW))
@@ -457,7 +457,7 @@ mod tests {
         run_plan(&store, &mut Fault::none()).unwrap();
         // Reverse order of the plan.
         assert!(!store
-            .restore_removed(2, OLD, b"old-png", &KEY, || Ok(()))
+            .restore_removed(2, OLD, b"old-png", true, &KEY, || Ok(()))
             .unwrap());
         assert!(!store
             .restore_replaced(1, "Note.md", b"old link", &KEY, || Ok(()))
@@ -478,14 +478,14 @@ mod tests {
         );
         assert!(!tombstone(root.path(), 2).exists());
         store
-            .verify_before_state(2, OLD, b"old-png", &KEY)
+            .verify_before_state(2, OLD, b"old-png", true, &KEY)
             .unwrap();
         store
-            .verify_before_state(1, "Note.md", b"old link", &KEY)
+            .verify_before_state(1, "Note.md", b"old link", true, &KEY)
             .unwrap();
         // A repeated rollback is a no-op, not a second write.
         assert!(store
-            .restore_removed(2, OLD, b"old-png", &KEY, || Ok(()))
+            .restore_removed(2, OLD, b"old-png", true, &KEY, || Ok(()))
             .unwrap());
         assert!(store
             .restore_replaced(1, "Note.md", b"old link", &KEY, || Ok(()))
@@ -502,14 +502,14 @@ mod tests {
         fs::write(&occupied, b"third party").unwrap();
         fs::set_permissions(&occupied, fs::Permissions::from_mode(0o644)).unwrap();
         let failure = store
-            .restore_removed(2, OLD, b"old-png", &KEY, || Ok(()))
+            .restore_removed(2, OLD, b"old-png", true, &KEY, || Ok(()))
             .err()
             .expect("an occupied original name must not be overwritten");
         assert_eq!(failure.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read(&occupied).unwrap(), b"third party");
         assert!(tombstone(root.path(), 2).is_file());
         assert!(store
-            .verify_before_state(2, OLD, b"old-png", &KEY)
+            .verify_before_state(2, OLD, b"old-png", true, &KEY)
             .is_err());
     }
 
@@ -545,7 +545,7 @@ mod tests {
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         let store = ImportStore::open(root.path(), ID, false).unwrap();
         assert!(store
-            .verify_step(1, "Note.md", Some(&b"old link"[..]), Some(&b"new link"[..]), &KEY)
+            .verify_step(1, "Note.md", Some(&b"old link"[..]), Some(&b"new link"[..]), true, &KEY)
             .is_err());
         assert!(store
             .restore_replaced(1, "Note.md", b"old link", &KEY, || Ok(()))
@@ -607,7 +607,7 @@ mod tests {
         let store = transaction(root.path());
         fs::hard_link(root.path().join(OLD), root.path().join("attachments/copy.png")).unwrap();
         assert!(store
-            .install_remove(2, OLD, b"old-png", &KEY, || Ok(()))
+            .install_remove(2, OLD, b"old-png", true, &KEY, || Ok(()))
             .is_err());
         assert_eq!(fs::read(root.path().join(OLD)).unwrap(), b"old-png");
         let outside = temporary();
@@ -668,7 +668,7 @@ mod tests {
         assert!(!store.install(0, name, b"png", &KEY, || Ok(())).unwrap());
         assert_eq!(fs::read(root.path().join(name)).unwrap(), b"png");
         assert!(!store
-            .install_remove(1, name, b"png", &KEY, || Ok(()))
+            .install_remove(1, name, b"png", true, &KEY, || Ok(()))
             .unwrap());
         assert!(!root.path().join(name).exists());
         let moved = root
@@ -676,7 +676,7 @@ mod tests {
             .join(format!("素材 目录 #1%/.lrk-{ID}-1.removed"));
         assert!(moved.is_file());
         assert!(!store
-            .restore_removed(1, name, b"png", &KEY, || Ok(()))
+            .restore_removed(1, name, b"png", true, &KEY, || Ok(()))
             .unwrap());
         assert_eq!(fs::read(root.path().join(name)).unwrap(), b"png");
     }
@@ -690,7 +690,7 @@ mod tests {
         private_file(&occupied, b"someone else");
         let old_inode = fs::metadata(root.path().join(OLD)).unwrap().ino();
         assert!(store
-            .install_remove(2, OLD, b"old-png", &KEY, || Ok(()))
+            .install_remove(2, OLD, b"old-png", true, &KEY, || Ok(()))
             .is_err());
         assert_eq!(
             fs::metadata(root.path().join(OLD)).unwrap().ino(),
@@ -719,5 +719,138 @@ mod tests {
             ImportStore::list_ids(root.path()).unwrap(),
             vec![ID.to_owned()]
         );
+    }
+
+    // --- Step 2 shapes: conversion, note move, external reference update ---------------
+
+    #[test]
+    fn note_removal_accepts_a_shared_markdown_file() {
+        // A note move removes a Markdown document, not a private attachment. The
+        // private rule must still be enforced for attachments, so the same call
+        // is refused as private and accepted as shared.
+        let root = fixture();
+        let store = transaction(root.path());
+        let note = root.path().join("Moved.md");
+        fs::write(&note, b"body").unwrap();
+        fs::set_permissions(&note, fs::Permissions::from_mode(0o644)).unwrap();
+        let inode = fs::metadata(&note).unwrap().ino();
+        assert!(store
+            .install_remove(0, "Moved.md", b"body", true, &KEY, || Ok(()))
+            .is_err());
+        assert_eq!(fs::metadata(&note).unwrap().ino(), inode);
+        assert!(!store
+            .install_remove(0, "Moved.md", b"body", false, &KEY, || Ok(()))
+            .unwrap());
+        assert!(!note.exists());
+        let moved = fs::metadata(root.path().join(format!(".lrk-{ID}-0.removed"))).unwrap();
+        assert_eq!(moved.ino(), inode);
+        assert_eq!(moved.permissions().mode() & 0o777, 0o644);
+        store
+            .verify_step(0, "Moved.md", Some(&b"body"[..]), None, false, &KEY)
+            .unwrap();
+        assert!(!store
+            .restore_removed(0, "Moved.md", b"body", false, &KEY, || Ok(()))
+            .unwrap());
+        let restored = fs::metadata(&note).unwrap();
+        assert_eq!(restored.ino(), inode);
+        assert_eq!(restored.permissions().mode() & 0o777, 0o644);
+        store
+            .verify_before_state(0, "Moved.md", b"body", false, &KEY)
+            .unwrap();
+    }
+
+    #[test]
+    fn conversion_sequence_publishes_copies_then_rewrites_the_note() {
+        let root = fixture();
+        fs::create_dir_all(root.path().join("attachments")).unwrap();
+        fs::write(root.path().join("Note.md"), b"old").unwrap();
+        fs::set_permissions(
+            root.path().join("Note.md"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        let store = transaction(root.path());
+        // Copies first, then the rewrite that points at them.
+        assert!(!store
+            .install(0, "attachments/a.png", b"png-a", &KEY, || Ok(()))
+            .unwrap());
+        assert!(!store
+            .install(1, "attachments/b.png", b"png-b", &KEY, || Ok(()))
+            .unwrap());
+        assert!(!store
+            .install_replace(2, "Note.md", b"old", b"new", &KEY, || Ok(()))
+            .unwrap());
+        assert_eq!(fs::read(root.path().join("attachments/a.png")).unwrap(), b"png-a");
+        assert_eq!(fs::read(root.path().join("attachments/b.png")).unwrap(), b"png-b");
+        assert_eq!(fs::read(root.path().join("Note.md")).unwrap(), b"new");
+        store
+            .verify_step(2, "Note.md", Some(&b"old"[..]), Some(&b"new"[..]), false, &KEY)
+            .unwrap();
+        // Rolling back restores the note and keeps both copies.
+        assert!(!store
+            .restore_replaced(2, "Note.md", b"old", &KEY, || Ok(()))
+            .unwrap());
+        assert_eq!(fs::read(root.path().join("Note.md")).unwrap(), b"old");
+        assert_eq!(fs::read(root.path().join("attachments/a.png")).unwrap(), b"png-a");
+        assert_eq!(fs::read(root.path().join("attachments/b.png")).unwrap(), b"png-b");
+    }
+
+    #[test]
+    fn interrupted_note_rewrite_rolls_back_without_touching_the_copies() {
+        let root = fixture();
+        fs::create_dir_all(root.path().join("attachments")).unwrap();
+        fs::write(root.path().join("Note.md"), b"old").unwrap();
+        fs::set_permissions(
+            root.path().join("Note.md"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        let store = transaction(root.path());
+        assert!(!store
+            .install(0, "attachments/a.png", b"png-a", &KEY, || Ok(()))
+            .unwrap());
+        // Interrupt the rewrite on its first admission, after the evidence exists.
+        let mut calls = 0;
+        assert!(store
+            .install_replace(1, "Note.md", b"old", b"new", &KEY, || {
+                calls += 1;
+                if calls == 1 {
+                    Err(io::Error::from(io::ErrorKind::Interrupted))
+                } else {
+                    Ok(())
+                }
+            })
+            .is_err());
+        assert_eq!(fs::read(root.path().join("Note.md")).unwrap(), b"old");
+        // The rollback finds the recorded before-state and changes nothing.
+        assert!(store
+            .restore_replaced(1, "Note.md", b"old", &KEY, || Ok(()))
+            .unwrap());
+        assert_eq!(fs::read(root.path().join("Note.md")).unwrap(), b"old");
+        assert_eq!(
+            fs::read(root.path().join("attachments/a.png")).unwrap(),
+            b"png-a"
+        );
+    }
+
+    #[test]
+    fn unprovable_forward_state_writes_no_evidence() {
+        // A note that matches neither the before nor the after bytes must stop
+        // the step before any evidence or mutation exists.
+        let root = fixture();
+        fs::write(root.path().join("Note.md"), b"third state").unwrap();
+        fs::set_permissions(
+            root.path().join("Note.md"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        let store = transaction(root.path());
+        let failure = store
+            .install_replace(1, "Note.md", b"old", b"new", &KEY, || Ok(()))
+            .err()
+            .expect("a third state must not be rewritten");
+        assert_eq!(failure.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(root.path().join("Note.md")).unwrap(), b"third state");
+        assert!(!step_path(root.path(), 1).exists());
     }
 }

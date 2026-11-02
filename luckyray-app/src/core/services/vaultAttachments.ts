@@ -57,6 +57,10 @@ export const recoverAttachmentOperation = (sourceEpoch: number, vaultId: string,
 export const cancelAttachmentOperation = (vaultId: string, requestId: string) => invoke<void>("knowledge_cancel_attachment_operation", { vaultId, requestId });
 export const listAttachmentOperations = (vaultId: string) => invoke<string[]>("knowledge_list_attachment_operations", { vaultId });
 
+/** Read-only: how many removed originals the Vault still holds. Never cleans. */
+export type AttachmentRecoverySummary = { tombstones: number };
+export const getAttachmentRecoverySummary = (vaultId: string) => invoke<AttachmentRecoverySummary>("knowledge_attachment_recovery_summary", { vaultId });
+
 // Operation state is scoped to a Vault and survives a settings component closing.
 // It is transient UI state; native files and durable receipts remain authoritative.
 const attachmentWorkflows = new Map<string, ReturnType<typeof createAttachmentWorkflow>>();

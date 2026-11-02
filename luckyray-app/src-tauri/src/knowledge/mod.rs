@@ -62,7 +62,7 @@ mod attachment_receipts;
 mod attachment_policy;
 mod attachment_observations;
 pub(crate) use attachment_observations::ExternalAttachmentUpdate;
-pub(crate) use attachment_operations::{AttachmentOperationPlan, AttachmentOperationResult, AttachmentOperationIssue};
+pub(crate) use attachment_operations::{AttachmentOperationIssue, AttachmentOperationPlan, AttachmentOperationResult, AttachmentRecoverySummary};
 #[cfg(test)]
 mod attachment_tests;
 #[cfg(test)]

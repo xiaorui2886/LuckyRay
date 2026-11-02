@@ -1,6 +1,6 @@
 import { AttachmentPortabilitySection } from "./AttachmentPortabilitySection";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { getVaultAttachmentWorkflow, listAttachmentOperations, getAttachmentLinkUpdatePolicy, setAttachmentLinkUpdatePolicy, type AttachmentLinkUpdatePolicy } from "../../core/services/vaultAttachments";
+import { getVaultAttachmentWorkflow, listAttachmentOperations, getAttachmentRecoverySummary, getAttachmentLinkUpdatePolicy, setAttachmentLinkUpdatePolicy, type AttachmentLinkUpdatePolicy } from "../../core/services/vaultAttachments";
 import { ensureActiveKnowledgeUiSource } from "../../core/services/knowledge";
 import { readActiveKnowledgeWriteSource } from "../../core/services/knowledgeSource";
 import { attachmentIssueLabel, attachmentWorkflowBusy } from "../../core/services/vaultAttachmentWorkflow";
@@ -25,6 +25,7 @@ export function VaultAttachmentsPanel({ vaultId, relativePath, notePaths, hasUns
   const [records, setRecords] = useState<string[]>([]);
   const [loadingRecords, setLoadingRecords] = useState(false);
   const [recordError, setRecordError] = useState("");
+  const [tombstones, setTombstones] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [linkPolicy, setLinkPolicy] = useState<AttachmentLinkUpdatePolicy | null>(null);
   const [policyBusy, setPolicyBusy] = useState(false);
@@ -51,6 +52,9 @@ export function VaultAttachmentsPanel({ vaultId, relativePath, notePaths, hasUns
     try { const next = await listAttachmentOperations(vaultId); if (request === generation.current) setRecords(next); }
     catch (error) { if (request === generation.current) setRecordError(String(error)); }
     finally { if (request === generation.current) setLoadingRecords(false); }
+    // Read-only count of removed originals. A failure here never blocks recovery.
+    try { const summary = await getAttachmentRecoverySummary(vaultId); if (request === generation.current) setTombstones(summary.tombstones); }
+    catch { if (request === generation.current) setTombstones(null); }
   };
   useEffect(() => { if (action === "recover" && maintenanceOpen) void refreshRecords(); return () => { generation.current += 1; }; }, [action, maintenanceOpen, vaultId]);
   const selectedPaths = scope === "current" ? relativePath ? [relativePath] : [] : notePaths;
@@ -92,6 +96,7 @@ export function VaultAttachmentsPanel({ vaultId, relativePath, notePaths, hasUns
           {action === "recover" && <>
             <label>操作记录<select value={recordId} disabled={loadingRecords} onChange={event => setRecordId(event.target.value)}><option value="">{loadingRecords ? "正在读取…" : records.length ? "选择本库记录" : "暂无操作记录"}</option>{records.map((id, index) => <option value={id} key={id}>记录 {index + 1} · {id.slice(0, 8)}…{id.slice(-4)}</option>)}</select></label>
             <p>继续剩余步骤或回滚引用。已复制的附件保留，外部修改不会被覆盖。</p>
+            {tombstones !== null && tombstones > 0 && <p>恢复区保留 {tombstones} 个已移除的原件，不会自动清理；需要时可在此回滚对应记录。</p>}
             {recordError && <p role="alert" className="vault-attachment-error">{recordError}</p>}
           </>}
         </>}

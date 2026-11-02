@@ -1,10 +1,17 @@
 //! Linux admission and execution for the attachment kinds that are open:
-//! new-file imports and in-Vault attachment renames. Every other kind is still
-//! refused, because Linux cannot yet conditionally remove a named inode for
-//! them (conversion, note move, external reference updates, real file moves).
+//! new-file imports, in-Vault attachment renames, conversions, note moves and
+//! external reference updates. Real file moves and relinks stay refused until
+//! the platform rename primitive is implemented for them.
 use super::attachment_operations::{bytes, validate_plan, AttachmentOperationIssue};
 use super::*;
 use crate::linux_attachment_store::{Dependency, ImportStore, MAX_FILE, MAX_INTENT};
+
+/// Attachments are private files (0600, no extra attributes). Markdown
+/// documents are ordinary user files: a removal renames their inode, so only
+/// the recorded identity and bytes are proved for them.
+pub(super) fn step_is_private(relative_path: &str) -> bool {
+    !relative_path.to_ascii_lowercase().ends_with(".md")
+}
 
 /// Durable intent of one admitted Linux attachment operation.
 pub(super) struct LinuxAttachmentIntent {
@@ -13,14 +20,18 @@ pub(super) struct LinuxAttachmentIntent {
     pub(super) plan: AttachmentOperationPlan,
 }
 
-/// Kind-dispatch admission. The import rule is unchanged; `attachment-rename`
-/// is the only newly admitted kind and it has its own closed shape below.
+/// Kind-dispatch admission. The import rule is unchanged; the four in-Vault
+/// mutation kinds have their own closed shapes below, and everything else is
+/// still refused.
 pub(super) fn admit_linux_attachment_operation(
     operation: &AttachmentOperationPlan,
 ) -> Result<(), KnowledgeError> {
     match operation.kind.as_str() {
         "import" => admit_import(operation),
         "attachment-rename" => admit_rename(operation),
+        "conversion" => admit_conversion(operation),
+        "note-move" => admit_note_move(operation),
+        "external-reference-update" => admit_external_reference_update(operation),
         _ => Err(linux_knowledge_write_unavailable()),
     }
 }
@@ -154,6 +165,145 @@ fn admit_rename(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeErro
     Ok(())
 }
 
+/// Collecting old material attachments: publish the copies first, then rewrite
+/// the notes that point at them. Nothing is removed and nothing external is
+/// written - the source bytes were sealed into the plan at preview time.
+fn admit_conversion(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
+    if operation.files.is_empty()
+        || operation.files.len() > 1024
+        || operation.material_relocation.is_some()
+        || operation.material_revision.is_some()
+        || operation.material_original_path.is_some()
+        || operation.material_file_move.is_some()
+        || !operation.external_paths.is_empty()
+        || !operation.external_dependencies.is_empty()
+    {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    let mut total = 0usize;
+    let mut created = 0usize;
+    let mut rewriting = false;
+    for file in &operation.files {
+        let before = bytes(&file.before)?;
+        let after = bytes(&file.after)?;
+        let markdown = file.relative_path.to_ascii_lowercase().ends_with(".md");
+        let charge = match (before.as_deref(), after.as_deref()) {
+            (None, Some(content)) => {
+                // A rewrite may never precede the copy it points at, or an
+                // interruption would leave Markdown pointing at a missing file.
+                if markdown || rewriting {
+                    return Err(linux_knowledge_write_unavailable());
+                }
+                created += 1;
+                content.len()
+            }
+            (Some(previous), Some(content)) => {
+                if !markdown {
+                    return Err(linux_knowledge_write_unavailable());
+                }
+                rewriting = true;
+                previous.len() + content.len()
+            }
+            // Conversion only copies and rewrites; it never removes or no-ops.
+            (Some(_), None) | (None, None) => return Err(linux_knowledge_write_unavailable()),
+        };
+        if charge > 2 * MAX_FILE {
+            return Err(linux_knowledge_write_unavailable());
+        }
+        total = total
+            .checked_add(charge)
+            .ok_or_else(linux_knowledge_write_unavailable)?;
+        if total > 128 * 1024 * 1024 {
+            return Err(linux_knowledge_write_unavailable());
+        }
+    }
+    if created == 0 {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    for (path, digest) in &operation.attachment_dependencies {
+        if !operation.files.iter().any(|file| {
+            &file.relative_path == path
+                && file.before.is_none()
+                && file.after_revision.as_ref() == Some(digest)
+        }) {
+            return Err(linux_knowledge_write_unavailable());
+        }
+    }
+    Ok(())
+}
+
+/// Moving a note inside the Vault: publish the rewritten document under its new
+/// name, then move the original aside. Exactly two steps, in that order.
+fn admit_note_move(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
+    if operation.files.len() != 2
+        || !operation.attachment_dependencies.is_empty()
+        || operation.material_relocation.is_some()
+        || operation.material_revision.is_some()
+        || operation.material_original_path.is_some()
+        || operation.material_file_move.is_some()
+        || !operation.external_paths.is_empty()
+        || !operation.external_dependencies.is_empty()
+    {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    let published = &operation.files[0];
+    let removed = &operation.files[1];
+    let published_markdown = published.relative_path.to_ascii_lowercase().ends_with(".md");
+    let removed_markdown = removed.relative_path.to_ascii_lowercase().ends_with(".md");
+    if !published_markdown
+        || !removed_markdown
+        || published.before.is_some()
+        || published.after.is_none()
+        || removed.before.is_none()
+        || removed.after.is_some()
+    {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    let after = bytes(&published.after)?.ok_or_else(linux_knowledge_write_unavailable)?;
+    let before = bytes(&removed.before)?.ok_or_else(linux_knowledge_write_unavailable)?;
+    if after.len() > MAX_FILE || before.len() > MAX_FILE {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    Ok(())
+}
+
+/// Updating references after an external move: existing Markdown only. The
+/// moved files themselves are already in place and are held, never written, so
+/// no external path is admitted here.
+fn admit_external_reference_update(
+    operation: &AttachmentOperationPlan,
+) -> Result<(), KnowledgeError> {
+    if operation.files.is_empty()
+        || operation.files.len() > 1024
+        || operation.material_relocation.is_some()
+        || operation.material_revision.is_some()
+        || operation.material_original_path.is_some()
+        || operation.material_file_move.is_some()
+        || !operation.external_paths.is_empty()
+        || !operation.external_dependencies.is_empty()
+    {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    let mut total = 0usize;
+    for file in &operation.files {
+        if !file.relative_path.to_ascii_lowercase().ends_with(".md") {
+            return Err(linux_knowledge_write_unavailable());
+        }
+        let before = bytes(&file.before)?.ok_or_else(linux_knowledge_write_unavailable)?;
+        let after = bytes(&file.after)?.ok_or_else(linux_knowledge_write_unavailable)?;
+        if before.len() > MAX_FILE || after.len() > MAX_FILE {
+            return Err(linux_knowledge_write_unavailable());
+        }
+        total = total
+            .checked_add(before.len() + after.len())
+            .ok_or_else(linux_knowledge_write_unavailable)?;
+        if total > 128 * 1024 * 1024 {
+            return Err(linux_knowledge_write_unavailable());
+        }
+    }
+    Ok(())
+}
+
 impl KnowledgeService {
     pub(super) fn read_linux_attachment_operation_plan(
         &self,
@@ -233,7 +383,13 @@ impl KnowledgeService {
                     // A retained creation is not asserted: it stays on purpose.
                     if let Some(previous) = before.as_deref() {
                         store
-                            .verify_before_state(index, &file.relative_path, previous, &key)
+                            .verify_before_state(
+                                index,
+                                &file.relative_path,
+                                previous,
+                                step_is_private(&file.relative_path),
+                                &key,
+                            )
                             .map_err(linux_transactions::failure)?;
                     }
                 } else if plan.kind == "import" {
@@ -252,6 +408,7 @@ impl KnowledgeService {
                             &file.relative_path,
                             before.as_deref(),
                             after.as_deref(),
+                            step_is_private(&file.relative_path),
                             &key,
                         )
                         .map_err(linux_transactions::failure)?;
