@@ -34,6 +34,7 @@ jobs:
           set -euo pipefail
           python3 luckyray-app/tests/linux-notes-ci.test.py -v
           node --test luckyray-app/tests/externalDropPaths.contract.test.cjs \
+            luckyray-app/tests/vaultImportSourceActivation.contract.test.cjs \
             luckyray-app/tests/linuxVaultPath.contract.test.cjs \
             luckyray-app/tests/linux-package-config.test.mjs
       - name: Install normal dependencies on the disposable runner

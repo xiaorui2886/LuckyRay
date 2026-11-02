@@ -19,6 +19,7 @@ import { createDefaultKnowledgeLegacyBridgeAdapter, knowledgeFolderIdentity, kno
 import {
   KnowledgeServiceError,
   createKnowledgeDocument,
+  ensureActiveKnowledgeUiSource,
   knowledgeDocumentNoteId,
   knowledgeTagCanonicalKey,
   parseKnowledgeDocumentNoteId,
@@ -26,6 +27,7 @@ import {
   readKnowledgeIndexSnapshot,
   setActiveKnowledgeDocumentTags,
 } from "./core/services/knowledge";
+import { readActiveKnowledgeWriteSource } from "./core/services/knowledgeSource";
 import { MATERIAL_CHANGE_LOCAL_EVENT, type MaterialChange } from "./core/services/materialChangeProtocol";
 import {
   resolveVideoThumbnailBackfillInput,
@@ -828,10 +830,27 @@ async function classifyDroppedPaths(paths: string[]): Promise<BridgeDroppedPathI
   }));
 }
 
+async function ensureNotesVaultImportSource(vault: BridgeVaultMetadata, source: ReturnType<typeof readActiveKnowledgeWriteSource>) {
+  const requireCurrent = () => {
+    if (!source || readActiveKnowledgeWriteSource() !== source
+        || source.vaultId !== vault.id || source.rootPath !== vault.rootPath) {
+      throw new KnowledgeServiceError("knowledge-source-inactive", "The import no longer targets the active Vault");
+    }
+  };
+  requireCurrent();
+  const activation = await ensureActiveKnowledgeUiSource();
+  requireCurrent();
+  if (activation.vaultId !== vault.id) {
+    throw new KnowledgeServiceError("knowledge-source-inactive", "The import activation belongs to another Vault");
+  }
+  return requireCurrent;
+}
+
 async function importNotesVaultMarkdownFiles(input: { vault: BridgeVaultMetadata; targetParentRelativePath: string; sourcePaths?: string[] }): Promise<BridgeNotesVaultImportMarkdownResult> {
   if (!isTauri()) {
     return { copiedCount: 0, skippedCount: 0, conflictRenamedCount: 0, targetParentRelativePath: input.targetParentRelativePath || "", files: [], errors: [] };
   }
+  const source = readActiveKnowledgeWriteSource();
   let sourcePaths = input.sourcePaths || [];
   if (!sourcePaths.length) {
     const selected = await open({
@@ -846,6 +865,8 @@ async function importNotesVaultMarkdownFiles(input: { vault: BridgeVaultMetadata
     }
     sourcePaths = Array.isArray(selected) ? selected : [selected];
   }
+  const requireCurrent = await ensureNotesVaultImportSource(input.vault, source);
+  requireCurrent();
   return await invoke<BridgeNotesVaultImportMarkdownResult>("import_notes_vault_markdown_files", {
     vault: input.vault,
     sourcePaths,
@@ -857,6 +878,7 @@ async function importNotesVaultMarkdownFolder(input: { vault: BridgeVaultMetadat
   if (!isTauri()) {
     return { copiedCount: 0, skippedCount: 0, conflictRenamedCount: 0, targetParentRelativePath: input.targetParentRelativePath || "", files: [], errors: [] };
   }
+  const source = readActiveKnowledgeWriteSource();
   let sourceDirectoryPath = input.sourceDirectoryPath || "";
   if (!sourceDirectoryPath) {
     const selected = await open({
@@ -872,6 +894,8 @@ async function importNotesVaultMarkdownFolder(input: { vault: BridgeVaultMetadat
   if (!sourceDirectoryPath) {
     return { copiedCount: 0, skippedCount: 0, conflictRenamedCount: 0, targetParentRelativePath: input.targetParentRelativePath || "", files: [], errors: [] };
   }
+  const requireCurrent = await ensureNotesVaultImportSource(input.vault, source);
+  requireCurrent();
   return await invoke<BridgeNotesVaultImportMarkdownResult>("import_notes_vault_markdown_folder", {
     vault: input.vault,
     sourceDirectoryPath,
