@@ -55,7 +55,12 @@ class EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.source = {"commit": "1" * 40, "tree": "2" * 40}
         self.build = {"application": {"sha256": "3" * 64}}
-        self.scripts = {"smoke": "4" * 64, "webdriver": "5" * 64, "layoutAudit": "6" * 64}
+        self.scripts = {"smoke": "4" * 64, "webdriver": "5" * 64, "layoutAudit": "6" * 64,
+                        "driverPrep": "7" * 64, "driverDiagnostic": "8" * 64}
+        self.driver_source = {"kind": ci.driver_source.KIND, "version": ci.driver_source.VERSION,
+            "archiveSha256": ci.driver_source.ARCHIVE_SHA, "lockSha256": ci.driver_source.LOCK_SHA,
+            "prepScriptSha256": self.scripts["driverPrep"], "diagnosticSha256": self.scripts["driverDiagnostic"],
+            "patchedMainSha256": "9" * 64, "patchedServerSha256": "a" * 64, "sourceClosureSha256": "b" * 64}
         self.raw = {"schemaVersion": 1, "status": "PASS", "scope": ci.SCOPE, "commit": self.source["commit"],
             "applicationSha256": "3" * 64, "scriptSha256": "4" * 64, "helperSha256": "5" * 64,
             "flowCount": 1, "appSessions": 2, "checks": {name: "PASS" for name in ci.smoke.CHECKS},
@@ -156,7 +161,8 @@ class EvidenceTests(unittest.TestCase):
                         body.update(**self.build, scripts=self.scripts)
                     if name == "notes.json":
                         body.update(attempts=1, flowCount=1, childExitCode=1 if case == "child-failed" else 0,
-                                    observations=ci.bounded_report(self.raw), componentLayout=component_unit_payload(self.source, self.scripts))
+                                    observations=ci.bounded_report(self.raw), componentLayout=component_unit_payload(self.source, self.scripts),
+                                    driver={"source": self.driver_source})
                     ci.write_json(run.evidence / name, body)
                 if case == "extra-artifact":
                     (run.evidence / "private.log").write_text("unit-only")
@@ -645,6 +651,97 @@ class TransportEvidenceTests(unittest.TestCase):
             "atUnconfirmedResponse": {"driver": value, "app": value}, "afterClipboardRead": {"nativeDriver": value}},
             cleanupEvidence={"quitFailure": value, "driverTermination": {**value, "exit": value}, "beforeDriverTermination": {"app": value}})
         self.assertNotIn("hunter2", json.dumps(ci.bounded_report(fixture.raw)))
+
+
+class ForwardingDiagnosticsTests(unittest.TestCase):
+    def test_only_exact_closed_driver_tags_after_this_request_are_exported(self):
+        with tempfile.TemporaryDirectory(prefix="forward-log-unit-") as temporary:
+            path = Path(temporary) / "owned.log"
+            prefix = b"hunter2 /private/previous-request\n"
+            body = (b"[luckyray-forward-v1] connect=false hyper=INCOMPLETE_MESSAGE io=NONE depth=2 truncated=false\n"
+                    b"Error serving connection: hyper::Error(User(Service), client error (SendRequest))\n"
+                    b"[luckyray-forward-v1] connect=false hyper=hunter2 io=NONE depth=2 truncated=false\n"
+                    b"[luckyray-forward-v1] connect=true hyper=NONE io=CONNECTION_REFUSED depth=3 truncated=false reason=hunter2\n"
+                    b"private body hunter2\n")
+            path.write_bytes(prefix + body); path.chmod(0o600)
+            value = ci.smoke.read_forwarding_trace(path, len(prefix))
+            self.assertEqual(value, {"state": "OBSERVED", "readBytes": len(body), "truncated": False,
+                "typed": [{"connect": False, "hyper": "INCOMPLETE_MESSAGE", "io": "NONE", "depth": 2, "truncated": False}], "legacy": ["SEND_REQUEST"]})
+            self.assertEqual(value, ci.bounded_forwarding(value))
+            self.assertNotIn("hunter2", json.dumps(value))
+            for offset in (None, True, -1, len(prefix + body) + 1):
+                self.assertEqual(ci.smoke.read_forwarding_trace(path, offset)["state"], "UNAVAILABLE")
+            linked = Path(temporary) / "linked.log"; linked.symlink_to(path)
+            self.assertEqual(ci.smoke.read_forwarding_trace(linked, 0)["state"], "UNAVAILABLE")
+
+    def test_forwarding_bytes_records_and_depth_are_bounded_without_raw_values(self):
+        with tempfile.TemporaryDirectory(prefix="forward-limit-unit-") as temporary:
+            path = Path(temporary) / "owned.log"
+            line = b"[luckyray-forward-v1] connect=false hyper=CANCELED io=NONE depth=2 truncated=false\n"
+            path.write_bytes(line * 2000); path.chmod(0o600)
+            result = ci.smoke.read_forwarding_trace(path, 0)
+            self.assertEqual(result["readBytes"], 65536)
+            self.assertEqual(len(result["typed"]), 2)
+            self.assertTrue(result["truncated"])
+        raw = {"state": "hunter2", "readBytes": True, "path": "hunter2", "typed": [{"connect": "hunter2", "hyper": "hunter2",
+                "io": "hunter2", "depth": 999, "reason": "hunter2"}] * 3, "legacy": ["hunter2", {"secret": "hunter2"}, "CONNECT"]}
+        value = ci.bounded_forwarding(raw)
+        self.assertNotIn("hunter2", json.dumps(value))
+        self.assertTrue(value["truncated"])
+        self.assertIsNone(value["typed"][0]["depth"])
+
+    def test_any_unconfirmed_action_observes_processes_before_cleanup_and_preserves_failure(self):
+        failure = ci.smoke.DriverFailure("TRANSPORT_ERROR", "click", transport="REMOTE_DISCONNECT", elapsed=1)
+        anchors = {"driver": "held-driver", "app": {"456": "held-app"}, "nativeDriver": {"789": "held-native"}}
+        driver = mock.Mock(pid=123); driver.poll.return_value = None
+        def identity(pid):
+            return {"123": "held-driver", "456": "held-app", "789": "held-native"}[str(pid)]
+        trace = {"state": "OBSERVED", "readBytes": 90, "truncated": False,
+                 "typed": [{"connect": False, "hyper": "OTHER", "io": "CONNECTION_RESET", "depth": 3, "truncated": False}], "legacy": ["SEND_REQUEST"]}
+        with mock.patch.object(ci.smoke.helpers, "live_identity", side_effect=identity), mock.patch.object(ci.smoke, "read_forwarding_trace", return_value=trace) as reader:
+            ci.smoke.observe_unconfirmed_failure(failure, Path("/owned/log"), 100, driver, anchors)
+        reader.assert_called_once_with(Path("/owned/log"), 100)
+        self.assertEqual(failure.observation["processesAtResponse"]["app"]["running"], 1)
+        self.assertEqual(failure.observation["processesAtResponse"]["nativeDriver"]["running"], 1)
+        self.assertEqual(failure.observation["processesAtResponse"]["driver"]["state"], "RUNNING")
+        self.assertEqual(failure.observation["transport"], "REMOTE_DISCONNECT")
+        self.assertEqual(failure.observation["responseState"], "UNCONFIRMED")
+        self.assertEqual(failure.observation, ci.bounded_driver(failure.observation))
+        self.assertNotIn("held-", json.dumps(failure.observation))
+        self.assertNotIn("456", json.dumps(failure.observation))
+        with mock.patch.object(ci.smoke, "observe_processes", side_effect=RuntimeError("hunter2")), \
+             mock.patch.object(ci.smoke, "read_forwarding_trace", side_effect=RuntimeError("hunter2")):
+            ci.smoke.observe_unconfirmed_failure(failure, Path("/owned/log"), 100, driver, anchors)
+        self.assertEqual(failure.observation["forwarding"]["state"], "UNAVAILABLE")
+        self.assertEqual(str(failure), "webdriver-command-failed")
+        self.assertNotIn("hunter2", json.dumps(ci.bounded_driver(failure.observation)))
+
+    def test_prepared_driver_identity_is_distinct_pinned_and_rejects_stale_source(self):
+        fixture = EvidenceTests(methodName="runTest"); fixture.setUp()
+        ci.validate_driver_source(fixture.driver_source, fixture.scripts)
+        for field in fixture.driver_source:
+            value = copy.deepcopy(fixture.driver_source); value[field] = "hunter2"
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                ci.validate_driver_source(value, fixture.scripts)
+        value = copy.deepcopy(fixture.driver_source); value["path"] = "hunter2"
+        with self.assertRaises(RuntimeError):ci.validate_driver_source(value, fixture.scripts)
+        with tempfile.TemporaryDirectory(prefix="driver-pin-unit-") as temporary:
+            root = Path(temporary); archive = root / "wrong.crate"; archive.write_bytes(b"x" * ci.driver_source.ARCHIVE_BYTES)
+            with self.assertRaisesRegex(RuntimeError, "pinned-driver-source-invalid"):
+                ci.driver_source.prepare(archive, root / "source")
+            self.assertFalse((root / "source").exists())
+            link = root / "linked.crate"; link.symlink_to(archive)
+            with self.assertRaises(RuntimeError):ci.driver_source.prepare(link, root / "linked-source")
+            self.assertFalse((root / "linked-source").exists())
+            source = root / "closure"; source.mkdir(mode=0o700)
+            files = {name: b"owned-static-closure-only" for name in ci.driver_source.SOURCE_FILES}
+            for name, data in files.items():
+                path = source / name; path.parent.mkdir(mode=0o700, parents=True, exist_ok=True); path.write_bytes(data)
+            self.assertEqual(ci.driver_source.verify_closure(source), ci.driver_source.closure(files))
+            (source / "src/server.rs").write_bytes(b"changed")
+            self.assertNotEqual(ci.driver_source.verify_closure(source), ci.driver_source.closure(files))
+            (source / "extra").symlink_to(root, target_is_directory=True)
+            with self.assertRaises(RuntimeError):ci.driver_source.verify_closure(source)
 
 
 class ComponentLayoutGateTests(unittest.TestCase):

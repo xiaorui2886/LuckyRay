@@ -28,6 +28,7 @@ def module(name, filename):
 runtime = module("notes_runtime_ci", "linux-runtime-ci.py")
 smoke = module("notes_smoke", "linux-notes-attachments-smoke.py")
 media_layout = module("notes_media_layout", "linux-media-layout-evidence.py")
+driver_source = module("notes_driver_source", "linux-tauri-driver-source.py")
 require, digest, read_json, write_json = runtime.require, runtime.digest, runtime.read_json, runtime.write_json
 SCOPE = smoke.SCOPE
 EXCLUDED = {name: "NOT_RUN" for name in ("chromiumConsent", "nativeMessaging", "nativePointerDrag",
@@ -50,13 +51,47 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
 
 def bounded_driver(raw):
     raw = raw if isinstance(raw, dict) else {}
-    return {"kind": raw.get("kind") if raw.get("kind") in ("HTTP_ERROR", "TRANSPORT_ERROR", "INVALID_RESPONSE") else "UNKNOWN",
+    result = {"kind": raw.get("kind") if raw.get("kind") in ("HTTP_ERROR", "TRANSPORT_ERROR", "INVALID_RESPONSE") else "UNKNOWN",
         "operation": raw.get("operation") if isinstance(raw.get("operation"), str) and raw["operation"] in smoke.DRIVER_OPERATIONS else "other",
         "error": raw.get("error") if isinstance(raw.get("error"), str) and raw["error"] in smoke.DRIVER_ERRORS else "unknown-standard-error",
         "httpStatus": raw.get("httpStatus") if type(raw.get("httpStatus")) is int and 400 <= raw["httpStatus"] <= 599 else None,
         "transport": raw.get("transport") if isinstance(raw.get("transport"), str) and raw["transport"] in smoke.TRANSPORT_CODES else "UNKNOWN",
         "responseState": raw.get("responseState") if raw.get("responseState") in ("UNCONFIRMED", "HTTP_ERROR_RECEIVED") else "UNKNOWN",
         "elapsedMs": media_layout.integer(raw.get("elapsedMs"), 0, 60000)}
+    if "forwarding" in raw:
+        result["forwarding"] = bounded_forwarding(raw["forwarding"])
+    if "processesAtResponse" in raw:
+        result["processesAtResponse"] = bounded_processes(raw["processesAtResponse"])
+    return result
+
+
+def bounded_forwarding(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    result = {"state": raw.get("state") if raw.get("state") in ("OBSERVED", "NOT_OBSERVED", "UNAVAILABLE") else "UNAVAILABLE",
+              "readBytes": media_layout.integer(raw.get("readBytes"), 0, 65536), "truncated": raw.get("truncated") is True,
+              "typed": [], "legacy": []}
+    rows = raw.get("typed") if isinstance(raw.get("typed"), list) else []
+    for row in rows[:2]:
+        if isinstance(row, dict):
+            result["typed"].append({"connect": row.get("connect") if type(row.get("connect")) is bool else None,
+                "hyper": row.get("hyper") if row.get("hyper") in smoke.FORWARD_HYPER else "OTHER",
+                "io": row.get("io") if row.get("io") in smoke.FORWARD_IO else "OTHER",
+                "depth": media_layout.integer(row.get("depth"), 1, 8), "truncated": row.get("truncated") is True})
+    legacy = raw.get("legacy") if isinstance(raw.get("legacy"), list) else []
+    result["legacy"] = [value for value in legacy[:2] if value in ("CONNECT", "SEND_REQUEST", "CANCELED", "CHANNEL_CLOSED")]
+    result["truncated"] |= len(rows) > 2 or len(legacy) > 2
+    return result
+
+
+def validate_driver_source(raw, scripts):
+    expected = {"kind": driver_source.KIND, "version": driver_source.VERSION,
+        "archiveSha256": driver_source.ARCHIVE_SHA, "lockSha256": driver_source.LOCK_SHA,
+        "prepScriptSha256": scripts["driverPrep"], "diagnosticSha256": scripts["driverDiagnostic"]}
+    require(isinstance(raw, dict) and set(raw) == {*expected, "patchedMainSha256", "patchedServerSha256", "sourceClosureSha256"}
+            and all(raw.get(key) == value for key, value in expected.items())
+            and all(media_layout.digest(raw.get(key)) is not None for key in ("patchedMainSha256", "patchedServerSha256", "sourceClosureSha256")),
+            "driver-source-diagnostic-identity-mismatch")
+    return raw
 
 
 def bounded_exit(raw):
@@ -279,7 +314,9 @@ class Run(runtime.Run):
                  "layoutBuild": "luckyray-app/tests/linux-media-layout-build.mjs",
                  "layoutAudit": "luckyray-app/tests/linux-media-layout-audit.mjs",
                  "layoutEvidence": "luckyray-app/tests/linux-media-layout-evidence.py",
-                 "cdpClient": "luckyray-app/tests/browser-extension-runtime/lib/cdp-client.mjs"}
+                 "cdpClient": "luckyray-app/tests/browser-extension-runtime/lib/cdp-client.mjs",
+                 "driverPrep": "luckyray-app/tests/linux-tauri-driver-source.py",
+                 "driverDiagnostic": "luckyray-app/tests/linux-tauri-driver-forward-diagnostics.rs"}
         return {name: digest(self.repo / path) for name, path in paths.items()}
 
     def publish_notes(self, report):
@@ -364,12 +401,19 @@ class Run(runtime.Run):
                 and build.get("source") == source and resources.get("source") == source
                 and resources.get("scope") == SCOPE, "source-bound-main-and-resources-required")
         require(runtime.regular_elf(Path(layout["application"])) == build["application"], "main-elf-changed")
+        prepared_driver = validate_driver_source(read_json(self.private / "driver-source.json"), self.scripts())
+        require(driver_source.verify_closure(self.work / "driver-source") == prepared_driver["sourceClosureSha256"], "prepared-driver-closure-changed")
+        for name, expected in (("Cargo.lock", prepared_driver["lockSha256"]), ("src/main.rs", prepared_driver["patchedMainSha256"]),
+                               ("src/server.rs", prepared_driver["patchedServerSha256"]),
+                               ("src/luckyray_forward_diagnostics.rs", prepared_driver["diagnosticSha256"])):
+            require(digest(self.work / "driver-source" / name) == expected, "prepared-driver-source-changed")
+        require(b"[luckyray-forward-v1] connect=" in self.args.driver.read_bytes(), "driver-diagnostic-marker-missing")
         command = ["dbus-run-session", "--", "xvfb-run", "-a", "-s", "-screen 0 1440x900x24",
             "/usr/bin/python3", str(self.app / "tests/linux-notes-attachments-smoke.py"),
             "--application", layout["application"], "--driver", str(self.args.driver), "--output", str(self.private / "notes-flow")]
         report = {"status": "FAIL", "scope": SCOPE, "source": source, "attempts": 1, "flowCount": 1,
                   "componentLayout": component,
-                  "driver": {"versionPin": "2.1.0", **runtime.regular_elf(self.args.driver)}}
+                  "driver": {"versionPin": "2.1.0", "source": prepared_driver, **runtime.regular_elf(self.args.driver)}}
         try:
             result = subprocess.run(command, env=self.env(), text=True, capture_output=True, timeout=720)
             (self.private / "notes-flow.log").write_text(result.stdout + result.stderr)
@@ -407,6 +451,7 @@ class Run(runtime.Run):
             require(bodies["build.json"].get("scripts") == self.scripts(), "build-script-identity-changed")
             notes = bodies["notes.json"]
             media_layout.validate(notes.get("componentLayout"), source, self.scripts())
+            validate_driver_source(notes["driver"]["source"], self.scripts())
             require(notes.get("attempts") == 1 and notes.get("flowCount") == 1 and notes.get("childExitCode") == 0
                     and "failure" not in notes, "missing-or-repeated-flow")
             validate_notes(notes.get("observations"), bodies["build.json"], source, self.scripts())

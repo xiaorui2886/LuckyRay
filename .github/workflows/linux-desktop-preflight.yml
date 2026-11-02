@@ -87,14 +87,21 @@ jobs:
             --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml \
             --message-format=json-render-diagnostics > "$WORK_ROOT/private/native-artifacts.jsonl"
           python3 luckyray-app/tests/linux-notes-ci.py binaries --work "$WORK_ROOT"
-      - name: Build the pinned WebDriver tool once
+      - name: Build the source-bound pinned WebDriver with closed diagnostics once
         id: driver
         timeout-minutes: 20
         env:
           WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
         run: |
           set -euo pipefail
-          rustup run 1.95.0 cargo install tauri-driver --locked --version 2.1.0 --debug \
+          curl --disable --fail --silent --show-error --location --proto '=https' \
+            --proto-redir '=https' --max-time 120 --max-filesize 14488 \
+            --output "$WORK_ROOT/tauri-driver-2.1.0.crate" \
+            https://static.crates.io/crates/tauri-driver/tauri-driver-2.1.0.crate
+          python3 luckyray-app/tests/linux-tauri-driver-source.py \
+            "$WORK_ROOT/tauri-driver-2.1.0.crate" "$WORK_ROOT/driver-source" \
+            > "$WORK_ROOT/private/driver-source.json"
+          rustup run 1.95.0 cargo install --path "$WORK_ROOT/driver-source" --locked --debug \
             --root "$WORK_ROOT/driver" --target-dir "$WORK_ROOT/driver-target"
       - name: Assemble the genuine pinned LSH runtime offline
         id: runtime

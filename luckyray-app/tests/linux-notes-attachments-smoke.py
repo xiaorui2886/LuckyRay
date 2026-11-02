@@ -55,6 +55,8 @@ DRIVER_ERRORS = frozenset(("element click intercepted", "element not interactabl
 DRIVER_OPERATIONS = frozenset(("session-start", "session-delete", "timeouts", "execute", "click", "actions", "release-actions", "screenshot", "other"))
 TRANSPORT_CODES = frozenset(("TIMEOUT", "REMOTE_DISCONNECT", "CONNECTION_RESET", "CONNECTION_REFUSED", "CONNECTION_ABORTED",
     "BROKEN_PIPE", "INCOMPLETE_RESPONSE", "HTTP_PROTOCOL_ERROR", "NETWORK_UNREACHABLE", "ADDRESS_UNREACHABLE", "IO_ERROR", "UNKNOWN", "NOT_APPLICABLE"))
+FORWARD_HYPER = ("NONE", "INCOMPLETE_MESSAGE", "CANCELED", "CLOSED", "TIMEOUT", "PARSE", "BODY_WRITE_ABORTED", "USER", "OTHER")
+FORWARD_IO = ("NONE", "CONNECTION_REFUSED", "CONNECTION_RESET", "CONNECTION_ABORTED", "BROKEN_PIPE", "TIMEOUT", "NOT_CONNECTED", "UNEXPECTED_EOF", "WOULD_BLOCK", "OTHER")
 MEDIA_OPEN_FLAGS = ("hoverApplied", "toolbarVisible", "toolbarFullyVisible", "buttonEnabled", "controlsFullyVisible", "buttonCenterHit", "allButtonCentersHit")
 MEDIA_OPEN_PROBE = """
 const button=[...document.querySelectorAll(arguments[0])].find(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0);
@@ -141,6 +143,66 @@ class DriverFailure(SmokeFailure):
         self.observation = {"kind": kind, "operation": operation, "error": error, "httpStatus": status,
             "transport": transport, "responseState": "HTTP_ERROR_RECEIVED" if kind == "HTTP_ERROR" else "UNCONFIRMED",
             "elapsedMs": elapsed}
+
+
+def read_forwarding_trace(path, offset):
+    """At most64KiB of this request's owned log; only exact closed SDK tags."""
+    result = {"state": "UNAVAILABLE", "readBytes": 0, "truncated": False, "typed": [], "legacy": []}
+    if type(offset) is not int or offset < 0:
+        return result
+    descriptor = None
+    try:
+        metadata = path.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_nlink != 1
+                or metadata.st_mode & 0o077 or offset > metadata.st_size):
+            return result
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
+            return result
+        data = os.pread(descriptor, 65536, offset)
+        result.update(state="NOT_OBSERVED", readBytes=len(data), truncated=opened.st_size - offset > len(data))
+        pattern = (r"\[luckyray-forward-v1\] connect=(true|false) hyper=(" + "|".join(FORWARD_HYPER)
+                   + r") io=(" + "|".join(FORWARD_IO) + r") depth=([1-8]) truncated=(true|false)")
+        kinds = {"Connect": "CONNECT", "SendRequest": "SEND_REQUEST", "Canceled": "CANCELED", "ChannelClosed": "CHANNEL_CLOSED"}
+        for line in data.decode("utf8", errors="replace").splitlines(keepends=True):
+            if not line.endswith("\n"):
+                continue
+            line = line.rstrip("\r\n")
+            typed = re.fullmatch(pattern, line)
+            legacy = re.fullmatch(r"Error serving connection: hyper::Error\(User\(Service\), client error \((Connect|SendRequest|Canceled|ChannelClosed)\)\)", line)
+            if typed:
+                if len(result["typed"]) == 2:
+                    result["truncated"] = True
+                    continue
+                result["typed"].append({"connect": typed[1] == "true", "hyper": typed[2], "io": typed[3],
+                                        "depth": int(typed[4]), "truncated": typed[5] == "true"})
+            if legacy:
+                if len(result["legacy"]) == 2:
+                    result["truncated"] = True
+                else:
+                    result["legacy"].append(kinds[legacy[1]])
+        if result["typed"] or result["legacy"]:
+            result["state"] = "OBSERVED"
+    except OSError:
+        pass
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return result
+
+
+def observe_unconfirmed_failure(error, path, offset, driver, anchors):
+    if error.observation["responseState"] != "UNCONFIRMED":
+        return
+    try:
+        error.observation["processesAtResponse"] = observe_processes(driver, anchors)
+    except Exception:
+        error.observation["processesAtResponse"] = None
+    try:
+        error.observation["forwarding"] = read_forwarding_trace(path, offset)
+    except Exception:
+        error.observation["forwarding"] = {"state": "UNAVAILABLE", "readBytes": 0, "truncated": False, "typed": [], "legacy": []}
 
 
 def transport_code(error):
@@ -523,7 +585,18 @@ def main():
     def wd(method, suffix, body=None, timeout=45):
         request = urllib.request.Request(f"http://127.0.0.1:{port}" + suffix, method=method,
             data=None if body is None else json.dumps(body).encode(), headers={"Content-Type": "application/json"})
-        return webdriver_command(http, request, timeout)
+        path = output / "driver.log"
+        try:
+            offset = path.stat().st_size
+        except OSError:
+            offset = None
+        try:
+            return webdriver_command(http, request, timeout)
+        except DriverFailure as error:
+            if error.observation["responseState"] == "UNCONFIRMED":
+                # Capture before finally can send any quit or termination signal.
+                observe_unconfirmed_failure(error, path, offset, driver, process_anchors)
+            raise
 
     def execute(script, arguments=None):
         return wd("POST", f"/session/{session}/execute/sync", {"script": script, "args": arguments or []})
