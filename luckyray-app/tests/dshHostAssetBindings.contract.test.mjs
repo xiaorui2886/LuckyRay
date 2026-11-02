@@ -8,6 +8,7 @@ const nativeRuntimeSeal = readFileSync(new URL("../src-tauri/src/dsh_runtime_sea
 const assetRoot = new URL("../src-tauri/dsh-host/", import.meta.url);
 const bindings = [
   ["HOST_SCRIPT_SHA256", "luckyray-dsh-host.mjs"],
+  ["MACOS_HOST_SUPPORT_SHA256", "../macos-lsh/host-support.mjs", "exact"],
   ["HOST_COMPAT_SCRIPT_SHA256", "luckyray-dsh-plugin-compat.mjs"],
   ["SURFACE_PLUGIN_SHA256", "luckyray-dsh-authenticated-webserver/index.mjs"],
   ["RESOURCE_PLUGIN_SHA256", "luckyray-dsh-resource-tools/index.mjs"],
@@ -62,7 +63,7 @@ function normalizedDigest(bytes) {
 for (const [name, path, kind] of bindings) {
   test(`native asset pin matches the packaged source: ${name}`, () => {
     const bytes = readFileSync(new URL(path, assetRoot));
-    assert.equal(kind === "binary" ? sha256(bytes) : normalizedDigest(bytes), pin(name), path);
+    assert.equal(kind === "binary" || kind === "exact" ? sha256(bytes) : normalizedDigest(bytes), pin(name), path);
   });
 }
 
