@@ -21,6 +21,26 @@ impl KnowledgeService {
         let root = self.capture_expected_target_unlocked(&vault, Some(expected))?;
         require_matching_vault(source, &vault.registration)?;
         let relative = safe_markdown_relative_path(&source.relative_path)?;
+        #[cfg(target_os="macos")]
+        {
+            let directory=root.as_ref().ok_or_else(knowledge_target_not_current)?.macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
+            let observed=macos_attachment_io::Observation::read_at(&directory,&relative,false).map_err(|_|error("knowledge-read-failed","Source note could not be verified"))?;
+            if observed.revision()!=revision {return Err(error("knowledge-revision-conflict","Source note changed before creation"));}
+            let destination_relative=relative.parent().unwrap_or(Path::new("")).join(safe_markdown_name(title)?);
+            self.assert_expected_target_unlocked(&vault,Some(expected),root.as_ref())?;
+            observed.verify().map_err(|_|error("knowledge-revision-conflict","Source note changed before creation"))?;
+            macos_attachment_io::create_at(&directory,&destination_relative,content.as_bytes(),false)
+                .map_err(|_|error("knowledge-recovery-required","New note publication is unconfirmed; inspect existing names before retrying"))?;
+            observed.verify().map_err(|_|error("knowledge-revision-conflict","Source note changed; a new sibling copy may remain"))?;
+            let next=macos_attachment_io::Observation::read_at(&directory,&destination_relative,false)
+                .map_err(|_|error("knowledge-recovery-required","New note could not be verified"))?;
+            if next.revision()!=sha256_hex(content.as_bytes()) {return Err(error("knowledge-revision-conflict","New note changed after publication"));}
+            self.assert_expected_target_unlocked(&vault,Some(expected),root.as_ref())?;
+            let snapshot=self.snapshot_from_observation(&vault,&destination_relative,&next)?;
+            self.index.mark_document_dirty(&snapshot.summary.document_ref)?;return Ok(snapshot);
+        }
+        #[cfg(not(target_os="macos"))]
+        {
         let source_path = safe_existing_file(&vault.root, &relative)?;
         let mut source_file = open_exclusive_document(&source_path)?;
         if sha256_hex(&read_exclusive_document(&mut source_file)?) != revision {
@@ -40,6 +60,7 @@ impl KnowledgeService {
         let snapshot = self.snapshot_from_path(&vault, &destination_relative, &destination)?;
         self.index.mark_document_dirty(&snapshot.summary.document_ref)?;
         Ok(snapshot)
+        }
     }
 
     pub(crate) fn workspace_publish_attachment(
@@ -54,6 +75,25 @@ impl KnowledgeService {
         let root = self.capture_expected_target_unlocked(&vault, Some(expected))?;
         require_matching_vault(source, &vault.registration)?;
         let relative = safe_markdown_relative_path(&source.relative_path)?;
+        #[cfg(target_os="macos")]
+        {
+            let directory=root.as_ref().ok_or_else(knowledge_target_not_current)?.macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
+            let observed=macos_attachment_io::Observation::read_at(&directory,&relative,false)
+                .map_err(|_|error("knowledge-read-failed","Source note could not be verified"))?;
+            if observed.revision()!=revision {return Err(error("knowledge-revision-conflict","Source note changed before attachment import"));}
+            let inventory=index::attachment_inventory(&vault.root)?;
+            self.assert_expected_target_unlocked(&vault,Some(expected),root.as_ref())?;
+            observed.verify().map_err(|_|error("knowledge-revision-conflict","Source note changed before attachment import"))?;
+            let result=attachments::macos_publish_bytes(&directory,&inventory,&source.relative_path,name,bytes,true)?;
+            observed.verify().map_err(|_|error("knowledge-revision-conflict","Source note changed; an attachment copy may remain"))?;
+            let published=macos_attachment_io::Observation::read_at(&directory,Path::new(&result.relative_path),true)
+                .map_err(|_|error("knowledge-recovery-required","Published attachment is unconfirmed"))?;
+            if published.revision()!=result.sha256 || published.bytes!=bytes {return Err(error("knowledge-revision-conflict","Published attachment changed"));}
+            published.verify().map_err(|_|error("knowledge-revision-conflict","Published attachment changed"))?;
+            self.assert_expected_target_unlocked(&vault,Some(expected),root.as_ref())?;return Ok(result);
+        }
+        #[cfg(not(target_os="macos"))]
+        {
         let target = safe_existing_file(&vault.root, &relative)?;
         let mut note = open_exclusive_document(&target)?;
         if sha256_hex(&read_exclusive_document(&mut note)?) != revision {
@@ -64,6 +104,7 @@ impl KnowledgeService {
         let result = attachments::publish_bytes(&vault.root, &inventory, &source.relative_path, name, bytes)?;
         self.assert_expected_target_unlocked(&vault, Some(expected), root.as_ref())?;
         Ok(result)
+        }
     }
 
     /// Verify only this backend-created publication. In particular, saved note

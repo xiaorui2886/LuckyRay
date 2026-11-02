@@ -57,13 +57,14 @@ jobs:
             exit "$macos_validation_exit"
           fi
           exit "$macos_summary_exit"
-      - name: Retain only the projected report and own LSH window
+      - name: Retain only the projected report and own synthetic windows
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-internal-validation
           path: |
             ${{ runner.temp }}/luckyray-macos-internal/luckyray-app/src-tauri/.macos-build/internal-validation-evidence/report.json
+            ${{ runner.temp }}/luckyray-macos-internal/luckyray-app/src-tauri/.macos-build/internal-validation-evidence/LuckyRay-note-flow.png
             ${{ runner.temp }}/luckyray-macos-internal/luckyray-app/src-tauri/.macos-build/internal-validation-evidence/LuckyRay-lsh-surface.png
           if-no-files-found: error
           include-hidden-files: true

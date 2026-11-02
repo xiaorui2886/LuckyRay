@@ -213,4 +213,19 @@ fn macos_platform_note_write_conflict_and_recovery() {
     );
     assert!(root3.join(&backup4).exists());
     assert!(root3.join(format!(".lrm-{nonce4}.journal")).exists());
+
+    // Equal bytes at another inode cannot satisfy an automatic restore.
+    let (_replaced_temp,replaced_root,replaced_dir,replaced_path)=fixture();
+    std::fs::write(&replaced_path,b"original").unwrap();
+    let original_file=replaced_dir.open_regular(OsStr::new("Synthetic note.md")).unwrap();
+    std::fs::rename(&replaced_path,replaced_root.join("external-original-held")).unwrap();
+    let replaced_nonce="f".repeat(32);
+    let replaced_backup=format!(".lrm-{replaced_nonce}.backup");
+    replaced_dir.create(OsStr::new(&replaced_backup),b"original").unwrap();
+    journal(&replaced_dir,&replaced_nonce,b"original",b"next",&original_file,None);
+    assert!(recover_tree(&replaced_root).is_err());
+    assert!(!replaced_path.exists());
+    assert_eq!(std::fs::read(replaced_root.join(&replaced_backup)).unwrap(),b"original");
+    assert!(replaced_root.join("external-original-held").is_file());
+    assert!(replaced_root.join(format!(".lrm-{replaced_nonce}.journal")).is_file());
 }

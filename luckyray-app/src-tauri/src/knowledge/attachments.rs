@@ -11,6 +11,7 @@ pub(super) struct AttachmentReadGuard {
     _parents: Vec<File>,
 }
 
+#[cfg(not(target_os = "macos"))]
 pub(super) fn hold_verified_attachment(
     root: &Path,
     relative: &str,
@@ -68,6 +69,19 @@ pub(super) fn hold_verified_attachment(
         _file: file,
         _parents: parents,
     })
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn hold_verified_attachment(root: &Path, relative: &str, digest: &str) -> Result<AttachmentReadGuard, KnowledgeError> {
+    let relative = safe_relative_path(relative, false)?;
+    let root = crate::macos_fs::Directory::open(root, false, false).map_err(macos_attachment_read_error)?;
+    let observed = super::macos_attachment_io::Observation::read_at(&root, &relative, true)
+        .map_err(macos_attachment_read_error)?;
+    if observed.revision() != digest {
+        return Err(error("knowledge-attachment-changing", "Referenced attachment changed since preview"));
+    }
+    let (file, parents) = observed.into_guards().map_err(macos_attachment_read_error)?;
+    Ok(AttachmentReadGuard { _file: file, _parents: parents })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -147,6 +161,7 @@ pub(super) fn resolve_attachment(
 }
 
 /// Deny concurrent Windows writes/deletes while reading a bounded source snapshot.
+#[cfg(not(target_os = "macos"))]
 pub(super) fn read_attachment_bytes(path: &Path) -> Result<Vec<u8>, KnowledgeError> {
     if has_reparse_point(path)? {
         return Err(error(
@@ -197,6 +212,29 @@ pub(super) fn read_attachment_bytes(path: &Path) -> Result<Vec<u8>, KnowledgeErr
     Ok(bytes)
 }
 
+#[cfg(target_os = "macos")]
+fn macos_attachment_read_error(failure: std::io::Error) -> KnowledgeError {
+    if failure.kind() == std::io::ErrorKind::FileTooLarge {
+        error("knowledge-attachment-size-limit", "Attachment exceeds 64 MiB")
+    } else {
+        error("knowledge-attachment-changing", "Attachment object is unavailable or changed during access")
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_verify_attachment_source(source: &Option<(super::macos_attachment_io::Observation, PathBuf)>) -> Result<(), KnowledgeError> {
+    if let Some((observed, canonical)) = source {
+        observed.verify_alias(canonical).map_err(macos_attachment_read_error)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn read_attachment_bytes(path: &Path) -> Result<Vec<u8>, KnowledgeError> {
+    super::macos_attachment_io::Observation::read(path, true)
+        .map(|observed| observed.bytes).map_err(macos_attachment_read_error)
+}
+
 pub(super) fn guard_existing_ancestors(
     root: &Path,
     path: &Path,
@@ -244,9 +282,19 @@ pub(super) fn read_scoped_attachment_bytes(
     root: &Path,
     relative: &Path,
 ) -> Result<Vec<u8>, KnowledgeError> {
+    #[cfg(target_os="macos")]
+    {
+        let directory=crate::macos_fs::Directory::open(root,false,false).map_err(macos_attachment_read_error)?;
+        let attachment=!relative.to_string_lossy().to_ascii_lowercase().ends_with(".md");
+        let observed=super::macos_attachment_io::Observation::read_at(&directory,relative,attachment).map_err(macos_attachment_read_error)?;
+        observed.verify().map_err(macos_attachment_read_error)?;return Ok(observed.bytes);
+    }
+    #[cfg(not(target_os="macos"))]
+    {
     let _parents = guard_existing_ancestors(root, &root.join(relative))?;
     let path = safe_existing_file(root, relative)?;
     read_attachment_bytes(&path)
+    }
 }
 
 pub(super) fn read_external_attachment_bytes(
@@ -339,8 +387,35 @@ pub(super) fn publish_bytes(
 }
 
 #[cfg(target_os = "macos")]
-fn publish_bytes_with_reuse(_root: &Path, _inventory: &[String], _note: &str, _name: &str, _bytes: &[u8], _reuse_content: bool) -> Result<AttachmentPublication, KnowledgeError> {
-    Err(error("knowledge-transaction-unsupported", "Attachment publication is unavailable on macOS"))
+fn publish_bytes_with_reuse(root: &Path, inventory: &[String], note: &str, name: &str, bytes: &[u8], reuse_content: bool) -> Result<AttachmentPublication, KnowledgeError> {
+    let directory = crate::macos_fs::Directory::open(root, false, false).map_err(macos_attachment_read_error)?;
+    macos_publish_bytes(&directory, inventory, note, name, bytes, reuse_content)
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn macos_publish_bytes(root: &crate::macos_fs::Directory, inventory: &[String], note: &str, name: &str, bytes: &[u8], reuse_content: bool) -> Result<AttachmentPublication, KnowledgeError> {
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err(error("knowledge-attachment-size-limit", "Attachment exceeds 64 MiB"));
+    }
+    if reuse_content {
+        for relative in inventory {
+            if relative.to_ascii_lowercase().ends_with(".md") || legacy_hash_attachment_name(relative) { continue; }
+            let relative_path = safe_relative_path(relative, false)?;
+            let Some(observed) = super::macos_attachment_io::Observation::read_matching_at(root, &relative_path, bytes.len() as u64)
+                .map_err(macos_attachment_read_error)? else { continue; };
+            if observed.bytes == bytes {
+                observed.verify().map_err(macos_attachment_read_error)?;
+                return Ok(publication(note, relative.clone(), bytes, true));
+            }
+        }
+    }
+    let names = (1..=100_001).map(|ordinal| attachment_copy_name(name, ordinal))
+        .filter(|leaf| !inventory.iter().any(|old| old.eq_ignore_ascii_case(&format!("attachments/{leaf}"))))
+        .map(std::ffi::OsString::from);
+    let leaf = super::macos_attachment_io::publish(root, names, bytes)
+        .map_err(|_| error("knowledge-attachment-conflict", "Attachment could not be published safely; existing files are preserved"))?;
+    let leaf = leaf.to_str().ok_or_else(|| error("knowledge-path-invalid", "Attachment name cannot be represented"))?;
+    Ok(publication(note, format!("attachments/{leaf}"), bytes, false))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -582,10 +657,22 @@ impl KnowledgeService {
         let root_guard = filesystem_directory_identity_guard(&vault.root)
             .map_err(map_filesystem_identity_error)?;
         let identity = knowledge_target_identity(&vault, root_guard.identity())?;
+        #[cfg(target_os = "macos")]
+        let macos_root = root_guard.macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
         require_matching_vault(document_ref, &vault.registration)?;
         let relative = safe_markdown_relative_path(&document_ref.relative_path)?;
+        #[cfg(not(target_os = "macos"))]
         let target = safe_existing_file(&vault.root, &relative)?;
+        #[cfg(target_os = "macos")]
+        let note_guard = super::macos_attachment_io::Observation::read_at(&macos_root, &relative, false)
+            .map_err(|_| error("knowledge-revision-conflict", "Note object is unavailable or changed before attachment insertion"))?;
+        #[cfg(not(target_os = "macos"))]
         let mut note_guard = open_exclusive_document(&target)?;
+        #[cfg(target_os = "macos")]
+        if note_guard.revision() != expected_revision {
+            return Err(error("knowledge-revision-conflict", "Note changed before attachment insertion"));
+        }
+        #[cfg(not(target_os = "macos"))]
         if sha256_hex(&read_exclusive_document(&mut note_guard)?) != expected_revision {
             return Err(error(
                 "knowledge-revision-conflict",
@@ -593,6 +680,8 @@ impl KnowledgeService {
             ));
         }
         let owned;
+        #[cfg(target_os = "macos")]
+        let mut attachment_source = None;
         let bytes = if let Some(path) = source_path {
             let canonical = path.canonicalize().map_err(|_| {
                 error(
@@ -609,10 +698,35 @@ impl KnowledgeService {
                     ));
                 }
             }
-            owned = read_external_attachment_bytes(&vault.root, &canonical)?;
+            #[cfg(target_os = "macos")]
+            {
+                // The original no-follow object, not canonicalize's path text,
+                // is the content authority. A racing link/rename cannot retarget
+                // the read to an unobserved outside object.
+                let mut observed = super::macos_attachment_io::Observation::read(path, true)
+                    .map_err(macos_attachment_read_error)?;
+                observed.verify_alias(&canonical).map_err(macos_attachment_read_error)?;
+                if canonical.to_str().is_none() {
+                    return Err(error("knowledge-path-invalid", "Attachment path cannot be represented"));
+                }
+                owned = std::mem::take(&mut observed.bytes);
+                attachment_source = Some((observed, canonical.clone()));
+            }
+            #[cfg(not(target_os = "macos"))]
+            { owned = read_external_attachment_bytes(&vault.root, &canonical)?; }
             if reference && !canonical.starts_with(&vault.root) {
                 super::external_attachments::verified_external_file(&canonical)?;
                 self.assert_expected_target_unlocked(&vault, Some(&identity), Some(&root_guard))?;
+                #[cfg(target_os = "macos")]
+                note_guard.verify().map_err(|_| error("knowledge-revision-conflict", "Note changed during attachment insertion"))?;
+                #[cfg(target_os = "macos")]
+                {
+                    let result = super::external_attachments::external_publication(&vault.root,&document_ref.relative_path,&canonical,&owned,name)?;
+                    macos_verify_attachment_source(&attachment_source)?;
+                    note_guard.verify().map_err(|_| error("knowledge-revision-conflict", "Note changed during attachment insertion"))?;
+                    return Ok(result);
+                }
+                #[cfg(not(target_os = "macos"))]
                 return super::external_attachments::external_publication(&vault.root,&document_ref.relative_path,&canonical,&owned,name);
             }
             if reference || (!independent_copy && !legacy_hash_attachment_name(&canonical.to_string_lossy())) {
@@ -625,6 +739,10 @@ impl KnowledgeService {
                         Some(&identity),
                         Some(&root_guard),
                     )?;
+                    #[cfg(target_os = "macos")]
+                    macos_verify_attachment_source(&attachment_source)?;
+                    #[cfg(target_os = "macos")]
+                    note_guard.verify().map_err(|_| error("knowledge-revision-conflict", "Note changed during attachment insertion"))?;
                     return Ok(publication(
                         &document_ref.relative_path,
                         relative,
@@ -638,7 +756,13 @@ impl KnowledgeService {
             bytes
         };
         self.assert_expected_target_unlocked(&vault, Some(&identity), Some(&root_guard))?;
+        #[cfg(target_os = "macos")]
+        note_guard.verify().map_err(|_| error("knowledge-revision-conflict", "Note changed during attachment insertion"))?;
         let inventory = index::attachment_inventory(&vault.root)?;
+        #[cfg(target_os = "macos")]
+        let result = macos_publish_bytes(&macos_root, &inventory, &document_ref.relative_path,
+            name, bytes, source_path.is_none())?;
+        #[cfg(not(target_os = "macos"))]
         let result = publish_bytes_with_reuse(
             &vault.root,
             &inventory,
@@ -648,6 +772,10 @@ impl KnowledgeService {
             source_path.is_none(),
         )?;
         self.assert_expected_target_unlocked(&vault, Some(&identity), Some(&root_guard))?;
+        #[cfg(target_os = "macos")]
+        macos_verify_attachment_source(&attachment_source)?;
+        #[cfg(target_os = "macos")]
+        note_guard.verify().map_err(|_| error("knowledge-revision-conflict", "Note changed during attachment insertion; attachment copy is preserved"))?;
         Ok(result)
     }
 }

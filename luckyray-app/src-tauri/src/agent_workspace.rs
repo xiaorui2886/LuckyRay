@@ -3795,6 +3795,18 @@ impl FilesystemDirectoryIdentityGuard {
         &self.identity
     }
 
+    #[cfg(target_os = "macos")]
+    pub(crate) fn macos_directory(&self, path: &Path) -> Result<crate::macos_fs::Directory, WorkspaceError> {
+        let directory = crate::macos_fs::Directory::open(path, false, false)
+            .map_err(|_| workspace_read_error())?;
+        let file = directory.identity_file().map_err(|_| workspace_read_error())?;
+        if workspace_file_identity(&file, path)? != self.identity {
+            return Err(WorkspaceError::new("workspace-grant-changed", "Workspace grant identity changed"));
+        }
+        directory.current().map_err(|_| workspace_read_error())?;
+        Ok(directory)
+    }
+
     /// Confirms that the caller's current path still resolves to the exact
     /// directory object held by this guard. Windows can prove this while the
     /// no-delete-share handle is live. macOS checks the visible device/inode

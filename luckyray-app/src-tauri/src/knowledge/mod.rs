@@ -38,6 +38,29 @@ pub(crate) fn companion_replaced_content(before: &str, content: &str) -> Result<
     replace_text(&decode_document(before.as_bytes())?, content)
 }
 mod attachments;
+#[cfg(target_os = "macos")]
+mod macos_attachment_io;
+#[cfg(target_os = "macos")]
+mod macos_data_policy;
+#[cfg(target_os = "macos")]
+mod macos_note_remove;
+#[cfg(target_os = "macos")]
+mod macos_record_policy;
+#[cfg(target_os = "macos")]
+mod macos_operation_store;
+#[cfg(target_os = "macos")]
+mod macos_recovery_key;
+mod note_recovery;
+mod note_recovery_types;
+pub(crate) use note_recovery_types::RecoverySnapshot;
+#[cfg(target_os = "macos")]
+mod macos_note_recovery;
+#[cfg(target_os="macos")]
+mod macos_step_policy;
+#[cfg(target_os="macos")]
+mod macos_operation_steps;
+#[cfg(all(test,target_os="macos"))]
+mod macos_operation_recovery_tests;
 mod workspace_attachment_reads;
 mod workspace_action_paths;
 mod workspace_note_actions;
@@ -466,6 +489,8 @@ pub(crate) struct KnowledgeService {
     attachment_inventory: Arc<attachment_inventory_cache::AttachmentInventoryCache>,
     attachment_attempt: Arc<Mutex<Option<attachment_operations::AttachmentAttemptState>>>,
     attachment_observations: Arc<Mutex<attachment_observations::AttachmentObservations>>,
+    #[cfg(target_os = "macos")]
+    recovery_needed: Arc<Mutex<Option<PathBuf>>>,
     #[cfg(test)]
     write_fault_before_commit: Arc<AtomicBool>,
     #[cfg(test)]
@@ -474,6 +499,8 @@ pub(crate) struct KnowledgeService {
     interrupt_after_backup_rename: Arc<AtomicBool>,
     #[cfg(test)]
     attachment_fault_after_steps: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(all(test,target_os="macos"))]
+    attachment_fault_before_step_receipt:Arc<AtomicBool>,
 }
 
 impl KnowledgeService {
@@ -511,6 +538,8 @@ impl KnowledgeService {
             attachment_inventory: Arc::new(attachment_inventory_cache::AttachmentInventoryCache::new()),
             attachment_attempt: Arc::new(Mutex::new(None)),
             attachment_observations: Arc::new(Mutex::new(Default::default())),
+            #[cfg(target_os = "macos")]
+            recovery_needed: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             write_fault_before_commit: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
@@ -519,7 +548,20 @@ impl KnowledgeService {
             interrupt_after_backup_rename: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
             attachment_fault_after_steps: Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX)),
+            #[cfg(all(test,target_os="macos"))]
+            attachment_fault_before_step_receipt:Arc::new(AtomicBool::new(false)),
         };
+        // A conflicted Mac publication must leave the recovery UI reachable.
+        // Per-directory mutation checks remain strict; no failure is resolved
+        // merely by allowing the service to start.
+        #[cfg(target_os = "macos")]
+        match service.recover_registered_vault_if_present() {
+            Err(failure) if failure.code == "knowledge-recovery-required" => {
+                *service.recovery_needed.lock().map_err(|_|error("knowledge-lock-poisoned","Knowledge recovery state failed"))?=Some(service.current_vault_unlocked()?.root);
+            },
+            other => other?,
+        }
+        #[cfg(not(target_os = "macos"))]
         service.recover_registered_vault_if_present()?;
         if service.current_vault_path().is_file() {
             let vault = service.current_vault_unlocked()?;
@@ -560,6 +602,14 @@ impl KnowledgeService {
             .lock()
             .map_err(|_| error("knowledge-lock-poisoned", "Knowledge service lock failed"))?;
         let trusted = trusted_vault(vault)?;
+        #[cfg(target_os = "macos")]
+        match recover_pending_document_writes(&trusted.root) {
+            Err(failure) if failure.code == "knowledge-recovery-required" => {
+                *self.recovery_needed.lock().map_err(|_|error("knowledge-lock-poisoned","Knowledge recovery state failed"))?=Some(trusted.root.clone());
+            },
+            other => {other?;*self.recovery_needed.lock().map_err(|_|error("knowledge-lock-poisoned","Knowledge recovery state failed"))?=None;},
+        }
+        #[cfg(not(target_os = "macos"))]
         recover_pending_document_writes(&trusted.root)?;
         let mut normalized = vault.clone();
         normalized.root_path = trusted.root.to_string_lossy().to_string();
@@ -1729,6 +1779,33 @@ impl KnowledgeService {
         };
         let destination =
             destination_parent.join(destination_relative.file_name().unwrap_or_default());
+        #[cfg(target_os = "macos")]
+        {
+            let owned_guard = if target_guard.is_none() { Some(filesystem_directory_identity_guard(&vault.root).map_err(map_filesystem_identity_error)?) } else { None };
+            let guard = target_guard.as_ref().or(owned_guard.as_ref()).ok_or_else(knowledge_target_not_current)?;
+            let root = guard.macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
+            let source = macos_attachment_io::Observation::read_at(&root,&relative,false)
+                .map_err(|_|error("knowledge-read-failed","The source note could not be verified"))?;
+            if source.revision()!=input.expected_revision {return Err(error("knowledge-revision-conflict","Knowledge document changed since it was opened"));}
+            self.assert_expected_target_unlocked(&vault,expected_target,target_guard.as_ref())?;
+            if destination_relative==relative {
+                source.verify().map_err(|_|error("knowledge-revision-conflict","The note changed during reading"))?;
+                return self.snapshot_from_observation(&vault,&relative,&source);
+            }
+            let next_path=relative_path_string(&destination_relative);
+            let next_revision=sha256_hex(&self.moved_note_bytes_unlocked(&vault,input,&next_path,&source.bytes)?);
+            source.verify().map_err(|_|error("knowledge-revision-conflict","The source changed while preparing the move"))?;
+            self.move_note_with_attachments_unlocked(&vault,input,&next_path,&source.bytes,Some(guard),&source.checkpoint())?;
+            self.index.mark_document_dirty(&input.document_ref)?;
+            self.index.mark_document_dirty(&KnowledgeDocumentRef{vault_id:vault.registration.id.clone(),relative_path:next_path})?;
+            let next=macos_attachment_io::Observation::read_at(&root,&destination_relative,false)
+                .map_err(|_|error("knowledge-recovery-required","The moved note could not be verified; inspect its recovery record"))?;
+            if next.revision()!=next_revision {return Err(error("knowledge-revision-conflict","The destination changed after the move; retained versions remain available"));}
+            self.assert_expected_target_unlocked(&vault,expected_target,target_guard.as_ref())?;
+            return self.snapshot_from_observation(&vault,&destination_relative,&next);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
         if destination == target {
             return self.snapshot_from_path(&vault, &relative, &target);
         }
@@ -1758,6 +1835,7 @@ impl KnowledgeService {
         };
         self.index.mark_document_dirty(&next_ref)?;
         self.snapshot_from_path(&vault, &destination_relative, &destination)
+        }
     }
 
     pub(crate) fn delete_document(
@@ -1788,6 +1866,28 @@ impl KnowledgeService {
         let target_guard = self.capture_expected_target_unlocked(&vault, expected_target)?;
         require_matching_vault(&input.document_ref, &vault.registration)?;
         let relative = safe_markdown_relative_path(&input.document_ref.relative_path)?;
+        #[cfg(target_os = "macos")]
+        {
+            let directory = match target_guard.as_ref() {
+                Some(guard) => guard.macos_directory(&vault.root),
+                None => filesystem_directory_identity_guard(&vault.root)
+                    .and_then(|guard| guard.macos_directory(&vault.root)),
+            }.map_err(map_filesystem_identity_error)?;
+            self.assert_expected_target_unlocked(&vault, expected_target, target_guard.as_ref())?;
+            macos_note_remove::retain(&directory, &relative, &input.expected_revision, false, None, None, || {
+                self.assert_expected_target_unlocked(&vault, expected_target, target_guard.as_ref())
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::Interrupted, "knowledge-target-changed"))
+            }).map_err(|failure| match failure {
+                macos_note_remove::Failure::RevisionConflict => error("knowledge-revision-conflict", "Knowledge document changed since it was opened"),
+                macos_note_remove::Failure::Io { phase: macos_note_remove::Phase::BeforeIntent, .. } =>
+                    error("knowledge-delete-failed", "Document removal did not begin; the source was not removed by this operation"),
+                macos_note_remove::Failure::Io { .. } => error("knowledge-recovery-required", "Removal is unconfirmed; refresh the note list and inspect retained recovery records before retrying"),
+            })?;
+            self.index.mark_document_dirty(&input.document_ref)?;
+            return Ok(());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
         let target = safe_existing_file(&vault.root, &relative)?;
         let mut file = open_exclusive_document(&target)?;
         let bytes = read_exclusive_document(&mut file)?;
@@ -1802,6 +1902,7 @@ impl KnowledgeService {
         drop(file);
         self.index.mark_document_dirty(&input.document_ref)?;
         Ok(())
+        }
     }
 
     pub(crate) fn begin_current_context_session(
@@ -2554,6 +2655,15 @@ impl KnowledgeService {
             content,
             revision: sha256_hex(&bytes),
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn snapshot_from_observation(&self, vault:&TrustedVault, relative:&Path,
+        observed:&macos_attachment_io::Observation)->Result<KnowledgeDocumentSnapshot,KnowledgeError> {
+        observed.verify().map_err(|_|error("knowledge-revision-conflict","The note changed while reading"))?;
+        let bytes=observed.bytes.strip_prefix(&[0xef,0xbb,0xbf]).unwrap_or(&observed.bytes);
+        let content=String::from_utf8(bytes.to_vec()).map_err(|_|error("knowledge-encoding-unsupported","Knowledge documents must use UTF-8"))?;
+        Ok(KnowledgeDocumentSnapshot{summary:summary_from_metadata(vault,relative,observed.metadata()),content,revision:observed.revision().into()})
     }
 
     fn mutate_document_for_optional_target(

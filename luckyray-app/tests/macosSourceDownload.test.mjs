@@ -73,10 +73,13 @@ test("HTTP errors, TLS errors and byte mismatches fail without another attempt",
   }
 });
 
-test("a conflicting existing cache object is preserved without contacting a source", async t => {
+test("verified cached sources are reused and conflicting bytes never contact a source", async t => {
   const cacheDirectory = await cache(t), existing = join(cacheDirectory, input.sha256);
-  await writeFile(existing, "keep conflict", { flag: "wx", mode: 0o600 });
+  await writeFile(existing, payload, { flag: "wx", mode: 0o600 });
   let contacted = false;
+  assert.equal(await download(input, { cacheDirectory, transfer: async () => { contacted = true; } }), existing);
+  assert.equal(contacted, false); assert.deepEqual(await readFile(existing), payload);
+  await writeFile(existing, "keep conflict");
   await assert.rejects(download(input, { cacheDirectory, transfer: async () => { contacted = true; } }), /cache-conflict/);
   assert.equal(contacted, false); assert.equal(await readFile(existing, "utf8"), "keep conflict");
 });

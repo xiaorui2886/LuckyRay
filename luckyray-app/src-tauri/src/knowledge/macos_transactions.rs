@@ -26,6 +26,27 @@ struct Journal {
     #[serde(default)]
     next_object: Option<(u64, u64)>,
 }
+
+pub(super) struct RecoveryRecord {
+    pub(super) version: Version,
+    pub(super) target: String,
+    pub(super) before: Option<String>,
+    pub(super) after: String,
+    pub(super) before_object: Option<(u64,u64)>,
+    pub(super) next_object: Option<(u64,u64)>,
+    pub(super) backup: String,
+}
+pub(super) fn inspect_record(dir:&Directory,name:&str)->Result<RecoveryRecord,KnowledgeError> {
+    let (bytes,version)=dir.read_owned(OsStr::new(name)).map_err(|_|failed())?.ok_or_else(failed)?;
+    let record:Journal=serde_json::from_slice(&bytes).map_err(|_|failed())?;
+    if record.version!=1 || !super::macos_record_policy::record_name(&format!("{}.json",record.nonce))
+        || ![format!(".lrm-{}.journal",record.nonce),format!(".lrm-{}.history",record.nonce)].contains(&name.to_owned())
+        || !super::macos_record_policy::data_path(&record.target) || record.target.contains('/')
+        || !super::macos_record_policy::hash64(&record.after)
+        || record.before.as_ref().is_some_and(|value|!super::macos_record_policy::hash64(value)) {return Err(failed());}
+    Ok(RecoveryRecord{version,target:record.target,before:record.before,after:record.after,
+        before_object:record.before_object,next_object:record.next_object,backup:format!(".lrm-{}.backup",record.nonce)})
+}
 fn failed() -> KnowledgeError {
     error(
         "knowledge-recovery-required",
@@ -59,6 +80,29 @@ pub(crate) fn write(
         .and_then(|v| v.to_str())
         .ok_or_else(failed)?;
     let dir = Directory::open(parent, false, false).map_err(|_| failed())?;
+    write_at(
+        &dir,
+        OsStr::new(name),
+        bytes,
+        replace,
+        fail_before_commit,
+        expected,
+        validate,
+    ).map(|_|())
+}
+
+pub(super) fn write_at(
+    dir: &Directory,
+    name: &OsStr,
+    bytes: &[u8],
+    replace: bool,
+    fail_before_commit: bool,
+    expected: Option<&Version>,
+    validate: impl FnOnce() -> Result<(), KnowledgeError>,
+) -> Result<super::macos_attachment_io::Checkpoint, KnowledgeError> {
+    let name = name.to_str().ok_or_else(failed)?;
+    if !super::macos_record_policy::data_path(name) || name.contains('/') {return Err(failed());}
+    dir.current().map_err(|_| failed())?;
     let source = match dir.open_metadata(OsStr::new(name)) {
         Ok(file) => {
             require_empty_acl(&file).map_err(|_| acl_unsupported())?;
@@ -166,9 +210,7 @@ pub(crate) fn write(
     }
     dir.rename(OsStr::new(&backup), OsStr::new(name), before.is_some())
         .map_err(|_| failed())?;
-    let installed = dir
-        .entry_info(OsStr::new(name))
-        .map_err(|_| failed())?;
+    let installed = dir.entry_info(OsStr::new(name)).map_err(|_| failed())?;
     let meta = staged_file.metadata().map_err(|_| failed())?;
     if (installed.device, installed.inode) != (meta.dev(), meta.ino()) {
         return Err(conflict());
@@ -232,7 +274,12 @@ pub(crate) fn write(
     } else {
         cleanup(&dir, &journal, &journal_version);
     }
-    Ok(())
+    let checkpoint=super::macos_attachment_io::checkpoint_held(dir,OsStr::new(name),&staged_file,false).map_err(|_|conflict())?;
+    require_empty_acl(&staged_file).map_err(|_|failed())?;
+    let final_meta=staged_file.metadata().map_err(|_|failed())?;
+    if !checkpoint.matches_metadata(&final_meta) || !installed.1.matches_metadata(&final_meta)
+        || (final_meta.uid(),final_meta.gid())!=(meta.uid(),meta.gid()) {return Err(conflict());}
+    Ok(checkpoint)
 }
 
 fn verify_source(
@@ -323,7 +370,7 @@ fn created_version(
 fn cleanup(dir: &Directory, name: &str, expected: &Version) -> bool {
     dir.remove(OsStr::new(name), expected).is_ok()
 }
-fn recover_directory(dir: &Directory) -> Result<(), KnowledgeError> {
+pub(super) fn recover_directory(dir: &Directory) -> Result<(), KnowledgeError> {
     for entry in dir.entries().map_err(|_| failed())? {
         let Some(name) = entry
             .to_str()
@@ -380,6 +427,13 @@ fn recover_directory(dir: &Directory) -> Result<(), KnowledgeError> {
                 archive(dir, &record, &data.1)?;
             }
             Recovery::Restore => {
+                // A matching digest at a replacement inode is not the original
+                // version. Legacy records without this proof need explicit UI
+                // inspection/copy, rather than an automatic pathname restore.
+                let Some((device,inode))=record.before_object else {return Err(failed());};
+                if previous.as_ref().is_none_or(|(_,version)|(version.device,version.inode)!=(device,inode)) {
+                    return Err(failed());
+                }
                 dir.rename(OsStr::new(&backup), OsStr::new(&record.target), false)
                     .map_err(|_| failed())?;
                 let restored = dir

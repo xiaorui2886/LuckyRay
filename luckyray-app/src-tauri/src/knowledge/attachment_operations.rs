@@ -98,6 +98,9 @@ pub(crate) struct AttachmentOperationPlan {
     pub authorization: String,
     #[serde(default)]
     pub receipt_authorization: String,
+    #[cfg(target_os="macos")]
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    macos_initial_objects:Option<std::collections::BTreeMap<String,Option<super::macos_attachment_io::Checkpoint>>>,
     pub kind: String,
     pub files: Vec<AttachmentFileChange>,
     pub issues: Vec<AttachmentOperationIssue>,
@@ -160,6 +163,8 @@ fn plan(
         source_epoch: 0,
         authorization: String::new(),
         receipt_authorization: String::new(),
+        #[cfg(target_os="macos")]
+        macos_initial_objects:None,
         kind: kind.into(),
         files: Vec::new(),
         issues: Vec::new(),
@@ -321,21 +326,45 @@ impl KnowledgeService {
         let (vault,guard,identity)=self.capture_current_target()?;
         if vault.registration.id!=vault_id {return Err(knowledge_target_not_current());}
         if id.len()!=32 || !id.bytes().all(|b|b.is_ascii_hexdigit()) {return Err(error("knowledge-recovery-invalid","Invalid operation identifier"));}
+        #[cfg(target_os = "macos")]
+        let bytes=macos_store(&vault,&guard,false)?.read(&format!("{id}.json")).map_err(macos_record_error)?;
+        #[cfg(not(target_os = "macos"))]
+        let bytes={
         let path=recovery_directory(&vault.root)?.join(format!("{id}.json"));
         if has_reparse_point(&path)? {return Err(error("knowledge-path-reparse-forbidden","Invalid recovery path"));}
         let mut bytes=Vec::new();
         File::open(&path).map_err(|_|error("knowledge-recovery-missing","Cannot read operation"))?.take((MAX_OPERATION_BYTES*3+1) as u64).read_to_end(&mut bytes).map_err(|_|error("knowledge-recovery-missing","Cannot read operation"))?;
         if bytes.len()>MAX_OPERATION_BYTES*3 {return Err(error("knowledge-recovery-invalid","Recovery record exceeds limit"));}
+        bytes
+        };
         let operation=serde_json::from_slice(&bytes).map_err(|_|error("knowledge-recovery-invalid","Invalid operation"))?;
-        validate_plan(&vault,&operation)?;self.verify_attachment_receipt(&operation)?;self.verify_current_target(&identity,&guard)?;Ok(operation)
+        validate_plan(&vault,&operation)?;self.verify_attachment_receipt(&operation)?;
+        #[cfg(target_os="macos")]
+        macos_admission(&operation)?;
+        self.verify_current_target(&identity,&guard)?;Ok(operation)
     }
     pub(crate) fn record_attachment_projection(&self,vault_id:&str,result:&AttachmentOperationResult)->Result<(),KnowledgeError> {
         let (vault,guard,identity)=self.capture_current_target()?;
         if vault.registration.id!=vault_id {return Err(knowledge_target_not_current());}
         if result.operation_id.len()!=32 || !result.operation_id.bytes().all(|b|b.is_ascii_hexdigit()) {return Err(error("knowledge-recovery-invalid","Invalid operation identifier"));}
+        #[cfg(target_os = "macos")]
+        {
+            let store=macos_store(&vault,&guard,false)?;
+            let plan:AttachmentOperationPlan=serde_json::from_slice(&store.read(&format!("{}.json",result.operation_id)).map_err(macos_record_error)?)
+                .map_err(|_|error("knowledge-recovery-invalid","Invalid operation"))?;
+            validate_plan(&vault,&plan)?;self.verify_attachment_receipt(&plan)?;
+            macos_admission(&plan)?;
+            self.verify_current_target(&identity,&guard)?;
+            let encoded=serde_json::to_vec(result).map_err(|_|error("knowledge-recovery-invalid","Cannot encode projection receipt"))?;
+            store.write(&format!("{}-{:032x}.result.json",result.operation_id,rand::random::<u128>()),&encoded).map_err(macos_record_error)?;
+            return self.verify_current_target(&identity,&guard);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
         let directory=recovery_directory(&vault.root)?;
         self.verify_current_target(&identity,&guard)?;
         write_new_synced(&directory.join(format!("{}-{:032x}.result.json",result.operation_id,rand::random::<u128>())),&serde_json::to_vec(result).map_err(|_|error("knowledge-recovery-invalid","Cannot encode projection receipt"))?)
+        }
     }
 
     pub(crate) fn list_attachment_operations(
@@ -346,6 +375,17 @@ impl KnowledgeService {
         if vault.registration.id != vault_id {
             return Err(knowledge_target_not_current());
         }
+        #[cfg(target_os = "macos")]
+        {
+            let ids=match macos_store(&vault,&guard,false) {
+                Ok(store)=>store.ids().map_err(macos_record_error)?,
+                Err(failure) if failure.code=="knowledge-recovery-missing"=>Vec::new(),
+                Err(failure)=>return Err(failure),
+            };
+            self.verify_current_target(&identity,&guard)?;return Ok(ids);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
         let relative = Path::new(".luckyray/attachment-operations");
         if !vault.root.join(relative).exists() {
             return Ok(Vec::new());
@@ -378,6 +418,7 @@ impl KnowledgeService {
         ids.sort();
         self.verify_current_target(&identity, &guard)?;
         Ok(ids)
+        }
     }
 
     pub(super) fn move_note_with_attachments_unlocked(
@@ -387,6 +428,7 @@ impl KnowledgeService {
         destination: &str,
         original: &[u8],
         existing_guard: Option<&FilesystemDirectoryIdentityGuard>,
+        #[cfg(target_os = "macos")] source_checkpoint: &super::macos_attachment_io::Checkpoint,
     ) -> Result<(), KnowledgeError> {
         let owned_guard = if existing_guard.is_none() {
             Some(
@@ -415,8 +457,28 @@ impl KnowledgeService {
         for file in &operation.files {
             require_file_state(&vault.root, file, false)?;
         }
+        #[cfg(target_os = "macos")]
+        let (macos_root, macos_captured) = {
+            let root = root_guard.macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
+            let captured = macos_capture(&root, &operation)?;
+            if captured.get(&input.document_ref.relative_path).and_then(Option::as_ref) != Some(source_checkpoint) {
+                return Err(error("knowledge-revision-conflict", "The source object changed while preparing the move"));
+            }
+            (root, captured)
+        };
+        #[cfg(target_os="macos")]
+        let operation={operation.macos_initial_objects=Some(macos_captured);self.seal_attachment_receipt(&operation)?};
+        #[cfg(not(target_os = "macos"))]
         let directory = recovery_directory(&vault.root)?;
         let id = format!("{:032x}", rand::random::<u128>());
+        #[cfg(target_os = "macos")]
+        {
+            let encoded=serde_json::to_vec(&operation)
+                .map_err(|_|error("knowledge-recovery-invalid","Cannot encode note move backup"))?;
+            macos_store(vault,root_guard,true)?.write(&format!("{id}.json"),&encoded).map_err(macos_record_error)?;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
         write_new_synced(
             &directory.join(format!("{id}.json")),
             &serde_json::to_vec(&operation).map_err(|_| {
@@ -426,6 +488,11 @@ impl KnowledgeService {
                 )
             })?,
         )?;
+        }
+        #[cfg(target_os = "macos")]
+        let result = self.run_macos_operation(vault, &operation, &id, false, root_guard,
+            &AtomicBool::new(false), &macos_root)?;
+        #[cfg(not(target_os = "macos"))]
         let result = self.run_attachment_operation_unlocked(
             vault,
             &operation,
@@ -757,14 +824,26 @@ impl KnowledgeService {
             .map_err(|_| error("knowledge-lock-poisoned", "Knowledge mutation lock failed"))?;
         let vault = self.current_vault_unlocked()?;
         validate_plan(&vault, operation)?;
+        #[cfg(target_os = "macos")]
+        let macos_guard=macos_plan_guard(&vault,operation)?;
+        #[cfg(target_os = "macos")]
+        let macos_root=macos_guard.macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
         let _external_files = self.hold_external_plan(&vault, operation, source_epoch)?;
         let _external_locations = hold_external_dependencies(operation)?;
         // Validate every before-state before publishing the durable intent.
         for file in &operation.files {
             require_file_state(&vault.root, file, false)?;
         }
+        #[cfg(target_os = "macos")]
+        let macos_captured=macos_capture(&macos_root,operation)?;
+        #[cfg(target_os="macos")]
+        let admitted={let mut plan=operation.clone();plan.macos_initial_objects=Some(macos_captured);self.seal_attachment_receipt(&plan)?};
+        #[cfg(target_os="macos")]
+        let operation=&admitted;
+        #[cfg(not(target_os = "macos"))]
         let directory = recovery_directory(&vault.root)?;
         let id = format!("{:032x}", rand::random::<u128>());
+        #[cfg(not(target_os = "macos"))]
         let record = directory.join(format!("{id}.json"));
         let receipt=self.seal_attachment_receipt(operation)?;
         let encoded = serde_json::to_vec(&receipt).map_err(|_| {
@@ -773,8 +852,16 @@ impl KnowledgeService {
                 "Cannot encode operation backup",
             )
         })?;
+        #[cfg(target_os = "macos")]
+        {
+            macos_store(&vault,&macos_guard,true)?.write(&format!("{id}.json"),&encoded).map_err(macos_record_error)?;
+            return self.run_macos_operation(&vault, operation, &id, false, &macos_guard, cancelled, &macos_root);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
         write_new_synced(&record, &encoded)?;
         self.run_attachment_operation_unlocked(&vault, operation, &id, false, None, cancelled)
+        }
     }
 
     pub(crate) fn recover_attachment_operation(
@@ -800,6 +887,12 @@ impl KnowledgeService {
                 "Invalid operation identifier",
             ));
         }
+        #[cfg(target_os = "macos")]
+        let macos_guard=filesystem_directory_identity_guard(&vault.root).map_err(map_filesystem_identity_error)?;
+        #[cfg(target_os = "macos")]
+        let encoded=macos_store(&vault,&macos_guard,false)?.read(&format!("{id}.json")).map_err(macos_record_error)?;
+        #[cfg(not(target_os = "macos"))]
+        let encoded={
         let directory = recovery_directory(&vault.root)?;
         let path = directory.join(format!("{id}.json"));
         if has_reparse_point(&path)? {
@@ -823,15 +916,23 @@ impl KnowledgeService {
         let mut encoded=Vec::new();
         File::open(path).map_err(|_|error("knowledge-recovery-missing","Cannot read operation backup"))?.take((MAX_OPERATION_BYTES*3+1) as u64).read_to_end(&mut encoded).map_err(|_|error("knowledge-recovery-missing","Cannot read operation backup"))?;
         if encoded.len()>MAX_OPERATION_BYTES*3 {return Err(error("knowledge-recovery-invalid","Recovery record exceeds limit"));}
+        encoded
+        };
         let operation: AttachmentOperationPlan = serde_json::from_slice(&encoded)
             .map_err(|_| error("knowledge-recovery-invalid", "Operation backup is invalid"))?;
         validate_plan(&vault, &operation)?;
         self.verify_attachment_receipt(&operation)?;
+        #[cfg(target_os="macos")]
+        macos_admission(&operation)?;
         let _external_files = if rollback { Vec::new() } else { self.hold_external_plan(&vault, &operation, source_epoch)? };
         let _external_locations=if rollback {Vec::new()} else {hold_external_dependencies(&operation)?};
-        self.run_attachment_operation_unlocked(&vault, &operation, id, rollback, None, cancelled)
+        #[cfg(target_os = "macos")]
+        {self.run_attachment_operation_unlocked(&vault, &operation, id, rollback, Some(&macos_guard), cancelled)}
+        #[cfg(not(target_os = "macos"))]
+        {self.run_attachment_operation_unlocked(&vault, &operation, id, rollback, None, cancelled)}
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn run_attachment_operation_unlocked(
         &self,
         vault: &TrustedVault,
@@ -1022,6 +1123,169 @@ impl KnowledgeService {
             &receipt,
         )?;
         Ok(result)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn run_attachment_operation_unlocked(&self,vault:&TrustedVault,operation:&AttachmentOperationPlan,id:&str,rollback:bool,
+        existing_guard:Option<&FilesystemDirectoryIdentityGuard>,cancelled:&AtomicBool)->Result<AttachmentOperationResult,KnowledgeError> {
+        let owned=if existing_guard.is_none(){Some(macos_plan_guard(vault,operation)?)}else{None};
+        let guard=existing_guard.or(owned.as_ref()).ok_or_else(knowledge_target_not_current)?;
+        let root=guard.macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
+        self.run_macos_operation(vault,operation,id,rollback,guard,cancelled,&root)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn run_macos_operation(&self,vault:&TrustedVault,operation:&AttachmentOperationPlan,id:&str,rollback:bool,
+        guard:&FilesystemDirectoryIdentityGuard,cancelled:&AtomicBool,root:&crate::macos_fs::Directory)
+        ->Result<AttachmentOperationResult,KnowledgeError> {
+        use super::macos_operation_steps as records;
+        use super::macos_step_policy::{self as policy,Decision};
+        let identity=knowledge_target_identity(vault,guard.identity())?;
+        if identity.identity_digest!=operation.target_identity {return Err(knowledge_target_not_current());}
+        let initial=macos_admission(operation)?;
+        self.verify_attachment_receipt(operation)?;
+        let encoded=serde_json::to_vec(operation).map_err(|_|error("knowledge-recovery-invalid","Cannot encode admitted operation"))?;
+        let plan_digest=sha256_hex(&encoded);
+        let store=macos_store(vault,guard,false)?;
+        let _operation_lock=store.lock_operation(id).map_err(macos_record_error)?;
+        if store.read(&format!("{id}.json")).map_err(macos_record_error)?!=encoded {
+            return Err(error("knowledge-recovery-untrusted","The admitted operation differs from its durable plan"));
+        }
+        let sign=|data:&[u8]|self.macos_step_authorization(data)
+            .map_err(|_|std::io::Error::new(std::io::ErrorKind::InvalidData,"step-seal-unavailable"));
+        let mut steps=operation.files.iter().enumerate().map(|(index,file)| {
+            records::load(&store,&macos_step_scope(operation,id,index,file,initial,&plan_digest)?,&sign).map_err(macos_record_error)
+        }).collect::<Result<Vec<_>,KnowledgeError>>()?;
+        if steps.iter().any(|step|step.progress.unknown()) {
+            return Err(error("knowledge-recovery-object-unknown","A step has an intent without a confirmed object outcome; inspect preserved files instead of replaying it"));
+        }
+        if !rollback && steps.iter().any(|step|step.progress.rollback_intent) {
+            return Err(error("knowledge-recovery-retired","Rollback has started; finish it or create a new reviewed operation"));
+        }
+        let mut expected=initial.clone();
+        for (index,file) in operation.files.iter().enumerate() {
+            expected.insert(file.relative_path.clone(),steps[index].progress.expected(initial.get(&file.relative_path).ok_or_else(macos_binding_missing)?).clone());
+        }
+        macos_verify_targets(root,&expected,None)?;
+        macos_verify_removals(root,operation,id,initial,&steps)?;
+        let mut result=AttachmentOperationResult{operation_id:id.into(),status:if rollback{"rolled-back"}else if operation.issues.is_empty(){"complete"}else{"complete-with-unresolved"}.into(),
+            completed_files:0,total_files:operation.files.len(),issues:operation.issues.clone(),recovery_path:format!(".luckyray/attachment-operations/macos/{id}.json")};
+        let ordered=if rollback{(0..operation.files.len()).rev().collect::<Vec<_>>()}else{(0..operation.files.len()).collect::<Vec<_>>()};
+        for index in ordered {
+            let file=&operation.files[index];
+            if cancelled.load(Ordering::Acquire) {result.status="partial".into();result.issues.push(AttachmentOperationIssue{document:file.relative_path.clone(),target:String::new(),status:"cancelled-between-files".into()});break;}
+            #[cfg(test)]
+            if result.completed_files==self.attachment_fault_after_steps.load(Ordering::Acquire) {
+                self.attachment_fault_after_steps.store(usize::MAX,Ordering::Release);result.status="partial".into();
+                result.issues.push(AttachmentOperationIssue{document:file.relative_path.clone(),target:String::new(),status:"injected-interruption".into()});break;
+            }
+            let outcome=(||->Result<(),KnowledgeError>{
+                self.assert_expected_target_unlocked(vault,Some(&identity),Some(guard))?;
+                macos_verify_targets(root,&expected,None)?;
+                macos_verify_removals(root,operation,id,initial,&steps)?;
+                let admitted=initial.get(&file.relative_path).ok_or_else(macos_binding_missing)?;
+                let pre=expected.get(&file.relative_path).ok_or_else(macos_binding_missing)?;
+                let decision=policy::decide(admitted,pre,&steps[index].progress,rollback);
+                match decision {
+                    Decision::Conflict|Decision::Retired=>return Err(macos_binding_missing()),
+                    Decision::Complete=>{if file.relative_path.to_ascii_lowercase().ends_with(".md") {self.index.mark_document_dirty(&KnowledgeDocumentRef{vault_id:vault.registration.id.clone(),relative_path:file.relative_path.clone()})?;}return Ok(());},
+                    _=>{},
+                }
+                let scope=macos_step_scope(operation,id,index,file,initial,&plan_digest)?;
+                let begin=||records::begin(&store,&scope,&steps[index],rollback,&sign).map_err(macos_record_error);
+                let post=if decision==Decision::Unchanged || (rollback && scope.keep_copy) {
+                    // This is a retained, already authorized binding. Do not
+                    // recapture current equal bytes to manufacture a new one.
+                    begin()?;pre.clone()
+                }else{
+                    self.macos_attachment_step(vault,operation,id,rollback,guard,&identity,root,file,pre,initial,&expected,begin)?
+                };
+                let mut next=expected.clone();next.insert(file.relative_path.clone(),post.clone());
+                macos_verify_targets(root,&next,None)?;
+                #[cfg(test)]
+                if self.attachment_fault_before_step_receipt.swap(false,Ordering::AcqRel) {
+                    return Err(error("knowledge-recovery-object-unknown","Injected interruption before the object outcome receipt"));
+                }
+                steps[index]=records::finish(&store,&scope,rollback,post,&sign).map_err(macos_record_error)?;
+                expected=next;
+                macos_verify_targets(root,&expected,None)?;
+                macos_verify_removals(root,operation,id,initial,&steps)?;
+                if file.relative_path.to_ascii_lowercase().ends_with(".md") {self.index.mark_document_dirty(&KnowledgeDocumentRef{vault_id:vault.registration.id.clone(),relative_path:file.relative_path.clone()})?;}
+                Ok(())
+            })();
+            match outcome {
+                Ok(())=>result.completed_files+=1,
+                Err(failure)=>{result.status="partial".into();result.issues.push(AttachmentOperationIssue{document:file.relative_path.clone(),target:String::new(),status:format!("{}: {}",failure.code,failure.message)});break;}
+            }
+        }
+        let mut durable=result.clone();
+        if !operation.external_paths.is_empty() || operation.material_relocation.is_some() || operation.material_file_move.is_some() {
+            durable.status="partial".into();durable.issues.push(AttachmentOperationIssue{document:String::new(),target:String::new(),status:"attachment-projection-pending".into()});
+        }
+        let encoded=serde_json::to_vec(&durable).map_err(|_|error("knowledge-recovery-invalid","Cannot encode operation result"))?;
+        store.write(&format!("{id}-{:032x}.result.json",rand::random::<u128>()),&encoded).map_err(macos_record_error)?;
+        self.assert_expected_target_unlocked(vault,Some(&identity),Some(guard))?;root.current().map_err(macos_record_error)?;Ok(result)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn macos_attachment_step(&self,vault:&TrustedVault,operation:&AttachmentOperationPlan,id:&str,rollback:bool,
+        guard:&FilesystemDirectoryIdentityGuard,identity:&KnowledgeTargetIdentity,root:&crate::macos_fs::Directory,
+        file:&AttachmentFileChange,pre:&Option<super::macos_attachment_io::Checkpoint>,initial:&MacCaptured,expected:&MacCaptured,
+        begin:impl FnOnce()->Result<(),KnowledgeError>)->Result<Option<super::macos_attachment_io::Checkpoint>,KnowledgeError> {
+        use super::macos_attachment_io::{self as io,Observation};
+        let relative=safe_relative_path(&file.relative_path,false)?;
+        let markdown=file.relative_path.to_ascii_lowercase().ends_with(".md");
+        let before=if rollback{&file.after_revision}else{&file.before_revision};
+        let after=if rollback{&file.before_revision}else{&file.after_revision};
+        let content=bytes(if rollback{&file.before}else{&file.after})?;
+        if pre.as_ref().map(|v|v.object.hash.as_str())!=before.as_deref() {return Err(macos_binding_missing());}
+        if !rollback && markdown && content.is_some() {
+            for (path,hash) in &operation.attachment_dependencies {
+                if expected.get(path).and_then(Option::as_ref).map(|v|v.object.hash.as_str())!=Some(hash.as_str()) {return Err(macos_binding_missing());}
+            }
+        }
+        let references=if !rollback && operation.kind=="attachment-rename" && content.is_none() {Some(macos_references(vault,root,&file.relative_path)?)}else{None};
+        let validate=||->Result<(),KnowledgeError>{
+            self.assert_expected_target_unlocked(vault,Some(identity),Some(guard))?;
+            // Other targets, including earlier publications and read-only
+            // dependencies, retain their durable binding across this step.
+            macos_verify_targets(root,expected,Some(&file.relative_path))
+        };
+        validate()?;
+        if &macos_observe(root,&file.relative_path)?!=pre {return Err(macos_binding_missing());}
+        if let Some(references)=&references {references.verify(vault,root)?;}
+        // All predictable validation precedes the durable mutation intent.
+        if let Some(content)=&content {if markdown {decode_document(content)?;}}
+        begin()?;
+        let post=match (before.is_some(),content) {
+            (false,Some(content))=>{
+                if rollback && file.before.is_some() && file.after.is_none() {
+                    let original=initial.get(&file.relative_path).and_then(Option::as_ref).ok_or_else(macos_binding_missing)?;
+                    Some(super::macos_note_remove::restore_operation(root,&relative,after.as_deref().unwrap_or_default(),id,&original.object,
+                        ||validate().map_err(|_|std::io::Error::new(std::io::ErrorKind::Interrupted,"operation-target-changed")))
+                        .map_err(macos_record_error)?)
+                } else {Some(io::create_at(root,&relative,&content,!markdown).map_err(macos_record_error)?)}
+            }
+            (true,Some(content))=>{
+                safe_markdown_relative_path(&file.relative_path)?;
+                let observed=Observation::read_at(root,&relative,false).map_err(macos_record_error)?;
+                if Some(observed.checkpoint()).as_ref()!=pre.as_ref() {return Err(macos_binding_missing());}
+                Some(super::macos_transactions::write_at(observed.directory(),observed.name(),&content,true,false,Some(observed.version()),||{validate()?;observed.verify().map_err(macos_record_error)})?)
+            }
+            (true,None)=>{
+                let original=pre.as_ref().ok_or_else(macos_binding_missing)?;
+                super::macos_note_remove::retain(root,&relative,before.as_deref().unwrap_or_default(),!markdown,Some(id),Some(original),||{
+                    validate().map_err(|_|std::io::Error::new(std::io::ErrorKind::Interrupted,"operation-target-changed"))?;
+                    if let Some(references)=&references {references.verify(vault,root).map_err(|_|std::io::Error::new(std::io::ErrorKind::Interrupted,"references-changed"))?;}Ok(())
+                }).map_err(|_|error("knowledge-recovery-object-unknown","Path removal is unconfirmed; inspect retained versions and intent records"))?;
+                if !super::macos_note_remove::verified_retained(root,&relative,&original.object.hash,id,&original.object).map_err(macos_record_error)? {return Err(macos_binding_missing());}
+                None
+            }
+            (false,None)=>return Err(error("knowledge-recovery-invalid","Empty operation step")),
+        };
+        validate()?;
+        if post.as_ref().map(|v|v.object.hash.as_str())!=after.as_deref() {return Err(macos_binding_missing());}
+        Ok(post)
     }
 
     pub(crate) fn preview_attachment_conversion(
@@ -1257,6 +1521,15 @@ impl KnowledgeService {
             let decoded = decode_document(&before)?;
             let mut patches = Vec::new();
             for link in attachment_links(&decoded.content) {
+                #[cfg(target_os = "macos")]
+                if super::external_attachments::external_target_path(&vault.root,note,&link.destination,link.syntax)?
+                    .as_ref().and_then(|path|path.strip_prefix(&vault.root).ok()).and_then(Path::to_str)
+                    .is_some_and(|path|path.eq_ignore_ascii_case(old)) {
+                    let range=link.destination_span.clone().ok_or_else(||error("knowledge-link-rewrite-unsupported","Resolve the shared reference definition before moving this attachment"))?;
+                    let fragment=link.destination.split_once('#').map(|(_,part)|format!("#{part}")).unwrap_or_default();
+                    let target=if link.syntax==LinkSyntax::Wiki {new.to_owned()}else{markdown_relative_target(note,new)};
+                    patches.push((range,format!("{target}{fragment}")));continue;
+                }
                 let resolved = resolve_attachment(
                     &vault.root,
                     &inventory,
@@ -1385,6 +1658,8 @@ fn validate_plan(
         }
     }
     for (path, digest) in &operation.attachment_dependencies {
+        #[cfg(target_os="macos")]
+        if !super::macos_record_policy::data_path(path) {return Err(error("knowledge-path-outside-vault","Attachment dependencies cannot address metadata or recovery files"));}
         safe_relative_path(path, false)?;
         if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(error(
@@ -1412,6 +1687,8 @@ fn validate_plan(
     let mut paths = std::collections::HashSet::new();
     let mut total = 0usize;
     for file in &operation.files {
+        #[cfg(target_os="macos")]
+        if !super::macos_record_policy::data_path(&file.relative_path) {return Err(error("knowledge-path-outside-vault","Operations cannot address metadata or recovery files"));}
         if operation.kind == "external-reference-update" && (!file.relative_path.to_ascii_lowercase().ends_with(".md") || file.before.is_none() || file.after.is_none()) {
             return Err(error("knowledge-recovery-invalid", "External reference updates may only edit existing Markdown notes"));
         }
@@ -1438,6 +1715,10 @@ fn validate_plan(
             (&file.after, &file.after_revision),
         ] {
             let decoded = bytes(data)?;
+            #[cfg(target_os="macos")]
+            if decoded.as_ref().is_some_and(|data|data.len() as u64 > if file.relative_path.to_ascii_lowercase().ends_with(".md") {crate::macos_fs::MAX_RECORD}else{crate::macos_fs::MAX_ATTACHMENT_BLOB}) {
+                return Err(error("knowledge-recovery-invalid","Operation exceeds the note or attachment capacity"));
+            }
             total += decoded.as_ref().map_or(0, Vec::len);
             if decoded.as_deref().map(sha256_hex) != *revision || total > MAX_OPERATION_BYTES * 2 {
                 return Err(error(
@@ -1504,8 +1785,124 @@ fn ensure_operation_parent(root: &Path, relative: &Path) -> Result<Vec<File>, Kn
 }
 
 #[cfg(target_os = "macos")]
-fn recovery_directory(_root: &Path) -> Result<PathBuf, KnowledgeError> {
-    Err(error("knowledge-transaction-unsupported", "Attachment operations are unavailable on macOS"))
+fn macos_record_error(failure:std::io::Error)->KnowledgeError {
+    if failure.kind()==std::io::ErrorKind::NotFound {error("knowledge-recovery-missing","Recovery record was not found")}
+    else {error("knowledge-recovery-required","Recovery record is unavailable or conflicted; existing objects are preserved")}
+}
+#[cfg(target_os = "macos")]
+type MacCaptured=std::collections::BTreeMap<String,Option<super::macos_attachment_io::Checkpoint>>;
+#[cfg(target_os="macos")]
+fn macos_binding_missing()->KnowledgeError {error("knowledge-recovery-object-conflict","The durable target object cannot be confirmed; current files and retained versions are preserved")}
+#[cfg(target_os="macos")]
+fn macos_admission(operation:&AttachmentOperationPlan)->Result<&MacCaptured,KnowledgeError> {
+    let initial=operation.macos_initial_objects.as_ref().ok_or_else(||error("knowledge-recovery-object-unknown","This older record has no durable target identities; automatic recovery cannot adopt current equal-content files"))?;
+    if operation.receipt_authorization.is_empty() {return Err(macos_binding_missing());}
+    let mut paths=std::collections::BTreeSet::new();
+    for file in &operation.files {
+        paths.insert(file.relative_path.as_str());
+        if initial.get(&file.relative_path).ok_or_else(macos_binding_missing)?.as_ref().map(|v|v.object.hash.as_str())!=file.before_revision.as_deref() {return Err(macos_binding_missing());}
+    }
+    for (path,hash) in &operation.attachment_dependencies {
+        paths.insert(path.as_str());
+        if !operation.files.iter().any(|file|file.relative_path==*path)
+            && initial.get(path).and_then(Option::as_ref).map(|v|v.object.hash.as_str())!=Some(hash.as_str()) {return Err(macos_binding_missing());}
+    }
+    if initial.len()!=paths.len() || paths.iter().any(|path|!initial.contains_key(*path)) {return Err(macos_binding_missing());}
+    Ok(initial)
+}
+#[cfg(target_os="macos")]
+fn macos_step_scope<'a>(operation:&'a AttachmentOperationPlan,id:&'a str,index:usize,file:&'a AttachmentFileChange,
+    initial:&'a MacCaptured,plan:&'a str)->Result<super::macos_operation_steps::Scope<'a>,KnowledgeError> {
+    Ok(super::macos_operation_steps::Scope{id,index,path:&file.relative_path,plan,plan_seal:&operation.receipt_authorization,
+        initial:initial.get(&file.relative_path).ok_or_else(macos_binding_missing)?,before_revision:file.before_revision.as_deref(),
+        after_revision:file.after_revision.as_deref(),keep_copy:file.before.is_none() && !file.relative_path.to_ascii_lowercase().ends_with(".md")})
+}
+#[cfg(target_os="macos")]
+fn macos_verify_targets(root:&crate::macos_fs::Directory,expected:&MacCaptured,skip:Option<&str>)->Result<(),KnowledgeError> {
+    for (path,pinned) in expected {if skip!=Some(path.as_str()) && &macos_observe(root,path)?!=pinned {return Err(macos_binding_missing());}}
+    root.current().map_err(macos_record_error)
+}
+#[cfg(target_os="macos")]
+fn macos_verify_removals(root:&crate::macos_fs::Directory,operation:&AttachmentOperationPlan,id:&str,
+    initial:&MacCaptured,steps:&[super::macos_operation_steps::Step])->Result<(),KnowledgeError> {
+    for (index,file) in operation.files.iter().enumerate() {
+        let progress=&steps[index].progress;
+        let removed=if progress.rollback_done.is_some() && progress.forward_done.is_some()
+            && file.before.is_none() && file.after.is_some() && file.relative_path.to_ascii_lowercase().ends_with(".md") {
+            progress.forward_done.as_ref().and_then(|v|v.object.as_ref())
+        }else if progress.rollback_done.is_none() && progress.forward_done.is_some() && file.before.is_some() && file.after.is_none() {
+            initial.get(&file.relative_path).and_then(Option::as_ref)
+        }else{None};
+        if let Some(pin)=removed {
+            if !super::macos_note_remove::verified_retained(root,Path::new(&file.relative_path),&pin.object.hash,id,&pin.object).map_err(macos_record_error)? {return Err(macos_binding_missing());}
+        }
+    }
+    Ok(())
+}
+#[cfg(target_os = "macos")]
+fn macos_observe(root:&crate::macos_fs::Directory,path:&str)->Result<Option<super::macos_attachment_io::Checkpoint>,KnowledgeError> {
+    if !super::macos_record_policy::data_path(path) {return Err(error("knowledge-path-outside-vault","Operation cannot address metadata or recovery objects"));}
+    let relative=safe_relative_path(path,false)?;
+    match super::macos_attachment_io::Observation::read_at(root,&relative,!path.to_ascii_lowercase().ends_with(".md")) {
+        Ok(value)=>Ok(Some(value.checkpoint())),
+        Err(failure) if failure.kind()==std::io::ErrorKind::NotFound=>{root.current().map_err(macos_record_error)?;Ok(None)},
+        Err(failure)=>Err(macos_record_error(failure)),
+    }
+}
+#[cfg(target_os = "macos")]
+fn macos_capture(root:&crate::macos_fs::Directory,operation:&AttachmentOperationPlan)->Result<MacCaptured,KnowledgeError> {
+    let mut captured=operation.files.iter().map(|file|Ok((file.relative_path.clone(),macos_observe(root,&file.relative_path)?))).collect::<Result<MacCaptured,KnowledgeError>>()?;
+    for (path,hash) in &operation.attachment_dependencies {
+        if operation.files.iter().any(|file|file.relative_path.eq_ignore_ascii_case(path) && file.relative_path!=*path) {
+            return Err(error("knowledge-path-spelling-conflict","Use the planned target spelling for an attachment dependency"));
+        }
+        if !captured.contains_key(path) {
+            let value=macos_observe(root,path)?;
+            if value.as_ref().map(|v|v.object.hash.as_str())!=Some(hash.as_str()) {return Err(error("knowledge-attachment-changing","Attachment changed during admission"));}
+            captured.insert(path.clone(),value);
+        }
+    }
+    Ok(captured)
+}
+#[cfg(target_os = "macos")]
+struct MacReferences {notes:MacCaptured,inventory:Vec<String>,old:String}
+#[cfg(target_os = "macos")]
+impl MacReferences {
+    fn verify(&self,vault:&TrustedVault,root:&crate::macos_fs::Directory)->Result<(),KnowledgeError> {
+        for (note,expected) in &self.notes {if &macos_observe(root,note)?!=expected {return Err(error("knowledge-attachment-changing","A note changed during reference validation; retained bytes are preserved"));}}
+        let current=index::attachment_inventory(&vault.root)?.into_iter().filter(|path|!path.eq_ignore_ascii_case(&self.old)).collect::<Vec<_>>();
+        if current!=self.inventory {return Err(error("knowledge-attachment-inventory-changed","Vault entries changed during reference validation"));}root.current().map_err(macos_record_error)
+    }
+}
+#[cfg(target_os = "macos")]
+fn macos_references(vault:&TrustedVault,root:&crate::macos_fs::Directory,old:&str)->Result<MacReferences,KnowledgeError> {
+    let inventory=index::attachment_inventory(&vault.root)?;let mut notes=std::collections::BTreeMap::new();
+    for note in inventory.iter().filter(|path|path.to_ascii_lowercase().ends_with(".md")) {
+        let observed=super::macos_attachment_io::Observation::read_at(root,Path::new(note),false).map_err(macos_record_error)?;
+        let decoded=decode_document(&observed.bytes)?;
+        for link in attachment_links(&decoded.content) {
+            let resolved=resolve_attachment(&vault.root,&inventory,note,&link.destination,link.syntax)?;
+            let absolute=super::external_attachments::external_target_path(&vault.root,note,&link.destination,link.syntax)?;
+            let absolute_matches=absolute.as_ref().and_then(|path|path.strip_prefix(&vault.root).ok()).and_then(|path|path.to_str()).is_some_and(|path|path.eq_ignore_ascii_case(old));
+            if absolute_matches || resolved.relative_path.as_deref().is_some_and(|path|path.eq_ignore_ascii_case(old)) || resolved.candidates.iter().any(|path|path.eq_ignore_ascii_case(old)) {
+                return Err(error("knowledge-attachment-new-reference","A note still references the old attachment; update it before resuming. Old bytes are retained"));
+            }
+        }
+        observed.verify().map_err(macos_record_error)?;notes.insert(note.clone(),Some(observed.checkpoint()));
+    }
+    let result=MacReferences{notes,inventory:inventory.into_iter().filter(|path|!path.eq_ignore_ascii_case(old)).collect(),old:old.into()};result.verify(vault,root)?;Ok(result)
+}
+#[cfg(target_os = "macos")]
+fn macos_store(vault:&TrustedVault,guard:&FilesystemDirectoryIdentityGuard,create:bool)->Result<super::macos_operation_store::Store,KnowledgeError> {
+    let root=guard.macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
+    let result=super::macos_operation_store::Store::open(&root,create).map_err(macos_record_error);
+    guard.verify_current_path(&vault.root).map_err(map_filesystem_identity_error)?;result
+}
+#[cfg(target_os = "macos")]
+fn macos_plan_guard(vault:&TrustedVault,operation:&AttachmentOperationPlan)->Result<FilesystemDirectoryIdentityGuard,KnowledgeError> {
+    let guard=filesystem_directory_identity_guard(&vault.root).map_err(map_filesystem_identity_error)?;
+    if knowledge_target_identity(vault,guard.identity())?.identity_digest!=operation.target_identity {return Err(knowledge_target_not_current());}
+    guard.verify_current_path(&vault.root).map_err(map_filesystem_identity_error)?;Ok(guard)
 }
 
 #[cfg(not(target_os = "macos"))]

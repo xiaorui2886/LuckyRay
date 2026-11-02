@@ -7,6 +7,9 @@ import { attachmentIssueLabel, attachmentWorkflowBusy } from "../../core/service
 import { importIssueMessage } from './ImportResultNotice';
 import "./vaultAttachments.css";
 import { AttachmentHandlingSelect } from "./AttachmentHandlingSelect";
+import { isMacPlatform } from "../../app/macosPresentation";
+import { NoteRecoveryPanel } from "./NoteRecoveryPanel";
+import { objectRecoveryMessage } from "../../core/services/vaultAttachmentErrors";
 
 const resultLabels: Record<string, string> = { complete: "已完成", "complete-with-unresolved": "已处理可确定项，部分引用需要关注", partial: "部分完成，可继续或恢复", "rolled-back": "引用变更已回滚" };
 export type VaultAttachmentsPanelProps = { vaultId: string; relativePath: string | null; notePaths: string[]; hasUnsavedChanges: () => boolean; saveAffected: (paths: string[]) => Promise<void>; chooseDirectory: () => Promise<string | null> };
@@ -61,6 +64,8 @@ export function VaultAttachmentsPanel({ vaultId, relativePath, notePaths, hasUns
     else if (action === "rename") void workflow.rename(oldPath.trim(), newPath.trim());
   };
   const issues = state.result?.issues || state.plan?.issues || [];
+  const resultLabel = state.result?.status === "partial" && issues.some(issue => objectRecoveryMessage(issue.status))
+    ? "部分完成，需先检查保留版本" : state.result ? resultLabels[state.result.status] || state.result.status : "";
   const receipt = state.importReceipt;
   return <section className="notes-vault-section vault-attachment-settings" aria-label="附件设置">
     <div className="notes-vault-section-heading"><h3>附件</h3><span>统一处理与显示</span></div>
@@ -75,6 +80,7 @@ export function VaultAttachmentsPanel({ vaultId, relativePath, notePaths, hasUns
       <ul className="vault-attachment-issues">{receipt.errors.map((error, index) => <li key={index}><strong>{importIssueMessage(error)}</strong><span>{error.sourcePath}</span></li>)}</ul>
     </div>}
     <AttachmentPortabilitySection vaultId={vaultId} notePaths={notePaths} saveAffected={saveAffected} chooseDirectory={chooseDirectory} />
+    {isMacPlatform() && <NoteRecoveryPanel vaultId={vaultId} hasUnsavedChanges={hasUnsavedChanges} saveAffected={saveAffected} disabled={busy} />}
     <details className="vault-attachment-maintenance" open={maintenanceOpen} onToggle={event => setMaintenanceOpen(event.currentTarget.open)}>
       <summary>附件维护 <span>{busy ? "处理中，可关闭设置" : "仅在需要整理旧文件时使用"}</span></summary>
       <div className="vault-attachment-form">
@@ -97,7 +103,7 @@ export function VaultAttachmentsPanel({ vaultId, relativePath, notePaths, hasUns
         </>}
       </div>
       {state.phase !== "idle" && <div className="vault-attachment-state" role="status" aria-live="polite">
-        <strong>{state.title} · {busy ? state.phase === "planning" ? "正在检查" : "正在处理" : state.phase === "review" ? "请确认影响范围" : state.phase === "failed" ? "未完成" : state.phase === "cancelled" ? "已停止，未执行写入" : state.title === "附件引用检查" ? "只读检查完成" : state.result ? resultLabels[state.result.status] || state.result.status : issues.length ? "没有可执行的变更，部分引用需要关注" : "没有需要处理的旧附件"}</strong>
+        <strong>{state.title} · {busy ? state.phase === "planning" ? "正在检查" : "正在处理" : state.phase === "review" ? "请确认影响范围" : state.phase === "failed" ? "未完成" : state.phase === "cancelled" ? "已停止，未执行写入" : state.title === "附件引用检查" ? "只读检查完成" : state.result ? resultLabel : issues.length ? "没有可执行的变更，部分引用需要关注" : "没有需要处理的旧附件"}</strong>
         {state.plan && <p>{state.plan.documentCount} 项笔记变更 · {state.plan.attachmentCount} 项附件变更 · 复制 {(state.plan.copyBytes / 1048576).toFixed(2)} MB · 备份 {(state.plan.backupBytes / 1048576).toFixed(2)} MB</p>}
         {state.title === "附件引用检查" && <p>本次仅刷新诊断，没有复制或修改文件。历史操作记录保持原样。</p>}
         {state.result && <p>已处理 {state.result.completedFiles} / {state.result.totalFiles} 项。请重新打开笔记查看内容更新。</p>}

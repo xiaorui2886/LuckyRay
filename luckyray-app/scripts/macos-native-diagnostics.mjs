@@ -8,6 +8,7 @@ export const DIAGNOSTIC_STAGES = Object.freeze([
   "python-configure", "python-build", "python-install", "python-install-probe", "python-stdlib", "python-probe",
   "ffmpeg-flags", "ffmpeg-configure", "ffmpeg-build", "ffmpeg-probe", "deno-probe", "node-version",
   "compile-sidecars", "cli-identity", "arm64-check", "code-sign", "diagnostic-self-test",
+  "native-note-data-compile", "native-note-data-test",
 ]);
 const COMMANDS = Object.freeze(["node", "pnpm", "cargo", "make", "configure", "perl", "curl", "python3", "python3.11",
   "lipo", "codesign", "otool", "plutil", "git", "deno", "ffmpeg", "swiftc", "screencapture", "luckyray-cli"]);
@@ -30,7 +31,7 @@ const IO_CODES = Object.freeze(["ENOENT", "EACCES", "EPERM", "ENOSPC", "EIO", "E
 const SIGNALS = Object.freeze(["SIGABRT", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGPIPE", "SIGQUIT", "SIGSEGV", "SIGTERM", "SIGTRAP", "SIGXCPU", "SIGXFSZ"]);
 const PREFIX = "MACOS_NATIVE_EVENT ";
 const SOURCES = Object.freeze(["macos-build-common.mjs", "macos-dsh-distribution.mjs", "prepare-macos-build.mjs",
-  "macos-lsh-seal.mjs",
+  "macos-lsh-seal.mjs", "check-macos-note-data.mjs", "check-macos-note-flow.mjs",
   "prepare-macos-runtimes.mjs", "prepare-macos-sidecars.mjs", "prepare-macos-node-input.mjs", "prepare-macos-deno-input.mjs",
   "check-macos-media-sources.mjs", "dsh-supply-chain.mjs", "build-macos.mjs", "check-macos-internal.mjs", "check-macos-material-flow.mjs", "check-macos-lsh-proof.mjs"]);
 const count = value => Number.isSafeInteger(value) && value >= 0 && value <= 10000000;

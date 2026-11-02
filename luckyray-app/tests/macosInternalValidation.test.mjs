@@ -7,13 +7,17 @@ import { internalPlan, diagnosticSummary, failureSummary, summarizeBuildResult, 
 test("internal LSH surface plan uses the full locked app and fixed own-window evidence", async () => {
   const plan = await internalPlan();
   assert.deepEqual(plan.sidecars, ["luckyray-native-host", "luckyray-cli", "luckyray-mcp"]);
-  assert.deepEqual(plan.evidenceFiles, ["report.json", "LuckyRay-lsh-surface.png"]);
+  assert.deepEqual(plan.evidenceFiles, ["report.json", "LuckyRay-note-flow.png", "LuckyRay-lsh-surface.png"]);
   assert.equal(plan.minimumSystemVersion, "15.0");
   assert.equal(plan.appBuild[plan.appBuild.indexOf("--bundles") + 1], "app");
   assert.deepEqual(JSON.parse(plan.appBuild[plan.appBuild.indexOf("--config") + 1]), { bundle: { createUpdaterArtifacts: false } });
   assert(plan.appBuild.includes("--locked"));
   assert(plan.appBuild.includes("browser-host-runtime"));
   assert(plan.appBuild.includes("macos-lsh-surface-flow"));
+  assert(plan.appBuild.includes("macos-note-flow"));
+  assert.equal(plan.notesUi.nativeFilePicker, "not-run");
+  assert.equal(plan.notesUi.vaultCreationUi, "not-run");
+  assert.equal(plan.phases.at(-2), "real-notes-ui-flow");
   assert(!plan.appBuild.includes("macos-lsh-proof"));
   assert(!plan.appBuild.includes("macos-material-flow"));
   assert.equal(plan.phases.at(-1), "real-lsh-surface-flow");

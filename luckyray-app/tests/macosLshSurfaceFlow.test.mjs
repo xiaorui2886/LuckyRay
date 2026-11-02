@@ -7,6 +7,8 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import { safeSurfaceRecord, safeSurfaceExecution, observeSurfaceFlow } from "../scripts/check-macos-lsh-surface-flow.mjs";
 import { PHASES, publishableReport, summarizeBuildResult } from "../scripts/check-macos-internal.mjs";
+import { NOTE_DATA_CASES } from "../scripts/check-macos-note-data.mjs";
+import { emptyNoteFlow } from "../scripts/check-macos-note-flow.mjs";
 
 const canary = "private-surface-canary-never-publish";
 const uiFlags = ["surfaceAttached", "surfaceHidden", "surfaceReshown", "bindingPreserved", "authenticatedParent", "processImageMatched"];
@@ -82,13 +84,18 @@ test("surface and saved-quit projection require every actual assertion and disca
 });
 
 test("saved and re-published internal reports require the new visible lifecycle", () => {
+  const notesUi = emptyNoteFlow();notesUi.status = "passed";notesUi.sourceUnchanged = true;
+  for (const phase of ["exercise", "reopen"]) Object.assign(notesUi[phase], { status: "passed", step: phase === "exercise" ? "recover" : "reopen",
+    flags: notesUi[phase].flags.map(() => true), backendVerified: true, filesVerified: true, normalSavedQuit: true,
+    screenshotCaptured: phase === "reopen", exitCode: 0 });
+  const noteData = { status: "passed", compiled: true, failure: "none", cases: NOTE_DATA_CASES.map(({ id }) => ({ id, status: "passed", exit: 0 })) };
   const build = summarizeBuildResult({ version: "1.9.9", target: "aarch64-apple-darwin",
     sidecars: ["luckyray-native-host", "luckyray-cli", "luckyray-mcp"], mediaFiles: 96, dshFiles: 35556,
     distribution: { sourceInputsSha256: "a".repeat(64), readyToPackage: false, providedSourceInputs: 26,
       providedSourceBytes: 100, missingRequirements: [{ id: "missing-source", raw: canary }] } });
   const input = { schemaVersion: 1, mode: "internal-native-validation", binaryExport: false, status: "passed", workerExit: 0,
     workerSignal: null, source: { repository: "xiaorui2886/LuckyRay", commit: "a".repeat(40), tree: "b".repeat(40), path: canary },
-    phases: PHASES.map(phase => ({ phase, status: "passed" })), build, lsh: { ...execution(), env: canary }, distributionReady: false };
+    phases: PHASES.map(phase => ({ phase, status: "passed" })), build, noteData, notesUi, lsh: { ...execution(), env: canary }, distributionReady: false };
   const saved = publishableReport(input);
   assert.deepEqual(publishableReport(JSON.parse(JSON.stringify(saved))), saved);
   assert(!JSON.stringify(saved).includes(canary));
@@ -97,7 +104,7 @@ test("saved and re-published internal reports require the new visible lifecycle"
   assert.equal(saved.coverage.systemPointerInput, "not-run");
   assert.equal(saved.coverage.screenshotVisualReview, "required");
   assert.equal(saved.distributionReady, false);
-  for (const bad of [{ lsh: null }, { workerExit: 3 }, { workerSignal: "SIGTERM" }, { distributionReady: true }])
+  for (const bad of [{ lsh: null }, { notesUi: null }, { noteData: null }, { workerExit: 3 }, { workerSignal: "SIGTERM" }, { distributionReady: true }])
     assert.throws(() => publishableReport({ ...input, ...bad }), /result-invalid/);
 });
 

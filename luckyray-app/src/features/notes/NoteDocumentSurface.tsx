@@ -165,6 +165,7 @@ export function NoteDocumentSurface(props:NoteDocumentSurfaceProps){
                     : selectedNote ? t("editor.notes.status.justEdited") : ""}</span>
                   <button
                     className="editor-status-btn"
+                    data-note-action="preview"
                     onClick={() => actions.togglePreview()}
                     title={editorMode === "preview" ? t("editor.notes.status.switchLive") : t("editor.notes.status.switchPreview")}
                   >
@@ -177,6 +178,7 @@ export function NoteDocumentSurface(props:NoteDocumentSurfaceProps){
                   </button>
                   <button
                     className={`editor-status-btn${editorMode === "source" ? " active" : ""}`}
+                    data-note-action="source"
                     onClick={() => actions.toggleSource()}
                     title={editorMode === "source" ? t("editor.notes.status.backLive") : t("editor.notes.status.switchSource")}
                   >

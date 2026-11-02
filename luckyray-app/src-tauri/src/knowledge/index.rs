@@ -36,6 +36,10 @@ pub(super) fn attachment_inventory(root: &Path) -> Result<Vec<String>, Knowledge
             let name = entry.file_name();
             let name = name.to_str().ok_or_else(|| error("knowledge-path-unavailable", "Vault filename is not Unicode"))?;
             if [".luckyray", ".obsidian", ".git"].iter().any(|reserved| name.eq_ignore_ascii_case(reserved)) || name.starts_with(".lrk-") { continue; }
+            // Retained macOS write versions are recovery authority, not
+            // ordinary attachments eligible for content reuse or indexing.
+            #[cfg(target_os = "macos")]
+            if name.starts_with(".lrm-") { continue; }
             if has_reparse_point(&entry.path())? { return Err(error("knowledge-path-reparse-forbidden", "Vault attachment inventory contains a linked path")); }
             let child = relative.join(name);
             let kind = entry.file_type().map_err(|_| error("knowledge-index-metadata-failed", "Cannot inspect Vault attachment"))?;

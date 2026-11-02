@@ -192,7 +192,7 @@ async function prepareMedia(scratch, node, home) {
   const env = isolatedEnvironment(home, { PKG_CONFIG: "/usr/bin/false" });
   const archives = {};
   for (const [name, input] of Object.entries({ openssl: OPENSSL, python: SOURCES.python, ffmpeg: SOURCES.ffmpeg })) {
-    const archive = await download(input); archives[name] = archive;
+    const archive = await download(input,{allowNetwork:name!=="ffmpeg" || process.env.MACOS_INTERNAL_DIAGNOSTICS!=="1"}); archives[name] = archive;
     const output = join(scratch, `${name}-source`); await mkdir(output);
     await extractSource(archive, input.sha256, output);
   }
@@ -286,6 +286,11 @@ with zipfile.ZipFile(target, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
 
 export async function prepareRuntimes() {
   requireNative();
+  // Resolve this pinned upstream source before expensive native/DSH work.
+  // prepareMedia reuses the same verified cache entry. Keep the original URL,
+  // byte pin and bounded download policy; this only fails earlier when that
+  // prerequisite is unavailable, and does not claim to repair the network.
+  await download(SOURCES.ffmpeg,{allowNetwork:process.env.MACOS_INTERNAL_DIAGNOSTICS!=="1"});
   await run("python3", ["-I", "-B", "-c", "import sys; assert sys.version_info >= (3,11)"]);
   const scratch = await stage("runtimes"); const home = join(scratch, "build-home"); await mkdir(home);
   const node = await nodeInput(scratch);

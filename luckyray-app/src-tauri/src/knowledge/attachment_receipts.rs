@@ -30,6 +30,19 @@ fn authorization(plan: &AttachmentOperationPlan, key: &[u8; 32]) -> Result<Strin
 }
 
 impl KnowledgeService {
+    #[cfg(target_os="macos")]
+    pub(super) fn macos_step_authorization(&self,payload:&[u8])->Result<String,KnowledgeError> {
+        let key=self.attachment_receipt_key(false)?;
+        let mut inner=Sha256::new();inner.update(b"LRK-MACOS-ATTACHMENT-STEP-V1\0");inner.update(payload);
+        let mut digest=Sha256::new();digest.update(key);digest.update(inner.finalize());
+        Ok(format!("{:x}",digest.finalize()))
+    }
+    #[cfg(target_os = "macos")]
+    fn attachment_receipt_key(&self, create: bool) -> Result<[u8; 32], KnowledgeError> {
+        super::macos_recovery_key::load(&self.app_data_dir,create).map_err(|_|error(
+            "knowledge-recovery-key-unavailable","Recovery authority is unavailable or conflicted; existing key files are preserved"))
+    }
+    #[cfg(not(target_os = "macos"))]
     fn attachment_receipt_key(&self, create: bool) -> Result<[u8; 32], KnowledgeError> {
         // This is independent of the service mutation lock, which callers may
         // already hold while creating a native receipt. It serializes first use.

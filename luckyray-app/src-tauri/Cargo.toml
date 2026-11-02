@@ -29,6 +29,8 @@ macos-material-flow = []
 macos-lsh-proof = []
 # Fixed visible LSH lifecycle scenario in the disposable native worker only.
 macos-lsh-surface-flow = []
+# Fixed synthetic notes UI exercise; disposable internal app builds only.
+macos-note-flow = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

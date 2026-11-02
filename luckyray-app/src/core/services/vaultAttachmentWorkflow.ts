@@ -1,4 +1,4 @@
-import { attachmentAccessMessage } from "./vaultAttachmentErrors";
+import { attachmentAccessMessage, objectRecoveryMessage } from "./vaultAttachmentErrors";
 import type { AttachmentOperationPlan, AttachmentOperationResult } from "./vaultAttachments";
 
 export type ImportReceipt = { copiedCount: number; skippedCount?: number; failedCount?: number; conflictRenamedCount: number; errors: { sourcePath: string; code: string; message: string }[] };
@@ -26,7 +26,7 @@ export function createAttachmentWorkflow(port: AttachmentWorkflowPort) {
   let activeRequestId: string | null = null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<AttachmentWorkflowState>) => { state = { ...state, ...patch }; listeners.forEach(listener => listener()); };
-  const fail = (error: unknown) => update({ phase: "failed", error: error instanceof Error ? error.message : String(error) });
+  const fail = (error: unknown) => update({ phase: "failed", error: objectRecoveryMessage(error) || (error instanceof Error ? error.message : String(error)) });
   const execute = async () => {
     const plan = state.plan;
     if (!plan) return;
@@ -98,6 +98,8 @@ export function createAttachmentWorkflow(port: AttachmentWorkflowPort) {
 }
 
 export function attachmentIssueLabel(status: string) {
+  const recoveryMessage = objectRecoveryMessage(status);
+  if (recoveryMessage) return recoveryMessage;
   const known: Record<string, string> = { missing: "找不到来源附件", ambiguous: "存在多个同名附件", "unsupported-reference-style-rewrite": "此引用格式暂不支持改写", "import-partial": "导入中断，可从操作记录恢复", "referenced-note-not-selected": "引用的笔记不在本次选择中", "material-source-unavailable": "素材记录存在，但来源文件不可用", "knowledge-attachment-read-failed": "无法读取来源附件", "knowledge-attachment-size-limit": "来源附件超出大小限制", "knowledge-path-reparse-forbidden": "来源路径不允许访问" };
   const attachmentManagement: Record<string, string> = {
     "other-vault-pending": "其他知识库仍有引用，请分别打开处理",

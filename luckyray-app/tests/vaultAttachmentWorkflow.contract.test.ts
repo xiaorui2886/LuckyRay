@@ -13,6 +13,16 @@ function setup(overrides: Partial<AttachmentWorkflowPort> = {}) {
   const port: AttachmentWorkflowPort = { capture:async()=>7, collect:async(paths)=>{calls.push(`collect:${paths.join()}`);return plan;}, rename:async()=>plan, execute:async(epoch,p)=>{assert.equal(epoch,7);assert.equal(p,plan);calls.push("execute");return result;}, recover:async()=>result, cancel:async()=>{calls.push("cancel");},...overrides };
   return {calls, workflow:createAttachmentWorkflow(port)};
 }
+test("unknown, replaced or retired object recovery stays failed without retry or success receipt",async()=>{
+  for(const code of ["knowledge-recovery-object-unknown","knowledge-recovery-object-conflict","knowledge-recovery-retired"]) {
+    let attempts=0;
+    const {workflow}=setup({recover:async()=>{attempts++;throw new Error(JSON.stringify({code,message:"native detail"}));}});
+    await workflow.recover("retained-operation",true);
+    assert.equal(attempts,1);assert.equal(workflow.getSnapshot().phase,"failed");assert.equal(workflow.getSnapshot().result,null);
+    assert(!workflow.getSnapshot().error.includes("native detail"));
+    assert.match(workflow.getSnapshot().error,/对象|回滚/);
+  }
+});
 test("safe scoped collection finishes after one action without a preview screen", async()=>{
   const {workflow,calls}=setup(); await workflow.collect(["note.md"]);
   assert.deepEqual(calls,["collect:note.md","execute"]);assert.equal(workflow.getSnapshot().result,result);

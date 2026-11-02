@@ -1,12 +1,28 @@
 import { normalizeLocale, translate, type Locale } from "../i18n/index";
 import { normalizeKnowledgeError } from "./knowledge";
 
+const objectRecoveryMessages: Record<string, string> = {
+  "knowledge-recovery-object-unknown": "此步骤缺少可确认的对象结果，或旧记录没有对象身份。文件和记录已保留，请检查保留版本，不要直接重复继续或回滚。",
+  "knowledge-recovery-object-conflict": "文件对象已变化，即使名称和内容相同也不会自动移动或覆盖。请先检查当前文件和保留版本。",
+  "knowledge-recovery-retired": "此批次已开始回滚。请完成回滚；需要再次执行时，请重新预览并创建新操作。",
+};
+export function objectRecoveryMessage(cause: unknown): string | null {
+  if (cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string" && objectRecoveryMessages[cause.code]) return objectRecoveryMessages[cause.code];
+  const normalized = normalizeKnowledgeError(cause);
+  if (objectRecoveryMessages[normalized.code]) return objectRecoveryMessages[normalized.code];
+  const text = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  const code = text.split(":", 1)[0];
+  return objectRecoveryMessages[code] || null;
+}
+
 export function attachmentAccessMessage(status: string | undefined, locale?: Locale): string | null {
   if (status !== "external-unregistered" && status !== "external-attachment-not-approved") return null;
   return translate(locale || normalizeLocale(typeof document === "undefined" ? null : document.documentElement.lang), "editor.notes.attachment.externalUnregistered");
 }
 
 export function attachmentErrorMessage(cause: unknown, locale?: Locale) {
+  const recoveryMessage = objectRecoveryMessage(cause);
+  if (recoveryMessage) return recoveryMessage;
   let structured = cause;
   if (typeof cause === "string") { try { structured = JSON.parse(cause); } catch { /* Plain errors retain the existing normalization. */ } }
   const rawCode = structured && typeof structured === "object" && "code" in structured && typeof structured.code === "string" ? structured.code : undefined;

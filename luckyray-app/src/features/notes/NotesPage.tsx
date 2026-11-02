@@ -22,6 +22,7 @@ import { attachmentContextIsCurrent, captureAttachmentContext, exportNoteArchive
 import { readActiveKnowledgeWriteSource } from "../../core/services/knowledgeSource";
 import type { ImportReceipt } from "../../core/services/vaultAttachmentWorkflow";
 import { VaultAttachmentsPanel } from "./VaultAttachmentsPanel";
+import { readNoteRecovery } from "../../core/services/noteRecovery";
 import { AttachmentImportDialog } from "./AttachmentImportDialog";
 import { ImportResultNotice } from './ImportResultNotice';
 import { useVaultFileDrop } from './useVaultFileDrop';
@@ -1539,6 +1540,16 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   useAttachmentFileVersions(currentVault?.id, recheckAttachments);
   const realVaultAssetOpenPathRef = useRef<Map<string, string>>(new Map());
   const [notesIndexPanel, setNotesIndexPanel] = useState<NotesIndexPanel | null>(null);
+  const [noteRecoveryNeeded, setNoteRecoveryNeeded] = useState(false);
+  useEffect(() => {
+    let active = true; setNoteRecoveryNeeded(false);
+    if (isMacPlatform() && currentVault) {
+      // This asks for cached startup state only: no Vault-wide history scan.
+      void readNoteRecovery(currentVault.id, true).then(value => { if (active) setNoteRecoveryNeeded(value.startupBlocked); })
+        .catch(() => { if (active) setNoteRecoveryNeeded(true); });
+    }
+    return () => { active = false; };
+  }, [currentVault?.id, currentVault?.rootPath]);
   const [knowledgeSearchOpen, setKnowledgeSearchOpen] = useState(false);
   const [knowledgeSearchQuery, setKnowledgeSearchQuery] = useState("");
   const [backlinksTab, setBacklinksTab] = useState<BacklinksTab>(() => {
@@ -8739,6 +8750,7 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
                       />
                     </button>
                   </div>
+                  {noteRecoveryNeeded && <p role="alert" className="vault-attachment-error">有未确认的笔记恢复状态，部分写入可能被阻止。<button type="button" onClick={() => setNotesIndexPanel("settings")}>打开设置检查保留版本</button></p>}
                   {renderNotesIndexTools()}
                 </div>
                 <div className="backlinks-tabs">
@@ -8948,6 +8960,7 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
           </div>
           <div
             className="note-ctx-item-react"
+            data-note-action="move"
             onClick={() => {
               setMoveModal({ note: noteCtx.note });
               setNoteCtx(null);
@@ -8994,6 +9007,7 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
           <div className="note-ctx-sep-react" />
           <div
             className="note-ctx-item-react danger"
+            data-note-action="delete"
             onClick={() => {
               setConfirmDelete({ note: noteCtx.note });
               setNoteCtx(null);
@@ -9331,7 +9345,7 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
             <div className="modal-body-react"><p className="notes-confirm-text">{t("editor.notes.dialog.deleteConfirm", { title: noteTitle(confirmDelete.note) })}</p></div>
             <div className="notes-dialog-actions">
               <button onClick={() => setConfirmDelete(null)}>{t("common.action.cancel")}</button>
-              <button className="danger" onClick={() => void deleteNote(confirmDelete.note)}>{t("common.action.delete")}</button>
+              <button className="danger" data-note-action="confirm-delete" onClick={() => void deleteNote(confirmDelete.note)}>{t("common.action.delete")}</button>
             </div>
           </div>
         </div>
@@ -9858,7 +9872,7 @@ function NotesIndexPopover({
             <div className="notes-index-popover-actions">
               <button type="button" onClick={onCreateVault}>{t("editor.notes.vault.create")}</button>
               <button type="button" onClick={onOpenVault}>{t("editor.notes.vault.addExisting")}</button>
-              {vaultUi.actions.includes("refresh-vault") ? <button type="button" onClick={onRefresh}>{t("editor.notes.vault.refresh")}</button> : null}
+              {vaultUi.actions.includes("refresh-vault") ? <button type="button" data-note-action="refresh-vault" onClick={onRefresh}>{t("editor.notes.vault.refresh")}</button> : null}
               <button type="button" onClick={onOpenSettings}>{t("editor.notes.vault.titleSettings")}</button>
             </div>
           </section>
@@ -10159,6 +10173,7 @@ function NoteMoveModal({
           {filteredTargets.map((target) => (
             <button
               key={target.id}
+              data-note-move-target={target.id}
               className={currentFolderId === target.id ? "active" : ""}
               onClick={() => onSelect(target.id)}
             >

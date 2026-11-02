@@ -137,7 +137,7 @@ export async function run(command, args, options = {}) {
     });
   });
 }
-export async function download(input, { transfer = run, cacheDirectory = join(BUILD, "cache") } = {}) {
+export async function download(input, { transfer = run, cacheDirectory = join(BUILD, "cache"), allowNetwork = true } = {}) {
   await directory(cacheDirectory);
   if (!/^https:\/\//.test(input.url) || !/^[a-f0-9]{64}$/.test(input.sha256)) throw new Error("macos-build-source-unpinned");
   const output = join(cacheDirectory, input.sha256);
@@ -146,6 +146,7 @@ export async function download(input, { transfer = run, cacheDirectory = join(BU
     if (sha256(cached) !== input.sha256) throw new Error("macos-build-cache-conflict");
     return output;
   } catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (!allowNetwork) throw new Error("macos-build-source-input-required");
   for (let attempt = 0; attempt < 2; attempt += 1) {
     // A retry never resumes, truncates or appends to a partial object. Keep
     // that private version and acquire a fresh O_EXCL/no-follow descriptor.

@@ -11,6 +11,9 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) const MAX_RECORD: u64 = 32 * 1024 * 1024;
+// Attachments have a separate product limit. Credentials and journals retain
+// MAX_RECORD; accepting a larger blob never changes their read/write policy.
+pub(crate) const MAX_ATTACHMENT_BLOB: u64 = 64 * 1024 * 1024;
 
 fn invalid() -> io::Error {
     io::ErrorKind::InvalidData.into()
@@ -79,6 +82,11 @@ pub(crate) struct Directory {
     owned: bool,
 }
 impl Directory {
+    pub(crate) fn try_clone(&self) -> io::Result<Self> {
+        self.current()?;
+        Ok(Self { file: self.file.try_clone()?, path: self.path.clone(), private: self.private,
+            trusted: self.trusted, owned: self.owned })
+    }
     pub(crate) fn identity_file(&self) -> io::Result<File> {
         self.file.try_clone()
     }
@@ -188,6 +196,35 @@ impl Directory {
         Ok(())
     }
 
+    /// Open/create only this immediate child through the retained parent.
+    /// Unlike open(path, true, ...), this cannot recreate a missing vault root.
+    /// Existing directory permissions are checked without changing them.
+    pub(crate) fn child(&self, entry: &OsStr, create: bool) -> io::Result<Self> {
+        self.current()?;
+        let component = name(entry)?;
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+        let mut fd = unsafe { libc::openat(self.file.as_raw_fd(), component.as_ptr(), flags) };
+        if fd < 0 && create && io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
+            if unsafe { libc::mkdirat(self.file.as_raw_fd(), component.as_ptr(), 0o700) } != 0
+                && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists
+            {
+                return Err(io::Error::last_os_error());
+            }
+            self.file.sync_all()?;
+            fd = unsafe { libc::openat(self.file.as_raw_fd(), component.as_ptr(), flags) };
+        }
+        let child = Self {
+            file: opened(fd)?,
+            path: self.path.join(entry),
+            private: self.private,
+            trusted: self.trusted,
+            owned: self.owned,
+        };
+        self.current()?;
+        child.current()?;
+        Ok(child)
+    }
+
     pub(crate) fn open_regular(&self, entry: &OsStr) -> io::Result<File> {
         self.open_regular_with_access(entry, libc::O_RDONLY)
     }
@@ -230,18 +267,22 @@ impl Directory {
     }
 
     pub(crate) fn read(&self, entry: &OsStr) -> io::Result<Option<(Vec<u8>, Version)>> {
-        self.read_checked(entry, self.private, false)
+        self.read_checked(entry, self.private, false, MAX_RECORD)
     }
     pub(crate) fn read_owned(&self, entry: &OsStr) -> io::Result<Option<(Vec<u8>, Version)>> {
-        self.read_checked(entry, true, false)
+        self.read_checked(entry, true, false, MAX_RECORD)
+    }
+    pub(crate) fn read_attachment(&self, entry: &OsStr) -> io::Result<Option<(Vec<u8>, Version)>> {
+        if self.private || self.trusted || self.owned { return Err(invalid()); }
+        self.read_checked(entry, self.private, false, MAX_ATTACHMENT_BLOB)
     }
     pub(crate) fn read_config(&self, entry: &OsStr) -> io::Result<Option<(Vec<u8>, Version)>> {
         if !self.owned {
             return Err(invalid());
         }
-        self.read_checked(entry, false, true)
+        self.read_checked(entry, false, true, MAX_RECORD)
     }
-    fn read_checked(&self, entry: &OsStr, private: bool, config: bool) -> io::Result<Option<(Vec<u8>, Version)>> {
+    fn read_checked(&self, entry: &OsStr, private: bool, config: bool, limit: u64) -> io::Result<Option<(Vec<u8>, Version)>> {
         self.current()?;
         let entry = name(entry)?;
         let fd = unsafe {
@@ -266,13 +307,13 @@ impl Directory {
             }
             reject_allow_acl(&file)?;
         }
-        if before.len() > MAX_RECORD {
+        if before.len() > limit {
             return Err(invalid());
         }
         let mut bytes = Vec::new();
-        (&mut file).take(MAX_RECORD + 1).read_to_end(&mut bytes)?;
+        (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
         let after = file.metadata()?;
-        if bytes.len() as u64 > MAX_RECORD || changed(&before, &after) {
+        if bytes.len() as u64 > limit || changed(&before, &after) {
             return Err(invalid());
         }
         let version = Version::of(&after, &bytes);
@@ -291,8 +332,15 @@ impl Directory {
     }
 
     pub(crate) fn create(&self, entry: &OsStr, bytes: &[u8]) -> io::Result<File> {
+        self.create_bounded(entry, bytes, MAX_RECORD)
+    }
+    pub(crate) fn create_attachment(&self, entry: &OsStr, bytes: &[u8]) -> io::Result<File> {
+        if self.private || self.trusted || self.owned { return Err(invalid()); }
+        self.create_bounded(entry, bytes, MAX_ATTACHMENT_BLOB)
+    }
+    fn create_bounded(&self, entry: &OsStr, bytes: &[u8], limit: u64) -> io::Result<File> {
         self.current()?;
-        if bytes.len() as u64 > MAX_RECORD {
+        if bytes.len() as u64 > limit {
             return Err(invalid());
         }
         let entry = name(entry)?;

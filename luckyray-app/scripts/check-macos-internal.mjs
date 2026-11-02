@@ -10,15 +10,20 @@ import { appBuildArguments, buildMacosApp } from "./build-macos.mjs";
 import { knownProofSignal } from "./check-macos-lsh-proof.mjs";
 import { runLshSurfaceFlow, safeSurfaceExecution, SURFACE_TIMEOUT_MS, SURFACE_CLEANUP_MS } from "./check-macos-lsh-surface-flow.mjs";
 import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary } from "./macos-native-diagnostics.mjs";
+import { NOTE_DATA_CASES, NOTE_DATA_TIMEOUT_MS, runNativeNoteData, safeNoteDataExecution, requireCachedMacosAppSource } from "./check-macos-note-data.mjs";
+import { runNoteFlow, safeNoteFlow, emptyNoteFlow, NOTE_PHASES, NOTE_UI_FLAGS, NOTE_TIMEOUT_MS, NOTE_CLEANUP_MS } from "./check-macos-note-flow.mjs";
 
-export const PHASES = Object.freeze(["install-frozen-frontend", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-lsh-surface-flow"]);
-export const EVIDENCE_FILES = Object.freeze(["report.json", "LuckyRay-lsh-surface.png"]);
+export const PHASES = Object.freeze(["install-frozen-frontend", "native-note-data", "require-existing-app-source", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-notes-ui-flow", "real-lsh-surface-flow"]);
+export const EVIDENCE_FILES = Object.freeze(["report.json", "LuckyRay-note-flow.png", "LuckyRay-lsh-surface.png"]);
 const EVIDENCE = join(BUILD, "internal-validation-evidence");
 const digest = value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const count = value => Number.isSafeInteger(value) && value >= 0;
 const knownExit = value => typeof value === "string" && ((/^\d{1,3}$/.test(value) && Number(value) <= 255)
   || ["SIGABRT", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGPIPE", "SIGQUIT", "SIGSEGV", "SIGTERM", "SIGTRAP", "SIGXCPU", "SIGXFSZ"].includes(value));
 const SAFE_CODES = Object.freeze([
+  "macos-note-flow-context-invalid", "macos-note-flow-result-invalid", "macos-note-flow-failed", "macos-note-flow-conflict-unconfirmed",
+  "macos-note-data-worker-required", "macos-note-data-result-invalid", "macos-note-data-artifact-invalid", "macos-note-data-failed",
+  "macos-note-data-source-input-missing", "macos-note-data-source-input-conflict", "macos-build-source-input-required",
   "macos-arm64-build-required", "macos-internal-ci-required", "macos-internal-temp-worktree-required",
   "macos-internal-source-identity-invalid", "macos-internal-unexpected-bundle-export", "macos-internal-package-manager-mismatch",
   "macos-internal-build-override-rejected",
@@ -94,6 +99,12 @@ export async function internalPlan() {
     distributionGate: "incomplete source remains ineligible for distribution; supplied bytes remain verified",
     binaryExport: false, dmg: false, applicationArchive: false, binaryUpload: false, release: false,
     rawOutput: "streamed into bounded typed command/error summaries, then discarded", nativeExecution: "not-run-by-plan",
+    noteData: { compiledFromFrozenProductLock: true, compileFeature: "macos-note-flow", exactTestIds: NOTE_DATA_CASES.map(item => item.id), perCaseTimeoutMs: NOTE_DATA_TIMEOUT_MS,
+      guiInteraction: "not-run", sourceGate: "existing exact FFmpeg archive required; no internal FFmpeg network fallback" },
+    notesUi: { buildFeature: "macos-note-flow", entry: "LuckyRay.app/Contents/MacOS/luckyray-app --macos-note-flow <exercise|reopen> <fixed-disposable-root>",
+      phases: NOTE_PHASES, flags: NOTE_UI_FLAGS, perPhaseTimeoutMs: NOTE_TIMEOUT_MS, cleanupGraceMs: NOTE_CLEANUP_MS,
+      interaction: "application-dom-automation", systemPointerInput: "not-run", nativeFilePicker: "not-run", vaultCreationUi: "not-run",
+      missingExactSource: "NOT_RUN; native-note-data remains independently reportable" },
     lshSurfaceFlow: { buildFeature: "macos-lsh-surface-flow", entry: "LuckyRay.app/Contents/MacOS/luckyray-app --macos-lsh-surface-flow <fixed-disposable-root>",
       timeoutMs: SURFACE_TIMEOUT_MS, cleanupGraceMs: SURFACE_CLEANUP_MS,
       stages: ["real-surface-attach", "hide-and-show-same-binding", "official-saved-stop", "normal-shutdown"],
@@ -137,9 +148,19 @@ async function worker() {
     if ((await run("pnpm", ["--version"], { capture: true, diagnosticStage: "package-manager-version" })).trim() !== "11.25.0")
       throw new Error("macos-internal-package-manager-mismatch");
     await run("pnpm", ["install", "--frozen-lockfile", "--ignore-scripts", "--reporter=silent"], { diagnosticStage: "frontend-install" });
+    process.send({ type: "phase", phase: "native-note-data" });
+    const noteData = await runNativeNoteData(internalWorkerEnvironment(process.env));
+    process.send({ type: "note-data", execution: noteData });
+    if (noteData.status !== "passed") throw new Error("macos-note-data-failed");
+    process.send({ type: "phase", phase: "require-existing-app-source" });
+    await requireCachedMacosAppSource();
     const result = await buildMacosApp({ internalValidation: true,
       onStage: phase => process.send({ type: "phase", phase }) });
     process.send({ type: "built", result });
+    process.send({ type: "phase", phase: "real-notes-ui-flow" });
+    const notes = await runNoteFlow(result.app, internalWorkerEnvironment(process.env), EVIDENCE);
+    process.send({ type: "notes-ui", execution: notes });
+    if (notes.status !== "passed") throw new Error("macos-note-flow-failed");
     process.send({ type: "phase", phase: "real-lsh-surface-flow" });
     const execution = await runLshSurfaceFlow(result.app, internalWorkerEnvironment(process.env), EVIDENCE);
     process.send({ type: "lsh-surface-flow", execution });
@@ -159,7 +180,7 @@ export async function validateInternal() {
   const diagnostics = new DiagnosticCollector(vocabulary, files);
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--worker"],
     { cwd: APP, env: internalWorkerEnvironment(process.env), stdio: ["ignore", "pipe", "pipe", "ipc"] });
-  let build; let lsh; let failure; let protocolInvalid = false;
+  let build; let lsh; let noteData; let notesUi; let failure; let protocolInvalid = false;
   const phases = [];
   child.stdout.on("data", bytes => diagnostics.feed("stdout", bytes));
   child.stderr.on("data", bytes => diagnostics.feed("stderr", bytes));
@@ -168,8 +189,12 @@ export async function validateInternal() {
       if (message?.type === "phase" && message.phase === PHASES[phases.length]) {
         phases.push(message.phase);
         console.log(`macos-internal-phase:${message.phase}`);
-      } else if (message?.type === "built" && phases.length === PHASES.length - 1 && !build) {
+      } else if (message?.type === "note-data" && phases.length === 2 && !noteData) {
+        noteData = safeNoteDataExecution(message.execution);
+      } else if (message?.type === "built" && phases.length === 6 && !build) {
         build = summarizeBuildResult(message.result);
+      } else if (message?.type === "notes-ui" && phases.length === 7 && build && !notesUi) {
+        notesUi = safeNoteFlow(message.execution);
       } else if (message?.type === "lsh-surface-flow" && phases.length === PHASES.length && build && !lsh) {
         lsh = safeSurfaceExecution(message.execution);
       } else if (message?.type === "failed" && !failure) {
@@ -189,21 +214,21 @@ export async function validateInternal() {
     child.once("error", () => resolveExit({ code: null, signal: null }));
     child.once("close", (code, signal) => resolveExit({ code, signal }));
   });
-  const success = exited.code === 0 && !protocolInvalid && !failure && !!build
+  const success = exited.code === 0 && !protocolInvalid && !failure && !!build && noteData?.status === "passed" && notesUi?.status === "passed"
     && lsh?.status === "passed" && phases.length === PHASES.length;
   const report = { schemaVersion: 1, mode: "internal-native-validation", source,
     status: success ? "passed" : "failed", minimumSystemVersion: plan.minimumSystemVersion, binaryExport: false,
     distributionReady: build?.distribution.readyToPackage ?? false, distributionAssessment: build ? "verified" : "not-reached",
     phases: PHASES.map((phase, index) => ({ phase,
-      status: success || index < phases.length - 1 ? "passed" : index < phases.length ? "failed" : "not-run" })),
-    build: build ?? null, lsh: lsh ?? null,
+      status: index === 1 && noteData ? noteData.status : index === 6 && notesUi ? notesUi.status : success || index < phases.length - 1 ? "passed" : index < phases.length ? "failed" : "not-run" })),
+    build: build ?? null, lsh: lsh ?? null, noteData: noteData ?? null, notesUi: notesUi ?? emptyNoteFlow(),
     failure: success ? null : failure ?? { code: protocolInvalid ? "invalid-worker-protocol" : lsh?.failure ?? "native-worker-failed" },
     workerExit: exited.code, workerSignal: exited.signal,
     diagnostics: safeDiagnosticSummary(diagnostics.summary(), vocabulary, files), rawOutput: "discarded-not-retained",
     artifacts: EVIDENCE_FILES,
     limitations: { frontendInteraction: lsh?.ui ? "application-dom-automation" : "not-run", materialFlow: "not-run",
       guiInteraction: lsh?.ui ? "application-dom-automation" : "not-run", modelAccount: "not-configured",
-      lshConnection: success ? "real-surface-hide-show-saved-stop-and-normal-shutdown" : "not-completed", notesRecovery: "not-run",
+      lshConnection: success ? "real-surface-hide-show-saved-stop-and-normal-shutdown" : "not-completed", notesRecovery: notesUi?.status === "passed" ? "real-ui-copy-with-foreign-path-preserved" : "not-completed",
       nativeHostBrowserSession: "not-run", mcpSession: "not-run", installIntoApplications: "not-run",
       notarization: "not-requested", release: "not-published" } };
   // Save the same strict projection that the workflow can publish. No raw
@@ -222,8 +247,14 @@ export function publishableReport(record, vocabulary = new Set(), files = new Se
     throw new Error("macos-internal-result-invalid");
   const lsh = record.lsh == null ? null : safeSurfaceExecution(record.lsh);
   const build = record.build == null ? null : summarizeStoredBuild(record.build);
+  const noteData = record.noteData == null ? null : safeNoteDataExecution(record.noteData);
+  const notesUi = safeNoteFlow(record.notesUi ?? emptyNoteFlow());
+  if (record.phases[6].status !== "not-run" && !build
+      || record.phases[6].status === "passed" && notesUi.status !== "passed"
+      || notesUi.status !== "not-run" && record.phases[6].status !== notesUi.status) throw new Error("macos-internal-result-invalid");
+  if (record.phases[1].status === "passed" && noteData?.status !== "passed") throw new Error("macos-internal-result-invalid");
   if (record.distributionReady !== (build?.distribution.readyToPackage ?? false)
-      || record.status === "passed" && (!build || lsh?.status !== "passed" || record.failure != null))
+      || record.status === "passed" && (!build || lsh?.status !== "passed" || noteData?.status !== "passed" || notesUi.status !== "passed" || record.failure != null))
     throw new Error("macos-internal-result-invalid");
   const failureCodes = [...SAFE_CODES, "native-command-failed", "native-validation-failed", "native-worker-failed", "invalid-worker-protocol"];
   const failure = failureCodes.includes(record.failure?.code) ? { code: record.failure.code } : null;
@@ -234,11 +265,12 @@ export function publishableReport(record, vocabulary = new Set(), files = new Se
     workerExit: Number.isInteger(record.workerExit) && record.workerExit >= 0 && record.workerExit <= 255 ? record.workerExit : null,
     workerSignal: knownProofSignal(record.workerSignal) ? record.workerSignal : null,
     build,
-    diagnostics: safeDiagnosticSummary(record.diagnostics, vocabulary, files), lsh, binaryExport: false,
+    diagnostics: safeDiagnosticSummary(record.diagnostics, vocabulary, files), lsh, noteData, notesUi, binaryExport: false,
     distributionReady: record.distributionReady === true, rawOutput: "not-published",
     coverage: { lsh: record.status === "passed" ? "real-official-dsh-surface-hide-show-saved-stop-and-normal-shutdown" : "not-completed",
-      materialFlow: "not-run", guiInteraction: lsh?.ui ? "application-dom-automation" : "not-run", modelAccount: "not-configured",
-      systemPointerInput: "not-run", screenshotVisualReview: lsh?.screenshotCaptured ? "required" : "not-captured" } };
+      materialFlow: "not-run", guiInteraction: lsh?.ui || notesUi.exercise.flags.some(Boolean) || notesUi.reopen.flags.some(Boolean) ? "application-dom-automation" : "not-run", modelAccount: "not-configured",
+      notesData: noteData?.status === "passed" ? "native-production-io" : "not-completed", notesRecoveryUi: notesUi.status === "passed" ? "dom-import-preview-save-move-delete-conflict-copy-normal-quit-and-reopen" : record.phases[6].status === "not-run" ? "not-run" : "not-completed",
+      systemPointerInput: "not-run", screenshotVisualReview: lsh?.screenshotCaptured || notesUi.reopen.screenshotCaptured ? "required" : "not-captured" } };
 }
 function summarizeStoredBuild(value) {
   const ids = value?.distribution?.missingRequirementIds;

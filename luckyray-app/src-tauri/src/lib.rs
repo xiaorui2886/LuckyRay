@@ -14,6 +14,8 @@ mod macos_fs;
 mod quit_transaction;
 #[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
 mod macos_material_flow;
+#[cfg(all(target_os = "macos", feature = "macos-note-flow"))]
+mod macos_note_flow;
 mod community_mcp_knowledge;
 mod community_mcp;
 mod community_mcp_package;
@@ -735,6 +737,8 @@ pub fn run() {
     let builder = macos_material_flow::configure(builder);
     #[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
     let builder = dsh_host::macos_surface_flow::configure(builder);
+    #[cfg(all(target_os = "macos", feature = "macos-note-flow"))]
+    let builder = macos_note_flow::configure(builder);
     builder
         .on_webview_event(|webview, event| {
             if webview.label() == "main" {
@@ -863,6 +867,10 @@ pub fn run() {
             macos_material_flow::macos_material_flow_report,
             #[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
             dsh_host::macos_surface_flow::macos_lsh_surface_flow_report,
+            #[cfg(all(target_os = "macos", feature = "macos-note-flow"))]
+            macos_note_flow::macos_note_flow_checkpoint,
+            #[cfg(all(target_os = "macos", feature = "macos-note-flow"))]
+            macos_note_flow::macos_note_flow_report,
             desktop_app_update::desktop_application_update,
             extension_appearance::publish_extension_appearance,
             extension_packages::manage_extension_packages,
@@ -991,6 +999,8 @@ pub fn run() {
             knowledge_recover_attachment_operation,
             knowledge_cancel_attachment_operation,
             knowledge_list_attachment_operations,
+            knowledge_note_recovery_snapshot,
+            knowledge_recover_note_version,
             knowledge_activate_ui_source,
             knowledge_activate_current_ui_source,
             knowledge_deactivate_ui_source,
@@ -1267,6 +1277,11 @@ fn request_normal_quit(app: tauri::AppHandle, restart: bool) {
         });
         #[cfg(target_os = "macos")]
         if result == Err("update-quit-in-progress") { return; }
+        #[cfg(all(target_os = "macos", feature = "macos-note-flow"))]
+        if !macos_note_flow::finish_quit(result, restart) {
+            app.exit(3);
+            return;
+        }
         #[cfg(all(target_os = "macos", feature = "macos-lsh-surface-flow"))]
         if !dsh_host::macos_surface_flow::finish_quit(result, restart) {
             // Only an active disposable scenario can return false here.
@@ -2917,6 +2932,30 @@ fn knowledge_cancel_attachment_operation(vault_id: String, request_id: String) -
 #[tauri::command]
 fn knowledge_list_attachment_operations(vault_id: String) -> Result<Vec<String>, String> {
     knowledge_service()?.list_attachment_operations(&vault_id).map_err(knowledge_error)
+}
+
+#[tauri::command]
+async fn knowledge_note_recovery_snapshot(vault_id:String,summary_only:Option<bool>)->Result<knowledge::RecoverySnapshot,String> {
+    let service=knowledge_service()?;
+    tauri::async_runtime::spawn_blocking(move ||service.note_recovery_snapshot(&vault_id,summary_only.unwrap_or(false)).map_err(knowledge_error))
+        .await.map_err(|_|"knowledge-recovery-worker-failed".to_owned())?
+}
+
+#[tauri::command]
+async fn knowledge_recover_note_version(source_epoch:u64,vault_id:String,record_path:String,token:String,
+    slot:String,destination:Option<String>,restore_original:bool)->Result<String,String> {
+    let service=knowledge_service()?.capture_workspace_scope(&vault_id).map_err(knowledge_error)?;
+    let catalog=backend_services()?.material_catalog();
+    tauri::async_runtime::spawn_blocking(move ||{
+        let path=service.recover_note_version(source_epoch,&vault_id,&record_path,&token,
+            &slot,destination.as_deref(),restore_original).map_err(knowledge_error)?;
+        if path.to_ascii_lowercase().ends_with(".md") {
+            attachment_coordination::sync_note_attachment_index(&service,&catalog,&knowledge::KnowledgeDocumentRef{vault_id,relative_path:path.clone()})
+                .map_err(|_|"knowledge-recovery-projection-incomplete: recovered file remains; refresh records and inspect the note before retrying".to_owned())?;
+        }
+        Ok(path)
+    })
+        .await.map_err(|_|"knowledge-recovery-worker-failed".to_owned())?
 }
 
 #[tauri::command]
