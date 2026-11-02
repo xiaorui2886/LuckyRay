@@ -7,6 +7,7 @@ No application command, bridge, media source or clipboard API is substituted.
 import argparse
 import base64
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -20,6 +21,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 import zlib
 from pathlib import Path
@@ -37,6 +39,18 @@ COPIED_IMAGE_RELATIVE = "attachments/素材 图 _100%.png"
 SOURCE_IMAGE_REFERENCE = "![synthetic PNG](<" + urllib.parse.quote(SOURCE_IMAGE_NAME) + ">)"
 COPIED_IMAGE_TARGET = "./" + urllib.parse.quote(COPIED_IMAGE_RELATIVE)
 COPIED_IMAGE_REFERENCE = "![synthetic PNG](<" + COPIED_IMAGE_TARGET + ">)"
+SOURCE_EDITOR = "#page-notes .note-editor-area > .note-content-area > textarea"
+EDITOR_APPEND = "\nSYNTHETIC_UI_SAVED_v1\n"
+ACTIONS = frozenset(("setup", "session-start", "backend-ready", "vault-setup", "notes-ready", "drop-dispatch", "drop-retained",
+    "image-copy-check", "image-copy-resolve", "select-note", "source-inspect", "source-toggle", "source-ready", "editor-focus",
+    "editor-append", "editor-value-check", "editor-save", "editor-save-readback", "context-open", "context-menu-ready", "context-copy",
+    "clipboard-readback", "preview-toggle", "preview-ready", "preview-geometry", "preview-screenshot", "attachment-open",
+    "attachment-ui-ready", "attachment-detail-check", "attachment-system-open", "attachment-receiver", "reopen-value-check",
+    "reopen-files", "quit-request", "quit-processes", "session-delete", "unknown"))
+DRIVER_ERRORS = frozenset(("element click intercepted", "element not interactable", "invalid argument", "invalid element state", "invalid selector",
+    "invalid session id", "javascript error", "no such element", "no such window", "stale element reference", "script timeout",
+    "timeout", "unknown command", "unknown error", "unsupported operation", "unexpected alert open", "move target out of bounds"))
+DRIVER_OPERATIONS = frozenset(("session-start", "session-delete", "timeouts", "execute", "click", "actions", "release-actions", "screenshot", "other"))
 CHECKS = ("nativeStartup", "caseDistinctInputContentsRetained", "specialNameImagePreserved",
           "uiSavePersisted", "reopenPersisted", "absolutePathClipboard", "imagePreviewPixels",
           "attachmentSystemHandoff", "quitProcessDisappearance")
@@ -93,6 +107,68 @@ def drop_targets(vault):
 
 class SmokeFailure(RuntimeError):
     pass
+
+
+class DriverFailure(SmokeFailure):
+    def __init__(self, kind, operation, error="unknown-standard-error", status=None):
+        super().__init__("webdriver-command-failed")
+        self.observation = {"kind": kind, "operation": operation, "error": error, "httpStatus": status}
+
+
+def driver_operation(request):
+    path = urllib.parse.urlsplit(request.full_url).path
+    for suffix, name in (("/execute/sync", "execute"), ("/click", "click"), ("/timeouts", "timeouts"), ("/screenshot", "screenshot")):
+        if path.endswith(suffix):
+            return name
+    if path.endswith("/actions"):
+        return "release-actions" if request.get_method() == "DELETE" else "actions"
+    if path == "/session":
+        return "session-start"
+    if request.get_method() == "DELETE" and re.fullmatch(r"/session/[^/]+", path):
+        return "session-delete"
+    return "other"
+
+
+def webdriver_command(opener, request, timeout):
+    """Never retry a mutation or retain a raw WebDriver response/error message."""
+    operation = driver_operation(request)
+    try:
+        return helpers.webdriver_value(opener, request, timeout)
+    except urllib.error.HTTPError as error:
+        code = "unknown-standard-error"
+        try:
+            data = error.read(65537)
+            if len(data) <= 65536:
+                body = json.loads(data)
+                value = body.get("value") if isinstance(body, dict) else None
+                candidate = value.get("error") if isinstance(value, dict) else None
+                if isinstance(candidate, str) and candidate in DRIVER_ERRORS:
+                    code = candidate
+        except (ValueError, OSError):
+            pass
+        finally:
+            error.close()
+        status = error.code if type(error.code) is int and 400 <= error.code <= 599 else None
+        raise DriverFailure("HTTP_ERROR", operation, code, status) from None
+    except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.RemoteDisconnected):
+        raise DriverFailure("TRANSPORT_ERROR", operation) from None
+    except (ValueError, UnicodeError):
+        raise DriverFailure("INVALID_RESPONSE", operation) from None
+
+
+def editor_key_actions(command):
+    # WebKitGTK 2.50.4 Element Send Keys does not release modifiers for NULL.
+    # Standard Actions explicitly release every key; no text/shortcut is retried.
+    if command == "append":
+        pairs = [("keyDown", "\ue009"), ("keyDown", "\ue010"), ("keyUp", "\ue010"), ("keyUp", "\ue009")]
+        for char in EDITOR_APPEND:
+            key = "\ue007" if char == "\n" else char
+            pairs.extend((("keyDown", key), ("keyUp", key)))
+    elif command == "save":
+        pairs = [("keyDown", "\ue009"), ("keyDown", "s"), ("keyUp", "s"), ("keyUp", "\ue009")]
+    else:
+        raise ValueError("unknown fixed editor command")
+    return {"actions": [{"type": "key", "id": "notes-editor", "actions": [{"type": kind, "value": key} for kind, key in pairs]}]}
 
 
 def require(value, code):
@@ -208,7 +284,7 @@ def main():
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     socket_root = log = driver = trace_offset = vault = None
     http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    session, phase = None, "synthetic-setup"
+    session, phase, action = None, "synthetic-setup", "setup"
     image_identity = {"materialAssetId": None}
     report = {"schemaVersion": 1, "status": "FAIL", "scope": SCOPE, "commit": os.environ.get("GITHUB_SHA"),
               "applicationSha256": digest(binary), "scriptSha256": digest(Path(__file__)),
@@ -221,7 +297,7 @@ def main():
     def wd(method, suffix, body=None, timeout=45):
         request = urllib.request.Request(f"http://127.0.0.1:{port}" + suffix, method=method,
             data=None if body is None else json.dumps(body).encode(), headers={"Content-Type": "application/json"})
-        return helpers.webdriver_value(http, request, timeout)
+        return webdriver_command(http, request, timeout)
 
     def execute(script, arguments=None):
         return wd("POST", f"/session/{session}/execute/sync", {"script": script, "args": arguments or []})
@@ -244,19 +320,24 @@ def main():
         require(helpers.wait_until(lambda: execute(script, arguments), seconds), "ui-observation-timeout")
 
     def start():
-        nonlocal session
+        nonlocal session, action
+        action = "session-start"
         session = wd("POST", "/session", {"capabilities": {"alwaysMatch": {"tauri:options": {"application": str(binary)}}}})["sessionId"]
         wd("POST", f"/session/{session}/timeouts", {"script": 45000})
         until("return !!window.__TAURI__?.core?.invoke;", seconds=30)
+        action = "backend-ready"
         require(helpers.wait_until(lambda: invoke("get_backend_bootstrap_status").get("ready") is True, 30), "backend-not-ready")
         report["appSessions"] += 1
 
     def stop():
-        nonlocal session
+        nonlocal session, action
+        action = "quit-request"
         old = helpers.app_pids(binary)
         invoke("close_window")
+        action = "quit-processes"
         require(old and helpers.wait_until(lambda: all(helpers.live_identity(pid) != identity for pid, identity in old.items()), 20), "quit-process-remained")
         report["quitRequests"].append({"ipcReplyObserved": True, "priorProcessIdentitiesGone": True, "exitStatus": "NOT_OBSERVED"})
+        action = "session-delete"
         wd("DELETE", f"/session/{session}")
         session = None
 
@@ -264,21 +345,32 @@ def main():
         return "#page-notes [data-folder-document-id=" + json.dumps("real-vault:" + relative) + "]"
 
     def source_mode():
-        if not execute("return [...document.querySelectorAll('#page-notes .note-editor-area textarea')].some(e=>e.getBoundingClientRect().width>0);"):
+        nonlocal action
+        action = "source-inspect"
+        if not execute("return [...document.querySelectorAll(arguments[0])].some(e=>e.getBoundingClientRect().width>0);", [SOURCE_EDITOR]):
+            action = "source-toggle"
             click("#page-notes .note-editor-area .editor-status-right > button:last-child")
-        until("return [...document.querySelectorAll('#page-notes .note-editor-area textarea')].some(e=>e.getBoundingClientRect().width>0&&!e.disabled&&!e.readOnly);")
+        action = "source-ready"
+        until("return [...document.querySelectorAll(arguments[0])].some(e=>e.getBoundingClientRect().width>0&&!e.disabled&&!e.readOnly);", [SOURCE_EDITOR])
 
     def preview():
+        nonlocal action
+        action = "preview-toggle"
         click("#page-notes .note-editor-area .editor-status-right > button:first-of-type")
+        action = "preview-ready"
         until("return [...document.querySelectorAll('#page-notes .note-preview .note-media[data-kind=image] img')].some(e=>e.complete&&e.naturalWidth===32&&e.naturalHeight===24&&e.getBoundingClientRect().width>0);")
-        rect = execute("const e=[...document.querySelectorAll('#page-notes .note-preview .note-media[data-kind=image] img')].find(e=>e.getBoundingClientRect().width>0);e.scrollIntoView({block:'center'});return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;resolve({centerX:x,centerY:y,viewportWidth:innerWidth,viewportHeight:innerHeight,naturalWidth:e.naturalWidth,naturalHeight:e.naturalHeight,visible:document.elementFromPoint(x,y)===e});}))); ")
+        action = "preview-geometry"
+        rect = execute("const e=[...document.querySelectorAll('#page-notes .note-preview .note-media[data-kind=image] img')].find(e=>e.complete&&e.naturalWidth===32&&e.naturalHeight===24&&e.getBoundingClientRect().width>0);e.scrollIntoView({block:'center'});return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;resolve({centerX:x,centerY:y,viewportWidth:innerWidth,viewportHeight:innerHeight,naturalWidth:e.naturalWidth,naturalHeight:e.naturalHeight,visible:document.elementFromPoint(x,y)===e});}))); ")
         require(rect["visible"] and 0 < rect["centerX"] < rect["viewportWidth"] and 0 < rect["centerY"] < rect["viewportHeight"], "preview-not-visible")
+        action = "preview-screenshot"
         probe = screenshot_pixels(wd("GET", f"/session/{session}/screenshot"), rect)
         require(probe["matched"] == 5, "preview-pixels-mismatch")
         report["previews"].append({"session": report["appSessions"], "naturalWidth": rect["naturalWidth"],
                                    "naturalHeight": rect["naturalHeight"], "visible": True, **probe})
 
     def verify_image_copy(expected_note_content):
+        nonlocal action
+        action = "image-copy-check"
         observation = image_copy_probe(vault, image, upper.read_text(), expected_note_content)
         observation.update(session=report["appSessions"],
                            sourceNotesUnchanged=all((incoming / name).read_text() == content for name, content in originals.items()),
@@ -286,6 +378,7 @@ def main():
         report["imageCopies"].append(observation)
         require(image_copy_retained(observation), "special-name-png-not-retained")
         target = vault / COPIED_IMAGE_RELATIVE
+        action = "image-copy-resolve"
         resolved = invoke("knowledge_resolve_attachment", {"documentRef": {"vaultId": created_vault["id"], "relativePath": "Note.md"},
                                                             "destination": COPIED_IMAGE_TARGET, "wiki": False})
         observation["productionResolved"] = (isinstance(resolved, dict) and resolved.get("status") == "resolved"
@@ -339,6 +432,7 @@ def main():
         require(helpers.wait_until(ready, 20), "driver-not-ready")
         phase = "main-start"
         start()
+        action = "vault-setup"
         created_vault = invoke("create_notes_vault", {"rootPath": str(vault)})
         # Set up the copied-attachment scenario through the existing preference
         # before reload, so the frontend starts with its own fresh source epoch.
@@ -348,6 +442,7 @@ def main():
         # Reload discards any pre-bootstrap frontend snapshot. The real app
         # then activates its persisted vault through the normal startup path.
         trace_offset = (output / "driver.log").stat().st_size
+        action = "notes-ready"
         execute("sessionStorage.setItem('luckyray-notes-drop-diagnostic','1');location.hash='#notes';location.reload();return true;")
         until("return !!document.querySelector('#page-notes .notes-vault-entry');", seconds=45)
         until("return document.querySelector('#page-notes .notes-vault-meta')?.textContent===arguments[0];", [str(vault)])
@@ -363,12 +458,14 @@ def main():
         require(position["x"] > 0 and position["y"] > 0, "drop-target-unavailable")
         execute("return new Promise(resolve=>setTimeout(resolve,500));")
         report["drop"]["inputNotes"] = len(originals)
+        action = "drop-dispatch"
         for kind in ("enter", "drop"):
             execute("return window.__TAURI__.event.emitTo({kind:'Webview',label:'main'},arguments[0],arguments[1]);",
                     ["tauri://drag-" + kind, {"paths": [str(incoming / name) for name in originals], "position": {name: position[name] for name in ("x", "y")}}])
             if kind == "enter":
                 execute("return new Promise(resolve=>setTimeout(resolve,100));")
         report["drop"]["gestures"] = 1
+        action = "drop-retained"
         targets_ready = helpers.wait_until(lambda: (vault / "Note.md").is_file() and (vault / "note (1).md").is_file(), 30)
         report["dropTargets"] = drop_targets(vault)
         values = report["dropTargets"].values()
@@ -385,32 +482,50 @@ def main():
             json.dump({"expected": str(copied_image.resolve())}, stream)
         report["checks"]["specialNameImagePreserved"] = "PASS"
         phase = "edit-save"
+        action = "select-note"
         until("return !!document.querySelector(arguments[0]);", [note_selector("Note.md")])
         click(note_selector("Note.md"))
         source_mode()
-        expected = upper.read_text() + "\nSYNTHETIC_UI_SAVED_v1\n"
-        textarea = element("#page-notes .note-editor-area textarea")
-        wd("POST", f"/session/{session}/element/{textarea}/value", {"text": "\ue009\ue010\ue000\nSYNTHETIC_UI_SAVED_v1\n"})
-        wd("POST", f"/session/{session}/element/{textarea}/value", {"text": "\ue009s\ue000"})
-        require(helpers.wait_until(lambda: upper.read_text() == expected, 20), "ui-edit-not-saved")
+        expected = imported_content + EDITOR_APPEND
+        action = "editor-focus"
+        textarea = element(SOURCE_EDITOR)
+        wd("POST", f"/session/{session}/element/{textarea}/click", {})
+        require(execute("const e=document.activeElement;return e?.matches(arguments[0])&&!e.disabled&&!e.readOnly&&e.value===arguments[1];",
+                        [SOURCE_EDITOR, imported_content]), "editor-not-ready")
+        save_deadline = time.monotonic() + 20
+        action = "editor-append"
+        wd("POST", f"/session/{session}/actions", editor_key_actions("append"))
+        action = "editor-value-check"
+        require(helpers.wait_until(lambda: execute("return document.activeElement?.matches(arguments[0])&&document.activeElement.value===arguments[1];",
+                                                    [SOURCE_EDITOR, expected]), max(0, save_deadline - time.monotonic())), "editor-input-mismatch")
+        action = "editor-save"
+        wd("POST", f"/session/{session}/actions", editor_key_actions("save"))
+        action = "editor-save-readback"
+        require(helpers.wait_until(lambda: upper.read_text() == expected, max(0, save_deadline - time.monotonic())), "ui-edit-not-saved")
         report["checks"]["uiSavePersisted"] = "PASS"
         phase = "copy-absolute-path"
+        action = "context-open"
         row = element(note_selector("Note.md"))
         wd("POST", f"/session/{session}/actions", {"actions": [{"type": "pointer", "id": "context", "parameters": {"pointerType": "mouse"},
            "actions": [{"type": "pointerMove", "origin": {"element-6066-11e4-a52e-4f735466cecf": row}, "x": 0, "y": 0},
                        {"type": "pointerDown", "button": 2}, {"type": "pointerUp", "button": 2}]}]})
-        menu = execute("return [...document.querySelectorAll('.note-ctx-react .note-ctx-item-react')].find(e=>/^(复制绝对路径|Copy absolute path)$/.test(e.textContent.trim()));")
-        require(isinstance(menu, dict), "copy-path-menu-missing")
+        action = "context-menu-ready"
+        until("return [...document.querySelectorAll('.note-ctx-react .note-ctx-item-react')].some(e=>/^(复制绝对路径|Copy absolute path)$/.test(e.textContent.trim())&&e.getBoundingClientRect().width>0);", seconds=5)
+        menu = execute("return [...document.querySelectorAll('.note-ctx-react .note-ctx-item-react')].find(e=>/^(复制绝对路径|Copy absolute path)$/.test(e.textContent.trim())&&e.getBoundingClientRect().width>0);")
+        require(isinstance(menu, dict) and isinstance(menu.get('element-6066-11e4-a52e-4f735466cecf'), str), "copy-path-menu-missing")
+        action = "context-copy"
         wd("POST", f"/session/{session}/element/{menu['element-6066-11e4-a52e-4f735466cecf']}/click", {})
         def clipboard_matches():
             result = subprocess.run(["xclip", "-selection", "clipboard", "-o"], env=env, capture_output=True, timeout=3)
             return result.returncode == 0 and result.stdout.decode() == str(upper)
+        action = "clipboard-readback"
         require(helpers.wait_until(clipboard_matches, 10), "absolute-path-clipboard-mismatch")
         report["clipboard"] = {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True}
         report["checks"]["absolutePathClipboard"] = "PASS"
         phase = "image-preview"
         preview()
         phase = "attachment-open"
+        action = "attachment-open"
         click('#page-notes .note-preview .note-media[data-kind=image] button[aria-label="打开素材详情"]')
         receiver = root / "receiver.json"
         handoff_deadline = time.monotonic() + 15
@@ -418,19 +533,23 @@ def main():
         # A catalog-backed note preview opens the real material inspector. Its
         # Open action performs the system handoff; opening the inspector alone
         # does not. An uncatalogued note reference opens the file directly.
+        action = "attachment-ui-ready"
         require(helpers.wait_until(lambda: receiver.is_file() or execute(
             "const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [detail_selector]), 15),
             "attachment-open-ui-not-observed")
         route = "NOTE_PREVIEW_OPEN"
         if not receiver.is_file():
+            action = "attachment-detail-check"
             observed_asset = execute("return document.querySelector(arguments[0])?.dataset.materialNativeAsset||null;", [detail_selector])
             require(isinstance(image_identity["materialAssetId"], str) and observed_asset == image_identity["materialAssetId"],
                     "attachment-detail-target-mismatch")
             opener_selector = detail_selector + " .detail-action-grid-react > button:first-child"
             require(execute("return ['打开','Open'].includes(document.querySelector(arguments[0])?.textContent.trim());", [opener_selector]),
                     "attachment-open-control-mismatch")
+            action = "attachment-system-open"
             click(opener_selector)
             route = "MATERIAL_DETAIL_OPEN"
+        action = "attachment-receiver"
         require(helpers.wait_until(receiver.is_file, max(0, handoff_deadline - time.monotonic())), "attachment-receiver-not-observed")
         handoff = json.loads(receiver.read_text())
         require(handoff.get("sha256") == digest(image) and handoff.get("exactExpectedFile") is True, "attachment-handoff-mismatch")
@@ -440,11 +559,14 @@ def main():
         phase = "reopen"
         stop()
         start()
+        action = "select-note"
         execute("location.hash='#notes';return true;")
         until("return !!document.querySelector(arguments[0]);", [note_selector("Note.md")], seconds=40)
         click(note_selector("Note.md"))
         source_mode()
-        until("return [...document.querySelectorAll('#page-notes .note-editor-area textarea')].some(e=>e.getBoundingClientRect().width>0&&e.value===arguments[0]);", [expected])
+        action = "reopen-value-check"
+        until("return [...document.querySelectorAll(arguments[0])].some(e=>e.getBoundingClientRect().width>0&&e.value===arguments[1]);", [SOURCE_EDITOR, expected])
+        action = "reopen-files"
         require(upper.read_text() == expected and lower.read_text() == originals["note.md"], "reopen-file-content-mismatch")
         verify_image_copy(expected)
         report["checks"]["reopenPersisted"] = "PASS"
@@ -456,7 +578,9 @@ def main():
         report["status"] = "PASS"
     except Exception as error:
         # No arbitrary native error, URL, clipboard contents or user path is exported.
-        report["failure"] = {"phase": phase, "code": str(error) if isinstance(error, SmokeFailure) else "unexpected-error"}
+        report["failure"] = {"phase": phase, "action": action, "code": str(error) if isinstance(error, SmokeFailure) else "unexpected-error"}
+        if isinstance(error, DriverFailure):
+            report["failure"]["webdriver"] = error.observation
         raise
     finally:
         if session:

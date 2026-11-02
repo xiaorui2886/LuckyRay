@@ -37,7 +37,7 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "preview-not-visible", "preview-pixels-mismatch", "screenshot-invalid", "screenshot-size-invalid",
     "image-outside-screenshot", "attachment-open-ui-not-observed", "attachment-detail-target-mismatch", "attachment-open-control-mismatch",
     "attachment-receiver-not-observed", "attachment-handoff-mismatch",
-    "reopen-file-content-mismatch", "quit-process-remained", "unexpected-error"))
+    "reopen-file-content-mismatch", "quit-process-remained", "webdriver-command-failed", "editor-not-ready", "editor-input-mismatch", "unexpected-error"))
 
 
 def bounded_drop_trace(raw):
@@ -132,7 +132,15 @@ def bounded_report(raw):
     if "failure" in raw:
         failure = raw["failure"] if isinstance(raw["failure"], dict) else {}
         result["failure"] = {"phase": failure.get("phase") if isinstance(failure.get("phase"), str) and failure["phase"] in PHASES else "unknown",
+                             "action": failure.get("action") if isinstance(failure.get("action"), str) and failure["action"] in smoke.ACTIONS else "unknown",
                              "code": failure.get("code") if isinstance(failure.get("code"), str) and failure["code"] in FAILURES else "unexpected-error"}
+        if "webdriver" in failure:
+            driver = failure["webdriver"] if isinstance(failure["webdriver"], dict) else {}
+            result["failure"]["webdriver"] = {
+                "kind": driver.get("kind") if driver.get("kind") in ("HTTP_ERROR", "TRANSPORT_ERROR", "INVALID_RESPONSE") else "UNKNOWN",
+                "operation": driver.get("operation") if isinstance(driver.get("operation"), str) and driver["operation"] in smoke.DRIVER_OPERATIONS else "other",
+                "error": driver.get("error") if isinstance(driver.get("error"), str) and driver["error"] in smoke.DRIVER_ERRORS else "unknown-standard-error",
+                "httpStatus": driver.get("httpStatus") if type(driver.get("httpStatus")) is int and 400 <= driver["httpStatus"] <= 599 else None}
     if "cleanup" in raw:
         result["cleanup"] = "UNCONFIRMED"
     return result

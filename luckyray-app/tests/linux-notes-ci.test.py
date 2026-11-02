@@ -3,6 +3,8 @@ import ast
 import copy
 import hashlib
 import importlib.util
+import io
+import http.client
 import json
 import os
 import re
@@ -12,6 +14,8 @@ import sys
 import tempfile
 import unittest
 import zlib
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -102,7 +106,7 @@ class EvidenceTests(unittest.TestCase):
         raw["imageCopies"][0]["name"] = canary
         projected = ci.bounded_report(raw)
         self.assertNotIn(canary, json.dumps(projected))
-        self.assertEqual(projected["failure"], {"phase": "unknown", "code": "unexpected-error"})
+        self.assertEqual(projected["failure"], {"phase": "unknown", "action": "unknown", "code": "unexpected-error"})
         for failure in ({"phase": [], "code": {}}, "arbitrary error"):
             raw["failure"] = failure
             self.assertNotIn(canary, json.dumps(ci.bounded_report(raw)))
@@ -198,6 +202,101 @@ class EvidenceTests(unittest.TestCase):
             (vault / "note (1).md").write_text("synthetic lower")
             self.assertEqual(ci.smoke.drop_targets(vault), {"upperExists": True, "lowerExists": True})
 
+    def test_editor_actions_release_modifiers_before_text_and_emit_one_save(self):
+        text, cursor, held, saves = "existing\n", 0, set(), 0
+        for command in ("append", "save"):
+            sequence = ci.smoke.editor_key_actions(command)["actions"]
+            self.assertEqual(len(sequence), 1)
+            self.assertEqual(sequence[0]["type"], "key")
+            for event in sequence[0]["actions"]:
+                key = event["value"]
+                self.assertEqual(len(key), 1)
+                self.assertNotEqual(key, "\ue000")
+                if event["type"] == "keyUp":
+                    self.assertIn(key, held)
+                    held.remove(key)
+                    continue
+                self.assertEqual(event["type"], "keyDown")
+                self.assertNotIn(key, held)
+                held.add(key)
+                if key == "\ue009":
+                    continue
+                if key == "\ue010":
+                    self.assertIn("\ue009", held)
+                    cursor = len(text)
+                elif "\ue009" in held:
+                    self.assertEqual(key, "s")
+                    saves += 1
+                else:
+                    char = "\n" if key == "\ue007" else key
+                    text = text[:cursor] + char + text[cursor:]
+                    cursor += len(char)
+            self.assertEqual(held, set())
+        self.assertEqual(text, "existing\n" + ci.smoke.EDITOR_APPEND)
+        self.assertEqual(saves, 1)
+
+    def test_driver_http_classification_is_bounded_closed_and_does_not_retry_post(self):
+        for body, expected in (({"value": {"error": "element click intercepted", "message": "hunter2", "stacktrace": "private/path"}}, "element click intercepted"),
+                               ({"value": {"error": "invalid element state", "message": "hunter2"}}, "invalid element state"),
+                               ({"value": {"error": "hunter2", "message": "private/path"}}, "unknown-standard-error"),
+                               ({"value": {"error": ["hunter2"]}}, "unknown-standard-error")):
+            stream = io.BytesIO(json.dumps(body).encode())
+            error = urllib.error.HTTPError("http://127.0.0.1/session/owned/element/owned/click", 400, "hunter2", {}, stream)
+            opener = mock.Mock()
+            opener.open.side_effect = error
+            request = urllib.request.Request(error.url, data=b"{}", method="POST")
+            with self.assertRaises(ci.smoke.DriverFailure) as raised:
+                ci.smoke.webdriver_command(opener, request, 1)
+            self.assertEqual(opener.open.call_count, 1)
+            self.assertEqual(raised.exception.observation, {"kind": "HTTP_ERROR", "operation": "click", "error": expected, "httpStatus": 400})
+            self.assertNotIn("hunter2", str(raised.exception))
+            raw = copy.deepcopy(self.raw)
+            raw["failure"] = {"phase": "edit-save", "action": "source-toggle", "code": str(raised.exception),
+                              "webdriver": {**raised.exception.observation, "message": "hunter2", "body": "private/path"}}
+            projected = ci.bounded_report(raw)
+            self.assertNotIn("hunter2", json.dumps(projected))
+            self.assertNotIn("private/path", json.dumps(projected))
+            self.assertEqual(projected["failure"]["action"], "source-toggle")
+        body = io.BytesIO(b"x" * 100000)
+        reads = []
+        original_read = body.read
+        def read(limit=-1):
+            reads.append(limit)
+            return original_read(limit)
+        body.read = read
+        opener = mock.Mock()
+        opener.open.side_effect = urllib.error.HTTPError("http://127.0.0.1/session/owned/actions", 500, "hunter2", {}, body)
+        with self.assertRaises(ci.smoke.DriverFailure) as raised:
+            ci.smoke.webdriver_command(opener, urllib.request.Request(opener.open.side_effect.url, data=b"{}", method="POST"), 1)
+        self.assertEqual(reads, [65537])
+        self.assertEqual(raised.exception.observation["error"], "unknown-standard-error")
+        self.assertEqual(opener.open.call_count, 1)
+
+    def test_uncertain_driver_mutations_are_not_replayed_and_invalid_response_is_closed(self):
+        for method in ("POST", "DELETE"):
+            opener = mock.Mock()
+            opener.open.side_effect = http.client.RemoteDisconnected("hunter2")
+            request = urllib.request.Request("http://127.0.0.1/session/owned/actions", method=method)
+            with self.assertRaises(ci.smoke.DriverFailure) as raised:
+                ci.smoke.webdriver_command(opener, request, 1)
+            self.assertEqual(opener.open.call_count, 1)
+            self.assertEqual(raised.exception.observation["kind"], "TRANSPORT_ERROR")
+            self.assertNotIn("hunter2", str(raised.exception))
+        opener = mock.Mock()
+        opener.open.return_value = io.BytesIO(b"hunter2")
+        with self.assertRaises(ci.smoke.DriverFailure) as raised:
+            ci.smoke.webdriver_command(opener, urllib.request.Request("http://127.0.0.1/session/owned/execute/sync", data=b"{}", method="POST"), 1)
+        self.assertEqual(raised.exception.observation["kind"], "INVALID_RESPONSE")
+
+    def test_failure_action_and_protocol_projection_reject_arbitrary_fields(self):
+        raw = copy.deepcopy(self.raw)
+        raw["failure"] = {"phase": "edit-save", "action": "hunter2", "code": "webdriver-command-failed",
+                          "webdriver": {"kind": "hunter2", "operation": "hunter2", "error": "hunter2", "httpStatus": "hunter2"}}
+        failure = ci.bounded_report(raw)["failure"]
+        self.assertNotIn("hunter2", json.dumps(failure))
+        self.assertEqual(failure["action"], "unknown")
+        self.assertEqual(failure["webdriver"], {"kind": "UNKNOWN", "operation": "other", "error": "unknown-standard-error", "httpStatus": None})
+
     def test_image_copy_probe_distinguishes_missing_duplicate_digest_name_and_link_failures(self):
         for case in ("complete", "missing", "duplicate", "different-extra", "digest", "name", "link", "source"):
             with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="notes-image-copy-offline-") as temporary:
@@ -281,7 +380,7 @@ class EvidenceTests(unittest.TestCase):
             finally:
                 os.umask(previous_mask)
             raw = json.loads((output / "report.json").read_text())
-            self.assertEqual(raw["failure"], {"phase": "desktop-association", "code": "unexpected-error"})
+            self.assertEqual(raw["failure"], {"phase": "desktop-association", "action": "setup", "code": "unexpected-error"})
             self.assertNotIn("hunter2", json.dumps(raw))
             self.assertEqual(raw["status"], "FAIL")
 
