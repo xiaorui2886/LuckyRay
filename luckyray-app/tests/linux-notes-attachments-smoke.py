@@ -601,7 +601,14 @@ def receive_image(config_path, target):
 
 
 def desktop_arg(value):
-    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`").replace("$", "\\$").replace("%", "%%") + '"'
+    # Generic xdg-open splits Exec arguments without removing literal quotes.
+    # These two launcher arguments are owned CI paths, not the image passed
+    # through %f. Fail on unsupported launcher paths instead of shell quoting
+    # them; Unicode/space/#/% image paths still use the real desktop field.
+    value = str(value)
+    require(Path(value).is_absolute() and re.fullmatch(r"[A-Za-z0-9_./-]+", value) is not None,
+            "owned-desktop-association-unavailable")
+    return value
 
 
 def screenshot_pixels(encoded, rect):

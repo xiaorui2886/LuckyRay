@@ -571,6 +571,45 @@ class EvidenceTests(unittest.TestCase):
                 elif case == "source":
                     self.assertFalse(observed["sourceImageUnchanged"])
 
+    def test_desktop_launcher_paths_are_bare_and_reject_ambiguous_exec_arguments(self):
+        for value in ("/usr/bin/python3", "/tmp/owned-notes_123/receiver-config.json"):
+            self.assertEqual(ci.smoke.desktop_arg(Path(value)), value)
+        for value in ("relative.py", "/tmp/with space/script.py", "/tmp/#hash.py", "/tmp/100%.py",
+                      '/tmp/"quote.py', "/tmp/$variable.py", "/tmp/`command`.py", "/tmp/line\nbreak.py", "/tmp/中文.py"):
+            with self.subTest(value=value), self.assertRaises(ci.smoke.SmokeFailure) as raised:
+                ci.smoke.desktop_arg(Path(value))
+            self.assertEqual(str(raised.exception), "owned-desktop-association-unavailable")
+
+    def test_owned_generic_desktop_launcher_executes_real_receiver_with_exact_special_name_png(self):
+        xdg = Path("/usr/bin/xdg-open")
+        if sys.platform != "linux" or not xdg.is_file():
+            self.skipTest("Installed Linux generic launcher is required for this local argument test")
+        functions = []
+        source = xdg.read_text()
+        for name in ("get_key", "first_word", "last_word", "search_desktop_file"):
+            matches = re.findall(r"^" + name + r"\(\)\n\{\n[\s\S]*?^\}\n", source, re.M)
+            self.assertEqual(len(matches), 1, "Installed generic launcher function is required")
+            functions.append(matches[0])
+        launcher = "\n".join(functions) + '\nDEBUG() { :; }\nexit_success() { exit 0; }\nsearch_desktop_file "$1" "$2" "$3"\n'
+        with tempfile.TemporaryDirectory(prefix="owned-desktop-args-") as temporary:
+            root = Path(temporary)
+            vault = root / "Vault 中文 #100%"; vault.mkdir(mode=0o700)
+            image = vault / ci.smoke.COPIED_IMAGE_RELATIVE; image.parent.mkdir(mode=0o700)
+            image.write_bytes(ci.smoke.png_bytes())
+            config = root / "receiver-config.json"; config.write_text(json.dumps({"expected": str(image.resolve())})); config.chmod(0o600)
+            applications = root / "applications"; applications.mkdir(mode=0o700)
+            desktop = applications / "owned-notes-receiver.desktop"
+            script = Path(ci.smoke.__file__).resolve()
+            desktop.write_text('[Desktop Entry]\nType=Application\nName=Owned PNG receiver\nTerminal=false\nMimeType=image/png;\nExec=/usr/bin/python3 '
+                + ci.smoke.desktop_arg(script) + ' --receive-image ' + ci.smoke.desktop_arg(config) + ' %f\n')
+            result = subprocess.run(["/bin/sh", "-c", launcher, "owned-generic", desktop.name, str(applications), str(image)],
+                env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": str(root)}, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0)
+            receipt = json.loads((root / "receiver.json").read_text())
+            self.assertEqual(receipt["sha256"], hashlib.sha256(ci.smoke.png_bytes()).hexdigest())
+            self.assertTrue(receipt["exactExpectedFile"])
+            self.assertEqual(receipt["externalApplicationDisplay"], "NOT_RUN")
+
     def test_owned_receiver_checks_the_exact_png_and_rejects_other_files(self):
         with tempfile.TemporaryDirectory(prefix="notes-receiver-offline-") as temporary:
             root = Path(temporary)
