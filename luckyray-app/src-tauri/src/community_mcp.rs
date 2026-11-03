@@ -103,7 +103,8 @@ fn initialize_storage(p: &Paths) -> Result<(), String> {
         // the only thing to prepare, and `initialize` touches no secret.
         package::safe_path(&p.root)?;
         fs::create_dir_all(&p.root).map_err(|_| "plugin-data-unavailable")?;
-        return secret(p, "initialize", "tunnel-key", None);
+        secret(p, "initialize", "tunnel-key", None)?;
+        return Ok(());
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -136,13 +137,14 @@ fn secret(p: &Paths, action: &str, name: &str, input: Option<&[u8]>) -> Result<S
         // The keyring needs no directory, and nothing is ever written to the
         // profile: the plugin's two secrets live in the Secret Service under
         // their own service entry.
+        // One keyring entry per secret name: the account must follow `name`,
+        // or writing `credential` would overwrite `tunnel-key`.
         let _ = p;
-        return crate::community_mcp_secret::secret(
-            linux_secret_backend().as_ref(),
-            action,
-            name,
-            input,
+        let backend = crate::companion_keyring::SecretServiceBackend::for_account(
+            crate::community_mcp_secret::SERVICE,
+            crate::community_mcp_secret::account(name)?,
         );
+        return crate::community_mcp_secret::secret(&backend, action, name, input);
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -172,19 +174,6 @@ fn secret(p: &Paths, action: &str, name: &str, input: Option<&[u8]>) -> Result<S
     }
     Ok(out)
     }
-}
-
-/// One Secret Service client for the plugin's secrets, created on first use.
-#[cfg(target_os = "linux")]
-fn linux_secret_backend() -> &'static std::sync::Arc<dyn crate::companion_keyring::SecretBackend> {
-    static BACKEND: std::sync::OnceLock<std::sync::Arc<dyn crate::companion_keyring::SecretBackend>> =
-        std::sync::OnceLock::new();
-    BACKEND.get_or_init(|| {
-        std::sync::Arc::new(crate::companion_keyring::SecretServiceBackend::for_account(
-            crate::community_mcp_secret::SERVICE,
-            crate::community_mcp_secret::TUNNEL_KEY,
-        ))
-    })
 }
 
 /// `status.hasKey`: Windows asks whether `tunnel-key.dpapi` exists; Linux asks

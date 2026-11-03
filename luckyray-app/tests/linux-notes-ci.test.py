@@ -1962,7 +1962,12 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         gateway = self.read("community_mcp.rs")
         # Linux branches delegate; Windows keeps the PowerShell helper path.
         self.assertIn("crate::community_mcp_secret::secret(", gateway)
-        self.assertIn("linux_secret_backend().as_ref()", gateway)
+        # Each secret name gets its own keyring account (no shared backend
+        # that would let `credential` overwrite `tunnel-key`).
+        self.assertIn("crate::community_mcp_secret::account(name)?,", gateway)
+        self.assertIn("crate::community_mcp_secret::secret(&backend, action, name, input)", gateway)
+        self.assertNotIn("linux_secret_backend", gateway)
+        self.assertIn('secret(p, "initialize", "tunnel-key", None)?;\n        return Ok(());', gateway)
         self.assertIn("fn tunnel_key_present(p: &Paths) -> bool", gateway)
         self.assertIn('"hasKey":tunnel_key_present(&p)', gateway)
         self.assertIn('std::env::var_os("SystemRoot")', gateway)

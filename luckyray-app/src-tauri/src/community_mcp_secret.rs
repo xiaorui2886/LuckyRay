@@ -72,7 +72,9 @@ pub(crate) fn secret(
     name: &str,
     input: Option<&[u8]>,
 ) -> Result<String, String> {
-    let account = account(name)?;
+    // The caller's backend is already bound to `account(name)`; validating the
+    // name here keeps unknown names failing with the Windows storage code.
+    account(name)?;
     match action {
         "initialize" => Ok(String::new()),
         "write" => {
