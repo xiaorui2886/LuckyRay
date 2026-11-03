@@ -152,3 +152,16 @@ workspace module never unlink a published name. The canvas document writer is
 compiled into the offline filesystem crate, which covers replace, read-back,
 temporary cleanup and the refused-replace cases; the workspace sites are
 verified by CI compilation and the shared helper.
+
+## Companion Gateway on Linux (first slice)
+
+The Companion Gateway's Windows foundation uses DPAPI for the desktop identity
+and `GetAdaptersAddresses` for the private LAN list. On Linux the identity store
+is now the interface layer for the freedesktop Secret Service (owner decision):
+without a keyring every identity operation refuses with
+`companion-keyring-unavailable` / 「未找到系统钥匙环，未做任何修改」, and no
+plaintext or weakly protected identity file is ever written. The LAN list is
+read through `getifaddrs` (the existing `libc` dependency) with the same
+private-LAN filtering as Windows. The D-Bus crate for the Secret Service itself
+is deliberately not added yet; the community MCP plugin runner stays
+Windows-only (`plugin-platform-unsupported`) until its packaged plugin exists.

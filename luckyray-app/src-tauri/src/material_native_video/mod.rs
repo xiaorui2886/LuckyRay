@@ -166,7 +166,6 @@ pub(crate) async fn material_video_preview_command(
         .map_err(|_| "native-video-preview-worker-failed".to_string())?;
     #[cfg(not(all(windows, feature = "browser-host-runtime")))]
     {
-        use tauri::Manager;
         let _ = (&caller, &request, &app);
         // Linux: the packaged media engine is verified exactly like Windows, so
         // a missing or unverified runtime is reported as its own capability
@@ -174,6 +173,7 @@ pub(crate) async fn material_video_preview_command(
         // until the Linux FFmpeg slice lands (T16 lists it).
         #[cfg(target_os = "linux")]
         {
+            use tauri::Manager;
             let resources = app
                 .path()
                 .resource_dir()
@@ -203,13 +203,13 @@ pub(crate) async fn material_native_video_command(
     .map_err(|_| "native-video-worker-failed".to_string())?;
     #[cfg(not(all(windows, feature = "browser-host-runtime")))]
     {
-        use tauri::Manager;
         let _ = (&caller, &request, &app);
         // Linux: capability stays honest (the player is not ported yet) while
         // the packaged runtime is verified exactly like Windows; a missing or
         // unverified runtime is its own capability refusal.
         #[cfg(target_os = "linux")]
         {
+            use tauri::Manager;
             let resources = app
                 .path()
                 .resource_dir()

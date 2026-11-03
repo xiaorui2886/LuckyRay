@@ -1942,6 +1942,49 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                      "replace_needs_an_existing_parent_directory"):
             self.assertIn(f"fn {name}()", canvas)
 
+    def test_companion_gateway_linux_slice_is_wired(self):
+        # T17: the Linux secret store refuses without a keyring (never plaintext,
+        # never a weak fallback), the LAN enumeration is a real getifaddrs read,
+        # and the manager picks the store by platform while macOS keeps DPAPI.
+        gateway = self.read("companion_gateway.rs")
+        self.assertIn('fn linux_keyring_unavailable() -> GatewayError {', gateway)
+        self.assertIn('"companion-keyring-unavailable"', gateway)
+        self.assertIn('"未找到系统钥匙环，未做任何修改"', gateway)
+        self.assertIn("struct LinuxIdentityStore {", gateway)
+        self.assertIn("impl ProtectedIdentityStore for LinuxIdentityStore {", gateway)
+        store_body = gateway.split("impl ProtectedIdentityStore for LinuxIdentityStore {", 1)[1].split("\n}\n", 1)[0]
+        for name in ("fn load(&self)", "fn store(&self", "fn remove(&self)"):
+            with self.subTest(fn=name):
+                self.assertIn(name, store_body)
+        self.assertIn("Err(Self::keyring_unavailable())", store_body)
+        self.assertNotIn("open(", store_body)
+        self.assertNotIn("fs::write", store_body)
+        self.assertNotIn("fs::rename", store_body)
+        self.assertNotIn("remove_file", store_body)
+        self.assertIn("libc::getifaddrs", gateway)
+        self.assertIn("libc::freeifaddrs", gateway)
+        self.assertIn("fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {",
+                      gateway)
+
+        self.assertIn('#[cfg(target_os = "linux")]\n        let store = LinuxIdentityStore::new(backend.app_data_dir());',
+                      gateway)
+        self.assertIn('#[cfg(not(target_os = "linux"))]\n        let store = DpapiIdentityStore::new(backend.app_data_dir());',
+                      gateway)
+        self.assertIn("fn linux_identity_store_refuses_without_a_keyring_and_never_writes(", gateway)
+        self.assertIn("fn linux_interface_enumeration_only_reports_private_lan(", gateway)
+        # The DPAPI Windows bodies stay byte-identical; macOS keeps the original
+        # platform refusal, Linux gets its own keyring refusal.
+        self.assertIn("CryptProtectData", gateway)
+        self.assertIn("CryptUnprotectData", gateway)
+        self.assertIn('#[cfg(not(any(windows, target_os = "linux")))]\n'
+                      'fn dpapi_protect(_plaintext: &[u8]) -> Result<Vec<u8>, GatewayError> {\n'
+                      '    Err(GatewayError::new(\n'
+                      '        "companion-secret-platform-unsupported",', gateway)
+        self.assertIn('#[cfg(not(any(windows, target_os = "linux")))]\n'
+                      'fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {\n'
+                      "    Ok(Vec::new())", gateway)
+        self.assertEqual(gateway.count('fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {'), 3)
+
     def test_native_media_linux_gate_is_wired_without_touching_windows(self):
         # T16 pure-code slice: the media-engine verification authority is
         # compiled on Linux with the same pinned-version + digest checks, the
@@ -1949,7 +1992,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         # code and "未做任何修改", and the runner/player stay Windows-gated.
         gate = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
         transfer = self.read("media_transfer.rs")
-        self.assertEqual(transfer.count(gate), 7, "only the verification gates widen")
+        self.assertEqual(transfer.count(gate), 9, "only the verification gates widen")
         for name in ("struct ExternalMediaResolver {", "impl ExternalMediaResolver {",
                      "pub(crate) fn verified_local_video_tools(resource_dir: &Path)",
                      "fn safe_runtime_path(root: &Path, relative: &str)",

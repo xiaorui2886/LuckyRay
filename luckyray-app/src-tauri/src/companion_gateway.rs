@@ -419,7 +419,17 @@ fn dpapi_unprotect(protected: &[u8]) -> Result<Vec<u8>, GatewayError> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn dpapi_protect(_plaintext: &[u8]) -> Result<Vec<u8>, GatewayError> {
+    Err(linux_keyring_unavailable())
+}
+
+#[cfg(target_os = "linux")]
+fn dpapi_unprotect(_protected: &[u8]) -> Result<Vec<u8>, GatewayError> {
+    Err(linux_keyring_unavailable())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn dpapi_protect(_plaintext: &[u8]) -> Result<Vec<u8>, GatewayError> {
     Err(GatewayError::new(
         "companion-secret-platform-unsupported",
@@ -427,12 +437,63 @@ fn dpapi_protect(_plaintext: &[u8]) -> Result<Vec<u8>, GatewayError> {
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn dpapi_unprotect(_protected: &[u8]) -> Result<Vec<u8>, GatewayError> {
     Err(GatewayError::new(
         "companion-secret-platform-unsupported",
         "The Companion Gateway foundation currently requires Windows DPAPI",
     ))
+}
+
+/// Linux secret storage (T17, owner decision): identities belong in the
+/// freedesktop Secret Service. The D-Bus crate for it is still under review, so
+/// this slice ships the interface only - it never writes a plaintext or weakly
+/// protected identity file, and it refuses with an explicit code so the UI can
+/// ask for manual entry instead.
+#[cfg(target_os = "linux")]
+fn linux_keyring_unavailable() -> GatewayError {
+    GatewayError::new(
+        "companion-keyring-unavailable",
+        "未找到系统钥匙环，未做任何修改",
+    )
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxIdentityStore {
+    /// Where the DPAPI file would live on Windows. Kept for the future Secret
+    /// Service wiring; nothing is ever written to it on Linux.
+    path: PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxIdentityStore {
+    fn new(app_data_dir: &Path) -> Self {
+        Self {
+            path: app_data_dir.join(PROTECTED_IDENTITY_FILE),
+        }
+    }
+
+    fn keyring_unavailable() -> GatewayError {
+        linux_keyring_unavailable()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ProtectedIdentityStore for LinuxIdentityStore {
+    fn load(&self) -> Result<Option<Zeroizing<Vec<u8>>>, GatewayError> {
+        // A file at the DPAPI name would be foreign data that no Linux keyring
+        // wrote; refuse it instead of guessing, exactly like a missing keyring.
+        let _ = &self.path;
+        Err(Self::keyring_unavailable())
+    }
+
+    fn store(&self, _plaintext: &[u8]) -> Result<(), GatewayError> {
+        Err(Self::keyring_unavailable())
+    }
+
+    fn remove(&self) -> Result<(), GatewayError> {
+        Err(Self::keyring_unavailable())
+    }
 }
 
 fn open_connection(path: &Path) -> Result<Connection, GatewayError> {
@@ -1278,6 +1339,9 @@ impl CompanionGateway {
     }
 
     pub(crate) fn initialize(backend: Arc<BackendServices>) -> Arc<Self> {
+        #[cfg(target_os = "linux")]
+        let store = LinuxIdentityStore::new(backend.app_data_dir());
+        #[cfg(not(target_os = "linux"))]
         let store = DpapiIdentityStore::new(backend.app_data_dir());
         Self::initialize_with_store(backend, Arc::new(store), GatewayPolicy::default())
     }
@@ -3654,7 +3718,57 @@ fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {
+    // Linux form of GetAdaptersAddresses(AF_INET) + IfOperStatusUp: every IPv4
+    // address on a running interface, with its prefix length. Read through
+    // getifaddrs (libc, already a dependency); no PATH lookup, no subprocess.
+    let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs only fills the list; freeifaddrs releases it below.
+    if unsafe { libc::getifaddrs(&mut head) } != 0 {
+        return Err(GatewayError::new(
+            "gateway-interface-enumeration-failed",
+            "Linux could not enumerate private LAN interfaces",
+        ));
+    }
+    let mut candidates = Vec::new();
+    let mut current = head;
+    while !current.is_null() {
+        // SAFETY: the entry is owned by the list until freeifaddrs.
+        let entry = unsafe { &*current };
+        current = unsafe { (*current).ifa_next };
+        let running = unsafe { (*entry).ifa_flags & (libc::IFF_UP | libc::IFF_RUNNING) }
+            == (libc::IFF_UP | libc::IFF_RUNNING);
+        let Some(socket) = (unsafe { (*entry).ifa_addr.as_ref() }) else {
+            continue;
+        };
+        if unsafe { (*socket).sa_family } != libc::AF_INET as libc::sa_family_t {
+            continue;
+        }
+        // SAFETY: sa_family is AF_INET, so the socket is a sockaddr_in.
+        let socket = unsafe { &*(socket.cast::<libc::sockaddr_in>()) };
+        let octets = u32::from_be(u32::from(socket.sin_addr.s_addr));
+        let address = Ipv4Addr::new(
+            (octets >> 24) as u8,
+            (octets >> 16) as u8,
+            (octets >> 8) as u8,
+            octets as u8,
+        );
+        let prefix = u32::from_be(u32::from(unsafe {
+            (*entry.ifa_netmask.cast::<libc::sockaddr_in>()).sin_addr.s_addr
+        }))
+        .count_ones() as u8;
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).ifa_name) }
+            .to_string_lossy()
+            .into_owned();
+        candidates.push((name, address, prefix, running));
+    }
+    // SAFETY: head still points at the list allocated by getifaddrs.
+    unsafe { libc::freeifaddrs(head) };
+    Ok(normalize_lan_interfaces(candidates))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {
     Ok(Vec::new())
 }
@@ -6700,6 +6814,46 @@ mod tests {
             assert_ne!(address, Ipv4Addr::UNSPECIFIED);
             assert!(unique.insert(address));
             assert!(interface.prefix_length <= 32);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_identity_store_refuses_without_a_keyring_and_never_writes() {
+        let temp = tempfile::tempdir().expect("synthetic profile");
+        let directory = temp.path().join("中文 连接");
+        std::fs::create_dir_all(&directory).expect("owned directory");
+        let store = LinuxIdentityStore::new(&directory);
+        // Every interface refuses with the explicit keyring code and the
+        // "nothing was modified" message.
+        let error = store.load().err().expect("no keyring on this synthetic box");
+        assert_eq!(error.code, "companion-keyring-unavailable");
+        assert_eq!(error.message, "未找到系统钥匙环，未做任何修改");
+        let error = store
+            .store(b"synthetic-identity-bytes")
+            .err()
+            .expect("store must refuse without a keyring");
+        assert_eq!(error.code, "companion-keyring-unavailable");
+        assert_eq!(error.message, "未找到系统钥匙环，未做任何修改");
+        let error = store.remove().err().expect("remove");
+        assert_eq!(error.code, "companion-keyring-unavailable");
+        // Nothing was ever written: the directory stays exactly as it was.
+        assert_eq!(std::fs::read_dir(&directory).expect("directory").count(), 0);
+        assert!(!directory.join(PROTECTED_IDENTITY_FILE).exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_interface_enumeration_only_reports_private_lan() {
+        let interfaces = list_lan_ipv4_interfaces().expect("enumeration");
+        let mut unique = BTreeSet::new();
+        for interface in &interfaces {
+            let address: Ipv4Addr = interface.address.parse().unwrap();
+            assert!(is_private_lan(address));
+            assert_ne!(address, Ipv4Addr::UNSPECIFIED);
+            assert!(unique.insert(address));
+            assert!(interface.prefix_length <= 32);
+            assert!(!interface.name.trim().is_empty());
         }
     }
 
