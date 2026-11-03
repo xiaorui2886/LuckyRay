@@ -1849,6 +1849,18 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("serde_json::to_vec(&durable_result)", runner)
         self.assertIn("Ok(result)", runner)
 
+    def test_mid_copy_seam_is_test_only(self):
+        nl = chr(10)
+        # T29: the mid-copy seam must be unreachable in production. Its
+        # definition and its single call site are both immediately gated.
+        move = self.read("linux_material_move.rs")
+        self.assertIn("#[cfg(test)]" + nl + "pub(crate) fn mid_copy_hook()", move)
+        self.assertIn("#[cfg(test)]" + nl + "        let mut chunks = 0usize;", move)
+        call_block = move.split("total += read as u64;", 1)[1].strip()
+        self.assertTrue(call_block.startswith("#[cfg(test)]" + nl + "            {"),
+                        "the seam call must be the next cfg-gated block after the copy")
+        self.assertNotIn("MID_COPY_HOOK", move)
+
     def test_material_file_move_renames_within_one_filesystem_and_copies_across(self):
         lib = self.read("lib.rs")
         self.assertIn('#[cfg(target_os = "linux")]\nmod linux_material_move;', lib)

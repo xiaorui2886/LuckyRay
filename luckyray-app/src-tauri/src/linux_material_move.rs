@@ -374,6 +374,7 @@ impl<'a> PreparedCopy<'a> {
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; 64 * 1024];
         let mut total = 0u64;
+        #[cfg(test)]
         let mut chunks = 0usize;
         loop {
             let read = reader.read(&mut buffer)?;
@@ -383,13 +384,15 @@ impl<'a> PreparedCopy<'a> {
             hasher.update(&buffer[..read]);
             writer.write_all(&buffer[..read])?;
             total += read as u64;
-            chunks += 1;
             #[cfg(test)]
-            if chunks == 1 {
-                if let Some(hook) =
-                    mid_copy_hook().lock().expect("mid-copy hook").get(&self.from_path)
-                {
-                    hook(&self.from_path, &self.to_path);
+            {
+                chunks += 1;
+                if chunks == 1 {
+                    if let Some(hook) =
+                        mid_copy_hook().lock().expect("mid-copy hook").get(&self.from_path)
+                    {
+                        hook(&self.from_path, &self.to_path);
+                    }
                 }
             }
         }
