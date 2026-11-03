@@ -159,17 +159,18 @@ def bounded_canvas_flow(raw):
 
 
 def bounded_canvas_storage(raw):
-    """Closed projection of the post-run temporary scan: four 0..8 counters.
+    """Closed projection of the post-run temporary scan: five 0..8 counters.
 
     `canvasLeftovers` counts the canvas writer's own
     `.{file_name}.agent-{pid}-{nanos}.tmp` names, `attachmentLeftovers` the
-    notes/attachment `.lrk-…tmp` family and `workspaceLeftovers` the
-    `.lrw-…tmp` family, so every leftover is attributed to its own writer.
+    notes/attachment `.lrk-…tmp` family, `workspaceLeftovers` the `.lrw-…tmp`
+    family and `moveLeftovers` the cross-volume material move's
+    `.lrk-move-…tmp` family, so every leftover is attributed to its own writer.
     """
     raw = raw if isinstance(raw, dict) else {}
     return {name: raw.get(name) if type(raw.get(name)) is int and 0 <= raw[name] <= 8 else None
             for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers",
-                         "directoriesScanned")}
+                         "moveLeftovers", "directoriesScanned")}
 
 
 def bounded_maintenance(raw):
@@ -531,7 +532,8 @@ def validate_notes(raw, build, source, scripts):
         "documentNodes": 1, "temporaryLeftovers": 0}, "canvas-save-reopen-evidence-missing")
     canvas_storage = raw.get("canvasStorage", {})
     require(all(canvas_storage.get(name) == 0
-                for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers"))
+                for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers",
+                             "moveLeftovers"))
             and type(canvas_storage.get("directoriesScanned")) is int
             and 1 <= canvas_storage["directoriesScanned"] <= 8,
             "canvas-storage-temporary-leftover")

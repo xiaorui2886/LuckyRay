@@ -130,6 +130,19 @@ reopening. It does not collect the application's exit status or decode the
 imported image. Neither a synthetic handler nor an IPC smoke establishes every
 visible UI interaction, Wayland, hardware media or installer behavior.
 
+## Material move across filesystems
+
+Windows v1.9.9 copies a material when `SetFileInformationByHandle` reports
+`ERROR_NOT_SAME_DEVICE`. Linux now does the same: the held source is copied
+into a `.lrk-move-<pid>-<nanos>.tmp` name in the destination directory, the
+copy is flushed and verified against the caller's SHA-256 and length, published
+with `renameat2(RENAME_NOREPLACE)`, and only then is the source unlinked after
+its `{dev,ino,size,mtime}` stamp is re-checked. A failure before the publish
+removes only the temporary and leaves the source alone; a failed source removal
+reports `attachment-move-source-kept` while the verified destination stays.
+The rename path is unchanged for same-filesystem moves. The temporary family is
+counted by the smoke's residue scan (`moveLeftovers`).
+
 ## Shared source coordination
 
 Windows branches remain platform-gated. Shared source bytes still affect

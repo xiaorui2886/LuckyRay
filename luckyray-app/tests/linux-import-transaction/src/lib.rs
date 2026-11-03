@@ -33,6 +33,169 @@ mod canvas_agent;
 #[path = "../../../src-tauri/src/linux_media_runtime.rs"]
 mod linux_media_runtime;
 
+    /// T27: the cross-filesystem material move, against a real EXDEV boundary.
+    /// The checkout is ext4 and /dev/shm is tmpfs, so `rename` genuinely fails
+    /// with EXDEV here instead of being injected.
+    mod cross_device_move {
+        use crate::linux_material_move::{copy_held_no_replace, is_cross_device};
+        use sha2::{Digest, Sha256};
+        use std::fs::File;
+        use std::io::Read;
+        use std::os::unix::fs::MetadataExt;
+        use std::path::{Path, PathBuf};
+
+        fn shm_root(label: &str) -> PathBuf {
+            let root = PathBuf::from("/dev/shm").join(format!(
+                "lray-t27-{label}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("tmpfs destination");
+            root
+        }
+
+        fn ext4_file(label: &str, bytes: &[u8]) -> (PathBuf, PathBuf) {
+            let root = std::env::current_dir()
+                .expect("checkout")
+                .join(format!(".t27-{label}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("ext4 source dir");
+            let path = root.join("素材 100%.bin");
+            std::fs::write(&path, bytes).expect("source bytes");
+            (root, path)
+        }
+
+        fn digest(path: &Path) -> String {
+            let mut file = File::open(path).expect("open");
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).expect("read");
+            format!("{:x}", Sha256::digest(&bytes))
+        }
+
+        fn temporaries(dir: &Path) -> Vec<String> {
+            std::fs::read_dir(dir)
+                .expect("dir")
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with(".lrk-move-"))
+                .collect()
+        }
+
+        #[test]
+        fn the_destination_really_is_another_filesystem() {
+            let (source_root, source) = ext4_file("exdev-probe", b"probe");
+            let destination = shm_root("exdev-probe");
+            let error = std::fs::rename(&source, destination.join("probe.bin")).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(libc::EXDEV));
+            assert!(is_cross_device(&error));
+            assert!(source.exists(), "a failed rename must leave the source");
+            let _ = std::fs::remove_dir_all(&source_root);
+            let _ = std::fs::remove_dir_all(&destination);
+        }
+
+        #[test]
+        fn the_fallback_moves_the_bytes_and_removes_the_source() {
+            let body: Vec<u8> = (0..180_000u32).map(|n| (n % 251) as u8).collect();
+            let (source_root, source) = ext4_file("fallback", &body);
+            let destination_root = shm_root("fallback");
+            let destination = destination_root.join("素材 100%.bin");
+            let sha = digest(&source);
+            let handle = File::open(&source).expect("held source");
+            let before = handle.metadata().expect("source metadata");
+            copy_held_no_replace(&handle, &source, &destination, &sha).expect("cross-device move");
+            assert_eq!(std::fs::read(&destination).expect("destination"), body);
+            assert_eq!(digest(&destination), sha);
+            assert!(!source.exists(), "the source is unlinked after the publish");
+            let after = std::fs::metadata(&destination).expect("destination metadata");
+            assert_ne!((after.dev(), after.ino()), (before.dev(), before.ino()));
+            assert!(temporaries(&source_root).is_empty());
+            assert!(temporaries(&destination_root).is_empty());
+            let _ = std::fs::remove_dir_all(&source_root);
+            let _ = std::fs::remove_dir_all(&destination_root);
+        }
+
+        #[test]
+        fn a_digest_mismatch_publishes_nothing_and_keeps_the_source() {
+            let body = b"synthetic-bytes-that-do-not-match".to_vec();
+            let (source_root, source) = ext4_file("digest", &body);
+            let destination_root = shm_root("digest");
+            let destination = destination_root.join("mismatch.bin");
+            let handle = File::open(&source).expect("held source");
+            let error = copy_held_no_replace(&handle, &source, &destination, &"0".repeat(64))
+                .expect_err("a wrong digest must fail");
+            assert_eq!(error.to_string(), "attachment-version-changed");
+            assert!(!destination.exists(), "nothing may be published");
+            assert_eq!(std::fs::read(&source).expect("source"), body);
+            assert!(temporaries(&source_root).is_empty());
+            assert!(temporaries(&destination_root).is_empty());
+            let _ = std::fs::remove_dir_all(&source_root);
+            let _ = std::fs::remove_dir_all(&destination_root);
+        }
+
+        #[test]
+        fn an_occupied_name_is_refused_without_touching_either_file() {
+            let (source_root, source) = ext4_file("occupied", b"source-bytes");
+            let destination_root = shm_root("occupied");
+            let destination = destination_root.join("occupied.bin");
+            std::fs::write(&destination, b"existing-target").expect("existing target");
+            let handle = File::open(&source).expect("held source");
+            let error = copy_held_no_replace(&handle, &source, &destination, &digest(&source))
+                .expect_err("an occupied name must be refused");
+            assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+            assert_eq!(std::fs::read(&source).expect("source"), b"source-bytes");
+            assert_eq!(std::fs::read(&destination).expect("target"), b"existing-target");
+            assert!(temporaries(&source_root).is_empty());
+            assert!(temporaries(&destination_root).is_empty());
+            let _ = std::fs::remove_dir_all(&source_root);
+            let _ = std::fs::remove_dir_all(&destination_root);
+        }
+
+        #[test]
+        fn a_source_that_is_no_longer_the_held_object_is_not_unlinked() {
+            let (source_root, source) = ext4_file("replaced", b"first-bytes");
+            let destination_root = shm_root("replaced");
+            let destination = destination_root.join("replaced.bin");
+            let sha = digest(&source);
+            let handle = File::open(&source).expect("held source");
+            // Replace the name with a different object after the handle was taken:
+            // the copy must stop before unlinking anything.
+            let moved = source_root.join("original-held.bin");
+            std::fs::rename(&source, &moved).expect("move the held name aside");
+            std::fs::write(&source, b"second-bytes").expect("new object under the name");
+            let error = copy_held_no_replace(&handle, &source, &destination, &sha)
+                .expect_err("a replaced source must stop the move");
+            // Either the prepare-time identity proof or the post-copy re-check
+            // stops it; both leave every file where it is.
+            let message = error.to_string();
+            // `linux-file-changed-or-unsafe` is the identity proof at prepare
+            // time: the name no longer denotes the held object.
+            assert!(
+                message == "source-changed" || message == "linux-file-changed-or-unsafe"
+                    || error.kind() == std::io::ErrorKind::AlreadyExists,
+                "unexpected stop: {message}"
+            );
+            assert_eq!(std::fs::read(&source).expect("new object"), b"second-bytes");
+            assert_eq!(std::fs::read(&moved).expect("held object"), b"first-bytes");
+            assert!(temporaries(&source_root).is_empty());
+            assert!(temporaries(&destination_root).is_empty());
+            let _ = std::fs::remove_dir_all(&source_root);
+            let _ = std::fs::remove_dir_all(&destination_root);
+        }
+
+        #[test]
+        fn the_same_filesystem_still_renames_without_copying() {
+            let (source_root, source) = ext4_file("rename", b"rename-bytes");
+            let destination = source_root.join("renamed.bin");
+            let handle = File::open(&source).expect("held source");
+            // Same device: the catalog's rename primitive is used, not this one.
+            assert!(crate::linux_material_move::move_held_no_replace(
+                &handle, &source, &destination).is_ok());
+            assert!(!source.exists());
+            assert_eq!(std::fs::read(&destination).expect("renamed"), b"rename-bytes");
+            let _ = std::fs::remove_dir_all(&source_root);
+        }
+    }
+
 #[cfg(test)]
 mod tests {
     use super::linux_attachment_store::{Dependency, ImportStore};

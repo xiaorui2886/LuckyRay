@@ -1020,6 +1020,10 @@ def is_workspace_temporary(name):
     return name.startswith(".lrw-") and name.endswith(".tmp")
 
 
+def is_move_temporary(name):
+    return name.startswith(".lrk-move-") and name.endswith(".tmp")
+
+
 def canvas_document_scan(home):
     """Bounded name-only walk of the owned profile for canvas documents.
 
@@ -1095,13 +1099,14 @@ return out;
 def profile_temporary_scan(home):
     """Bounded name-only walk of the owned profile after both sessions ended.
 
-    The canvas, attachment and workspace writers all stage a hidden temporary
+    The canvas, attachment, workspace and material-move writers all stage a
+    hidden temporary
     and replace or publish atomically; a crash or a failed commit leaves exactly
     one such name behind. Returns (canvas, attachment, workspace leftovers,
     directories scanned), each capped by the caller. No file content is opened
     and no path is exported.
     """
-    canvas_markers, attachment_markers, workspace_markers = 0, 0, 0
+    canvas_markers, attachment_markers, workspace_markers, move_markers = 0, 0, 0, 0
     scanned, pending = 0, [Path(home)]
     while pending and scanned <= 4096:
         current = pending.pop()
@@ -1120,13 +1125,20 @@ def profile_temporary_scan(home):
             except OSError:
                 continue
             name = child.name
+            # The move family is a more specific `.lrk-` prefix, so it is
+            # checked before the attachment family it would otherwise be
+            # swallowed by.
             if is_canvas_temporary(name):
                 canvas_markers += 1
+            elif is_move_temporary(name):
+                move_markers += 1
             elif is_attachment_temporary(name):
                 attachment_markers += 1
             elif is_workspace_temporary(name):
                 workspace_markers += 1
-    return canvas_markers, attachment_markers, workspace_markers, max(1, scanned)
+            elif is_move_temporary(name):
+                move_markers += 1
+    return canvas_markers, attachment_markers, workspace_markers, move_markers, max(1, scanned)
 
 
 def main():
@@ -1992,10 +2004,12 @@ def main():
             "canvasLeftovers": min(leftovers[0], 8),
             "attachmentLeftovers": min(leftovers[1], 8),
             "workspaceLeftovers": min(leftovers[2], 8),
-            "directoriesScanned": min(leftovers[3], 8),
+            "moveLeftovers": min(leftovers[3], 8),
+            "directoriesScanned": min(leftovers[4], 8),
         }
         require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] == 0
-                and leftovers[3] > 0, "canvas-storage-temporary-leftover")
+                and leftovers[3] == 0 and leftovers[4] > 0,
+                "canvas-storage-temporary-leftover")
         report["checks"]["canvasStorageHygiene"] = "PASS"
         report["status"] = "PASS"
     except Exception as error:

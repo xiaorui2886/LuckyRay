@@ -323,17 +323,21 @@ impl<'a> PreparedCopy<'a> {
 
     /// Copy, verify, publish, then unlink the source it came from.
     pub(crate) fn commit(self, expected_sha256: &str) -> io::Result<()> {
+        // Borrows, so the directory stays open for the cleanup below: the name
+        // removed is exactly the temporary this attempt created.
+        let directory = self.to.file.as_raw_fd();
+        let temporary = self.temporary.clone();
         let result = self.run(expected_sha256);
         if result.is_err() {
             // Only the name this attempt created is removed. Before the publish
             // the source was never touched; after it, an error means the source
             // is still there and both copies are complete.
-            let _ = unsafe { libc::unlinkat(self.to.file.as_raw_fd(), self.temporary.as_ptr(), 0) };
+            let _ = unsafe { libc::unlinkat(directory, temporary.as_ptr(), 0) };
         }
         result
     }
 
-    fn run(self, expected_sha256: &str) -> io::Result<()> {
+    fn run(&self, expected_sha256: &str) -> io::Result<()> {
         use sha2::{Digest, Sha256};
         use std::io::{Read, Seek, SeekFrom, Write};
 

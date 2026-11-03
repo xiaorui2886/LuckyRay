@@ -381,7 +381,8 @@ class EvidenceTests(unittest.TestCase):
             **{name: "NOT_RUN" for name in ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer")},
             "attachmentMaintenance": passing_maintenance(),
             "canvasStorage": {"canvasLeftovers": 0, "attachmentLeftovers": 0,
-                              "workspaceLeftovers": 0, "directoriesScanned": 5},
+                              "workspaceLeftovers": 0, "moveLeftovers": 0,
+                              "directoriesScanned": 5},
             "directorWebgl": {"directorCanvasPresent": True, "contextKind": "webgl2",
                               "rendererClass": "software", "contextLost": False,
                               "canvasWidth": 640, "canvasHeight": 360,
@@ -1750,7 +1751,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         # Exactly one unlinkat in the whole module, and it is the source removal
         # of the copy path.
         self.assertEqual(move.count("unlinkat("), 2, "the commit cleanup and the source removal")
-        source_unlink = move.split("fn run(self, expected_sha256: &str) -> io::Result<()> {", 1)[1]
+        source_unlink = move.split("fn run(&self, expected_sha256: &str) -> io::Result<()> {", 1)[1]
         cleaned = source_unlink.split("fn copy_held_no_replace(", 1)[0]
         self.assertEqual(cleaned.count("libc::unlinkat("), 1)
         # Order inside that function: copy+flush, digest check, publish, target
@@ -2404,14 +2405,15 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             (nested / ".canvas-1.json.agent-99-88.tmp").write_bytes(b"{}")
             (nested / ".lrk-attachment-0123abcdef.tmp").write_bytes(b"{}")
             (nested / ".lrw-99-88.tmp").write_bytes(b"{}")
+            (nested / ".lrk-move-99-88.tmp").write_bytes(b"{}")
             (nested / ".luckyray-write.lock").write_bytes(b"{}")
-            canvas, attachment, workspace, scanned = ci.smoke.profile_temporary_scan(home)
-            self.assertEqual((canvas, attachment, workspace), (1, 1, 1))
-            self.assertGreaterEqual(scanned, 5)
+            canvas, attachment, workspace, moved, scanned = ci.smoke.profile_temporary_scan(home)
+            self.assertEqual((canvas, attachment, workspace, moved), (1, 1, 1, 1))
+            self.assertGreaterEqual(scanned, 6)
             clean = home / "clean"
             clean.mkdir()
             (clean / "canvas-1.json").write_bytes(b"{}")
-            self.assertEqual(ci.smoke.profile_temporary_scan(clean), (0, 0, 0, 1))
+            self.assertEqual(ci.smoke.profile_temporary_scan(clean), (0, 0, 0, 0, 1))
 
     def test_canvas_storage_hygiene_evidence_is_closed_and_required(self):
         # The smoke scans the owned profile after both sessions end; the
@@ -2419,21 +2421,23 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertEqual(ci.bounded_canvas_storage({}), {"canvasLeftovers": None,
                                                          "attachmentLeftovers": None,
                                                          "workspaceLeftovers": None,
+                                                         "moveLeftovers": None,
                                                          "directoriesScanned": None})
         clean = {"canvasLeftovers": 0, "attachmentLeftovers": 0, "workspaceLeftovers": 0,
-                 "directoriesScanned": 5}
+                 "moveLeftovers": 0, "directoriesScanned": 5}
         self.assertEqual(ci.bounded_canvas_storage(clean), clean)
-        for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers"):
+        for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers", "moveLeftovers"):
             dirty = dict(clean); dirty[name] = 1
             self.assertNotEqual(ci.bounded_canvas_storage(dirty), clean, name)
         self.assertEqual(ci.bounded_canvas_storage({"canvasLeftovers": "hunter2"})["canvasLeftovers"], None)
         self.assertEqual(ci.bounded_canvas_storage([{"canvasLeftovers": 1}]), {"canvasLeftovers": None,
                                                                               "attachmentLeftovers": None,
                                                                               "workspaceLeftovers": None,
+                                                                              "moveLeftovers": None,
                                                                               "directoriesScanned": None})
         fixture = EvidenceTests(methodName="runTest"); fixture.setUp()
         fixture.raw.update(canvasStorage={"canvasLeftovers": 2, "attachmentLeftovers": 1,
-                                          "workspaceLeftovers": "hunter2",
+                                          "workspaceLeftovers": "hunter2", "moveLeftovers": 0,
                                           "directoriesScanned": 9, "path": "hunter2"})
         self.assertNotIn("hunter2", json.dumps(ci.bounded_report(fixture.raw)))
         # The full passing fixture is accepted, and a single leftover temporary
@@ -2453,11 +2457,14 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('"canvasStorageHygiene"', smoke)
         self.assertIn('"canvas-temporary-scan"', smoke)
         self.assertIn('require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] == 0', smoke)
+        self.assertIn("def is_move_temporary(name):", smoke)
+        self.assertIn('name.startswith(".lrk-move-")', smoke)
         self.assertIn('"attachmentLeftovers": min(leftovers[1], 8)', smoke)
         gate = (Path(__file__).resolve().parents[1] / "tests/linux-notes-ci.py").read_text()
         self.assertIn('"canvas-storage", "canvas-flow", "director-webgl", "quit"', gate)
         self.assertIn('"canvas-storage-temporary-leftover"', gate)
-        self.assertIn('"attachmentLeftovers", "workspaceLeftovers",', gate)
+        self.assertIn('"moveLeftovers", "directoriesScanned")', gate)
+        self.assertIn('"moveLeftovers"))', gate)
 
     def test_note_move_uses_the_sealed_runner_not_the_windows_journal(self):
         operations = self.read("knowledge/attachment_operations.rs")
