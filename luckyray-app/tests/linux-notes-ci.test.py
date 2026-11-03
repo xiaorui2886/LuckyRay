@@ -1977,6 +1977,11 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                        "linux-native-registration-smoke.py").read_bytes()).hexdigest(),
                    "roundTripFrames": 1, "realBrowser": "NOT_RUN",
                    "roundTripRefusalCode": "app-unavailable"}
+        # The smoke reports the CLI steps as "PASS", not as booleans; both forms
+        # normalise to the same closed projection.
+        self.assertEqual(ci.bounded_native_messaging(dict(passing, registration="PASS")), passing)
+        self.assertEqual(ci.bounded_native_messaging(dict(passing, registration="FAIL")),
+                         dict(passing, registration=None))
         projected = ci.bounded_native_messaging(passing)
         self.assertEqual(projected, passing)
         self.assertEqual(ci.bounded_native_messaging(projected), projected)

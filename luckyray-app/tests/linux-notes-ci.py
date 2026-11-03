@@ -75,7 +75,17 @@ def bounded_native_messaging(raw):
     manifest body and no browser profile name.
     """
     raw = raw if isinstance(raw, dict) else {}
-    result = {name: raw.get(name) if type(raw.get(name)) is bool else None
+
+    def passed(value):
+        # The smoke reports the CLI outcomes as the literal "PASS" its other
+        # reports use; anything else has to be a real boolean.
+        if value is True or value == "PASS":
+            return True
+        if value is False:
+            return False
+        return None
+
+    result = {name: passed(raw.get(name))
               for name in ("registration", "revocation", "reenable", "sourceIdentity",
                            "conflictAndSymlinkPreservation", "independentBackupAndOldInode",
                            "credentialNamespaceUnchanged", "roundTrip")}
