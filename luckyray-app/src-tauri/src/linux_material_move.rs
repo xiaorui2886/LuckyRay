@@ -1,12 +1,15 @@
 //! Linux move of a material's real file (素材详情 → 移动或重命名文件).
 //!
-//! One rule, the same as Windows v1.9.9 within one volume: the held source
+//! Two rules, both as Windows v1.9.9: within one filesystem the held source
 //! object is renamed with `renameat2(RENAME_NOREPLACE)` between two parent
 //! directories reached from `/` without following any link, and both parents
-//! are proved again around the rename. A different filesystem is refused before
-//! anything moves (`attachment-move-cross-device`); there is no copy fallback.
-//! Nothing here unlinks, truncates or replaces a name: the only inverse is the
-//! same no-replace rename in the other direction.
+//! are proved again around the rename. Across filesystems (the kernel's
+//! `EXDEV`, which Windows reports as `ERROR_NOT_SAME_DEVICE`) the same object is
+//! copied into the destination directory, verified against the caller's digest,
+//! published without replacing anything, and only then is the source unlinked
+//! (`PreparedCopy`). The rename path still never unlinks, truncates or replaces
+//! a name: its only inverse is the same no-replace rename in the other
+//! direction.
 use crate::linux_fs::{conflict, owned_fd, Directory};
 use std::ffi::{CString, OsStr};
 use std::fs::File;
@@ -232,6 +235,156 @@ impl<'a> PreparedMove<'a> {
 /// Move the held, already-verified source object to `destination`.
 pub(crate) fn move_held_no_replace(source: &File, from: &Path, destination: &Path) -> io::Result<()> {
     PreparedMove::prepare(source, from, destination)?.commit()
+}
+
+/// Source identity with the fields a copy must re-check before unlinking it:
+/// a rename cannot change them, but a copy takes time and another writer can.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Stamp {
+    device: u64,
+    inode: u64,
+    size: u64,
+    mtime: (i64, i64),
+}
+
+fn stamp_of(file: &File) -> io::Result<Stamp> {
+    let m = file.metadata()?;
+    Ok(Stamp { device: m.dev(), inode: m.ino(), size: m.len(), mtime: (m.mtime(), m.mtime_nsec()) })
+}
+
+fn stamp_at(directory: &Directory, name: &CString) -> io::Result<Stamp> {
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe {
+        libc::fstatat(directory.file.as_raw_fd(), name.as_ptr(), &mut stat, libc::AT_SYMLINK_NOFOLLOW)
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
+        return Err(conflict());
+    }
+    Ok(Stamp {
+        device: stat.st_dev as u64,
+        inode: stat.st_ino as u64,
+        size: stat.st_size as u64,
+        mtime: (stat.st_mtime, stat.st_mtime_nsec),
+    })
+}
+
+/// Message of the honest partial result: the destination is published and the
+/// original is still there. Never reported as a successful move.
+pub(crate) const SOURCE_KEPT: &str = "attachment-move-source-kept";
+
+/// One temporary name per attempt, in the destination directory, recognisable
+/// by the residue scan (`.lrk-move-<pid>-<nanos>.tmp`).
+fn temporary_name() -> CString {
+    CString::new(format!(
+        ".lrk-move-{}-{}.tmp",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ))
+    .unwrap_or_else(|_| CString::new(".lrk-move-0-0.tmp").expect("fixed name"))
+}
+
+/// A cross-filesystem move whose source, parents and vacancy were proved and
+/// whose invisible temporary already exists in the destination directory.
+///
+/// Same order as Windows v1.9.9 `move_owned_handle_no_replace` on
+/// ERROR_NOT_SAME_DEVICE: create the new target, copy from the held source,
+/// flush it, publish without replacing, and only then handle the source.
+pub(crate) struct PreparedCopy<'a> {
+    source: &'a File,
+    stamp: Stamp,
+    from: Directory,
+    from_name: CString,
+    to: Directory,
+    to_name: CString,
+    temporary: CString,
+    staged: File,
+}
+
+impl<'a> PreparedCopy<'a> {
+    pub(crate) fn prepare(source: &'a File, from: &Path, to: &Path) -> io::Result<Self> {
+        let stamp = stamp_of(source)?;
+        let (from_dir, from_name) = leaf(from)?;
+        let (to_dir, to_name) = leaf(to)?;
+        if stamp_at(&from_dir, &from_name)? != stamp {
+            return Err(conflict());
+        }
+        match named(&to_dir, &to_name) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Ok(_) => return Err(io::Error::from(io::ErrorKind::AlreadyExists)),
+            Err(error) => return Err(error),
+        }
+        let temporary = temporary_name();
+        let staged = to_dir.create(OsStr::from_bytes(temporary.as_bytes()), b"")?;
+        Ok(Self { source, stamp, from: from_dir, from_name, to: to_dir, to_name, temporary, staged })
+    }
+
+    /// Copy, verify, publish, then unlink the source it came from.
+    pub(crate) fn commit(self, expected_sha256: &str) -> io::Result<()> {
+        let result = self.run(expected_sha256);
+        if result.is_err() {
+            // Only the name this attempt created is removed. Before the publish
+            // the source was never touched; after it, an error means the source
+            // is still there and both copies are complete.
+            let _ = unsafe { libc::unlinkat(self.to.file.as_raw_fd(), self.temporary.as_ptr(), 0) };
+        }
+        result
+    }
+
+    fn run(self, expected_sha256: &str) -> io::Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::io::{Read, Seek, SeekFrom, Write};
+
+        let mut reader = self.source;
+        reader.seek(SeekFrom::Start(0))?;
+        let mut writer = &self.staged;
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let mut total = 0u64;
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            writer.write_all(&buffer[..read])?;
+            total += read as u64;
+        }
+        self.staged.sync_all()?;
+        if total != self.stamp.size || format!("{:x}", hasher.finalize()) != expected_sha256 {
+            return Err(io::Error::new(io::ErrorKind::Other, "attachment-version-changed"));
+        }
+        // Publish without replacing, then make both directory entries durable
+        // before the source may go -- the same guarantee the Windows
+        // WRITE_THROUGH move gives.
+        self.to.file.sync_all()?;
+        rename_no_replace(&self.to, &self.temporary, &self.to, &self.to_name)?;
+        self.to.file.sync_all()?;
+        named(&self.to, &self.to_name)?;
+        // Only now may the source go, and only if it is still the object copied.
+        if stamp_at(&self.from, &self.from_name)? != self.stamp || stamp_of(self.source)? != self.stamp {
+            return Err(io::Error::new(io::ErrorKind::Other, "source-changed"));
+        }
+        if unsafe { libc::unlinkat(self.from.file.as_raw_fd(), self.from_name.as_ptr(), 0) } != 0 {
+            return Err(io::Error::new(io::ErrorKind::Other, SOURCE_KEPT));
+        }
+        self.from.file.sync_all()?;
+        Ok(())
+    }
+}
+
+/// Move the held source across filesystems by copying it into the destination
+/// directory and unlinking it only after the published copy is durable.
+/// `expected_sha256` is the digest the caller already verified on the source.
+pub(crate) fn copy_held_no_replace(
+    source: &File,
+    from: &Path,
+    destination: &Path,
+    expected_sha256: &str,
+) -> io::Result<()> {
+    PreparedCopy::prepare(source, from, destination)?.commit(expected_sha256)
 }
 
 /// Path form used by the catalog's recovery (`renamed_paths`): the leaf is

@@ -2696,7 +2696,7 @@ impl MaterialCatalog {
         let name=target.file_name().and_then(|s|s.to_str()).ok_or_else(||MaterialError::new("invalid-file-name","目标文件名无效"))?;
         validate_asset_file_name(name)?;
         let destination=canonical_regular_leaf(target)?;
-        if destination.exists() {return Err(MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖"))}
+        if destination.exists() {return Err(MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖，未做任何修改"))}
         // Linux refuses another filesystem at preview, before any note is rewritten.
         #[cfg(target_os = "linux")]
         linux_reject_cross_device(&owned.file_path,&destination)?;
@@ -2783,7 +2783,7 @@ impl MaterialCatalog {
                 MaterialError::io("rename-file-failed", "重命名素材真实文件失败", error)
             })?;
             #[cfg(target_os = "linux")]
-            let copied_guard=linux_move_owned_handle_no_replace(&mut source_guard, &owned.file_path, &destination)?;
+            let copied_guard=linux_move_owned_handle_no_replace(&mut source_guard, &owned.file_path, &destination, &owned.content_hash)?;
             renamed_paths = Some((owned.file_path.clone(), destination.clone()));
             let destination_guard=std::fs::File::open(&destination).map_err(|e|MaterialError::io("attachment-unavailable","无法校验移动后的附件",e))?;
             let destination_identity=note_attachments::file_identity(&destination_guard)?;
@@ -5384,14 +5384,35 @@ fn move_owned_file_no_replace(source:&Path,destination:&Path)->std::io::Result<(
 /// second handle is ever returned; `source_path` names the held object for the
 /// no-follow identity proof.
 #[cfg(target_os = "linux")]
-fn linux_move_owned_handle_no_replace(source:&mut std::fs::File,source_path:&Path,destination:&Path)->MaterialResult<Option<std::fs::File>> {
-    crate::linux_material_move::move_held_no_replace(source,source_path,destination).map_err(|error| {
+fn linux_move_owned_handle_no_replace(source:&mut std::fs::File,source_path:&Path,destination:&Path,expected_sha256:&str)->MaterialResult<Option<std::fs::File>> {
+    // Windows v1.9.9 copies across volumes (`move_owned_handle_no_replace`,
+    // ERROR_NOT_SAME_DEVICE): the same order runs here -- create the target,
+    // copy from the held source, verify, publish without replacing, then handle
+    // the source. The refusal below stays only for failures the copy cannot fix.
+    let moved = match crate::linux_material_move::move_held_no_replace(source,source_path,destination) {
+        Ok(()) => Ok(()),
+        Err(error) if crate::linux_material_move::is_cross_device(&error) => {
+            crate::linux_material_move::copy_held_no_replace(source,source_path,destination,expected_sha256)
+        }
+        Err(error) => Err(error),
+    };
+    moved.map_err(|error| {
+        let text=error.to_string();
+        if text==crate::linux_material_move::SOURCE_KEPT {
+            return MaterialError::new("attachment-move-source-kept","目标已移动，原文件未删除，未做任何修改，可在恢复记录中查看")
+        }
+        if text=="source-changed" {
+            return MaterialError::new("attachment-version-changed","附件在移动期间变化，目标已复制完成、原文件保留，未做任何修改")
+        }
+        if text=="attachment-version-changed" {
+            return MaterialError::new("attachment-version-changed","附件在复制期间变化，未做任何修改")
+        }
         if crate::linux_material_move::is_cross_device(&error) {return linux_cross_device_error()}
         // No byte moved: make an unsupported RENAME_NOREPLACE an explicit
         // capability refusal instead of a generic "rename failed".
         if error.kind()==std::io::ErrorKind::Unsupported {return MaterialError::new("knowledge-linux-fs-unsupported","当前文件系统不支持安全的文件移动，未做任何修改")}
-        if error.kind()==std::io::ErrorKind::AlreadyExists {return MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖")}
-        MaterialError::io("rename-file-failed", "重命名素材真实文件失败", error)
+        if error.kind()==std::io::ErrorKind::AlreadyExists {return MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖，未做任何修改")}
+        MaterialError::io("rename-file-failed", "重命名素材真实文件失败，未做任何修改", error)
     })?;
     Ok(None)
 }

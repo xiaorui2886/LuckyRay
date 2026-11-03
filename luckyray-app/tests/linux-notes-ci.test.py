@@ -1729,8 +1729,11 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             self.assertIn(f'#[cfg(target_os = "linux")]\nmod {module};', lib)
 
     def test_attachment_mutation_sources_never_unlink_a_user_object(self):
+        # `linux_material_move.rs` is checked separately below: its cross-volume
+        # path must unlink the source it copied (Windows v1.9.9 does the same
+        # with delete-on-close), and that single site is position-pinned.
         files = ("linux_attachment_store.rs", "knowledge/linux_attachment_mutations.rs",
-                 "knowledge/linux_attachment_import.rs", "linux_material_move.rs")
+                 "knowledge/linux_attachment_import.rs")
         banned = ("remove_file(", "remove_dir(", "fs::remove_", "unlinkat(", "libc::unlink",
                   "RENAME_EXCHANGE", "shutil.")
         for name in files:
@@ -1738,6 +1741,33 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             for token in banned:
                 with self.subTest(file=name, token=token):
                     self.assertNotIn(token, text)
+        move = self.read("linux_material_move.rs")
+        # `libc::unlink` (the path-based syscall) stays banned; only the
+        # directory-relative `unlinkat` below is allowed, once.
+        for token in ("remove_file(", "remove_dir(", "fs::remove_", "libc::unlink(", "RENAME_EXCHANGE"):
+            with self.subTest(file="linux_material_move.rs", token=token):
+                self.assertNotIn(token, move)
+        # Exactly one unlinkat in the whole module, and it is the source removal
+        # of the copy path.
+        self.assertEqual(move.count("unlinkat("), 2, "the commit cleanup and the source removal")
+        source_unlink = move.split("fn run(self, expected_sha256: &str) -> io::Result<()> {", 1)[1]
+        cleaned = source_unlink.split("fn copy_held_no_replace(", 1)[0]
+        self.assertEqual(cleaned.count("libc::unlinkat("), 1)
+        # Order inside that function: copy+flush, digest check, publish, target
+        # directory fsync, then the stamp re-check, and only then the unlink.
+        self.assertLess(cleaned.index("self.staged.sync_all()?;"),
+                        cleaned.index("rename_no_replace(&self.to, &self.temporary, &self.to, &self.to_name)?;"))
+        after_publish = cleaned.split(
+            "rename_no_replace(&self.to, &self.temporary, &self.to, &self.to_name)?;", 1)[1]
+        order = ("self.to.file.sync_all()?;", "named(&self.to, &self.to_name)?;",
+                 "stamp_at(&self.from, &self.from_name)?", "libc::unlinkat(self.from.file.as_raw_fd()",
+                 "self.from.file.sync_all()?;")
+        positions = [after_publish.index(token) for token in order]
+        self.assertEqual(positions, sorted(positions), "publish fsync, verify, then unlink")
+        # The rename path keeps its own reverse-only rule.
+        rename_path = move.split("impl<'a> PreparedMove<'a> {", 1)[1].split("/// Move the held, already-verified source object", 1)[0]
+        self.assertNotIn("unlinkat(", rename_path)
+        self.assertNotIn("write_all(", rename_path)
         store = self.read("linux_attachment_store.rs")
         # The only two inverses the engine may use: a no-replace rename in both
         # directions, and the tombstone name that keeps the original inode.
@@ -1818,17 +1848,37 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("serde_json::to_vec(&durable_result)", runner)
         self.assertIn("Ok(result)", runner)
 
-    def test_material_file_move_is_linux_gated_and_same_filesystem_only(self):
+    def test_material_file_move_renames_within_one_filesystem_and_copies_across(self):
         lib = self.read("lib.rs")
         self.assertIn('#[cfg(target_os = "linux")]\nmod linux_material_move;', lib)
         primitive = self.read("linux_material_move.rs")
         self.assertIn("libc::RENAME_NOREPLACE", primitive)
         self.assertIn("libc::AT_SYMLINK_NOFOLLOW", primitive)
         self.assertIn("libc::O_NOFOLLOW", primitive)
+        # Same filesystem: the rename path still refuses a foreign device.
         self.assertIn("return Err(cross_device());", primitive)
-        for token in ("std::io::copy", "fs::copy", "set_len(", ".truncate(", "O_TRUNC", "write("):
-            with self.subTest(token=token):
-                self.assertNotIn(token, primitive)
+        # The rename path never copies, truncates or rewrites bytes.
+        rename_path = primitive.split("pub(crate) struct PreparedMove<'a> {", 1)[1] \
+            .split("/// Source identity with the fields a copy must re-check", 1)[0]
+        for token in ("std::io::copy", "fs::copy", "set_len(", ".truncate(", "O_TRUNC",
+                      "write(", "write_all("):
+            with self.subTest(token=token, path="rename"):
+                self.assertNotIn(token, rename_path)
+        # Cross filesystem: the copy path exists and only the EXDEV branch uses it.
+        self.assertIn("pub(crate) fn copy_held_no_replace(", primitive)
+        self.assertIn("PreparedCopy::prepare(source, from, destination)?.commit(expected_sha256)", primitive)
+        self.assertIn('"attachment-move-source-kept"', primitive)
+        copy_path = primitive.split("pub(crate) struct PreparedCopy<'a> {", 1)[1]
+        self.assertIn("write_all(", copy_path)
+        self.assertIn("sha2", copy_path)
+        # The temporary lives in the destination directory under the name the
+        # residue scan recognises.
+        self.assertIn('".lrk-move-{}-{}.tmp"', primitive)
+        self.assertIn("to_dir.create(OsStr::from_bytes(temporary.as_bytes()), b\"\")", primitive)
+        catalog_call = self.read("materials/catalog.rs").split("fn linux_move_owned_handle_no_replace(", 1)[1]
+        branch = catalog_call.split("if crate::linux_material_move::is_cross_device(&error) => {", 1)
+        self.assertEqual(len(branch), 2, "the copy runs only from the cross-device branch")
+        self.assertIn("crate::linux_material_move::copy_held_no_replace(", branch[1].split("}", 1)[0])
         catalog = self.read("materials/catalog.rs")
         # The Windows/Mac primitives and their call sites are untouched; Linux
         # has its own functions, chosen by cfg at the two call sites.
@@ -1849,7 +1899,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                 self.assertIn(line, catalog)
         self.assertIn('            #[cfg(target_os = "linux")]\n'
                       "            let copied_guard=linux_move_owned_handle_no_replace(&mut source_guard, "
-                      "&owned.file_path, &destination)?;", catalog)
+                      "&owned.file_path, &destination, &owned.content_hash)?;", catalog)
         self.assertIn('                #[cfg(target_os = "linux")]\n'
                       "                let move_owned_file_no_replace = linux_move_owned_file_no_replace;",
                       catalog)
@@ -1874,7 +1924,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         # The SQLite-failure recovery still moves the renamed file back.
         rename = catalog.split("fn rename_asset_file_internal(", 1)[1].split("\n    pub", 1)[0]
         self.assertIn("move_owned_file_no_replace(&renamed, &original)", rename)
-        self.assertIn('return Err(MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖"))',
+        self.assertIn('return Err(MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖，未做任何修改"))',
                       catalog)
 
     def test_material_move_follows_v1_9_9_links_and_refuses_unsupported_renameat2(self):
