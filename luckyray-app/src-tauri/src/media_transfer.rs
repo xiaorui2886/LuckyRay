@@ -8,10 +8,12 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 use std::collections::HashSet;
 #[cfg(all(windows, feature = "browser-host-runtime"))]
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
