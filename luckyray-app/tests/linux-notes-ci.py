@@ -39,7 +39,7 @@ EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "result.
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",
                     "image-preview", "attachment-open", "reopen", "attachment-rename", "attachment-rollback",
-                    "material-maintenance", "quit", "unknown"))
+                    "material-maintenance", "canvas-storage", "quit", "unknown"))
 FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready", "backend-not-ready", "production-ipc-rejected", "visible-control-missing",
     "ui-observation-timeout", "drop-target-unavailable", "both-input-notes-not-retained", "case-distinct-content-mismatch",
     "special-name-png-not-retained", "imported-image-resolution-mismatch", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
@@ -51,7 +51,7 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "maintenance-control-rejected", "recovery-records-invalid", "recovery-summary-invalid", "attachment-rename-not-confirmed",
     "attachment-rollback-not-confirmed", "material-catalog-read-invalid", "material-import-not-observed", "material-source-mode-not-applied",
     "material-rename-not-observed", "material-rename-not-confirmed", "material-delete-not-observed", "material-delete-not-confirmed", "material-viewer-opened-by-context-gesture", "context-release-point-unavailable",
-    "control-not-interactable", "unexpected-error"))
+    "canvas-storage-temporary-leftover", "control-not-interactable", "unexpected-error"))
 
 
 def bounded_interactability(raw):
@@ -64,6 +64,13 @@ def bounded_interactability(raw):
     result["hitDialog"] = raw.get("hitDialog") if raw.get("hitDialog") in ("NONE", "OTHER", *smoke.DIALOG_LABELS.values()) else "NONE"
     result["geometry"] = smoke.bounded_geometry(raw.get("geometry"))
     return result
+
+
+def bounded_canvas_storage(raw):
+    """Closed projection of the post-run temporary scan: three 0..8 counters."""
+    raw = raw if isinstance(raw, dict) else {}
+    return {name: raw.get(name) if type(raw.get(name)) is int and 0 <= raw[name] <= 8 else None
+            for name in ("canvasLeftovers", "workspaceLeftovers", "directoriesScanned")}
 
 
 def bounded_maintenance(raw):
@@ -341,6 +348,7 @@ def bounded_report(raw):
     for name in ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer"):
         result[name] = "NOT_RUN" if raw.get(name) == "NOT_RUN" else "INVALID"
     result["attachmentMaintenance"] = bounded_maintenance(raw.get("attachmentMaintenance"))
+    result["canvasStorage"] = bounded_canvas_storage(raw.get("canvasStorage"))
     if "failure" in raw:
         failure = raw["failure"] if isinstance(raw["failure"], dict) else {}
         result["failure"] = {"phase": failure.get("phase") if isinstance(failure.get("phase"), str) and failure["phase"] in PHASES else "unknown",
@@ -408,6 +416,12 @@ def validate_notes(raw, build, source, scripts):
     require([(item["session"], item["found"], item["hit"], item["centerInViewport"]) for item in raw.get("previewGeometry", [])]
             == [(1, True, "SELF", True), (2, True, "SELF", True)], "real-preview-pixel-evidence-missing")
     require(raw.get("attachmentMaintenance") == expected_maintenance(), "attachment-maintenance-ui-evidence-missing")
+    canvas_storage = raw.get("canvasStorage", {})
+    require(canvas_storage.get("canvasLeftovers") == 0
+            and canvas_storage.get("workspaceLeftovers") == 0
+            and type(canvas_storage.get("directoriesScanned")) is int
+            and 1 <= canvas_storage["directoriesScanned"] <= 8,
+            "canvas-storage-temporary-leftover")
     require(raw.get("clipboard") == {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True}, "real-clipboard-evidence-missing")
     handoff = raw.get("handoff", {})
     require(handoff.get("kind") == "OWNED_XDG_RECEIVER_READBACK" and handoff.get("exactExpectedFile") is True
@@ -598,6 +612,7 @@ class Run(runtime.Run):
                        "component layout is a precondition, not Main product acceptance",
                        "attachment rename and recovery rollback via real settings UI; path inputs set by DOM value events",
                        "source-mode material import via declared Tauri drop IPC; real context-menu rename and source delete",
+                       "canvas and workspace writes fsync the directory entry (write-through); UI canvas flow NOT_RUN",
                        "delete quarantine intermediate and crash resume OFFLINE_ONLY; conversion, note move, material move and insert-copy NOT_RUN"]})
         require(passed, "required-notes-product-flow-failed-or-not-run")
 

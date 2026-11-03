@@ -23,6 +23,11 @@ mod linux_material_move;
 mod linux_attachment_publish;
 #[path = "../../../src-tauri/src/linux_material_delete.rs"]
 mod linux_material_delete;
+// Canvas agent storage: the atomic replace is compiled here so the Linux
+// write-through behaviour (temp naming, cleanup, replace, read-back) is
+// exercised without Tauri. The module is self-contained apart from chrono.
+#[path = "../../../src-tauri/src/canvas_agent.rs"]
+mod canvas_agent;
 
 #[cfg(test)]
 mod tests {
@@ -1192,6 +1197,27 @@ mod tests {
         assert_eq!(prepared.commit().unwrap_err().kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&source).unwrap(), b"replacement");
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn directory_entry_fsync_is_the_write_through_equivalent() {
+        // The Linux form of MOVEFILE_WRITE_THROUGH: a completed rename is only
+        // durable once its directory entry is synced. The helper opens the
+        // directory read-only, so it never creates, removes or rewrites
+        // anything, and it refuses a path that is not a directory.
+        let root = temporary();
+        let directory = root.path().join("canvases");
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("canvas-1.json");
+        fs::write(&target, b"{}").unwrap();
+        super::linux_fs::sync_directory(&directory).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"{}");
+        // A path that is not a real directory is refused instead of being
+        // silently accepted, and a symlinked entry is not followed.
+        assert!(super::linux_fs::sync_directory(&target).is_err());
+        let link = root.path().join("linked-canvases");
+        symlink(&directory, &link).unwrap();
+        assert!(super::linux_fs::sync_directory(&link).is_err());
     }
 
     #[test]

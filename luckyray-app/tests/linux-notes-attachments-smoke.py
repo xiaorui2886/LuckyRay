@@ -52,7 +52,7 @@ ACTIONS = frozenset(("setup", "session-start", "backend-ready", "vault-setup", "
     "maintenance-result", "rename-files", "rename-resolve", "recovery-records", "recovery-select", "recovery-rollback",
     "rollback-files", "rollback-resolve", "materials-open", "materials-mode", "materials-drop", "materials-catalog",
     "materials-context", "materials-rename-input", "materials-rename-confirm", "materials-rename-files",
-    "materials-delete-confirm", "materials-delete-files", "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
+    "materials-delete-confirm", "materials-delete-files", "canvas-temporary-scan", "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
 DRIVER_ERRORS = frozenset(("element click intercepted", "element not interactable", "invalid argument", "invalid element state", "invalid selector",
     "invalid session id", "javascript error", "no such element", "no such window", "stale element reference", "script timeout",
     "timeout", "unknown command", "unknown error", "unsupported operation", "unexpected alert open", "move target out of bounds"))
@@ -89,7 +89,8 @@ return {hoverApplied:media.matches(':hover'),toolbarVisible:Number(style.opacity
 CHECKS = ("nativeStartup", "caseDistinctInputContentsRetained", "specialNameImagePreserved",
           "uiSavePersisted", "reopenPersisted", "absolutePathClipboard", "imagePreviewPixels",
           "attachmentSystemHandoff", "attachmentRenameRewritesNote", "attachmentRenameRollbackUi",
-          "materialFileRenamed", "materialDeleteSourceRemoved", "quitProcessDisappearance")
+          "materialFileRenamed", "materialDeleteSourceRemoved", "canvasStorageHygiene",
+          "quitProcessDisappearance")
 # T11: UI-driven attachment maintenance after reopen. Every typed path is a
 # fixed synthetic vault-relative value; nothing user-derived is reported.
 RENAMED_IMAGE_RELATIVE = "attachments/改名 图.png"
@@ -997,6 +998,40 @@ def screenshot_pixels(encoded, rect):
     return {"method": "WEBVIEW_SCREENSHOT_PIXELS", "sampled": 5, "matched": matched}
 
 
+def profile_temporary_scan(home):
+    """Bounded name-only walk of the owned profile after both sessions ended.
+
+    The canvas and workspace writers stage a hidden temporary and replace it
+    atomically; a crash or a failed replace leaves exactly one such name behind.
+    Returns (canvas leftovers, workspace leftovers, directories scanned), each
+    capped by the caller. No file content is opened and no path is exported.
+    """
+    canvas_markers, workspace_markers = 0, 0
+    scanned, pending = 0, [Path(home)]
+    while pending and scanned <= 4096:
+        current = pending.pop()
+        try:
+            children = sorted(current.iterdir(), key=lambda item: item.name)[:512]
+        except OSError:
+            continue
+        for child in children:
+            scanned += 1
+            if scanned > 4096:
+                break
+            try:
+                if child.is_dir() and not child.is_symlink():
+                    pending.append(child)
+                    continue
+            except OSError:
+                continue
+            name = child.name
+            if name.startswith(".lrk-") and name.endswith(".tmp"):
+                canvas_markers += 1
+            elif name.startswith(".lrw-") and name.endswith(".tmp"):
+                workspace_markers += 1
+    return canvas_markers, workspace_markers, max(1, scanned)
+
+
 def main():
     os.umask(0o077)
     if len(sys.argv) == 4 and sys.argv[1] == "--receive-image":
@@ -1718,6 +1753,22 @@ def main():
         phase = "quit"
         stop()
         report["checks"]["quitProcessDisappearance"] = "PASS"
+        phase = "canvas-storage"
+        action = "canvas-temporary-scan"
+        # T14: the canvas and workspace writers commit through a synced temporary
+        # and an atomic replace. A crash or a failed replace would leave exactly
+        # one hidden temporary behind, so after both app sessions are gone the
+        # synthetic profile must contain none. The walk is bounded and reads only
+        # file names inside the owned profile; no content is opened.
+        leftovers = profile_temporary_scan(home)
+        report["canvasStorage"] = {
+            "canvasLeftovers": min(leftovers[0], 8),
+            "workspaceLeftovers": min(leftovers[1], 8),
+            "directoriesScanned": min(leftovers[2], 8),
+        }
+        require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] > 0,
+                "canvas-storage-temporary-leftover")
+        report["checks"]["canvasStorageHygiene"] = "PASS"
         report["status"] = "PASS"
     except Exception as error:
         # No arbitrary native error, URL, clipboard contents or user path is exported.

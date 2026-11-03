@@ -379,7 +379,8 @@ class EvidenceTests(unittest.TestCase):
                 "externalApplicationDisplay": "NOT_RUN"},
             "quitRequests": [{"ipcReplyObserved": True, "priorProcessIdentitiesGone": True, "exitStatus": "NOT_OBSERVED"}] * 2,
             **{name: "NOT_RUN" for name in ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer")},
-            "attachmentMaintenance": passing_maintenance()}
+            "attachmentMaintenance": passing_maintenance(),
+            "canvasStorage": {"canvasLeftovers": 0, "workspaceLeftovers": 0, "directoriesScanned": 5}}
 
     def validate(self, raw):
         ci.validate_notes(ci.bounded_report(raw), self.build, self.source, self.scripts)
@@ -1908,6 +1909,73 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         tests = (Path(__file__).resolve().parents[1] /
                  "tests/linux-import-transaction/src/lib.rs").read_text()
         self.assertIn("fn publish_rename_capability_failure_is_marked_and_stage_scoped()", tests)
+
+    def test_canvas_and_workspace_writes_fsync_the_directory_entry(self):
+        # T14: Windows commits canvas and workspace writes with
+        # MOVEFILE_WRITE_THROUGH / a write-through commit handle. The Linux
+        # branches must fsync the directory entry after the replace, must not
+        # touch macOS, and the canvas write path must be executable offline.
+        primitive = self.read("linux_fs.rs")
+        self.assertIn("pub(crate) fn sync_directory(directory: &Path) -> io::Result<()> {", primitive)
+        self.assertIn("libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC", primitive)
+        canvas = self.read("canvas_agent.rs")
+        self.assertIn("#[cfg(target_os = \"linux\")]\n            crate::linux_fs::sync_directory(", canvas)
+        self.assertIn('#[cfg(all(test, target_os = "linux"))]\nmod linux_replace_tests {', canvas)
+        workspace = self.read("agent_workspace.rs")
+        replace_body = workspace.split("#[cfg(not(windows))]\nfn replace_file_atomic(", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("#[cfg(target_os = \"linux\")]\n    crate::linux_fs::sync_directory(", replace_body)
+        move_body = workspace.split("#[cfg(not(windows))]\nfn move_file_no_replace(", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("#[cfg(target_os = \"linux\")]\n    crate::linux_fs::sync_directory(", move_body)
+        # The offline crate compiles the canvas module (chrono pinned like
+        # src-tauri) and proves replace/read-back/no-temporary/cleanup. Those
+        # tests live next to the writer, the fsync proof lives in the crate.
+        cargo = (Path(__file__).resolve().parents[1] /
+                 "tests/linux-import-transaction/Cargo.toml").read_text()
+        self.assertIn('chrono = "=0.4.45"', cargo)
+        offline = (Path(__file__).resolve().parents[1] /
+                   "tests/linux-import-transaction/src/lib.rs").read_text()
+        self.assertIn('#[path = "../../../src-tauri/src/canvas_agent.rs"]\nmod canvas_agent;', offline)
+        self.assertIn("fn directory_entry_fsync_is_the_write_through_equivalent()", offline)
+        for name in ("replace_creates_reads_back_and_leaves_no_temporary",
+                     "failed_replace_keeps_the_previous_document_and_cleans_the_temporary",
+                     "replace_needs_an_existing_parent_directory"):
+            self.assertIn(f"fn {name}()", canvas)
+
+    def test_canvas_storage_hygiene_evidence_is_closed_and_required(self):
+        # The smoke scans the owned profile after both sessions end; the
+        # projection is closed and a leftover temporary can never pass.
+        self.assertEqual(ci.bounded_canvas_storage({}), {"canvasLeftovers": None,
+                                                         "workspaceLeftovers": None,
+                                                         "directoriesScanned": None})
+        clean = {"canvasLeftovers": 0, "workspaceLeftovers": 0, "directoriesScanned": 5}
+        self.assertEqual(ci.bounded_canvas_storage(clean), clean)
+        dirty = {"canvasLeftovers": 1, "workspaceLeftovers": 0, "directoriesScanned": 5}
+        self.assertNotEqual(ci.bounded_canvas_storage(dirty), clean)
+        self.assertEqual(ci.bounded_canvas_storage({"canvasLeftovers": "hunter2"})["canvasLeftovers"], None)
+        self.assertEqual(ci.bounded_canvas_storage([{"canvasLeftovers": 1}]), {"canvasLeftovers": None,
+                                                                              "workspaceLeftovers": None,
+                                                                              "directoriesScanned": None})
+        fixture = EvidenceTests(methodName="runTest"); fixture.setUp()
+        fixture.raw.update(canvasStorage={"canvasLeftovers": 2, "workspaceLeftovers": "hunter2",
+                                          "directoriesScanned": 9, "path": "hunter2"})
+        self.assertNotIn("hunter2", json.dumps(ci.bounded_report(fixture.raw)))
+        # The full passing fixture is accepted, and a single leftover temporary
+        # fails with the dedicated code.
+        passing = EvidenceTests(methodName="runTest"); passing.setUp()
+        ci.validate_notes(ci.bounded_report(passing.raw), passing.build, passing.source, passing.scripts)
+        failing = EvidenceTests(methodName="runTest"); failing.setUp()
+        failing.raw["canvasStorage"]["canvasLeftovers"] = 1
+        with self.assertRaisesRegex(RuntimeError, "canvas-storage-temporary-leftover"):
+            ci.validate_notes(ci.bounded_report(failing.raw), failing.build, failing.source, failing.scripts)
+        smoke = (Path(__file__).resolve().parents[1] /
+                 "tests/linux-notes-attachments-smoke.py").read_text()
+        self.assertIn("def profile_temporary_scan(home):", smoke)
+        self.assertIn('"canvasStorageHygiene"', smoke)
+        self.assertIn('"canvas-temporary-scan"', smoke)
+        self.assertIn('require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] > 0,', smoke)
+        gate = (Path(__file__).resolve().parents[1] / "tests/linux-notes-ci.py").read_text()
+        self.assertIn('"canvas-storage", "quit"', gate)
+        self.assertIn('"canvas-storage-temporary-leftover"', gate)
 
     def test_note_move_uses_the_sealed_runner_not_the_windows_journal(self):
         operations = self.read("knowledge/attachment_operations.rs")

@@ -16,6 +16,9 @@ rand = "=0.8.6"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"
 sha2 = "=0.10.9"
+# canvas_agent.rs is compiled here for the Linux write-through coverage and
+# stamps its temporary name with chrono, so the same pinned version is needed.
+chrono = "=0.4.45"
 
 [dev-dependencies]
 tempfile = "=3.27.0"
