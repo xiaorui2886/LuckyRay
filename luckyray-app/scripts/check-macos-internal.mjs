@@ -11,6 +11,7 @@ import { knownProofSignal } from "./check-macos-lsh-proof.mjs";
 import { runLshSurfaceFlow, safeSurfaceExecution, SURFACE_TIMEOUT_MS, SURFACE_CLEANUP_MS } from "./check-macos-lsh-surface-flow.mjs";
 import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary } from "./macos-native-diagnostics.mjs";
 import { NOTE_DATA_CASES, NOTE_DATA_TIMEOUT_MS, runNativeNoteData, safeNoteDataExecution, requireCachedMacosAppSource } from "./check-macos-note-data.mjs";
+import { importStagedMacosSource } from "./import-macos-app-source.mjs";
 import { runNoteFlow, safeNoteFlow, emptyNoteFlow, NOTE_PHASES, NOTE_UI_FLAGS, NOTE_TIMEOUT_MS, NOTE_CLEANUP_MS } from "./check-macos-note-flow.mjs";
 
 export const PHASES = Object.freeze(["install-frozen-frontend", "native-note-data", "require-existing-app-source", "compile-app", "verify-resources-and-runtimes", "ad-hoc-sign", "real-notes-ui-flow", "real-lsh-surface-flow"]);
@@ -111,7 +112,7 @@ export async function internalPlan() {
       provider: "real-official-dsh-with-no-model-account", materialFlow: "not-run", guiInteraction: "application-dom-automation",
       systemPointerInput: "not-run", screenshotVisualReview: "required" } };
 }
-async function requireInternalContext() {
+export async function requireInternalContext() {
   requireNative();
   if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_REPOSITORY !== "xiaorui2886/LuckyRay")
     throw new Error("macos-internal-ci-required");
@@ -153,6 +154,8 @@ async function worker() {
     process.send({ type: "note-data", execution: noteData });
     if (noteData.status !== "passed") throw new Error("macos-note-data-failed");
     process.send({ type: "phase", phase: "require-existing-app-source" });
+    try { await importStagedMacosSource(); }
+    catch { throw new Error("macos-note-data-source-input-conflict"); }
     await requireCachedMacosAppSource();
     const result = await buildMacosApp({ internalValidation: true,
       onStage: phase => process.send({ type: "phase", phase }) });

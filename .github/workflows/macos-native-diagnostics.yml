@@ -44,6 +44,9 @@ jobs:
           rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin
           rustup override set 1.95.0
           rustc -vV
+      - name: Stage the pinned official FFmpeg source for this worktree
+        working-directory: ${{ runner.temp }}/luckyray-macos-internal/luckyray-app
+        run: node scripts/fetch-macos-app-source.mjs
       - name: Build the real app and validate the visible LSH lifecycle
         working-directory: ${{ runner.temp }}/luckyray-macos-internal/luckyray-app
         # Publish only a re-projected typed summary after discarding bootstrap
