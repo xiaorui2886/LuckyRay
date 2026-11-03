@@ -1422,12 +1422,40 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, primitive)
         catalog = self.read("materials/catalog.rs")
-        handle = catalog.split("fn move_owned_handle_no_replace(", 1)[1].split("\nfn ", 1)[0]
-        self.assertIn("#[cfg(target_os = \"linux\")] {crate::linux_material_move::move_held_no_replace(",
+        # The Windows/Mac primitives and their call sites are untouched; Linux
+        # has its own functions, chosen by cfg at the two call sites.
+        for line in (
+                "fn move_owned_handle_no_replace(source:&mut std::fs::File,destination:&Path)"
+                "->std::io::Result<Option<std::fs::File>> {",
+                "fn move_owned_file_no_replace(source:&Path,destination:&Path)->std::io::Result<()> {",
+                '    #[cfg(not(windows))] {let _=(source,destination);Err(std::io::Error::new('
+                'std::io::ErrorKind::Unsupported,"Coordinated physical moves require Windows"))}',
+                '    #[cfg(not(windows))] { let _=(source,destination);Err(std::io::Error::new('
+                'std::io::ErrorKind::Unsupported,"Coordinated physical moves require Windows")) }',
+                "    #[cfg(not(windows))] let _=(source,destination);",
+                '            #[cfg(not(target_os = "linux"))]\n'
+                "            let copied_guard=move_owned_handle_no_replace(&mut source_guard, &destination)"
+                ".map_err(|error| {",
+                "                if let Err(restore_error) = move_owned_file_no_replace(&renamed, &original) {"):
+            with self.subTest(line=line[:60]):
+                self.assertIn(line, catalog)
+        self.assertIn('            #[cfg(target_os = "linux")]\n'
+                      "            let copied_guard=linux_move_owned_handle_no_replace(&mut source_guard, "
+                      "&owned.file_path, &destination)?;", catalog)
+        self.assertIn('                #[cfg(target_os = "linux")]\n'
+                      "                let move_owned_file_no_replace = linux_move_owned_file_no_replace;",
+                      catalog)
+        handle = catalog.split("fn linux_move_owned_handle_no_replace(", 1)[1].split("\nfn ", 1)[0]
+        self.assertIn("crate::linux_material_move::move_held_no_replace(source,source_path,destination)",
                       handle)
-        self.assertIn("#[cfg(not(any(windows, target_os = \"linux\")))]", handle)
-        restore = catalog.split("fn move_owned_file_no_replace(", 1)[1].split("\nfn ", 1)[0]
+        self.assertIn("Ok(None)", handle)
+        restore = catalog.split("fn linux_move_owned_file_no_replace(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("hold_material_parent_directories(source,destination)", restore)
         self.assertIn("crate::linux_material_move::move_path_no_replace(source,destination)", restore)
+        for name in ("linux_move_owned_handle_no_replace", "linux_move_owned_file_no_replace",
+                     "linux_reject_cross_device", "linux_cross_device_error"):
+            with self.subTest(gated=name):
+                self.assertIn('#[cfg(target_os = "linux")]\nfn ' + name + "(", catalog)
         parents = catalog.split("fn hold_material_parent_directories(", 1)[1].split("\nfn ", 1)[0]
         self.assertIn("crate::linux_material_move::hold_parents(source,destination)", parents)
         # Cross-filesystem is refused at preview, before any note is rewritten.
@@ -1498,8 +1526,10 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                       errors)
         self.assertIn('"knowledge-linux-rollback-unprovable"', errors)
         self.assertIn('"knowledge-linux-fs-unsupported"', errors)
-        move = errors.split('"attachment-move-cross-device":', 1)[1].split("\n", 1)[0]
-        self.assertIn("未移动文件", move)
+        # The cross-device refusal needs no shared-frontend entry: its Chinese
+        # message is shown as-is by the existing pass-through.
+        self.assertNotIn("attachment-move-cross-device", errors)
+        self.assertIn("/[\\u4e00-\\u9fff]/.test(error.message)", errors)
         catalog = self.read("materials/catalog.rs")
         self.assertIn("目标位置与原文件不在同一文件系统，未移动文件。", catalog)
         # The unprovable-rollback message must promise that nothing was written.

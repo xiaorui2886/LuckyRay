@@ -2778,11 +2778,12 @@ impl MaterialCatalog {
             let mut source_guard=source_options.open(&owned.file_path).map_err(|e|MaterialError::io("attachment-file-busy","附件正被其他程序写入，请稍后重试",e))?;
             let source_identity=note_attachments::file_identity(&source_guard)?;
             if sha256_file(&owned.file_path)?!=owned.content_hash {return Err(MaterialError::new("attachment-version-changed","附件在移动前已变化，请重新预览"))}
-            let copied_guard=move_owned_handle_no_replace(&mut source_guard, &owned.file_path, &destination).map_err(|error| {
-                #[cfg(target_os = "linux")]
-                let error = match linux_move_error(error) { Ok(mapped) => return mapped, Err(error) => error };
+            #[cfg(not(target_os = "linux"))]
+            let copied_guard=move_owned_handle_no_replace(&mut source_guard, &destination).map_err(|error| {
                 MaterialError::io("rename-file-failed", "重命名素材真实文件失败", error)
             })?;
+            #[cfg(target_os = "linux")]
+            let copied_guard=linux_move_owned_handle_no_replace(&mut source_guard, &owned.file_path, &destination)?;
             renamed_paths = Some((owned.file_path.clone(), destination.clone()));
             let destination_guard=std::fs::File::open(&destination).map_err(|e|MaterialError::io("attachment-unavailable","无法校验移动后的附件",e))?;
             let destination_identity=note_attachments::file_identity(&destination_guard)?;
@@ -2838,6 +2839,9 @@ impl MaterialCatalog {
         if let Err(error) = operation {
             let _ = rollback_transaction(&conn);
             if let Some((original, renamed)) = renamed_paths {
+                // Linux restores with its own no-replace rename (same signature).
+                #[cfg(target_os = "linux")]
+                let move_owned_file_no_replace = linux_move_owned_file_no_replace;
                 if let Err(restore_error) = move_owned_file_no_replace(&renamed, &original) {
                     return Err(MaterialError::new(
                         error.code,
@@ -5265,10 +5269,8 @@ fn metadata_is_reparse(metadata: &std::fs::Metadata) -> bool {
 /// Rename the verified source handle rather than looking its path up again.
 /// On different volumes, create a new target and mark the held source for
 /// deletion only after the copied bytes have been flushed successfully.
-/// Linux renames the held object within one filesystem only (no copy, so the
-/// result is always `None`); `source_path` names it for the no-follow proof.
-fn move_owned_handle_no_replace(source:&mut std::fs::File,source_path:&Path,destination:&Path)->std::io::Result<Option<std::fs::File>> {
-    #[cfg(windows)] let _=source_path;
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+fn move_owned_handle_no_replace(source:&mut std::fs::File,destination:&Path)->std::io::Result<Option<std::fs::File>> {
     #[cfg(windows)] {
         use std::os::windows::{ffi::OsStrExt,fs::OpenOptionsExt,io::AsRawHandle};
         #[link(name="kernel32")] extern "system" {fn SetFileInformationByHandle(handle:*mut std::ffi::c_void,class:i32,info:*const std::ffi::c_void,size:u32)->i32;}
@@ -5303,8 +5305,7 @@ fn move_owned_handle_no_replace(source:&mut std::fs::File,source_path:&Path,dest
         copied?;
         Ok(Some(output))
     }
-    #[cfg(target_os = "linux")] {crate::linux_material_move::move_held_no_replace(source,source_path,destination).map(|()|None)}
-    #[cfg(not(any(windows, target_os = "linux")))] {let _=(source,source_path,destination);Err(std::io::Error::new(std::io::ErrorKind::Unsupported,"Coordinated physical moves require Windows"))}
+    #[cfg(not(windows))] {let _=(source,destination);Err(std::io::Error::new(std::io::ErrorKind::Unsupported,"Coordinated physical moves require Windows"))}
 }
 
 fn mark_held_file_for_deletion(file:&std::fs::File)->std::io::Result<()> {
@@ -5346,12 +5347,13 @@ fn hold_material_parent_directories(source:&Path,destination:&Path)->MaterialRes
             }
         })?;
     }
-    #[cfg(not(any(windows, target_os = "linux")))] let _=(source,destination);
+    #[cfg(not(windows))] let _=(source,destination);
     Ok(guards)
 }
 
 /// Windows ownership moves never replace a concurrently-created destination.
 /// COPY_ALLOWED supports different volumes without granting arbitrary deletion.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn move_owned_file_no_replace(source:&Path,destination:&Path)->std::io::Result<()> {
     let _parent_guards=hold_material_parent_directories(source,destination).map_err(|e|std::io::Error::other(e.message))?;
     #[cfg(windows)] {
@@ -5363,9 +5365,29 @@ fn move_owned_file_no_replace(source:&Path,destination:&Path)->std::io::Result<(
         if source.exists() {return Err(std::io::Error::other("目标已复制但源文件尚未移除；已保留两处文件，请恢复操作"))}
         Ok(())
     }
-    // Linux recovery uses the same no-replace rename in the other direction.
-    #[cfg(target_os = "linux")] { crate::linux_material_move::move_path_no_replace(source,destination) }
-    #[cfg(not(any(windows, target_os = "linux")))] { let _=(source,destination);Err(std::io::Error::new(std::io::ErrorKind::Unsupported,"Coordinated physical moves require Windows")) }
+    #[cfg(not(windows))] { let _=(source,destination);Err(std::io::Error::new(std::io::ErrorKind::Unsupported,"Coordinated physical moves require Windows")) }
+}
+
+/// Linux counterpart of `move_owned_handle_no_replace`: renames the held,
+/// verified source object within one filesystem only. There is no copy, so no
+/// second handle is ever returned; `source_path` names the held object for the
+/// no-follow identity proof.
+#[cfg(target_os = "linux")]
+fn linux_move_owned_handle_no_replace(source:&mut std::fs::File,source_path:&Path,destination:&Path)->MaterialResult<Option<std::fs::File>> {
+    crate::linux_material_move::move_held_no_replace(source,source_path,destination).map_err(|error| {
+        if crate::linux_material_move::is_cross_device(&error) {return linux_cross_device_error()}
+        if error.kind()==std::io::ErrorKind::AlreadyExists {return MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖")}
+        MaterialError::io("rename-file-failed", "重命名素材真实文件失败", error)
+    })?;
+    Ok(None)
+}
+
+/// Linux counterpart of `move_owned_file_no_replace`, used by the SQLite-failure
+/// recovery: the same parent proof, then the same no-replace rename back.
+#[cfg(target_os = "linux")]
+fn linux_move_owned_file_no_replace(source:&Path,destination:&Path)->std::io::Result<()> {
+    let _parent_guards=hold_material_parent_directories(source,destination).map_err(|e|std::io::Error::other(e.message))?;
+    crate::linux_material_move::move_path_no_replace(source,destination)
 }
 
 /// Shown when a move would leave the source filesystem. Nothing is moved and
@@ -5386,14 +5408,6 @@ fn linux_reject_cross_device(source:&Path,destination:&Path)->MaterialResult<()>
     let target_device=std::fs::symlink_metadata(parent).map_err(|e|MaterialError::io("physical-path-unavailable","无法读取目标目录",e))?.dev();
     if source_device!=target_device {return Err(linux_cross_device_error())}
     Ok(())
-}
-
-/// Linux-only readings of a failed move; anything else keeps the generic code.
-#[cfg(target_os = "linux")]
-fn linux_move_error(error:std::io::Error)->Result<MaterialError,std::io::Error> {
-    if crate::linux_material_move::is_cross_device(&error) {return Ok(linux_cross_device_error())}
-    if error.kind()==std::io::ErrorKind::AlreadyExists {return Ok(MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖"))}
-    Err(error)
 }
 
 fn move_material_file(source: &Path, destination: &Path) -> Result<(), String> {
