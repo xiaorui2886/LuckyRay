@@ -613,7 +613,11 @@ class Run(runtime.Run):
             validate_native_messaging(report["observations"], self.scripts())
             report["status"] = "PASS"
         finally:
-            write_json(self.evidence / "nativeMessaging.json", report)
+            # A retried step must replace its own report, never fail on it.
+            target = self.evidence / "nativeMessaging.json"
+            if target.is_symlink() or target.exists():
+                target.unlink()
+            write_json(target, report)
 
     def notes(self):
         source = self.source()
