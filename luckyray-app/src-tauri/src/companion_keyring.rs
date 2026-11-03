@@ -75,23 +75,37 @@ pub(crate) fn classify(error: keyring::Error) -> KeyringFailure {
     }
 }
 
-/// The real backend: one fixed entry in the freedesktop Secret Service, reached
+/// The real backend: one entry in the freedesktop Secret Service, reached
 /// through `keyring`'s pure-Rust secret-service backend (zbus, no libdbus).
-pub(crate) struct SecretServiceBackend;
+pub(crate) struct SecretServiceBackend {
+    service: &'static str,
+    account: String,
+}
 
 impl SecretServiceBackend {
+    /// The Companion Gateway's desktop identity entry.
     pub(crate) fn new() -> Self {
-        Self
+        Self::for_account(SERVICE, ACCOUNT)
     }
 
-    fn entry() -> Result<keyring::Entry, KeyringFailure> {
-        keyring::Entry::new(SERVICE, ACCOUNT).map_err(classify)
+    /// A second product surface keeps its own service/account pair without a
+    /// second keyring client: the community MCP plugin secrets use their own
+    /// service and one account per secret name.
+    pub(crate) fn for_account(service: &'static str, account: &str) -> Self {
+        Self {
+            service,
+            account: account.to_owned(),
+        }
+    }
+
+    fn entry(&self) -> Result<keyring::Entry, KeyringFailure> {
+        keyring::Entry::new(self.service, &self.account).map_err(classify)
     }
 }
 
 impl SecretBackend for SecretServiceBackend {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, KeyringFailure> {
-        match Self::entry()?.get_secret() {
+        match self.entry()?.get_secret() {
             Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(classify(error)),
@@ -99,11 +113,11 @@ impl SecretBackend for SecretServiceBackend {
     }
 
     fn write(&self, bytes: &[u8]) -> Result<(), KeyringFailure> {
-        Self::entry()?.set_secret(bytes).map_err(classify)
+        self.entry()?.set_secret(bytes).map_err(classify)
     }
 
     fn remove(&self) -> Result<(), KeyringFailure> {
-        match Self::entry()?.delete_credential() {
+        match self.entry()?.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(classify(error)),

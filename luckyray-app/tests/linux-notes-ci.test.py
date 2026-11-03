@@ -1945,6 +1945,47 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                      "replace_needs_an_existing_parent_directory"):
             self.assertIn(f"fn {name}()", canvas)
 
+    def test_community_mcp_secrets_and_process_use_the_linux_seams(self):
+        # T20: the plugin's two secrets live in the Secret Service through the
+        # T19 backend (no second keyring client), and the plugin process is
+        # owned by a fresh process group instead of a Windows job object.
+        module = self.read("community_mcp_secret.rs")
+        self.assertIn('pub(crate) const SERVICE: &str = "app.luckyray.community-mcp";', module)
+        self.assertIn('pub(crate) const TUNNEL_KEY: &str = "tunnel-key";', module)
+        self.assertIn('pub(crate) const CREDENTIAL: &str = "credential";', module)
+        self.assertIn('pub(crate) const STORAGE_FAILED: &str = "private-secret-storage-failed";', module)
+        self.assertIn("pub(crate) fn secret(", module)
+        self.assertIn("pub(crate) fn has_key(", module)
+        self.assertIn('"未找到系统钥匙环，未做任何修改"', module)
+        self.assertIn('"系统钥匙环已锁定，未做任何修改"', module)
+        self.assertNotIn("fs::", module)
+        gateway = self.read("community_mcp.rs")
+        # Linux branches delegate; Windows keeps the PowerShell helper path.
+        self.assertIn("crate::community_mcp_secret::secret(", gateway)
+        self.assertIn("linux_secret_backend().as_ref()", gateway)
+        self.assertIn("fn tunnel_key_present(p: &Paths) -> bool", gateway)
+        self.assertIn('"hasKey":tunnel_key_present(&p)', gateway)
+        self.assertIn('std::env::var_os("SystemRoot")', gateway)
+        self.assertIn("powershell.exe", gateway)
+        self.assertIn('"private-secret-storage-failed"', gateway)
+        # Pairing refuses on Linux before writing anything.
+        self.assertIn('return Err("plugin-platform-unsupported".into());', gateway)
+        lib = self.read("lib.rs")
+        self.assertIn('#[cfg(target_os = "linux")]\nmod community_mcp_secret;', lib)
+        keyring = self.read("companion_keyring.rs")
+        self.assertIn("pub(crate) fn for_account(service: &'static str, account: &str) -> Self", keyring)
+        process = self.read("community_mcp_process.rs")
+        self.assertIn("crate::owned_process::spawn_in_owned_job(", process)
+        self.assertIn("terminate_and_wait(std::time::Duration::from_secs(5))", process)
+        self.assertIn('"plugin-stop-failed"', process)
+        self.assertIn('"plugin-start-failed"', process)
+        # macOS keeps the previous stub.
+        self.assertIn('#[cfg(not(any(windows, target_os = "linux")))]\npub(crate) fn spawn(', process)
+        # The synthetic process-group proof exists next to the launcher.
+        owned = self.read("owned_process/linux.rs")
+        self.assertIn("fn stopping_the_group_leaves_no_descendant_of_the_plugin_shaped_tree()", owned)
+        self.assertIn('"sleep 60 & echo $!; exec sleep 60"', owned)
+
     def test_companion_keyring_uses_the_secret_service_without_touching_windows(self):
         # T19: the Linux identity store is backed by the freedesktop Secret
         # Service through keyring v3 with the pure-Rust backend, never by a
@@ -1972,7 +2013,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('pub(crate) const SERVICE: &str = "app.luckyray.companion-gateway";', module)
         self.assertIn('pub(crate) const ACCOUNT: &str = "desktop-identity-v1";', module)
         self.assertIn("pub(crate) trait SecretBackend: Send + Sync {", module)
-        self.assertIn("pub(crate) struct SecretServiceBackend;", module)
+        self.assertIn("pub(crate) struct SecretServiceBackend {", module)
         self.assertIn("fn encode_identity(plaintext: &[u8]) -> Zeroizing<String>", module)
         self.assertIn("fn decode_identity(encoded: &[u8]) -> Result<Zeroizing<Vec<u8>>, KeyringFailure>", module)
         # The failure kinds are decided in one place, and a locked store is not

@@ -592,9 +592,70 @@ mod platform {
 }
 #[cfg(windows)]
 pub(crate) use platform::*;
-#[cfg(not(windows))]
+/// Linux owns the plugin through its own process group: `owned_process` puts the
+/// child in a fresh group (and validates the ELF before launching it), so
+/// stopping means killing the whole group and waiting until it is quiet —
+/// the same guarantee the Windows job object gives.
+#[cfg(target_os = "linux")]
+pub(crate) struct OwnedProcess {
+    process: crate::owned_process::OwnedProcess,
+    job: crate::owned_process::OwnedJob,
+}
+#[cfg(target_os = "linux")]
+impl OwnedProcess {
+    pub(crate) fn running(&self) -> bool {
+        self.process.is_running()
+    }
+    pub(crate) fn failure_code(&self) -> Option<&'static str> {
+        // Linux reports startup failures through the process exit status, not a
+        // pre-classified code; the controller falls back to its generic error.
+        None
+    }
+    pub(crate) fn stop(&mut self) -> Result<(), String> {
+        // The Windows job object is terminated hard; Linux does the same with
+        // SIGKILL on the group and then waits for every member to disappear.
+        if self
+            .job
+            .terminate_and_wait(std::time::Duration::from_secs(5))
+        {
+            Ok(())
+        } else {
+            Err("plugin-stop-failed".into())
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn external_tunnel_running() -> Result<bool, String> {
+    // Windows scans the process table for another tunnel. Linux has no plugin
+    // binary to look for until packaging ships one, and guessing by name would
+    // be worse than answering "none seen"; T20-result.md lists this.
+    Ok(false)
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn spawn(
+    exe: &std::path::Path,
+    args: &[String],
+    cwd: &std::path::Path,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<OwnedProcess, String> {
+    let arguments: Vec<std::ffi::OsString> =
+        args.iter().map(std::ffi::OsString::from).collect();
+    let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = env
+        .into_iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .collect();
+    let spawned = crate::owned_process::spawn_in_owned_job(
+        exe, &arguments, cwd, environment, false,
+    )
+    .map_err(|_| "plugin-start-failed".to_string())?;
+    Ok(OwnedProcess {
+        process: spawned.process,
+        job: spawned.job,
+    })
+}
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) struct OwnedProcess;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl OwnedProcess {
     pub(crate) fn running(&self) -> bool {
         false
@@ -606,11 +667,11 @@ impl OwnedProcess {
         Ok(())
     }
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn external_tunnel_running() -> Result<bool, String> {
     Ok(false)
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn spawn(
     _: &std::path::Path,
     _: &[String],

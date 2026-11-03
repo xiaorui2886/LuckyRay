@@ -275,7 +275,10 @@ mod tests {
     #[test]
     fn linux_owned_process_stdio_exit_and_group_cleanup() {
         let root = tempfile::tempdir().unwrap();
-        let shell = Path::new("/bin/sh").canonicalize().unwrap();
+        // The launcher validates ELF + file attributes, so the synthetic shell
+        // lives in the owned directory (as the packaged plugin will).
+        let shell = root.path().join("sh");
+        std::fs::copy(Path::new("/bin/sh").canonicalize().unwrap(), &shell).unwrap();
         let args = vec![
             "-c".into(),
             "read value; /bin/sleep 30 & printf diagnostic >&2; printf '%s' \"$value\"; wait"
@@ -315,8 +318,10 @@ mod tests {
         let link = root.path().join("shell");
         std::os::unix::fs::symlink(&shell, &link).unwrap();
         assert!(spawn_in_owned_job(&link, &[], root.path(), Vec::new(), false).is_err());
+        let owned = root.path().join("sh-ok");
+        std::fs::copy(&shell, &owned).unwrap();
         let success = spawn_in_owned_job(
-            &shell,
+            &owned,
             &["-c".into(), "exit 0".into()],
             root.path(),
             Vec::new(),
@@ -327,4 +332,49 @@ mod tests {
         assert!(success.process.succeeded());
         assert!(success.job.settled());
     }
+    #[test]
+    fn stopping_the_group_leaves_no_descendant_of_the_plugin_shaped_tree() {
+        // T20: the plugin runs as `node server.mjs` with helper children. Prove
+        // the shape with a synthetic tree: a background sleep and a foreground
+        // one, both in the spawned process group, must all be gone after stop.
+        let root = tempfile::tempdir().unwrap();
+        // The launcher validates the ELF and the file attributes, so the
+        // synthetic executable lives in the owned directory (exactly where the
+        // packaged plugin will live) instead of a read-only system path.
+        let shell = root.path().join("sh");
+        std::fs::copy(Path::new("/bin/sh").canonicalize().unwrap(), &shell).unwrap();
+        let args = vec![
+            "-c".into(),
+            "sleep 60 & echo $!; exec sleep 60".into(),
+        ];
+        let mut spawned =
+            spawn_in_owned_job(&shell, &args, root.path(), Vec::new(), false).unwrap();
+        let leader = spawned.process.process_id();
+        let mut line = String::new();
+        {
+            use std::io::BufRead;
+            let mut reader = std::io::BufReader::new(&mut spawned.stdout);
+            reader.read_line(&mut line).unwrap();
+        }
+        let background: i32 = line.trim().parse().expect("background pid");
+        assert!(background > 0);
+        let alive = |pid: i32| Path::new(&format!("/proc/{pid}")).exists();
+        assert!(alive(background) && alive(leader as i32));
+        assert!(spawned.process.is_running());
+        assert!(spawned.job.terminate_and_wait(Duration::from_secs(5)));
+        // Reaping the leader is what removes its /proc entry; the grandchild is
+        // reparented and disappears on its own.
+        assert!(!spawned.process.is_running());
+        // The leader is reaped only when the authority drops (WNOWAIT keeps its
+        // pid reserved on purpose), so the grandchild is what must be gone now.
+        assert!(!alive(background), "background child survived the group stop");
+        assert!(spawned.job.settled());
+        drop(spawned);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while alive(leader as i32) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!alive(leader as i32), "the leader was not released after stop");
+    }
+
 }

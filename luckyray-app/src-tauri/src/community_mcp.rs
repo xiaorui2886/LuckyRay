@@ -97,6 +97,16 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 fn initialize_storage(p: &Paths) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        // No PowerShell helper and no *.dpapi file on Linux: the data root is
+        // the only thing to prepare, and `initialize` touches no secret.
+        package::safe_path(&p.root)?;
+        fs::create_dir_all(&p.root).map_err(|_| "plugin-data-unavailable")?;
+        return secret(p, "initialize", "tunnel-key", None);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
     package::safe_path(&p.helper)?;
     fs::create_dir_all(p.helper.parent().ok_or("plugin-path-invalid")?)
         .map_err(|_| "plugin-data-unavailable")?;
@@ -118,8 +128,24 @@ fn initialize_storage(p: &Paths) -> Result<(), String> {
     fs::create_dir_all(&p.root).map_err(|_| "plugin-data-unavailable")?;
     secret(p, "initialize", "tunnel-key", None)?;
     Ok(())
+    }
 }
 fn secret(p: &Paths, action: &str, name: &str, input: Option<&[u8]>) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        // The keyring needs no directory, and nothing is ever written to the
+        // profile: the plugin's two secrets live in the Secret Service under
+        // their own service entry.
+        let _ = p;
+        return crate::community_mcp_secret::secret(
+            linux_secret_backend().as_ref(),
+            action,
+            name,
+            input,
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
     package::safe_path(&p.helper)?;
     package::safe_path(&p.secret)?;
     if fs::read(&p.helper).map_err(|_| "plugin-helper-unavailable")? != STORE.as_bytes() {
@@ -145,6 +171,39 @@ fn secret(p: &Paths, action: &str, name: &str, input: Option<&[u8]>) -> Result<S
         return Err("private-secret-storage-failed".into());
     }
     Ok(out)
+    }
+}
+
+/// One Secret Service client for the plugin's secrets, created on first use.
+#[cfg(target_os = "linux")]
+fn linux_secret_backend() -> &'static std::sync::Arc<dyn crate::companion_keyring::SecretBackend> {
+    static BACKEND: std::sync::OnceLock<std::sync::Arc<dyn crate::companion_keyring::SecretBackend>> =
+        std::sync::OnceLock::new();
+    BACKEND.get_or_init(|| {
+        std::sync::Arc::new(crate::companion_keyring::SecretServiceBackend::for_account(
+            crate::community_mcp_secret::SERVICE,
+            crate::community_mcp_secret::TUNNEL_KEY,
+        ))
+    })
+}
+
+/// `status.hasKey`: Windows asks whether `tunnel-key.dpapi` exists; Linux asks
+/// the keyring. A keyring failure answers `false`, the same conservative answer
+/// Windows gives for an absent file.
+fn tunnel_key_present(p: &Paths) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = p;
+        let backend = crate::companion_keyring::SecretServiceBackend::for_account(
+            crate::community_mcp_secret::SERVICE,
+            crate::community_mcp_secret::TUNNEL_KEY,
+        );
+        return crate::community_mcp_secret::has_key(&backend, crate::community_mcp_secret::TUNNEL_KEY);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        p.secret.join("tunnel-key.dpapi").is_file()
+    }
 }
 fn grant_valid(app: &tauri::AppHandle, s: &Settings) -> bool {
     let Some(binding) = &s.binding else {
@@ -464,7 +523,7 @@ fn status(app: &tauri::AppHandle) -> Result<Value, String> {
     Ok(
         json!({"revision":revision(&s),"phase":phase,"version":s.version,"availableVersion":c.version,"updateAvailable":s.version.as_ref().is_some_and(|v|v!=&c.version),"packageAvailable":package::available(&c),"downloadBytes":c.download_bytes,
         "authorized":authorized,"grant":s.binding,"configured":s.tunnel_id.is_some(),"tunnelId":s.tunnel_id,
-        "hasKey":p.secret.join("tunnel-key.dpapi").is_file(),"connectOnLaunch":s.connect_on_launch,
+        "hasKey":tunnel_key_present(&p),"connectOnLaunch":s.connect_on_launch,
         "desktopReady":r.desktop_ready&&authorized,"tunnelReady":r.phase=="ready",
         "lastWebCallAt":if r.phase=="ready"{activity.and_then(|v|v.get("at").cloned())}else{None},
         "errorCode":r.error,"libraries":libraries,"vaults":vaults}),
@@ -539,6 +598,13 @@ fn act(app: &tauri::AppHandle, input: ActionInput) -> Result<(), String> {
     let transport = app.state::<crate::local_transport::LocalTransportHandle>();
     match input.action.as_str() {
         "authorize" => {
+            // Linux has no plugin package that could consume the credential, so
+            // pairing refuses before it creates a grant or stores a secret.
+            // Options for the handoff are listed in tasks/T20-result.md; this
+            // task must not pick a weaker one on its own.
+            #[cfg(target_os = "linux")]
+            return Err("plugin-platform-unsupported".into());
+            #[allow(unreachable_code)]
             if !input.confirmed {
                 return Err("library-consent-required".into());
             }

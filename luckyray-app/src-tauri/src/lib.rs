@@ -182,6 +182,8 @@ mod linux_media_runtime;
 #[cfg(target_os = "linux")]
 mod companion_keyring;
 #[cfg(target_os = "linux")]
+mod community_mcp_secret;
+#[cfg(target_os = "linux")]
 mod linux_material_move;
 #[cfg(target_os = "linux")]
 mod linux_attachment_publish;
