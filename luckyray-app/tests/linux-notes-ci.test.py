@@ -2529,6 +2529,10 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("/[\\u4e00-\\u9fff]/.test(error.message)", errors)
         catalog = self.read("materials/catalog.rs")
         self.assertIn("目标位置与原文件不在同一文件系统，未移动文件，未做任何修改。", catalog)
+        # T28: the Linux delete-quarantine refusal keeps the same promise, and
+        # the Windows/macOS quarantine site is untouched.
+        self.assertIn('"delete-quarantine-failed", "隔离素材文件失败，未做任何修改"', catalog)
+        self.assertIn('"隔离素材文件失败",\n                error,', catalog)
         # The unprovable-rollback message must promise that nothing was written.
         rollback = errors.split('"knowledge-linux-rollback-unprovable":', 1)[1].split("\n", 1)[0]
         self.assertIn("现场已保留", rollback)

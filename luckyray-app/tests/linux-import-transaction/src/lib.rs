@@ -196,6 +196,118 @@ mod linux_media_runtime;
         }
     }
 
+        /// T28: the two mid-copy races, driven by the `#[cfg(test)]` seam. The
+        /// seam fires synchronously inside the copy loop, after the first chunk
+        /// and before anything is flushed or published, so both races are
+        /// deterministic without weakening production code.
+        mod mid_copy_race {
+            use crate::linux_material_move::{copy_held_no_replace, mid_copy_hook};
+            use sha2::{Digest, Sha256};
+            use std::fs::File;
+            use std::io::Write;
+            use std::path::{Path, PathBuf};
+
+            fn shm_root(label: &str) -> PathBuf {
+                let root = PathBuf::from("/dev/shm").join(format!("lray-t28-{label}-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&root);
+                std::fs::create_dir_all(&root).expect("tmpfs destination");
+                root
+            }
+
+            fn ext4_file(label: &str, bytes: &[u8]) -> (PathBuf, PathBuf) {
+                let root = std::env::current_dir()
+                    .expect("checkout")
+                    .join(format!(".t28-{label}-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&root);
+                std::fs::create_dir_all(&root).expect("ext4 source dir");
+                let path = root.join("素材 100%.bin");
+                std::fs::write(&path, bytes).expect("source bytes");
+                (root, path)
+            }
+
+            fn digest(path: &Path) -> String {
+                let bytes = std::fs::read(path).expect("read");
+                format!("{:x}", Sha256::digest(&bytes))
+            }
+
+            fn temporaries(dir: &Path) -> Vec<String> {
+                std::fs::read_dir(dir)
+                    .expect("dir")
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .filter(|name| name.starts_with(".lrk-move-"))
+                    .collect()
+            }
+
+            /// Only the test that owns the named source may act; every other
+            /// copy running in parallel passes through untouched.
+            fn arm(source: &Path, action: Box<dyn Fn(&Path, &Path) + Send + Sync>) {
+                mid_copy_hook().lock().expect("hook").insert(source.to_path_buf(), action);
+            }
+
+            fn disarm(source: &Path) {
+                mid_copy_hook().lock().expect("hook").remove(source);
+            }
+
+            #[test]
+            fn a_source_appended_mid_copy_publishes_nothing_and_keeps_the_new_content() {
+                let mut body = b"synthetic-original-bytes".to_vec();
+                let (source_root, source) = ext4_file("append", &body);
+                let destination_root = shm_root("append");
+                let destination = destination_root.join("appended.bin");
+                arm(&source, Box::new(|from, _| {
+                    let mut file = std::fs::OpenOptions::new().append(true).open(from).unwrap();
+                    file.write_all(b"-mid-copy-appendix").unwrap();
+                }));
+                let handle = File::open(&source).expect("held source");
+                let error = copy_held_no_replace(&handle, &source, &destination, &digest(&source))
+                    .expect_err("an appended source must be refused");
+                disarm(&source);
+                assert_eq!(error.to_string(), "attachment-version-changed");
+                assert!(!destination.exists(), "nothing may be published");
+                // The writer's bytes are part of the source now; the copy is
+                // abandoned, not rolled back into a lie.
+                body.extend_from_slice(b"-mid-copy-appendix");
+                assert_eq!(std::fs::read(&source).expect("source"), body);
+                assert!(temporaries(&source_root).is_empty());
+                assert!(temporaries(&destination_root).is_empty());
+                let _ = std::fs::remove_dir_all(&source_root);
+                let _ = std::fs::remove_dir_all(&destination_root);
+            }
+
+            #[test]
+            fn a_source_replaced_mid_copy_keeps_both_objects_and_reports_the_partial() {
+                let original = b"first-object-bytes".to_vec();
+                let (source_root, source) = ext4_file("replaced", &original);
+                let destination_root = shm_root("replaced");
+                let destination = destination_root.join("replaced.bin");
+                // The hook is global and tests run in parallel, so it must act
+                // only on the source this test owns.
+                arm(&source, Box::new(|from, _| {
+                    let held = from.with_extension("held.bin");
+                    std::fs::rename(from, &held).expect("move the held object aside");
+                    std::fs::write(from, b"replacement-object").expect("new object under the name");
+                }));
+                let handle = File::open(&source).expect("held source");
+                let error = copy_held_no_replace(&handle, &source, &destination, &digest(&source))
+                    .expect_err("a replaced source must stop before the unlink");
+                disarm(&source);
+                assert_eq!(error.to_string(), "source-changed");
+                // The copy was valid, so the verified destination stays: the same
+                // honest partial Windows reports when delete-on-close fails.
+                assert!(destination.exists(), "the published copy must not be rolled back");
+                assert_eq!(std::fs::read(&destination).expect("destination"), original);
+                // Old object (renamed aside) and new object both intact.
+                let held = source.with_extension("held.bin");
+                assert_eq!(std::fs::read(&held).expect("held object"), original);
+                assert_eq!(std::fs::read(&source).expect("new object"), b"replacement-object");
+                assert!(temporaries(&source_root).is_empty());
+                assert!(temporaries(&destination_root).is_empty());
+                let _ = std::fs::remove_dir_all(&source_root);
+                let _ = std::fs::remove_dir_all(&destination_root);
+            }
+        }
+
 #[cfg(test)]
 mod tests {
     use super::linux_attachment_store::{Dependency, ImportStore};

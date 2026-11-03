@@ -17,7 +17,7 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 /// Message of the refusal for a destination on another filesystem.
 pub(crate) const CROSS_DEVICE: &str = "attachment-move-cross-device";
@@ -275,6 +275,20 @@ fn stamp_at(directory: &Directory, name: &CString) -> io::Result<Stamp> {
 /// original is still there. Never reported as a successful move.
 pub(crate) const SOURCE_KEPT: &str = "attachment-move-source-kept";
 
+/// Test-only seam: keyed by the watched source path and fired once, after the
+/// first chunk has been copied and before anything is flushed or published.
+/// Keyed, because the offline crate runs tests in parallel. Production builds
+/// never compile it, so the shipped behaviour cannot change through it.
+#[cfg(test)]
+pub(crate) fn mid_copy_hook() -> &'static std::sync::Mutex<
+    std::collections::HashMap<PathBuf, Box<dyn Fn(&Path, &Path) + Send + Sync>>,
+> {
+    static HOOK: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Box<dyn Fn(&Path, &Path) + Send + Sync>>>,
+    > = std::sync::OnceLock::new();
+    HOOK.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 /// One temporary name per attempt, in the destination directory, recognisable
 /// by the residue scan (`.lrk-move-<pid>-<nanos>.tmp`).
 fn temporary_name() -> CString {
@@ -296,8 +310,10 @@ pub(crate) struct PreparedCopy<'a> {
     source: &'a File,
     stamp: Stamp,
     from: Directory,
+    from_path: PathBuf,
     from_name: CString,
     to: Directory,
+    to_path: PathBuf,
     to_name: CString,
     temporary: CString,
     staged: File,
@@ -318,7 +334,18 @@ impl<'a> PreparedCopy<'a> {
         }
         let temporary = temporary_name();
         let staged = to_dir.create(OsStr::from_bytes(temporary.as_bytes()), b"")?;
-        Ok(Self { source, stamp, from: from_dir, from_name, to: to_dir, to_name, temporary, staged })
+        Ok(Self {
+            source,
+            stamp,
+            from: from_dir,
+            from_path: from.to_path_buf(),
+            from_name,
+            to: to_dir,
+            to_path: to.to_path_buf(),
+            to_name,
+            temporary,
+            staged,
+        })
     }
 
     /// Copy, verify, publish, then unlink the source it came from.
@@ -347,6 +374,7 @@ impl<'a> PreparedCopy<'a> {
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; 64 * 1024];
         let mut total = 0u64;
+        let mut chunks = 0usize;
         loop {
             let read = reader.read(&mut buffer)?;
             if read == 0 {
@@ -355,6 +383,15 @@ impl<'a> PreparedCopy<'a> {
             hasher.update(&buffer[..read]);
             writer.write_all(&buffer[..read])?;
             total += read as u64;
+            chunks += 1;
+            #[cfg(test)]
+            if chunks == 1 {
+                if let Some(hook) =
+                    mid_copy_hook().lock().expect("mid-copy hook").get(&self.from_path)
+                {
+                    hook(&self.from_path, &self.to_path);
+                }
+            }
         }
         self.staged.sync_all()?;
         if total != self.stamp.size || format!("{:x}", hasher.finalize()) != expected_sha256 {
