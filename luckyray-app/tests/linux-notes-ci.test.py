@@ -380,7 +380,8 @@ class EvidenceTests(unittest.TestCase):
             "quitRequests": [{"ipcReplyObserved": True, "priorProcessIdentitiesGone": True, "exitStatus": "NOT_OBSERVED"}] * 2,
             **{name: "NOT_RUN" for name in ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer")},
             "attachmentMaintenance": passing_maintenance(),
-            "canvasStorage": {"canvasLeftovers": 0, "workspaceLeftovers": 0, "directoriesScanned": 5}}
+            "canvasStorage": {"canvasLeftovers": 0, "attachmentLeftovers": 0,
+                              "workspaceLeftovers": 0, "directoriesScanned": 5}}
 
     def validate(self, raw):
         ci.validate_notes(ci.bounded_report(raw), self.build, self.source, self.scripts)
@@ -1941,41 +1942,99 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                      "replace_needs_an_existing_parent_directory"):
             self.assertIn(f"fn {name}()", canvas)
 
+    def test_canvas_temporary_name_is_tied_to_the_rust_writer(self):
+        # The canvas writer (canvas_agent.rs::atomic_write) stages
+        # `.{file_name}.agent-{pid}-{nanos}.tmp`. The scan predicate must match
+        # exactly that shape - built from the format string in the Rust source -
+        # and must never claim the notes/attachment (`.lrk-`) or workspace
+        # (`.lrw-`) families.
+        rust = self.read("canvas_agent.rs")
+        formats = re.findall(r'"\.\{file_name\}\.agent-\{\}-\{\}\.tmp"', rust)
+        self.assertEqual(len(formats), 1, "the canvas temporary format moved")
+        sample = formats[0].strip('"').replace("{file_name}", "canvas-1.json", 1) \
+            .replace("{}", "4242", 1).replace("{}", "1730000000000000000", 1)
+        self.assertEqual(sample, ".canvas-1.json.agent-4242-1730000000000000000.tmp")
+        self.assertTrue(ci.smoke.is_canvas_temporary(sample))
+        self.assertFalse(ci.smoke.is_attachment_temporary(sample))
+        self.assertFalse(ci.smoke.is_workspace_temporary(sample))
+        for foreign in (".lrk-attachment-0123abcdef.tmp", ".lrk-import-0123abcdef-3.tmp",
+                        ".lrw-4242-1730000000000000000.tmp", "canvas-1.json",
+                        ".canvas-1.json.agent-4242.tmp", ".canvas-1.json.agent-x-y.tmp"):
+            self.assertFalse(ci.smoke.is_canvas_temporary(foreign), foreign)
+        self.assertTrue(ci.smoke.is_attachment_temporary(".lrk-attachment-0123abcdef.tmp"))
+        self.assertTrue(ci.smoke.is_workspace_temporary(".lrw-4242-1730000000000000000.tmp"))
+        # The offline canvas test uses the same family, not the .lrk- prefix.
+        offline_canvas = self.read("canvas_agent.rs").split(
+            "mod linux_replace_tests", 1)[1]
+        self.assertIn('.contains(".agent-") && name.ends_with(".tmp")', offline_canvas)
+        self.assertNotIn('name.startswith(".lrk-")', offline_canvas)
+
+    def test_profile_temporary_scan_reports_each_writer_family(self):
+        # Synthetic profile only: a canvas leftover must be reported by the scan,
+        # and so must the attachment and workspace families, each on its own
+        # counter.
+        with tempfile.TemporaryDirectory(prefix="canvas-scan-unit-") as temporary:
+            home = Path(temporary)
+            nested = home / "data" / "luckyray" / "canvases"
+            nested.mkdir(parents=True)
+            (nested / "canvas-1.json").write_bytes(b"{}")
+            (nested / ".canvas-1.json.agent-99-88.tmp").write_bytes(b"{}")
+            (nested / ".lrk-attachment-0123abcdef.tmp").write_bytes(b"{}")
+            (nested / ".lrw-99-88.tmp").write_bytes(b"{}")
+            (nested / ".luckyray-write.lock").write_bytes(b"{}")
+            canvas, attachment, workspace, scanned = ci.smoke.profile_temporary_scan(home)
+            self.assertEqual((canvas, attachment, workspace), (1, 1, 1))
+            self.assertGreaterEqual(scanned, 5)
+            clean = home / "clean"
+            clean.mkdir()
+            (clean / "canvas-1.json").write_bytes(b"{}")
+            self.assertEqual(ci.smoke.profile_temporary_scan(clean), (0, 0, 0, 1))
+
     def test_canvas_storage_hygiene_evidence_is_closed_and_required(self):
         # The smoke scans the owned profile after both sessions end; the
         # projection is closed and a leftover temporary can never pass.
         self.assertEqual(ci.bounded_canvas_storage({}), {"canvasLeftovers": None,
+                                                         "attachmentLeftovers": None,
                                                          "workspaceLeftovers": None,
                                                          "directoriesScanned": None})
-        clean = {"canvasLeftovers": 0, "workspaceLeftovers": 0, "directoriesScanned": 5}
+        clean = {"canvasLeftovers": 0, "attachmentLeftovers": 0, "workspaceLeftovers": 0,
+                 "directoriesScanned": 5}
         self.assertEqual(ci.bounded_canvas_storage(clean), clean)
-        dirty = {"canvasLeftovers": 1, "workspaceLeftovers": 0, "directoriesScanned": 5}
-        self.assertNotEqual(ci.bounded_canvas_storage(dirty), clean)
+        for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers"):
+            dirty = dict(clean); dirty[name] = 1
+            self.assertNotEqual(ci.bounded_canvas_storage(dirty), clean, name)
         self.assertEqual(ci.bounded_canvas_storage({"canvasLeftovers": "hunter2"})["canvasLeftovers"], None)
         self.assertEqual(ci.bounded_canvas_storage([{"canvasLeftovers": 1}]), {"canvasLeftovers": None,
+                                                                              "attachmentLeftovers": None,
                                                                               "workspaceLeftovers": None,
                                                                               "directoriesScanned": None})
         fixture = EvidenceTests(methodName="runTest"); fixture.setUp()
-        fixture.raw.update(canvasStorage={"canvasLeftovers": 2, "workspaceLeftovers": "hunter2",
+        fixture.raw.update(canvasStorage={"canvasLeftovers": 2, "attachmentLeftovers": 1,
+                                          "workspaceLeftovers": "hunter2",
                                           "directoriesScanned": 9, "path": "hunter2"})
         self.assertNotIn("hunter2", json.dumps(ci.bounded_report(fixture.raw)))
         # The full passing fixture is accepted, and a single leftover temporary
         # fails with the dedicated code.
         passing = EvidenceTests(methodName="runTest"); passing.setUp()
         ci.validate_notes(ci.bounded_report(passing.raw), passing.build, passing.source, passing.scripts)
-        failing = EvidenceTests(methodName="runTest"); failing.setUp()
-        failing.raw["canvasStorage"]["canvasLeftovers"] = 1
-        with self.assertRaisesRegex(RuntimeError, "canvas-storage-temporary-leftover"):
-            ci.validate_notes(ci.bounded_report(failing.raw), failing.build, failing.source, failing.scripts)
+        for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers"):
+            failing = EvidenceTests(methodName="runTest"); failing.setUp()
+            failing.raw["canvasStorage"][name] = 1
+            with self.subTest(counter=name), self.assertRaisesRegex(
+                    RuntimeError, "canvas-storage-temporary-leftover"):
+                ci.validate_notes(ci.bounded_report(failing.raw), failing.build, failing.source, failing.scripts)
         smoke = (Path(__file__).resolve().parents[1] /
                  "tests/linux-notes-attachments-smoke.py").read_text()
         self.assertIn("def profile_temporary_scan(home):", smoke)
+        self.assertIn("CANVAS_TEMPORARY = re.compile", smoke)
         self.assertIn('"canvasStorageHygiene"', smoke)
         self.assertIn('"canvas-temporary-scan"', smoke)
-        self.assertIn('require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] > 0,', smoke)
+        self.assertIn('require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] == 0', smoke)
+        self.assertIn('"attachmentLeftovers": min(leftovers[1], 8)', smoke)
         gate = (Path(__file__).resolve().parents[1] / "tests/linux-notes-ci.py").read_text()
         self.assertIn('"canvas-storage", "quit"', gate)
         self.assertIn('"canvas-storage-temporary-leftover"', gate)
+        self.assertIn('"attachmentLeftovers", "workspaceLeftovers",', gate)
 
     def test_note_move_uses_the_sealed_runner_not_the_windows_journal(self):
         operations = self.read("knowledge/attachment_operations.rs")

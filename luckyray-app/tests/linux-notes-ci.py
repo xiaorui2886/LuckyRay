@@ -67,10 +67,17 @@ def bounded_interactability(raw):
 
 
 def bounded_canvas_storage(raw):
-    """Closed projection of the post-run temporary scan: three 0..8 counters."""
+    """Closed projection of the post-run temporary scan: four 0..8 counters.
+
+    `canvasLeftovers` counts the canvas writer's own
+    `.{file_name}.agent-{pid}-{nanos}.tmp` names, `attachmentLeftovers` the
+    notes/attachment `.lrk-…tmp` family and `workspaceLeftovers` the
+    `.lrw-…tmp` family, so every leftover is attributed to its own writer.
+    """
     raw = raw if isinstance(raw, dict) else {}
     return {name: raw.get(name) if type(raw.get(name)) is int and 0 <= raw[name] <= 8 else None
-            for name in ("canvasLeftovers", "workspaceLeftovers", "directoriesScanned")}
+            for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers",
+                         "directoriesScanned")}
 
 
 def bounded_maintenance(raw):
@@ -417,8 +424,8 @@ def validate_notes(raw, build, source, scripts):
             == [(1, True, "SELF", True), (2, True, "SELF", True)], "real-preview-pixel-evidence-missing")
     require(raw.get("attachmentMaintenance") == expected_maintenance(), "attachment-maintenance-ui-evidence-missing")
     canvas_storage = raw.get("canvasStorage", {})
-    require(canvas_storage.get("canvasLeftovers") == 0
-            and canvas_storage.get("workspaceLeftovers") == 0
+    require(all(canvas_storage.get(name) == 0
+                for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers"))
             and type(canvas_storage.get("directoriesScanned")) is int
             and 1 <= canvas_storage["directoriesScanned"] <= 8,
             "canvas-storage-temporary-leftover")
@@ -612,7 +619,7 @@ class Run(runtime.Run):
                        "component layout is a precondition, not Main product acceptance",
                        "attachment rename and recovery rollback via real settings UI; path inputs set by DOM value events",
                        "source-mode material import via declared Tauri drop IPC; real context-menu rename and source delete",
-                       "canvas and workspace writes fsync the directory entry (write-through); UI canvas flow NOT_RUN",
+                       "canvas/attachment/workspace writes fsync the directory entry (write-through); UI canvas flow NOT_RUN",
                        "delete quarantine intermediate and crash resume OFFLINE_ONLY; conversion, note move, material move and insert-copy NOT_RUN"]})
         require(passed, "required-notes-product-flow-failed-or-not-run")
 

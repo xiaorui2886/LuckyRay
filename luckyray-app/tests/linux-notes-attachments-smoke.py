@@ -998,15 +998,35 @@ def screenshot_pixels(encoded, rect):
     return {"method": "WEBVIEW_SCREENSHOT_PIXELS", "sampled": 5, "matched": matched}
 
 
+# The canvas writer (canvas_agent.rs::atomic_write) stages
+# `.{file_name}.agent-{pid}-{nanos}.tmp` next to the document; the notes and
+# attachment writers use `.lrk-…tmp` and the workspace writer `.lrw-…tmp`. Each
+# family is counted separately so a leftover is attributed to its own writer.
+CANVAS_TEMPORARY = re.compile(r"^\..+\.agent-\d+-\d+\.tmp$")
+
+
+def is_canvas_temporary(name):
+    return bool(CANVAS_TEMPORARY.match(name))
+
+
+def is_attachment_temporary(name):
+    return name.startswith(".lrk-") and name.endswith(".tmp")
+
+
+def is_workspace_temporary(name):
+    return name.startswith(".lrw-") and name.endswith(".tmp")
+
+
 def profile_temporary_scan(home):
     """Bounded name-only walk of the owned profile after both sessions ended.
 
-    The canvas and workspace writers stage a hidden temporary and replace it
-    atomically; a crash or a failed replace leaves exactly one such name behind.
-    Returns (canvas leftovers, workspace leftovers, directories scanned), each
-    capped by the caller. No file content is opened and no path is exported.
+    The canvas, attachment and workspace writers all stage a hidden temporary
+    and replace or publish atomically; a crash or a failed commit leaves exactly
+    one such name behind. Returns (canvas, attachment, workspace leftovers,
+    directories scanned), each capped by the caller. No file content is opened
+    and no path is exported.
     """
-    canvas_markers, workspace_markers = 0, 0
+    canvas_markers, attachment_markers, workspace_markers = 0, 0, 0
     scanned, pending = 0, [Path(home)]
     while pending and scanned <= 4096:
         current = pending.pop()
@@ -1025,11 +1045,13 @@ def profile_temporary_scan(home):
             except OSError:
                 continue
             name = child.name
-            if name.startswith(".lrk-") and name.endswith(".tmp"):
+            if is_canvas_temporary(name):
                 canvas_markers += 1
-            elif name.startswith(".lrw-") and name.endswith(".tmp"):
+            elif is_attachment_temporary(name):
+                attachment_markers += 1
+            elif is_workspace_temporary(name):
                 workspace_markers += 1
-    return canvas_markers, workspace_markers, max(1, scanned)
+    return canvas_markers, attachment_markers, workspace_markers, max(1, scanned)
 
 
 def main():
@@ -1755,19 +1777,21 @@ def main():
         report["checks"]["quitProcessDisappearance"] = "PASS"
         phase = "canvas-storage"
         action = "canvas-temporary-scan"
-        # T14: the canvas and workspace writers commit through a synced temporary
-        # and an atomic replace. A crash or a failed replace would leave exactly
-        # one hidden temporary behind, so after both app sessions are gone the
-        # synthetic profile must contain none. The walk is bounded and reads only
-        # file names inside the owned profile; no content is opened.
+        # T14/T15: the canvas, attachment and workspace writers commit through a
+        # synced temporary and an atomic replace/publish. A crash or a failed
+        # commit would leave exactly one hidden temporary behind, so after both
+        # app sessions are gone the synthetic profile must contain none - each
+        # family counted under its own writer's name. The walk is bounded and
+        # reads only file names inside the owned profile; no content is opened.
         leftovers = profile_temporary_scan(home)
         report["canvasStorage"] = {
             "canvasLeftovers": min(leftovers[0], 8),
-            "workspaceLeftovers": min(leftovers[1], 8),
-            "directoriesScanned": min(leftovers[2], 8),
+            "attachmentLeftovers": min(leftovers[1], 8),
+            "workspaceLeftovers": min(leftovers[2], 8),
+            "directoriesScanned": min(leftovers[3], 8),
         }
-        require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] > 0,
-                "canvas-storage-temporary-leftover")
+        require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] == 0
+                and leftovers[3] > 0, "canvas-storage-temporary-leftover")
         report["checks"]["canvasStorageHygiene"] = "PASS"
         report["status"] = "PASS"
     except Exception as error:
