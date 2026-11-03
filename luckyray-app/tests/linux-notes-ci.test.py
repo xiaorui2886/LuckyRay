@@ -56,7 +56,7 @@ def passing_maintenance():
     """Literal T11 evidence; deliberately not derived from the validator."""
     return {"noteRename": {"method": "REAL_SETTINGS_UI", "inputMethod": "DOM_VALUE_EVENT", "reviewShown": True, "statusComplete": True,
                            "newFileDigestMatches": True, "oldPathGone": True, "noteLinkRewritten": True, "noteOtherwiseUnchanged": True,
-                           "productionResolved": True, "materialAssetRetained": True, "newRecords": 1, "tombstones": 1},
+                           "productionResolved": True, "materialAssetReregistered": True, "newRecords": 1, "tombstones": 1},
             "rollback": {"method": "REAL_RECOVERY_UI", "recordListed": True, "statusRolledBack": True, "oldFileRestored": True,
                          "noteBytesRestored": True, "renamedCopyRetained": True, "productionResolved": True, "tombstones": 0},
             "materialRename": {"method": "REAL_MATERIAL_CONTEXT_MENU", "inputMethod": "DOM_VALUE_EVENT", "importModeChosenInUi": True,

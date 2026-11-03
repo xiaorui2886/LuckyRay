@@ -772,7 +772,7 @@ def image_copy_probe(vault, source_image, note_content, expected_note_content):
 MAINTENANCE_FIELDS = {
     "noteRename": ({"method": "REAL_SETTINGS_UI", "inputMethod": "DOM_VALUE_EVENT"},
                    ("reviewShown", "statusComplete", "newFileDigestMatches", "oldPathGone", "noteLinkRewritten",
-                    "noteOtherwiseUnchanged", "productionResolved", "materialAssetRetained"), ("newRecords", "tombstones")),
+                    "noteOtherwiseUnchanged", "productionResolved", "materialAssetReregistered"), ("newRecords", "tombstones")),
     "rollback": ({"method": "REAL_RECOVERY_UI"},
                  ("recordListed", "statusRolledBack", "oldFileRestored", "noteBytesRestored", "renamedCopyRetained",
                   "productionResolved"), ("tombstones",)),
@@ -1357,8 +1357,11 @@ def main():
         resolved = resolve(destination) if destination is not None else None
         rename["productionResolved"] = (isinstance(resolved, dict) and resolved.get("status") == "resolved"
             and resolved.get("relativePath") == RENAMED_IMAGE_RELATIVE and resolved.get("absolutePath") == str(new_file.resolve()))
-        rename["materialAssetRetained"] = (isinstance(resolved, dict) and isinstance(image_identity["materialAssetId"], str)
-            and resolved.get("materialAssetId") == image_identity["materialAssetId"])
+        # Windows v1.9.9 (shared code, unchanged on this branch): a plain attachment rename plan carries no
+        # material binding, so finish_attachment_projection re-registers the new path as a NEW ordinary asset.
+        rename["materialAssetReregistered"] = (isinstance(resolved, dict) and isinstance(image_identity["materialAssetId"], str)
+            and isinstance(resolved.get("materialAssetId"), str) and resolved.get("materialAssetId").startswith("asset")
+            and resolved.get("materialAssetId") != image_identity["materialAssetId"])
         records_after = invoke("knowledge_list_attachment_operations", {"vaultId": created_vault["id"]})
         require(isinstance(records_after, list), "recovery-records-invalid")
         new_records = [record for record in records_after if record not in records_before]
