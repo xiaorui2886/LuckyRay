@@ -3737,8 +3737,8 @@ fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {
         // SAFETY: the entry is owned by the list until freeifaddrs.
         let entry = unsafe { &*current };
         current = unsafe { (*current).ifa_next };
-        let running = unsafe { (*entry).ifa_flags & (libc::IFF_UP | libc::IFF_RUNNING) }
-            == (libc::IFF_UP | libc::IFF_RUNNING);
+        let up_running = (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_uint;
+        let running = entry.ifa_flags & up_running == up_running;
         let Some(socket) = (unsafe { (*entry).ifa_addr.as_ref() }) else {
             continue;
         };
@@ -3746,7 +3746,7 @@ fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {
             continue;
         }
         // SAFETY: sa_family is AF_INET, so the socket is a sockaddr_in.
-        let socket = unsafe { &*(socket.cast::<libc::sockaddr_in>()) };
+        let socket = unsafe { &*(socket as *const libc::sockaddr).cast::<libc::sockaddr_in>() };
         let octets = u32::from_be(u32::from(socket.sin_addr.s_addr));
         let address = Ipv4Addr::new(
             (octets >> 24) as u8,
