@@ -1847,9 +1847,12 @@ def main():
             nodes = parsed.get("nodes") if isinstance(parsed, dict) else None
             report["canvasFlow"]["documentNodes"] = (
                 len(nodes) if isinstance(nodes, list) and len(nodes) <= 8 else None)
-            return (isinstance(nodes, list) and len(nodes) == 1
-                    and nodes[0].get("kind") == "text"
-                    and nodes[0].get("data", {}).get("label") == "双击开始编辑...")
+            # Persisted React Flow node: {type: "spike", data: {kind, label}}.
+            node = nodes[0] if isinstance(nodes, list) and len(nodes) == 1 else None
+            data = node.get("data") if isinstance(node, dict) else None
+            return (isinstance(data, dict) and node.get("type") == "spike"
+                    and data.get("kind") == "text"
+                    and data.get("label") == "双击开始编辑...")
         require(helpers.wait_until(canvas_saved_on_disk, 20), "canvas-save-not-on-disk")
         report["canvasFlow"]["savedOnDisk"] = True
         action = "canvas-leave-editor"
