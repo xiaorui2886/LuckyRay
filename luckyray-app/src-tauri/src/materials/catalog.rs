@@ -3185,6 +3185,9 @@ impl MaterialCatalog {
                 "隔离素材文件失败",
             ));
         }
+        #[cfg(target_os = "linux")]
+        self.linux_quarantine_for_delete(owned_file, &quarantine_path, &manifest_path, &token)?;
+        #[cfg(not(target_os = "linux"))]
         if let Err(error) = std::fs::rename(&owned_file.file_path, &quarantine_path) {
             let _ = std::fs::remove_file(&manifest_path);
             return Err(MaterialError::io(
@@ -3432,6 +3435,9 @@ impl MaterialCatalog {
         }
         match (original_exists, quarantine_exists) {
             (false, true) => {
+                #[cfg(target_os = "linux")]
+                self.linux_restore_delete_quarantine(&validated)?;
+                #[cfg(not(target_os = "linux"))]
                 std::fs::rename(&validated.quarantine_path, &validated.original_path).map_err(
                     |error| {
                         MaterialError::io("delete-restore-failed", "恢复隔离素材文件失败", error)
@@ -3531,6 +3537,8 @@ impl MaterialCatalog {
                 ));
             }
         }
+        #[cfg(target_os = "linux")]
+        self.linux_verify_quarantine_before_purge(&validated)?;
         match std::fs::remove_file(&validated.quarantine_path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -3543,6 +3551,9 @@ impl MaterialCatalog {
             }
         }
         remove_pending_manifest(&validated.manifest_path, "delete-cleanup-record-failed")?;
+        // A leftover identity record is inert (its token is never reused).
+        #[cfg(target_os = "linux")]
+        let _ = remove_pending_manifest(&self.linux_delete_identity_dir().join(format!("{}.inode", validated.record.token)), "delete-cleanup-record-failed");
         conn.execute(
             "DELETE FROM material_delete_pending_identity WHERE token=?1",
             [&validated.record.token],
@@ -5408,6 +5419,68 @@ fn linux_reject_cross_device(source:&Path,destination:&Path)->MaterialResult<()>
     let target_device=std::fs::symlink_metadata(parent).map_err(|e|MaterialError::io("physical-path-unavailable","无法读取目标目录",e))?.dev();
     if source_device!=target_device {return Err(linux_cross_device_error())}
     Ok(())
+}
+
+// 删除素材文件 on Linux (T02 §5.4.b; D1 = quarantine then permanent delete,
+// no system trash, as Windows v1.9.9). Proves the quarantined/restored/purged
+// object is the one that was checked; never deletes anything itself.
+#[cfg(target_os = "linux")]
+impl MaterialCatalog {
+    fn linux_delete_identity_dir(&self) -> PathBuf {
+        // Kept outside material-delete-pending so its retry count is unchanged.
+        self.app_data_dir.join("material-delete-identity")
+    }
+
+    fn linux_quarantine_for_delete(&self, owned_file: &OwnedPhysicalFile, quarantine_path: &Path, manifest_path: &Path, token: &str) -> MaterialResult<()> {
+        let identity = match crate::linux_material_delete::quarantine(&owned_file.file_path, quarantine_path, &owned_file.content_hash) {
+            Ok(identity) => identity,
+            Err(error) => {
+                // Nothing was renamed (or the move primitive put it back).
+                let _ = std::fs::remove_file(manifest_path);
+                return Err(MaterialError::io("delete-quarantine-failed", "隔离素材文件失败", error));
+            }
+        };
+        let recorded = self
+            .trusted_app_subdirectory("material-delete-identity", true, "delete-quarantine-failed")
+            .map_err(|error| std::io::Error::other(error.message))
+            .and_then(|directory| crate::linux_material_delete::write_record(&directory, token, identity));
+        if let Err(error) = recorded {
+            return match crate::linux_material_move::move_path_no_replace(quarantine_path, &owned_file.file_path) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(manifest_path);
+                    Err(MaterialError::io("delete-quarantine-failed", "无法记录隔离文件身份，文件已移回原位置", error))
+                }
+                // The manifest stays so the pending-deletion retry restores it.
+                Err(back) => Err(MaterialError::new(
+                    "delete-quarantine-failed",
+                    format!("无法记录隔离文件身份，也未能移回原位置；文件保留在隔离名称下，恢复记录已保留，未删除任何文件（{error}；{back}）"),
+                )),
+            };
+        }
+        Ok(())
+    }
+
+    fn linux_delete_identity(&self, validated: &DeleteQuarantine) -> MaterialResult<Option<crate::linux_material_delete::Identity>> {
+        crate::linux_material_delete::read_record(&self.linux_delete_identity_dir(), &validated.record.token)
+            .map_err(|error| MaterialError::io("delete-pending-content-mismatch", "删除隔离身份记录无效", error))
+    }
+
+    fn linux_restore_delete_quarantine(&self, validated: &DeleteQuarantine) -> MaterialResult<()> {
+        let identity = self.linux_delete_identity(validated)?;
+        crate::linux_material_delete::restore(identity, &validated.quarantine_path, &validated.original_path)
+            .map_err(|error| MaterialError::io("delete-restore-failed", "恢复隔离素材文件失败", error))
+    }
+
+    fn linux_verify_quarantine_before_purge(&self, validated: &DeleteQuarantine) -> MaterialResult<()> {
+        match std::fs::symlink_metadata(&validated.quarantine_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(MaterialError::io("delete-cleanup-pending", "隔离文件等待后台清理", error)),
+            Ok(_) => {}
+        }
+        let identity = self.linux_delete_identity(validated)?;
+        crate::linux_material_delete::verify_before_purge(identity, &validated.quarantine_path)
+            .map_err(|error| MaterialError::io("delete-cleanup-pending", "隔离文件身份无法确认，保留文件等待处理", error))
+    }
 }
 
 fn move_material_file(source: &Path, destination: &Path) -> Result<(), String> {

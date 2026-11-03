@@ -340,7 +340,7 @@ pub(super) fn publish_bytes(
 
 fn publish_bytes_with_reuse(root: &Path, inventory: &[String], note: &str, name: &str, bytes: &[u8], reuse_content: bool) -> Result<AttachmentPublication, KnowledgeError> {
     #[cfg(target_os = "linux")]
-    return Err(linux_knowledge_write_unavailable());
+    return linux_publish_bytes_with_reuse(root, inventory, note, name, bytes, reuse_content);
 
     if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
         return Err(error(
@@ -427,7 +427,7 @@ impl KnowledgeService {
     pub(crate) fn publish_companion_attachment(&self, expected: &KnowledgeTargetIdentity, document_ref: &KnowledgeDocumentRef,
         expected_revision: &str, name: &str, staged: &Path, size: u64, digest: &str) -> Result<AttachmentPublication, KnowledgeError> {
         #[cfg(target_os = "linux")]
-        return Err(linux_knowledge_write_unavailable());
+        return self.linux_publish_companion_attachment(expected, document_ref, expected_revision, name, staged, size, digest);
 
         if size > MAX_ATTACHMENT_BYTES { return Err(error("knowledge-attachment-size-limit", "Attachment exceeds 64 MiB")); }
         let _inventory_mutation=self.attachment_inventory.mutation();
@@ -648,6 +648,112 @@ impl KnowledgeService {
             source_path.is_none(),
         )?;
         self.assert_expected_target_unlocked(&vault, Some(&identity), Some(&root_guard))?;
+        Ok(result)
+    }
+}
+
+// Linux copy-publish (T02 §5.3.b): same size limit, reuse scan and name
+// policy as above; the write itself goes through the held, owned Vault root,
+// a private 0600 stage and a no-replace rename. A failed stage is left as a
+// hidden `.lrk-` file (never unlinked here); the inventory ignores it.
+#[cfg(target_os = "linux")]
+fn linux_publish_failure(failure: std::io::Error) -> KnowledgeError {
+    super::linux_transactions::failure(failure)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_pick_attachment_name(target: &crate::linux_attachment_publish::PublishTarget, inventory: &[String], name: &str) -> Result<String, KnowledgeError> {
+    for ordinal in 1..=100_001 {
+        let leaf = attachment_copy_name(name, ordinal);
+        let candidate = format!("{}/{}", crate::linux_attachment_publish::ATTACHMENTS, leaf);
+        if inventory.iter().any(|old| old.eq_ignore_ascii_case(&candidate)) {
+            continue;
+        }
+        if target.vacant(std::ffi::OsStr::new(&leaf)).map_err(linux_publish_failure)? {
+            return Ok(leaf);
+        }
+    }
+    Err(error("knowledge-attachment-conflict", "No unused attachment name is available"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_publish_bytes_with_reuse(root: &Path, inventory: &[String], note: &str, name: &str, bytes: &[u8], reuse_content: bool) -> Result<AttachmentPublication, KnowledgeError> {
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err(error("knowledge-attachment-size-limit", "Attachment exceeds 64 MiB"));
+    }
+    let digest = sha256_hex(bytes);
+    for relative in inventory.iter().filter(|_| reuse_content) {
+        if relative.to_ascii_lowercase().ends_with(".md") || legacy_hash_attachment_name(relative) {
+            continue;
+        }
+        let path = safe_existing_file(root, Path::new(relative))?;
+        if path.metadata().map_err(|_| error("knowledge-attachment-read-failed", "Attachment metadata is unavailable"))?.len() != bytes.len() as u64 {
+            continue;
+        }
+        let existing = read_scoped_attachment_bytes(root, Path::new(relative))?;
+        if sha256_hex(&existing) == digest && existing == bytes {
+            return Ok(publication(note, relative.clone(), bytes, true));
+        }
+    }
+    assert_safe_components(root, Path::new(crate::linux_attachment_publish::ATTACHMENTS))?;
+    let target = crate::linux_attachment_publish::PublishTarget::open(root, true).map_err(linux_publish_failure)?;
+    let leaf = linux_pick_attachment_name(&target, inventory, name)?;
+    target.publish(std::ffi::OsStr::new(&leaf), bytes).map_err(linux_publish_failure)?;
+    let relative = format!("{}/{}", crate::linux_attachment_publish::ATTACHMENTS, leaf);
+    if read_scoped_attachment_bytes(root, Path::new(&relative))? != bytes {
+        return Err(error("knowledge-attachment-verification-failed", "Published attachment verification failed"));
+    }
+    Ok(publication(note, relative, bytes, false))
+}
+
+#[cfg(target_os = "linux")]
+impl KnowledgeService {
+    fn linux_publish_companion_attachment(&self, expected: &KnowledgeTargetIdentity, document_ref: &KnowledgeDocumentRef,
+        expected_revision: &str, name: &str, staged: &Path, size: u64, digest: &str) -> Result<AttachmentPublication, KnowledgeError> {
+        use std::os::unix::fs::OpenOptionsExt;
+        if size > MAX_ATTACHMENT_BYTES { return Err(error("knowledge-attachment-size-limit", "Attachment exceeds 64 MiB")); }
+        let _inventory_mutation = self.attachment_inventory.mutation();
+        let _mutation = self.mutation_lock.lock().map_err(|_| error("knowledge-lock-poisoned", "Knowledge mutation lock failed"))?;
+        let vault = self.current_vault_unlocked()?;
+        let root_guard = self.capture_expected_target_unlocked(&vault, Some(expected))?;
+        require_matching_vault(document_ref, &vault.registration)?;
+        let note = safe_existing_file(&vault.root, &safe_markdown_relative_path(&document_ref.relative_path)?)?;
+        let mut note_guard = open_exclusive_document(&note)?;
+        if sha256_hex(&read_exclusive_document(&mut note_guard)?) != expected_revision { return Err(error("knowledge-revision-conflict", "Note changed before attachment insertion")); }
+        let open_no_follow = |path: &Path| -> Result<File, KnowledgeError> {
+            let input = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)
+                .map_err(|_| error("knowledge-attachment-read-failed", "Attachment unavailable"))?;
+            let metadata = input.metadata().map_err(|_| error("knowledge-attachment-read-failed", "Attachment unavailable"))?;
+            if !metadata.is_file() || metadata.len() != size { return Err(error("knowledge-attachment-verification-failed", "Attachment length changed")); }
+            Ok(input)
+        };
+        let hash_file = |path: &Path| -> Result<String, KnowledgeError> {
+            let mut input = open_no_follow(path)?;
+            let mut hash = Sha256::new(); let mut buffer = [0u8; 64 * 1024];
+            loop { let count = input.read(&mut buffer).map_err(|_| error("knowledge-attachment-read-failed", "Attachment unavailable"))?; if count == 0 { break; } hash.update(&buffer[..count]); }
+            Ok(format!("{:x}", hash.finalize()))
+        };
+        if hash_file(staged)? != digest { return Err(error("knowledge-attachment-verification-failed", "Attachment checksum changed")); }
+        let inventory = index::attachment_inventory(&vault.root)?;
+        let mut reused = None;
+        for relative in &inventory {
+            if relative.to_ascii_lowercase().ends_with(".md") || legacy_hash_attachment_name(relative) { continue; }
+            let file = safe_existing_file(&vault.root, Path::new(relative))?;
+            if file.metadata().map(|m| m.len() == size).unwrap_or(false) && hash_file(&file)? == digest { reused = Some(relative.clone()); break; }
+        }
+        let was_reused = reused.is_some();
+        let relative = if let Some(relative) = reused { relative } else {
+            assert_safe_components(&vault.root, Path::new(crate::linux_attachment_publish::ATTACHMENTS))?;
+            let target = crate::linux_attachment_publish::PublishTarget::open(&vault.root, true).map_err(linux_publish_failure)?;
+            let leaf = linux_pick_attachment_name(&target, &inventory, name)?;
+            self.assert_expected_target_unlocked(&vault, Some(expected), root_guard.as_ref())?;
+            let mut input = open_no_follow(staged)?;
+            target.publish_from(std::ffi::OsStr::new(&leaf), &mut input, size, digest).map_err(linux_publish_failure)?;
+            format!("{}/{}", crate::linux_attachment_publish::ATTACHMENTS, leaf)
+        };
+        self.assert_expected_target_unlocked(&vault, Some(expected), root_guard.as_ref())?;
+        let mut result = publication(&document_ref.relative_path, relative, &[], was_reused);
+        result.sha256 = digest.to_owned(); result.bytes = size;
         Ok(result)
     }
 }

@@ -1381,6 +1381,31 @@ class AttachmentMutationSourceTests(unittest.TestCase):
     def read(self, relative):
         return (self.source / relative).read_text()
 
+    def test_step4_copy_publish_and_delete_hardening_are_wired(self):
+        publish = self.read("linux_attachment_publish.rs")
+        delete = self.read("linux_material_delete.rs")
+        for source in (publish, delete):
+            for forbidden in ("remove_file", "unlinkat", "unlink(", "remove_dir", "O_TRUNC", "trash::", "gio trash"):
+                self.assertNotIn(forbidden, source)
+        self.assertIn("create_private(&stage", publish)
+        self.assertIn("rename_new(&stage, &self.attachments, name)", publish)
+        self.assertIn("root.lock()?", publish)
+        self.assertIn("move_held_no_replace(&file, original, quarantine)", delete)
+        self.assertIn("move_path_no_replace(quarantine, original)", delete)
+        attachments = self.read("knowledge/attachments.rs")
+        self.assertIn("return linux_publish_bytes_with_reuse(root, inventory, note, name, bytes, reuse_content);", attachments)
+        self.assertIn("return self.linux_publish_companion_attachment(", attachments)
+        catalog = self.read("materials/catalog.rs")
+        self.assertIn('#[cfg(target_os = "linux")]\n        self.linux_quarantine_for_delete(', catalog)
+        self.assertIn('#[cfg(not(target_os = "linux"))]\n        if let Err(error) = std::fs::rename(&owned_file.file_path, &quarantine_path)', catalog)
+        self.assertIn('#[cfg(not(target_os = "linux"))]\n                std::fs::rename(&validated.quarantine_path, &validated.original_path)', catalog)
+        purge = catalog.split("fn purge_delete_quarantine_in_transaction", 1)[1]
+        self.assertLess(purge.index("self.linux_verify_quarantine_before_purge(&validated)?;"),
+                        purge.index("std::fs::remove_file(&validated.quarantine_path)"))
+        lib = self.read("lib.rs")
+        for module in ("linux_attachment_publish", "linux_material_delete"):
+            self.assertIn(f'#[cfg(target_os = "linux")]\nmod {module};', lib)
+
     def test_attachment_mutation_sources_never_unlink_a_user_object(self):
         files = ("linux_attachment_store.rs", "knowledge/linux_attachment_mutations.rs",
                  "knowledge/linux_attachment_import.rs", "linux_material_move.rs")

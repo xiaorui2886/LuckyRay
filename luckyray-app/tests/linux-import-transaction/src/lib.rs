@@ -18,6 +18,11 @@ mod attachment_witness;
 // The material file move primitive (step 3) only needs linux_fs and libc.
 #[path = "../../../src-tauri/src/linux_material_move.rs"]
 mod linux_material_move;
+// Step 4: copy-publish and delete-quarantine identity (linux_fs/libc only).
+#[path = "../../../src-tauri/src/linux_attachment_publish.rs"]
+mod linux_attachment_publish;
+#[path = "../../../src-tauri/src/linux_material_delete.rs"]
+mod linux_material_delete;
 
 #[cfg(test)]
 mod tests {
@@ -1186,5 +1191,152 @@ mod tests {
         assert_eq!(prepared.commit().unwrap_err().kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&source).unwrap(), b"replacement");
         assert!(!destination.exists());
+    }
+
+    // ---- step 4: copy-publish -------------------------------------------
+    use super::linux_attachment_publish::PublishTarget;
+    use std::ffi::OsStr;
+
+    fn vault() -> tempfile::TempDir {
+        let dir = temporary();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        dir
+    }
+
+    #[test]
+    fn step4_publish_creates_private_new_name_and_never_overwrites() {
+        let dir = vault();
+        let target = PublishTarget::open(dir.path(), true).unwrap();
+        target.publish(OsStr::new("a.png"), b"synthetic-one").unwrap();
+        let path = dir.path().join("attachments/a.png");
+        assert_eq!(fs::read(&path).unwrap(), b"synthetic-one");
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
+        assert_eq!(fs::metadata(dir.path().join("attachments")).unwrap().mode() & 0o777, 0o700);
+        let error = target.publish(OsStr::new("a.png"), b"synthetic-two").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&path).unwrap(), b"synthetic-one");
+        assert!(!target.vacant(OsStr::new("a.png")).unwrap());
+        assert!(target.vacant(OsStr::new("b.png")).unwrap());
+        assert!(target.publish(OsStr::new(".lrk-x"), b"x").is_err());
+        assert!(target.publish(OsStr::new("../x"), b"x").is_err());
+    }
+
+    #[test]
+    fn step4_publish_refuses_symlinked_attachments_and_occupied_link_names() {
+        let dir = vault();
+        let outside = temporary();
+        symlink(outside.path(), dir.path().join("attachments")).unwrap();
+        assert!(PublishTarget::open(dir.path(), true).is_err());
+        fs::remove_file(dir.path().join("attachments")).unwrap();
+        let target = PublishTarget::open(dir.path(), true).unwrap();
+        symlink(outside.path().join("victim"), dir.path().join("attachments/l.png")).unwrap();
+        assert!(!target.vacant(OsStr::new("l.png")).unwrap());
+        assert!(target.publish(OsStr::new("l.png"), b"x").is_err());
+        assert!(!outside.path().join("victim").exists());
+    }
+
+    #[test]
+    fn step4_publish_refuses_unsafe_root_and_busy_lease() {
+        let dir = vault();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(PublishTarget::open(dir.path(), true).is_err());
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let held = PublishTarget::open(dir.path(), true).unwrap();
+        let busy = PublishTarget::open(dir.path(), true).err().unwrap();
+        assert_eq!(busy.kind(), io::ErrorKind::WouldBlock);
+        drop(held);
+        PublishTarget::open(dir.path(), false).unwrap();
+    }
+
+    #[test]
+    fn step4_stream_publish_checks_size_and_digest_and_leaves_no_target() {
+        let dir = vault();
+        let target = PublishTarget::open(dir.path(), true).unwrap();
+        let data = vec![9u8; 200_000];
+        let digest: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
+        assert!(target.publish_from(OsStr::new("v.mp4"), &mut &data[..], 199_999, &digest).is_err());
+        assert!(target.publish_from(OsStr::new("v.mp4"), &mut &data[..], 200_000, &"0".repeat(64)).is_err());
+        assert!(!dir.path().join("attachments/v.mp4").exists());
+        target.publish_from(OsStr::new("v.mp4"), &mut &data[..], 200_000, &digest.to_uppercase()).unwrap();
+        assert_eq!(fs::read(dir.path().join("attachments/v.mp4")).unwrap(), data);
+        // Failed stages are hidden `.lrk-` files and are not removed (no unlink).
+        let stages = fs::read_dir(dir.path().join("attachments")).unwrap()
+            .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with(".lrk-attachment-")).count();
+        assert_eq!(stages, 2); // the two refused attempts; the good stage was renamed
+    }
+
+    // ---- step 4: delete quarantine identity -------------------------------
+    use super::linux_material_delete as delete;
+
+    fn hex(bytes: &[u8]) -> String {
+        Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn step4_quarantine_records_identity_and_restore_is_no_replace() {
+        let dir = vault();
+        let original = dir.path().join("m.bin");
+        let quarantine = dir.path().join(".luckyray-delete-pending-delete-1-m.bin");
+        fs::write(&original, b"synthetic-material").unwrap();
+        let identity = delete::quarantine(&original, &quarantine, &hex(b"synthetic-material")).unwrap();
+        assert!(!original.exists());
+        let records = dir.path().join("identity");
+        delete::write_record(&records, "delete-1", identity).unwrap();
+        assert_eq!(fs::metadata(records.join("delete-1.inode")).unwrap().mode() & 0o777, 0o600);
+        let read = delete::read_record(&records, "delete-1").unwrap();
+        assert_eq!(read, Some(identity));
+        assert!(delete::write_record(&records, "delete-1", identity).is_err());
+        assert!(delete::write_record(&records, "../x", identity).is_err());
+        delete::verify_before_purge(read, &quarantine).unwrap();
+        fs::write(&original, b"occupier").unwrap();
+        assert!(delete::restore(read, &quarantine, &original).is_err());
+        assert_eq!(fs::read(&original).unwrap(), b"occupier");
+        assert_eq!(fs::read(&quarantine).unwrap(), b"synthetic-material");
+        fs::remove_file(&original).unwrap();
+        delete::restore(read, &quarantine, &original).unwrap();
+        assert_eq!(fs::read(&original).unwrap(), b"synthetic-material");
+    }
+
+    #[test]
+    fn step4_quarantine_refuses_link_hardlink_mismatch_and_other_parent() {
+        let dir = vault();
+        let target = dir.path().join("t.bin");
+        fs::write(&target, b"abc").unwrap();
+        let link = dir.path().join("l.bin");
+        symlink(&target, &link).unwrap();
+        assert!(delete::quarantine(&link, &dir.path().join(".q-l"), &hex(b"abc")).is_err());
+        assert!(link.symlink_metadata().is_ok() && target.exists());
+        assert!(delete::quarantine(&target, &dir.path().join(".q-t"), &hex(b"other")).is_err());
+        assert!(target.exists());
+        fs::hard_link(&target, dir.path().join("h.bin")).unwrap();
+        assert!(delete::quarantine(&target, &dir.path().join(".q-t"), &hex(b"abc")).is_err());
+        fs::remove_file(dir.path().join("h.bin")).unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        assert!(delete::quarantine(&target, &dir.path().join("sub/.q-t"), &hex(b"abc")).is_err());
+        fs::write(dir.path().join(".q-t"), b"occupied").unwrap();
+        assert!(delete::quarantine(&target, &dir.path().join(".q-t"), &hex(b"abc")).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"abc");
+        assert_eq!(fs::read(dir.path().join(".q-t")).unwrap(), b"occupied");
+    }
+
+    #[test]
+    fn step4_purge_requires_matching_record() {
+        let dir = vault();
+        let original = dir.path().join("m.bin");
+        let quarantine = dir.path().join(".q-m");
+        fs::write(&original, b"one").unwrap();
+        let identity = delete::quarantine(&original, &quarantine, &hex(b"one")).unwrap();
+        assert!(delete::verify_before_purge(None, &quarantine).is_err());
+        // A swapped object at the quarantine name is refused.
+        fs::rename(&quarantine, dir.path().join("moved")).unwrap();
+        fs::write(&quarantine, b"one").unwrap();
+        assert!(delete::verify_before_purge(Some(identity), &quarantine).is_err());
+        assert!(delete::restore(Some(identity), &quarantine, &original).is_err());
+        assert!(!original.exists());
+        assert!(delete::decode(b"luckyray-delete-identity v1 1 2\n").is_ok());
+        for bad in [&b"luckyray-delete-identity v1 1 2"[..], b"x v1 1 2\n", b"luckyray-delete-identity v1 1 2 3\n"] {
+            assert!(delete::decode(bad).is_err());
+        }
+        assert_eq!(delete::decode(&delete::encode(identity)).unwrap(), identity);
     }
 }

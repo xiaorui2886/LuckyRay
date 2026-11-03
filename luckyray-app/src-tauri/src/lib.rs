@@ -180,6 +180,10 @@ mod linux_managed_record;
 #[cfg(target_os = "linux")]
 mod linux_material_move;
 #[cfg(target_os = "linux")]
+mod linux_attachment_publish;
+#[cfg(target_os = "linux")]
+mod linux_material_delete;
+#[cfg(target_os = "linux")]
 mod linux_directory;
 #[cfg(target_os = "linux")]
 mod linux_credential_admission;
