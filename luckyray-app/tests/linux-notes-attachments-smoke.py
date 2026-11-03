@@ -1940,7 +1940,11 @@ def main():
         # T22: the Director stage is the only WebGL surface in the product. Open
         # it from the canvas creative rail with a real click and read the live
         # context the renderer actually got.
-        ui_click('button[aria-label="3D 导演台"]', seconds=20)
+        # The rail's actions sit in an inert <nav> until the rail is expanded, and
+        # they carry no aria-label: pin the rail open with its handle (v1.9.9
+        # click-to-pin), then click the exact 3D Director action by its text.
+        ui_click('button.canvas-creative-rail-handle', seconds=20)
+        ui_click('.canvas-creative-rail nav button', "3D 导演台布景、机位与镜头预演", seconds=20)
         until("return !!document.querySelector('.director-workspace');", seconds=30)
         action = "director-probe"
         probe = execute(DIRECTOR_PROBE)
