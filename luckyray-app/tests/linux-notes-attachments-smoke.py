@@ -54,7 +54,8 @@ ACTIONS = frozenset(("setup", "session-start", "backend-ready", "vault-setup", "
     "materials-context", "materials-rename-input", "materials-rename-confirm", "materials-rename-files",
     "materials-delete-confirm", "materials-delete-files", "canvas-temporary-scan", "canvas-open-home",
     "canvas-create", "canvas-editor-ready", "canvas-add-node", "canvas-save-shortcut", "canvas-leave-editor",
-    "canvas-reopen-editor", "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
+    "canvas-reopen-editor", "director-open", "director-probe", "director-close",
+    "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
 DRIVER_ERRORS = frozenset(("element click intercepted", "element not interactable", "invalid argument", "invalid element state", "invalid selector",
     "invalid session id", "javascript error", "no such element", "no such window", "stale element reference", "script timeout",
     "timeout", "unknown command", "unknown error", "unsupported operation", "unexpected alert open", "move target out of bounds"))
@@ -92,7 +93,7 @@ CHECKS = ("nativeStartup", "caseDistinctInputContentsRetained", "specialNameImag
           "uiSavePersisted", "reopenPersisted", "absolutePathClipboard", "imagePreviewPixels",
           "attachmentSystemHandoff", "attachmentRenameRewritesNote", "attachmentRenameRollbackUi",
           "materialFileRenamed", "materialDeleteSourceRemoved", "canvasSaveReopen",
-          "canvasStorageHygiene", "quitProcessDisappearance")
+          "directorWebgl", "canvasStorageHygiene", "quitProcessDisappearance")
 # T11: UI-driven attachment maintenance after reopen. Every typed path is a
 # fixed synthetic vault-relative value; nothing user-derived is reported.
 RENAMED_IMAGE_RELATIVE = "attachments/改名 图.png"
@@ -195,7 +196,7 @@ return null;
 """
 
 MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance:not(.attachment-portability)"
-DIAGNOSED_PHASES = frozenset({"material-maintenance", "attachment-rollback", "attachment-rename", "canvas-flow", })
+DIAGNOSED_PHASES = frozenset({"material-maintenance", "attachment-rollback", "attachment-rename", "canvas-flow", "director-webgl", })
 # Read-only: status heading text (mapped to a closed label before export), open dialog label,
 # alert presence, and record option values (compared in-process, never exported).
 DIAGNOSTIC_PROBE = """
@@ -1050,6 +1051,47 @@ def canvas_document_scan(home):
     return documents[:4], max(1, scanned)
 
 
+DIRECTOR_PROBE = """
+const canvas = document.querySelector('canvas[aria-label="3D 导演台视图"], canvas[aria-label="3D stage viewport"]');
+const out = {present: !!canvas, width: 0, height: 0, kind: 'none', renderer: 'unknown', lost: true,
+             probeDrawn: false, probeNonBlack: false, probeColors: 0};
+if (canvas) {
+  out.width = Math.min(canvas.width, 4096);
+  out.height = Math.min(canvas.height, 4096);
+  const gl2 = canvas.getContext('webgl2');
+  const gl = gl2 || canvas.getContext('webgl');
+  if (gl) {
+    out.kind = gl2 ? 'webgl2' : 'webgl1';
+    out.lost = !!gl.isContextLost();
+    let name = '';
+    try {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      if (ext) name = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '');
+    } catch {}
+    if (!name) { try { name = String(gl.getParameter(gl.RENDERER) || ''); } catch {} }
+    const lower = name.toLowerCase();
+    out.renderer = /swiftshader|llvmpipe|softpipe|swrast|software|mesa offscreen/.test(lower) ? 'software'
+                 : (lower ? 'hardware' : 'unknown');
+  }
+}
+const probe = document.createElement('canvas');
+probe.width = 4; probe.height = 4;
+const pgl = probe.getContext('webgl2') || probe.getContext('webgl');
+if (pgl) {
+  pgl.clearColor(0.25, 0.5, 0.75, 1);
+  pgl.clear(pgl.COLOR_BUFFER_BIT);
+  const pixels = new Uint8Array(4 * 4 * 4);
+  pgl.readPixels(0, 0, 4, 4, pgl.RGBA, pgl.UNSIGNED_BYTE, pixels);
+  const seen = new Set();
+  for (let i = 0; i < pixels.length; i += 4) seen.add(pixels[i] + ',' + pixels[i+1] + ',' + pixels[i+2] + ',' + pixels[i+3]);
+  out.probeDrawn = true;
+  out.probeNonBlack = [...seen].some(v => v !== '0,0,0,0' && v !== '0,0,0,255');
+  out.probeColors = Math.min(seen.size, 8);
+}
+return out;
+"""
+
+
 def profile_temporary_scan(home):
     """Bounded name-only walk of the owned profile after both sessions ended.
 
@@ -1114,6 +1156,9 @@ def main():
               "flowCount": 1, "appSessions": 0, "checks": {name: "NOT_RUN" for name in CHECKS},
               "drop": {"transport": "TAURI_EVENT_IPC", "nativePointerDrag": "NOT_RUN", "gestures": 0},
               "previews": [], "previewGeometry": [], "previewToggle": [], "imageCopies": [], "quitRequests": [],
+              "directorWebgl": {"directorCanvasPresent": None, "contextKind": None, "rendererClass": None,
+                                "contextLost": None, "canvasWidth": None, "canvasHeight": None,
+                                "probeDrawn": None, "probeNonBlack": None, "probeColors": None},
               "canvasFlow": {"homeRendered": None, "editorOpened": None, "nodeAdded": None, "savedOnDisk": None,
                              "reopened": None, "nodePresentAfterReopen": None, "documentNodes": None,
                              "temporaryLeftovers": None},
@@ -1889,6 +1934,43 @@ def main():
         require(report["canvasFlow"]["temporaryLeftovers"] == 0,
                 "canvas-storage-temporary-leftover")
         report["checks"]["canvasSaveReopen"] = "PASS"
+
+        phase = "director-webgl"
+        action = "director-open"
+        # T22: the Director stage is the only WebGL surface in the product. Open
+        # it from the canvas creative rail with a real click and read the live
+        # context the renderer actually got.
+        ui_click('button[aria-label="3D 导演台"]', seconds=20)
+        until("return !!document.querySelector('.director-workspace');", seconds=30)
+        action = "director-probe"
+        probe = execute(DIRECTOR_PROBE)
+        probe = probe if isinstance(probe, dict) else {}
+        kind = probe.get("kind") if probe.get("kind") in ("webgl2", "webgl1", "none") else "none"
+        renderer = probe.get("renderer") if probe.get("renderer") in ("software", "hardware", "unknown") else "unknown"
+        width, height = probe.get("width"), probe.get("height")
+        drawn, non_black = probe.get("probeDrawn") is True, probe.get("probeNonBlack") is True
+        colors = probe.get("probeColors")
+        observations = {
+            "directorCanvasPresent": probe.get("present") is True,
+            "contextKind": kind,
+            "rendererClass": renderer,
+            "contextLost": probe.get("lost") is True,
+            "canvasWidth": min(width, 4096) if type(width) is int and width > 0 else 0,
+            "canvasHeight": min(height, 4096) if type(height) is int and height > 0 else 0,
+            "probeDrawn": drawn,
+            "probeNonBlack": non_black,
+            "probeColors": colors if type(colors) is int and 0 <= colors <= 8 else 0,
+        }
+        report["directorWebgl"] = observations
+        require(observations["directorCanvasPresent"], "director-canvas-missing")
+        require(kind == "webgl2", "director-webgl2-unavailable")
+        require(not observations["contextLost"], "director-context-lost")
+        require(observations["canvasWidth"] > 0 and observations["canvasHeight"] > 0, "director-canvas-empty")
+        require(drawn and non_black, "director-probe-not-rendered")
+        report["checks"]["directorWebgl"] = "PASS"
+        action = "director-close"
+        ui_click('button[aria-label="关闭导演台"]', seconds=20)
+        until("return !document.querySelector('.director-workspace');", seconds=20)
 
         phase = "quit"
         stop()

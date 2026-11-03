@@ -40,7 +40,7 @@ EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "nativeM
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",
                     "image-preview", "attachment-open", "reopen", "attachment-rename", "attachment-rollback",
-                    "material-maintenance", "canvas-storage", "canvas-flow", "quit", "unknown"))
+                    "material-maintenance", "canvas-storage", "canvas-flow", "director-webgl", "quit", "unknown"))
 FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready", "backend-not-ready", "production-ipc-rejected", "visible-control-missing",
     "ui-observation-timeout", "drop-target-unavailable", "both-input-notes-not-retained", "case-distinct-content-mismatch",
     "special-name-png-not-retained", "imported-image-resolution-mismatch", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
@@ -52,7 +52,10 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "maintenance-control-rejected", "recovery-records-invalid", "recovery-summary-invalid", "attachment-rename-not-confirmed",
     "attachment-rollback-not-confirmed", "material-catalog-read-invalid", "material-import-not-observed", "material-source-mode-not-applied",
     "material-rename-not-observed", "material-rename-not-confirmed", "material-delete-not-observed", "material-delete-not-confirmed", "material-viewer-opened-by-context-gesture", "context-release-point-unavailable",
-    "canvas-storage-temporary-leftover", "canvas-save-not-on-disk", "canvas-reopen-lost-edit", "control-not-interactable", "unexpected-error"))
+    "canvas-storage-temporary-leftover", "canvas-save-not-on-disk", "canvas-reopen-lost-edit",
+    "director-canvas-missing", "director-webgl2-unavailable", "director-context-lost", "director-canvas-empty",
+    "director-probe-not-rendered", "director-webgl-evidence-missing",
+    "control-not-interactable", "unexpected-error"))
 
 
 def bounded_interactability(raw):
@@ -113,6 +116,29 @@ def validate_native_messaging(observed, scripts):
     require(observed.get("scriptSha256") == scripts["nativeMessaging"],
             "native-messaging-script-identity-changed")
     require(observed.get("roundTripRefusalCode"), "native-messaging-round-trip-no-response")
+
+
+def bounded_director_webgl(raw):
+    """Closed projection of the Director stage's WebGL probe.
+
+    Only a context kind, a renderer *class* (software/hardware), a boolean
+    state and bounded pixel counts leave the report: the full GL_RENDERER or
+    UNMASKED_RENDERER string is never exported, because it identifies the
+    machine's driver stack.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    result = {name: raw.get(name) if type(raw.get(name)) is bool else None
+              for name in ("directorCanvasPresent", "contextLost", "probeDrawn", "probeNonBlack")}
+    kind = raw.get("contextKind")
+    result["contextKind"] = kind if kind in ("webgl2", "webgl1", "none") else None
+    renderer = raw.get("rendererClass")
+    result["rendererClass"] = renderer if renderer in ("software", "hardware", "unknown") else None
+    for name in ("canvasWidth", "canvasHeight"):
+        value = raw.get(name)
+        result[name] = value if type(value) is int and 0 <= value <= 4096 else None
+    colors = raw.get("probeColors")
+    result["probeColors"] = colors if type(colors) is int and 0 <= colors <= 8 else None
+    return result
 
 
 def bounded_canvas_flow(raw):
@@ -423,6 +449,7 @@ def bounded_report(raw):
     result["attachmentMaintenance"] = bounded_maintenance(raw.get("attachmentMaintenance"))
     result["canvasStorage"] = bounded_canvas_storage(raw.get("canvasStorage"))
     result["canvasFlow"] = bounded_canvas_flow(raw.get("canvasFlow"))
+    result["directorWebgl"] = bounded_director_webgl(raw.get("directorWebgl"))
     if "failure" in raw:
         failure = raw["failure"] if isinstance(raw["failure"], dict) else {}
         result["failure"] = {"phase": failure.get("phase") if isinstance(failure.get("phase"), str) and failure["phase"] in PHASES else "unknown",
@@ -490,6 +517,15 @@ def validate_notes(raw, build, source, scripts):
     require([(item["session"], item["found"], item["hit"], item["centerInViewport"]) for item in raw.get("previewGeometry", [])]
             == [(1, True, "SELF", True), (2, True, "SELF", True)], "real-preview-pixel-evidence-missing")
     require(raw.get("attachmentMaintenance") == expected_maintenance(), "attachment-maintenance-ui-evidence-missing")
+    director = raw.get("directorWebgl") or {}
+    require(director.get("directorCanvasPresent") is True
+            and director.get("contextKind") == "webgl2"
+            and director.get("contextLost") is False
+            and director.get("rendererClass") in ("software", "hardware")
+            and type(director.get("canvasWidth")) is int and director["canvasWidth"] > 0
+            and type(director.get("canvasHeight")) is int and director["canvasHeight"] > 0
+            and director.get("probeDrawn") is True and director.get("probeNonBlack") is True,
+            "director-webgl-evidence-missing")
     require(raw.get("canvasFlow") == {"homeRendered": True, "editorOpened": True, "nodeAdded": True,
         "savedOnDisk": True, "reopened": True, "nodePresentAfterReopen": True,
         "documentNodes": 1, "temporaryLeftovers": 0}, "canvas-save-reopen-evidence-missing")

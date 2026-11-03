@@ -382,6 +382,10 @@ class EvidenceTests(unittest.TestCase):
             "attachmentMaintenance": passing_maintenance(),
             "canvasStorage": {"canvasLeftovers": 0, "attachmentLeftovers": 0,
                               "workspaceLeftovers": 0, "directoriesScanned": 5},
+            "directorWebgl": {"directorCanvasPresent": True, "contextKind": "webgl2",
+                              "rendererClass": "software", "contextLost": False,
+                              "canvasWidth": 640, "canvasHeight": 360,
+                              "probeDrawn": True, "probeNonBlack": True, "probeColors": 1},
             "canvasFlow": {"homeRendered": True, "editorOpened": True, "nodeAdded": True,
                            "savedOnDisk": True, "reopened": True, "nodePresentAfterReopen": True,
                            "documentNodes": 1, "temporaryLeftovers": 0}}
@@ -1054,6 +1058,9 @@ class EvidenceTests(unittest.TestCase):
                    and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)]
         self.assertGreater(len(scripts), 10)
         scripts.append(ci.smoke.MEDIA_OPEN_PROBE)
+        # The Director probe references WebGL constants a bare parser cannot know,
+        # but its syntax must still compile in the same engine check.
+        scripts.append(ci.smoke.DIRECTOR_PROBE)
         result = subprocess.run(["node", "-e", "for(const s of JSON.parse(require('fs').readFileSync(0,'utf8')))new Function(s)"],
                                 input=json.dumps(scripts), text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2221,6 +2228,41 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('Err("native-video-preview-unavailable".into())', commands)
         self.assertIn('Err("native-video-platform-unavailable".into())', commands)
 
+    def test_director_webgl_evidence_is_closed_and_never_leaks_the_renderer(self):
+        # T22: the Director stage's GL probe is a closed projection. The full
+        # GL_RENDERER / UNMASKED_RENDERER string identifies the driver stack, so
+        # only a software/hardware class may leave the report.
+        self.assertEqual(ci.bounded_director_webgl({}), {
+            "directorCanvasPresent": None, "contextLost": None, "probeDrawn": None,
+            "probeNonBlack": None, "contextKind": None, "rendererClass": None,
+            "canvasWidth": None, "canvasHeight": None, "probeColors": None})
+        passing = {"directorCanvasPresent": True, "contextLost": False, "probeDrawn": True,
+                   "probeNonBlack": True, "contextKind": "webgl2", "rendererClass": "software",
+                   "canvasWidth": 640, "canvasHeight": 360, "probeColors": 1}
+        self.assertEqual(ci.bounded_director_webgl(passing), passing)
+        self.assertEqual(ci.bounded_director_webgl(ci.bounded_director_webgl(passing)), passing)
+        driver = "ANGLE (Mesa, llvmpipe (LLVM 15.0.7, 256 bits), OpenGL 4.5)"
+        leaked = dict(passing, renderer=driver, vendor=driver, rendererString=driver,
+                      contextKind="webgl2 (llvmpipe)", probeColors=99, canvasWidth=10**9)
+        projected = ci.bounded_director_webgl(leaked)
+        self.assertEqual(projected["contextKind"], None)
+        self.assertEqual(projected["canvasWidth"], None)
+        self.assertEqual(projected["probeColors"], None)
+        for token in ("llvmpipe", "ANGLE", "LLVM", "Mesa"):
+            self.assertNotIn(token, json.dumps(projected))
+        # A failing probe must fail the notes gate with its own code, never pass.
+        for name, value in (("directorCanvasPresent", False), ("contextKind", "webgl1"),
+                            ("contextKind", "none"), ("contextLost", True),
+                            ("probeDrawn", False), ("probeNonBlack", False),
+                            ("canvasWidth", 0), ("rendererClass", "unknown")):
+            broken = dict(passing); broken[name] = value
+            fixture = EvidenceTests(methodName="runTest"); fixture.setUp()
+            fixture.raw["directorWebgl"] = broken
+            projected = ci.bounded_report(fixture.raw)
+            with self.subTest(field=name, value=value), self.assertRaisesRegex(
+                    RuntimeError, "director-webgl-evidence-missing"):
+                ci.validate_notes(projected, fixture.build, fixture.source, fixture.scripts)
+
     def test_canvas_flow_evidence_is_closed_and_required(self):
         # T18: every step of the real-UI canvas save/reopen flow is a closed
         # boolean, the document node count and the temporary leftovers are
@@ -2363,7 +2405,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] == 0', smoke)
         self.assertIn('"attachmentLeftovers": min(leftovers[1], 8)', smoke)
         gate = (Path(__file__).resolve().parents[1] / "tests/linux-notes-ci.py").read_text()
-        self.assertIn('"canvas-storage", "canvas-flow", "quit"', gate)
+        self.assertIn('"canvas-storage", "canvas-flow", "director-webgl", "quit"', gate)
         self.assertIn('"canvas-storage-temporary-leftover"', gate)
         self.assertIn('"attachmentLeftovers", "workspaceLeftovers",', gate)
 
