@@ -44,7 +44,7 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "ui-observation-timeout", "drop-target-unavailable", "both-input-notes-not-retained", "case-distinct-content-mismatch",
     "special-name-png-not-retained", "imported-image-resolution-mismatch", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
     "preview-not-visible", "preview-pixels-mismatch", "screenshot-invalid", "screenshot-size-invalid",
-    "image-outside-screenshot", "attachment-open-not-interactable", "attachment-open-ui-not-observed", "attachment-detail-target-mismatch", "attachment-open-control-mismatch",
+    "image-outside-screenshot", "attachment-open-not-interactable", "attachment-open-ui-not-observed", "attachment-detail-target-mismatch", "attachment-note-only-opened-detail", "attachment-open-control-mismatch",
     "attachment-receiver-not-observed", "attachment-handoff-mismatch",
     "reopen-file-content-mismatch", "quit-process-remained", "quit-already-attempted", "driver-cleanup-incomplete",
     "webdriver-command-failed", "editor-not-ready", "editor-input-mismatch", "maintenance-precondition-mismatch",
@@ -346,6 +346,8 @@ def bounded_report(raw):
                              "code": failure.get("code") if isinstance(failure.get("code"), str) and failure["code"] in FAILURES else "unexpected-error"}
         if "webdriver" in failure:
             result["failure"]["webdriver"] = bounded_driver(failure["webdriver"])
+        if "observed" in failure:
+            result["failure"]["observed"] = smoke.bounded_observed(failure["observed"])
         if "interactability" in failure:
             result["failure"]["interactability"] = bounded_interactability(failure["interactability"])
     if "unconfirmedCopy" in raw:
@@ -362,7 +364,7 @@ def expected_maintenance():
     for name, (fixed, flags, counts) in smoke.MAINTENANCE_FIELDS.items():
         result[name] = {**fixed, **{flag: True for flag in flags}}
     result["noteRename"].update(newRecords=1, tombstones=1, materialAssetIdShape={
-        "first": "NULL", "final": "NULL", "waitedSeconds": smoke.ASSET_ID_SETTLE_SECONDS})
+        "before": "NULL", "first": "NULL", "final": "NULL", "waitedSeconds": smoke.ASSET_ID_SETTLE_SECONDS})
     result["rollback"]["tombstones"] = 0
     result["materialDelete"]["quarantineLeftovers"] = 0
     result["notRun"] = dict(smoke.MAINTENANCE_NOT_RUN)

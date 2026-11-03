@@ -57,7 +57,7 @@ def passing_maintenance():
     return {"noteRename": {"method": "REAL_SETTINGS_UI", "inputMethod": "DOM_VALUE_EVENT", "reviewShown": True, "statusComplete": True,
                            "newFileDigestMatches": True, "oldPathGone": True, "noteLinkRewritten": True, "noteOtherwiseUnchanged": True,
                            "productionResolved": True, "materialAssetNoteOnly": True, "newRecords": 1, "tombstones": 1,
-                           "materialAssetIdShape": {"first": "NULL", "final": "NULL", "waitedSeconds": 20}},
+                           "materialAssetIdShape": {"before": "NULL", "first": "NULL", "final": "NULL", "waitedSeconds": 20}},
             "rollback": {"method": "REAL_RECOVERY_UI", "recordListed": True, "statusRolledBack": True, "oldFileRestored": True,
                          "noteBytesRestored": True, "renamedCopyRetained": True, "productionResolved": True, "tombstones": 0},
             "materialRename": {"method": "REAL_MATERIAL_CONTEXT_MENU", "inputMethod": "DOM_VALUE_EVENT", "importModeChosenInUi": True,
@@ -190,9 +190,38 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
         self.assertEqual(shape({"materialAssetId": "asset-2"}, "asset-1"), "NEW_ASSET_PREFIX")
         self.assertEqual(shape({"materialAssetId": "/home/runner/secret"}, "asset-1"), "OTHER")
         bounded = ci.smoke.bounded_asset_id_shape({"first": "asset-9", "final": "NULL", "waitedSeconds": 999, "x": 1})
-        self.assertEqual(bounded, {"first": "INVALID", "final": "NULL", "waitedSeconds": None})
+        self.assertEqual(bounded, {"before": "INVALID", "first": "INVALID", "final": "NULL", "waitedSeconds": None})
         projected = ci.bounded_maintenance({"noteRename": {"materialAssetIdShape": {"first": "SAME_AS_ORIGINAL", "final": "SAME_AS_ORIGINAL", "waitedSeconds": 0}}})
         self.assertNotEqual(projected, ci.expected_maintenance())
+
+    def test_note_only_precondition_requires_pre_rename_null(self):
+        # v1.9.9: a dropped image is note-only before the rename too; a string pre-id must fail the expectation.
+        expected = ci.expected_maintenance()
+        self.assertEqual(expected["noteRename"]["materialAssetIdShape"]["before"], "NULL")
+        for before in ("OTHER", "SAME_AS_ORIGINAL"):
+            raw = passing_maintenance()
+            raw["noteRename"]["materialAssetIdShape"]["before"] = before
+            self.assertNotEqual(ci.bounded_maintenance(raw), expected)
+        smoke_src = open(ci.smoke.__file__, encoding="utf-8").read()
+        self.assertIn('rename["materialAssetNoteOnly"] = (image_identity["materialAssetId"] is None', smoke_src)
+
+    def test_failure_diagnostics_are_closed_and_redacted(self):
+        canary = "/home/runner/secret-canary"
+        raw = {"maintenanceStatus": "回滚引用变更 · 引用变更已回滚", "openDialog": canary, "oldFile": "MATCH", "newFile": canary,
+               "maintenanceAlert": "yes", "recordOptionPresent": True, "recordCount": 99, "tombstones": 1, "path": canary,
+               "storageMode": "source", "catalogLibraryPath": canary, "quarantineLeftovers": 0}
+        bounded = ci.smoke.bounded_observed(raw)
+        self.assertEqual(bounded, {"maintenanceStatus": "INVALID", "openDialog": "INVALID", "storageMode": "source",
+                                   "catalogLibraryPath": "INVALID", "oldFile": "MATCH", "newFile": "INVALID",
+                                   "maintenanceAlert": None, "recordOptionPresent": True, "recordCount": None,
+                                   "tombstones": 1, "quarantineLeftovers": 0})
+        self.assertNotIn(canary, json.dumps(bounded, ensure_ascii=False))
+        report = {"schemaVersion": 1, "status": "FAIL", "failure": {"phase": "attachment-rollback", "action": "recovery-rollback",
+                  "code": "attachment-rollback-not-confirmed", "observed": dict(raw, maintenanceStatus="ROLLBACK_PARTIAL")}}
+        projected = ci.bounded_report(report)["failure"]["observed"]
+        self.assertEqual(projected["maintenanceStatus"], "ROLLBACK_PARTIAL")
+        self.assertNotIn(canary, json.dumps(projected, ensure_ascii=False))
+        self.assertEqual(ci.smoke.MAINTENANCE_STATUS_LABELS["回滚引用变更 · 引用变更已回滚"], "ROLLED_BACK")
 
     def test_maintenance_panel_excludes_portability_details(self):
         # Both <details> carry .vault-attachment-maintenance; the portability one comes first in the DOM.

@@ -118,7 +118,62 @@ def asset_id_shape(resolved, original):
     return "OTHER"
 
 
+# Closed, redacted diagnostics for the later phases. Every value is an enum or a
+# capped count; no path, id, text or byte ever leaves the run.
+FILE_STATES = ("MISSING", "MATCH", "DIFFERENT")
+MAINTENANCE_STATUS_LABELS = {
+    "移动或重命名附件 · 请确认影响范围": "RENAME_REVIEW", "移动或重命名附件 · 已完成": "RENAME_COMPLETE",
+    "移动或重命名附件 · 未完成": "RENAME_FAILED", "回滚引用变更 · 引用变更已回滚": "ROLLED_BACK",
+    "回滚引用变更 · 部分完成，可继续或恢复": "ROLLBACK_PARTIAL", "回滚引用变更 · 未完成": "ROLLBACK_FAILED",
+    "回滚引用变更 · 正在处理": "ROLLBACK_RUNNING", "回滚引用变更 · 正在检查": "ROLLBACK_PLANNING"}
+DIALOG_LABELS = {"选择素材管理方式": "IMPORT_MODE", "重命名真实文件": "RENAME_FILE", "确定": "CONFIRM"}
+OBSERVED_ENUMS = {
+    "maintenanceStatus": ("ABSENT", "OTHER", *MAINTENANCE_STATUS_LABELS.values()),
+    "openDialog": ("NONE", "OTHER", *DIALOG_LABELS.values()),
+    "resolveStatus": ("RESOLVED_EXPECTED", "RESOLVED_OTHER", "NOT_RESOLVED", "INVALID"),
+    "storageMode": ("ABSENT", "OTHER", "managed", "linked", "source"),
+    "catalogOriginalPath": ("ABSENT", "OTHER", "SOURCE", "RENAMED"),
+    "catalogLibraryPath": ("ABSENT", "OTHER", "SOURCE", "RENAMED"),
+    **{name: FILE_STATES for name in ("oldFile", "newFile", "note", "materialSource", "materialRenamed")}}
+OBSERVED_FLAGS = ("maintenanceAlert", "recordOptionPresent")
+OBSERVED_COUNTS = ("recordCount", "tombstones", "materialMatches", "quarantineLeftovers")
+
+
+def bounded_observed(raw):
+    """Projection of the failure diagnostics: unknown keys dropped, bad values INVALID/None."""
+    raw = raw if isinstance(raw, dict) else {}
+    result = {}
+    for key, allowed in OBSERVED_ENUMS.items():
+        if key in raw:
+            result[key] = raw[key] if raw[key] in allowed else "INVALID"
+    for key in OBSERVED_FLAGS:
+        if key in raw:
+            result[key] = raw[key] if type(raw[key]) is bool else None
+    for key in OBSERVED_COUNTS:
+        if key in raw:
+            result[key] = raw[key] if type(raw[key]) is int and 0 <= raw[key] <= 8 else None
+    return result
+
+
+def file_state(path, expected):
+    try:
+        return "MATCH" if path.read_bytes() == expected else "DIFFERENT"
+    except OSError:
+        return "MISSING"
+
+
 MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance:not(.attachment-portability)"
+DIAGNOSED_PHASES = frozenset({"material-maintenance", "attachment-rollback", "attachment-rename", })
+# Read-only: status heading text (mapped to a closed label before export), open dialog label,
+# alert presence, and record option values (compared in-process, never exported).
+DIAGNOSTIC_PROBE = """
+const panel=document.querySelector(arguments[0]);
+const dialogs=[...document.querySelectorAll('[role=dialog][aria-label]')];
+return {status:panel?.querySelector('.vault-attachment-state > strong')?.textContent.trim()??null,
+        alert:!!panel?.querySelector('[role=alert]'),
+        dialog:dialogs.length?dialogs[dialogs.length-1].getAttribute('aria-label'):null,
+        options:panel?[...panel.querySelectorAll('.vault-attachment-form select option')].map(o=>o.value):[]};
+"""
 SET_CONTROL_VALUE = """
 const e=[...document.querySelectorAll(arguments[0])].find(x=>x.getBoundingClientRect().width>0&&(!(x instanceof HTMLSelectElement)||[...x.options].some(o=>o.value===arguments[1])));
 if(!e||e.disabled)return false;
@@ -814,7 +869,8 @@ def bounded_asset_id_shape(raw):
         return None
     raw = raw if isinstance(raw, dict) else {}
     waited = raw.get("waitedSeconds")
-    return {"first": raw.get("first") if raw.get("first") in ASSET_ID_SHAPES else "INVALID",
+    return {"before": raw.get("before") if raw.get("before") in ASSET_ID_SHAPES else "INVALID",
+            "first": raw.get("first") if raw.get("first") in ASSET_ID_SHAPES else "INVALID",
             "final": raw.get("final") if raw.get("final") in ASSET_ID_SHAPES else "INVALID",
             "waitedSeconds": waited if type(waited) is int and 0 <= waited <= ASSET_ID_SETTLE_SECONDS else None}
 
@@ -918,6 +974,7 @@ def main():
     http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     session, phase, action = None, "synthetic-setup", "setup"
     image_identity = {"materialAssetId": None}
+    diag, observed = {}, {}
     report = {"schemaVersion": 1, "status": "FAIL", "scope": SCOPE, "commit": os.environ.get("GITHUB_SHA"),
               "applicationSha256": digest(binary), "scriptSha256": digest(Path(__file__)),
               "helperSha256": digest(Path(__file__).with_name("linux-desktop-smoke.py")),
@@ -1128,6 +1185,53 @@ def main():
         require(isinstance(value, list), "material-catalog-read-invalid")
         return value
 
+    def snapshot_diagnostics():
+        """Read-only, best-effort failure snapshot; each probe may fail on its own."""
+        result = dict(observed)
+        for key in ("oldFile", "newFile", "note", "materialSource", "materialRenamed"):
+            if key in diag:
+                result[key] = file_state(*diag[key])
+        def attempt(fn):
+            try:
+                fn()
+            except Exception:
+                pass
+        def ui():
+            value = execute(DIAGNOSTIC_PROBE, [MAINTENANCE_PANEL])
+            value = value if isinstance(value, dict) else {}
+            text, label = value.get("status"), value.get("dialog")
+            result["maintenanceStatus"] = "ABSENT" if text is None else MAINTENANCE_STATUS_LABELS.get(text, "OTHER")
+            result["openDialog"] = "NONE" if label is None else DIALOG_LABELS.get(label, "OTHER")
+            result["maintenanceAlert"] = value.get("alert") is True
+            options = value.get("options") if isinstance(value.get("options"), list) else []
+            result["recordOptionPresent"] = bool(diag.get("record")) and diag.get("record") in options
+        def records():
+            listed = invoke("knowledge_list_attachment_operations", {"vaultId": created_vault["id"]})
+            result["recordCount"] = min(len(listed), 8) if isinstance(listed, list) else None
+        def recovery():
+            result["tombstones"] = tombstones()
+        def catalog():
+            assets = [item for item in material_assets() if isinstance(item, dict) and item.get("id") == diag["assetId"]]
+            result["materialMatches"] = min(len(assets), 8)
+            item = assets[0] if len(assets) == 1 else {}
+            mode = item.get("storageMode")
+            result["storageMode"] = "ABSENT" if mode is None else mode if mode in ("managed", "linked", "source") else "OTHER"
+            paths = {str(diag["materialSource"][0]): "SOURCE", str(diag["materialRenamed"][0]): "RENAMED"}
+            for key, field in (("catalogOriginalPath", "originalPath"), ("catalogLibraryPath", "libraryPath")):
+                result[key] = "ABSENT" if not item.get(field) else paths.get(item.get(field), "OTHER")
+        def leftovers():
+            result["quarantineLeftovers"] = min(sum(1 for path in diag["materialDir"].iterdir()
+                                                    if path.name.startswith(DELETE_QUARANTINE_PREFIX)), 8)
+        attempt(ui)
+        if created_vault:
+            attempt(records)
+            attempt(recovery)
+        if "assetId" in diag:
+            attempt(catalog)
+        if "materialDir" in diag:
+            attempt(leftovers)
+        return result
+
     def verify_image_copy(expected_note_content):
         nonlocal action
         action = "image-copy-check"
@@ -1313,6 +1417,9 @@ def main():
         route = "NOTE_PREVIEW_OPEN"
         if not receiver.is_file():
             action = "attachment-detail-check"
+            # A note-only image (no materialAssetId; NotesPage.tsx assetId falls back to the
+            # vault-prefixed id) has no catalog inspector to open in v1.9.9.
+            require(image_identity["materialAssetId"] is not None, "attachment-note-only-opened-detail")
             observed_asset = execute("return document.querySelector(arguments[0])?.dataset.materialNativeAsset||null;", [detail_selector])
             require(isinstance(image_identity["materialAssetId"], str) and observed_asset == image_identity["materialAssetId"],
                     "attachment-detail-target-mismatch")
@@ -1349,6 +1456,7 @@ def main():
         # Real Knowledge settings UI: 附件维护 → 移动或重命名附件 → review → 确认执行.
         old_file, new_file = vault / COPIED_IMAGE_RELATIVE, vault / RENAMED_IMAGE_RELATIVE
         before_rename = upper.read_bytes()
+        diag.update(oldFile=(old_file, png_bytes()), newFile=(new_file, png_bytes()), note=(upper, before_rename))
         require(before_rename == expected.encode() and not new_file.exists(), "maintenance-precondition-mismatch")
         records_before = invoke("knowledge_list_attachment_operations", {"vaultId": created_vault["id"]})
         require(isinstance(records_before, list), "recovery-records-invalid")
@@ -1396,8 +1504,12 @@ def main():
             time.sleep(1)
             shape = asset_id_shape(resolve(destination), image_identity["materialAssetId"])  # read-only, idempotent
             waited = time.monotonic() - started
-        rename["materialAssetIdShape"] = {"first": first_shape, "final": shape, "waitedSeconds": min(int(waited), ASSET_ID_SETTLE_SECONDS)}
-        rename["materialAssetNoteOnly"] = (isinstance(image_identity["materialAssetId"], str)
+        before_shape = "NULL" if image_identity["materialAssetId"] is None else "OTHER"
+        rename["materialAssetIdShape"] = {"before": before_shape, "first": first_shape, "final": shape, "waitedSeconds": min(int(waited), ASSET_ID_SETTLE_SECONDS)}
+        # v1.9.9 precondition: the drop-copied image was registered note-only too
+        # (register_note_attachment(path, None) -> ordinary=0), so resolve reported no
+        # materialAssetId before the rename either. Pre NULL, post NULL/NULL; nothing else.
+        rename["materialAssetNoteOnly"] = (image_identity["materialAssetId"] is None
                                            and first_shape == "NULL" and shape == "NULL")
         records_after = invoke("knowledge_list_attachment_operations", {"vaultId": created_vault["id"]})
         require(isinstance(records_after, list), "recovery-records-invalid")
@@ -1414,6 +1526,7 @@ def main():
         set_value(action_select, "recover")
         until("return [...document.querySelectorAll(arguments[0]+' option')].some(o=>o.value===arguments[1]);",
               [action_select, new_records[0]], seconds=20)
+        diag["record"] = new_records[0]
         maintenance["rollback"]["recordListed"] = True
         action = "recovery-select"
         set_value(action_select, new_records[0])
@@ -1432,6 +1545,10 @@ def main():
         rollback["productionResolved"] = (isinstance(restored, dict) and restored.get("status") == "resolved"
             and restored.get("relativePath") == COPIED_IMAGE_RELATIVE and restored.get("absolutePath") == str(old_file.resolve()))
         rollback["tombstones"] = tombstones()
+        observed["resolveStatus"] = "RESOLVED_EXPECTED" if rollback["productionResolved"] else (
+            "RESOLVED_OTHER" if isinstance(restored, dict) and restored.get("status") == "resolved" else
+            "NOT_RESOLVED" if isinstance(restored, dict) else "INVALID")
+        observed["tombstones"] = rollback["tombstones"]
         require(maintenance_passed(maintenance, "rollback") and rollback["tombstones"] == 0, "attachment-rollback-not-confirmed")
         report["checks"]["attachmentRenameRollbackUi"] = "PASS"
         phase = "material-maintenance"
@@ -1440,6 +1557,8 @@ def main():
         material_source, material_renamed = material_dir / MATERIAL_SOURCE_NAME, material_dir / MATERIAL_RENAMED_NAME
         material_source.write_bytes(png_bytes(MATERIAL_COLOR))
         material_inode = material_source.stat().st_ino
+        diag.update(materialSource=(material_source, png_bytes(MATERIAL_COLOR)), materialRenamed=(material_renamed, png_bytes(MATERIAL_COLOR)),
+                    materialDir=material_dir)
         action = "materials-open"
         # Close the settings dialog with its real close button before leaving Notes.
         ui_click(".notes-vault-dialog .editorial-dialog-close")
@@ -1467,6 +1586,7 @@ def main():
             return len(found["assets"]) == 1
         require(helpers.wait_until(imported, 30), "material-import-not-observed")
         asset = found["assets"][0]
+        diag["assetId"] = asset.get("id")
         asset_id = asset.get("id")
         require(isinstance(asset_id, str) and asset_id, "material-import-not-observed")
         maintenance["materialRename"]["storageModeSource"] = asset.get("storageMode") == "source"
@@ -1492,7 +1612,10 @@ def main():
                         newDigestMatches=material_renamed.read_bytes() == png_bytes(MATERIAL_COLOR),
                         sameInode=material_renamed.stat().st_ino == material_inode)
         current = [item for item in material_assets() if isinstance(item, dict) and item.get("id") == asset_id]
-        material["catalogPathUpdated"] = len(current) == 1 and (current[0].get("libraryPath") or current[0].get("originalPath")) == str(material_renamed)
+        # v1.9.9 catalog.rs rename_asset_file_internal: a source-mode asset stores the new path in
+        # BOTH original_path and library_path. Require both.
+        material["catalogPathUpdated"] = (len(current) == 1 and current[0].get("libraryPath") == str(material_renamed)
+                                          and current[0].get("originalPath") == str(material_renamed))
         require(maintenance_passed(maintenance, "materialRename"), "material-rename-not-confirmed")
         report["checks"]["materialFileRenamed"] = "PASS"
         action = "materials-context"
@@ -1520,6 +1643,11 @@ def main():
     except Exception as error:
         # No arbitrary native error, URL, clipboard contents or user path is exported.
         report["failure"] = {"phase": phase, "action": action, "code": str(error) if isinstance(error, SmokeFailure) else "unexpected-error"}
+        if phase in DIAGNOSED_PHASES:
+            try:
+                report["failure"]["observed"] = bounded_observed(snapshot_diagnostics())
+            except Exception:
+                report["failure"]["observed"] = {}
         if isinstance(error, DriverFailure):
             report["failure"]["webdriver"] = error.observation
         if isinstance(report.get("interactability"), dict):
