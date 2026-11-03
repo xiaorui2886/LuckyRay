@@ -1113,6 +1113,30 @@ class ForwardingDiagnosticsTests(unittest.TestCase):
             (source / "extra").symlink_to(root, target_is_directory=True)
             with self.assertRaises(RuntimeError):ci.driver_source.verify_closure(source)
 
+    def test_prepared_driver_keeps_no_idle_upstream_connection_and_never_retries(self):
+        # CI 41558569342: connect=false io=CONNECTION_RESET 3 ms into a request with every
+        # process alive, i.e. a request written onto a stale pooled upstream socket.
+        source = ci.driver_source
+        main = "mod cli;\nmod server;\nmod webdriver;\n"
+        server = ("  client\n" + source.FORWARD_ANCHOR + "\n    .await\n}\n"
+                  "  let client = Client::builder(TokioExecutor::new())\n    .http1_title_case_headers(true)\n"
+                  + source.POOL_ANCHOR + "\n")
+        patched_main, patched = source.patch_sources(main, server)
+        self.assertEqual(patched_main.count("mod luckyray_forward_diagnostics;"), 1)
+        self.assertIn("    .retry_canceled_requests(false)\n    .pool_max_idle_per_host(0)\n    .build_http();", patched)
+        self.assertEqual(patched.count("pool_max_idle_per_host"), 1)
+        self.assertEqual(patched.count(".inspect_err(crate::luckyray_forward_diagnostics::emit)"), 1)
+        self.assertNotIn("retry_canceled_requests(true)", patched)
+        self.assertNotIn("retry", patched.replace("retry_canceled_requests(false)", ""))
+        self.assertIn("NO_IDLE_UPSTREAM_POOL", source.KIND)
+        for broken in (server.replace(source.POOL_ANCHOR, ""), server + source.POOL_ANCHOR,
+                       server.replace(source.FORWARD_ANCHOR, ""), server + "    .pool_max_idle_per_host(8)\n",
+                       server + "    .retry_canceled_requests(true)\n"):
+            with self.subTest(broken=len(broken)), self.assertRaisesRegex(RuntimeError, "pinned-driver-source-invalid"):
+                source.patch_sources(main, broken)
+        with self.assertRaises(RuntimeError):
+            source.patch_sources(main + "mod server;\n", server)
+
 
 class ComponentLayoutGateTests(unittest.TestCase):
     def setUp(self):
