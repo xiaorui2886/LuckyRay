@@ -73,6 +73,8 @@ def bounded_maintenance(raw):
         item = {key: expected if value.get(key) == expected else "INVALID" for key, expected in fixed.items()}
         item.update({flag: value.get(flag) if type(value.get(flag)) is bool else None for flag in flags})
         item.update({count: value.get(count) if type(value.get(count)) is int and 0 <= value[count] <= 8 else None for count in counts})
+        if name == "noteRename":
+            item["materialAssetIdShape"] = smoke.bounded_asset_id_shape(value.get("materialAssetIdShape"))
         result[name] = item
     not_run = raw.get("notRun") if isinstance(raw.get("notRun"), dict) else {}
     result["notRun"] = {name: expected if not_run.get(name) == expected else "INVALID" for name, expected in smoke.MAINTENANCE_NOT_RUN.items()}
@@ -359,7 +361,8 @@ def expected_maintenance():
     result = {}
     for name, (fixed, flags, counts) in smoke.MAINTENANCE_FIELDS.items():
         result[name] = {**fixed, **{flag: True for flag in flags}}
-    result["noteRename"].update(newRecords=1, tombstones=1)
+    result["noteRename"].update(newRecords=1, tombstones=1, materialAssetIdShape={
+        "first": "NULL", "final": "NULL", "waitedSeconds": smoke.ASSET_ID_SETTLE_SECONDS})
     result["rollback"]["tombstones"] = 0
     result["materialDelete"]["quarantineLeftovers"] = 0
     result["notRun"] = dict(smoke.MAINTENANCE_NOT_RUN)

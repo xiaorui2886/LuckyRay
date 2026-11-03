@@ -56,7 +56,8 @@ def passing_maintenance():
     """Literal T11 evidence; deliberately not derived from the validator."""
     return {"noteRename": {"method": "REAL_SETTINGS_UI", "inputMethod": "DOM_VALUE_EVENT", "reviewShown": True, "statusComplete": True,
                            "newFileDigestMatches": True, "oldPathGone": True, "noteLinkRewritten": True, "noteOtherwiseUnchanged": True,
-                           "productionResolved": True, "materialAssetReregistered": True, "newRecords": 1, "tombstones": 1},
+                           "productionResolved": True, "materialAssetNoteOnly": True, "newRecords": 1, "tombstones": 1,
+                           "materialAssetIdShape": {"first": "NULL", "final": "NULL", "waitedSeconds": 20}},
             "rollback": {"method": "REAL_RECOVERY_UI", "recordListed": True, "statusRolledBack": True, "oldFileRestored": True,
                          "noteBytesRestored": True, "renamedCopyRetained": True, "productionResolved": True, "tombstones": 0},
             "materialRename": {"method": "REAL_MATERIAL_CONTEXT_MENU", "inputMethod": "DOM_VALUE_EVENT", "importModeChosenInUi": True,
@@ -181,9 +182,22 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
         self.assertEqual(projected["code"], "control-not-interactable")
         self.assertNotIn("secret", json.dumps(projected))
 
+    def test_asset_id_shape_is_closed_and_redacted(self):
+        shape = ci.smoke.asset_id_shape
+        self.assertEqual(shape({"materialAssetId": None}, "asset-1"), "NULL")
+        self.assertEqual(shape({}, "asset-1"), "NULL")
+        self.assertEqual(shape({"materialAssetId": "asset-1"}, "asset-1"), "SAME_AS_ORIGINAL")
+        self.assertEqual(shape({"materialAssetId": "asset-2"}, "asset-1"), "NEW_ASSET_PREFIX")
+        self.assertEqual(shape({"materialAssetId": "/home/runner/secret"}, "asset-1"), "OTHER")
+        bounded = ci.smoke.bounded_asset_id_shape({"first": "asset-9", "final": "NULL", "waitedSeconds": 999, "x": 1})
+        self.assertEqual(bounded, {"first": "INVALID", "final": "NULL", "waitedSeconds": None})
+        projected = ci.bounded_maintenance({"noteRename": {"materialAssetIdShape": {"first": "SAME_AS_ORIGINAL", "final": "SAME_AS_ORIGINAL", "waitedSeconds": 0}}})
+        self.assertNotEqual(projected, ci.expected_maintenance())
+
     def test_maintenance_panel_excludes_portability_details(self):
         # Both <details> carry .vault-attachment-maintenance; the portability one comes first in the DOM.
-        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "features", "notes", "AttachmentPortabilitySection.tsx"), encoding="utf-8").read()
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "features", "notes", "AttachmentPortabilitySection.tsx"), encoding="utf-8") as stream:
+            src = stream.read()
         self.assertIn('className=\"vault-attachment-maintenance attachment-portability\"', src)
         self.assertIn(":not(.attachment-portability)", ci.smoke.MAINTENANCE_PANEL)
 

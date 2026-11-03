@@ -102,6 +102,22 @@ IMAGE_LINK = re.compile(r"!\[synthetic PNG\]\((<[^<>\n]*>|[^()\s]*)\)")
 MAINTENANCE_NOT_RUN = {"deleteQuarantineIntermediate": "OFFLINE_ONLY", "crashResume": "OFFLINE_ONLY",
                        "legacyConversion": "NOT_RUN", "noteMove": "NOT_RUN", "materialCrossDirectoryMove": "NOT_RUN",
                        "materialInsertCopyPublish": "NOT_RUN"}
+ASSET_ID_SHAPES = ("NULL", "SAME_AS_ORIGINAL", "NEW_ASSET_PREFIX", "OTHER")
+ASSET_ID_SETTLE_SECONDS = 20
+
+
+def asset_id_shape(resolved, original):
+    """Closed, redacted shape of a resolved materialAssetId; never the id itself."""
+    value = resolved.get("materialAssetId") if isinstance(resolved, dict) else None
+    if value is None:
+        return "NULL"
+    if isinstance(value, str) and isinstance(original, str) and value == original:
+        return "SAME_AS_ORIGINAL"
+    if isinstance(value, str) and value.startswith("asset") and len(value) <= 128:
+        return "NEW_ASSET_PREFIX"
+    return "OTHER"
+
+
 MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance:not(.attachment-portability)"
 SET_CONTROL_VALUE = """
 const e=[...document.querySelectorAll(arguments[0])].find(x=>x.getBoundingClientRect().width>0&&(!(x instanceof HTMLSelectElement)||[...x.options].some(o=>o.value===arguments[1])));
@@ -772,7 +788,7 @@ def image_copy_probe(vault, source_image, note_content, expected_note_content):
 MAINTENANCE_FIELDS = {
     "noteRename": ({"method": "REAL_SETTINGS_UI", "inputMethod": "DOM_VALUE_EVENT"},
                    ("reviewShown", "statusComplete", "newFileDigestMatches", "oldPathGone", "noteLinkRewritten",
-                    "noteOtherwiseUnchanged", "productionResolved", "materialAssetReregistered"), ("newRecords", "tombstones")),
+                    "noteOtherwiseUnchanged", "productionResolved", "materialAssetNoteOnly"), ("newRecords", "tombstones")),
     "rollback": ({"method": "REAL_RECOVERY_UI"},
                  ("recordListed", "statusRolledBack", "oldFileRestored", "noteBytesRestored", "renamedCopyRetained",
                   "productionResolved"), ("tombstones",)),
@@ -787,8 +803,20 @@ MAINTENANCE_FIELDS = {
 def maintenance_template():
     result = {name: {**fixed, **{flag: None for flag in flags}, **{count: None for count in counts}}
               for name, (fixed, flags, counts) in MAINTENANCE_FIELDS.items()}
+    result["noteRename"]["materialAssetIdShape"] = None
     result["notRun"] = dict(MAINTENANCE_NOT_RUN)
     return result
+
+
+def bounded_asset_id_shape(raw):
+    """Closed enums plus a whole-second wait capped at the settle window; anything else is INVALID."""
+    if raw is None:
+        return None
+    raw = raw if isinstance(raw, dict) else {}
+    waited = raw.get("waitedSeconds")
+    return {"first": raw.get("first") if raw.get("first") in ASSET_ID_SHAPES else "INVALID",
+            "final": raw.get("final") if raw.get("final") in ASSET_ID_SHAPES else "INVALID",
+            "waitedSeconds": waited if type(waited) is int and 0 <= waited <= ASSET_ID_SETTLE_SECONDS else None}
 
 
 def maintenance_passed(section, name):
@@ -1357,11 +1385,20 @@ def main():
         resolved = resolve(destination) if destination is not None else None
         rename["productionResolved"] = (isinstance(resolved, dict) and resolved.get("status") == "resolved"
             and resolved.get("relativePath") == RENAMED_IMAGE_RELATIVE and resolved.get("absolutePath") == str(new_file.resolve()))
-        # Windows v1.9.9 (shared code, unchanged on this branch): a plain attachment rename plan carries no
-        # material binding, so finish_attachment_projection re-registers the new path as a NEW ordinary asset.
-        rename["materialAssetReregistered"] = (isinstance(resolved, dict) and isinstance(image_identity["materialAssetId"], str)
-            and isinstance(resolved.get("materialAssetId"), str) and resolved.get("materialAssetId").startswith("asset")
-            and resolved.get("materialAssetId") != image_identity["materialAssetId"])
+        # Windows v1.9.9 (shared code, byte-identical here): the rename plan has no material binding, so the
+        # synchronous finish_attachment_projection re-registers the new path via register_note_attachment(None)
+        # as a NOTE-ONLY asset (ordinary=0; the upsert never sets ordinary). material_id_for_vault_attachment
+        # only returns ordinary=1 identities, so resolve reports no materialAssetId until a user promotes it.
+        first_shape = asset_id_shape(resolved, image_identity["materialAssetId"])
+        shape, waited = first_shape, 0.0
+        started = time.monotonic()
+        while shape == "NULL" and time.monotonic() - started < ASSET_ID_SETTLE_SECONDS:
+            time.sleep(1)
+            shape = asset_id_shape(resolve(destination), image_identity["materialAssetId"])  # read-only, idempotent
+            waited = time.monotonic() - started
+        rename["materialAssetIdShape"] = {"first": first_shape, "final": shape, "waitedSeconds": min(int(waited), ASSET_ID_SETTLE_SECONDS)}
+        rename["materialAssetNoteOnly"] = (isinstance(image_identity["materialAssetId"], str)
+                                           and first_shape == "NULL" and shape == "NULL")
         records_after = invoke("knowledge_list_attachment_operations", {"vaultId": created_vault["id"]})
         require(isinstance(records_after, list), "recovery-records-invalid")
         new_records = [record for record in records_after if record not in records_before]
