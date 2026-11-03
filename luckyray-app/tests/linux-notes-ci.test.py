@@ -2478,6 +2478,35 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('"moveLeftovers", "directoriesScanned")', gate)
         self.assertIn('"moveLeftovers"))', gate)
 
+    def test_checked_context_click_scrolls_and_proves_the_hit_first(self):
+        # T30 (CI 41725565246): the actions gesture died with "move target out of
+        # bounds" because the card was off-viewport. The checked right-click must
+        # scroll the card into the viewport and prove the centre point hits it
+        # before any WebDriver pointer move; the real gesture, the gesture-tap
+        # probe and the viewer check stay exactly where they were.
+        smoke_text = (Path(__file__).resolve().parents[1] /
+                      "tests/linux-notes-attachments-smoke.py").read_text()
+        self.assertIn('CONTROL_IN_VIEWPORT = """', smoke_text)
+        self.assertIn('element.scrollIntoView({block: "center", inline: "center"});', smoke_text)
+        self.assertIn("document.elementFromPoint(", smoke_text)
+        body = smoke_text.split("def checked_context_click(selector):", 1)[1].split(
+            "\n    def ", 1)[0]
+        before, after = body.split("context_click(selector)", 1)
+        self.assertIn('require(execute(CONTEXT_GESTURE_TAP, [selector]) is True, "ui-observation-timeout")', before)
+        self.assertIn("CONTROL_IN_VIEWPORT", before)
+        self.assertIn('"control-outside-viewport"', before)
+        self.assertIn("contextTargetInViewport", before)
+        self.assertIn("contextTargetHitSelf", before)
+        # The real gesture is untouched: the button-2 actions sequence lives in
+        # the lower-level helper and is never a JS contextmenu.
+        click_body = smoke_text.split("def context_click(selector):", 1)[1].split(
+            "\n    def ", 1)[0]
+        self.assertIn('"button": 2', click_body)
+        self.assertNotIn("dispatchEvent", click_body)
+        # The new code is whitelisted and the failure code is distinct.
+        gate = (Path(__file__).resolve().parents[1] / "tests/linux-notes-ci.py").read_text()
+        self.assertIn('"control-outside-viewport"', gate)
+
     def test_note_move_uses_the_sealed_runner_not_the_windows_journal(self):
         operations = self.read("knowledge/attachment_operations.rs")
         move = operations.split("fn move_note_with_attachments_unlocked", 1)[1].split(

@@ -173,6 +173,20 @@ def file_state(path, expected):
 
 # Read-only passive capture listeners (never preventDefault/stopPropagation): record which real event the
 # material viewer appeared after during the WebDriver context gesture. Exported only as fixed labels and counts.
+CONTROL_IN_VIEWPORT = """
+const element = document.querySelector(arguments[0]);
+if (!element) return {present: false};
+element.scrollIntoView({block: "center", inline: "center"});
+return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
+  const rect = element.getBoundingClientRect();
+  const center = {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
+  const inside = rect.width > 0 && rect.height > 0 && center.x >= 0 && center.y >= 0
+                 && center.x <= window.innerWidth && center.y <= window.innerHeight;
+  const hit = inside ? document.elementFromPoint(center.x, center.y) : null;
+  resolve({present: true, inside, hitSelf: !!hit && (hit === element || element.contains(hit))});
+})));
+"""
+
 CONTEXT_GESTURE_TAP = """
 const card=document.querySelector(arguments[0]);
 const tap={card:0,menu:0,aux:0,ctx:0,last:'NONE',opened:document.querySelector('.material-viewer-react')?'BEFORE_GESTURE':'NOT_OPENED'};
@@ -1383,6 +1397,17 @@ def main():
     def checked_context_click(selector):
         """The real right-click must open the menu and nothing else; a viewer appearing is a distinct failure."""
         require(execute(CONTEXT_GESTURE_TAP, [selector]) is True, "ui-observation-timeout")
+        # CI 41725565246: the actions gesture died with HTTP 500 "move target out
+        # of bounds" (2 ms) because the card had never been scrolled into the
+        # viewport. Bring it to the centre first, then prove the centre point is
+        # inside the window and actually hits the card before any WebDriver
+        # pointer move is issued.
+        placement = execute(CONTROL_IN_VIEWPORT, [selector])
+        placement = placement if isinstance(placement, dict) else {}
+        observed["contextTargetInViewport"] = placement.get("inside") is True
+        observed["contextTargetHitSelf"] = placement.get("hitSelf") is True
+        require(placement.get("present") is True and placement.get("inside") is True
+                and placement.get("hitSelf") is True, "control-outside-viewport")
         context_click(selector)
         until("return !!document.querySelector('.asset-ctx-react')||!!document.querySelector('.material-viewer-react');")
         execute("return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))));")

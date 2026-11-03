@@ -55,7 +55,7 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "canvas-storage-temporary-leftover", "canvas-save-not-on-disk", "canvas-reopen-lost-edit",
     "director-canvas-missing", "director-webgl2-unavailable", "director-context-lost", "director-canvas-empty",
     "director-probe-not-rendered", "director-webgl-evidence-missing",
-    "control-not-interactable", "unexpected-error"))
+    "control-not-interactable", "control-outside-viewport", "unexpected-error"))
 
 
 def bounded_interactability(raw):
