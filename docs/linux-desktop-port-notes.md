@@ -137,3 +137,18 @@ compiled contract/adapter fingerprints, including lib.rs and tool_cli.rs.
 Integrating a platform change requires rebuilding the corresponding sidecars
 and reviewing their identities. The Linux branch does not update another
 platform's checkout, formal publisher, version or installer.
+
+## Canvas and workspace write-through
+
+Windows commits canvas documents and workspace files through a write-through
+replace (`MoveFileExW(MOVEFILE_WRITE_THROUGH)` / a `FILE_FLAG_WRITE_THROUGH`
+commit handle), so a completed replacement is durable. The Linux branches now
+match that semantics: the staged file is `sync_all`-ed, the replacement is an
+atomic rename (or a no-clobber `hard_link` for the workspace), and the parent
+directory entry is fsynced through `linux_fs::sync_directory` before the write
+reports success. A missing directory fsync reports the operation as failed, and
+the caller's temporary cleanup applies as before; the canvas agent and the
+workspace module never unlink a published name. The canvas document writer is
+compiled into the offline filesystem crate, which covers replace, read-back,
+temporary cleanup and the refused-replace cases; the workspace sites are
+verified by CI compilation and the shared helper.

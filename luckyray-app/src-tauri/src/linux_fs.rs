@@ -472,3 +472,19 @@ impl Directory {
         Ok(file)
     }
 }
+
+/// A completed rename is only durable once the directory entry that carries it
+/// is on disk. This is the Linux form of Windows' `MOVEFILE_WRITE_THROUGH` (and
+/// of `FILE_FLAG_WRITE_THROUGH` on the commit handle): call it right after a
+/// replacing rename whose file was already `sync_all`-ed. The directory is
+/// opened read-only with `O_DIRECTORY|O_NOFOLLOW`, so this never creates,
+/// removes or rewrites anything, and a path that is not a real directory is
+/// refused instead of being silently accepted.
+pub(crate) fn sync_directory(directory: &Path) -> io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let handle = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(directory)?;
+    handle.sync_all()
+}

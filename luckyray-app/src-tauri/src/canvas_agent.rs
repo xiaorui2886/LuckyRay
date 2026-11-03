@@ -524,8 +524,21 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), CanvasAgentError> {
             }
         }
         #[cfg(not(windows))]
-        fs::rename(&temp, path)
+        {
+            fs::rename(&temp, path)
+                .map_err(|_| CanvasAgentError::new("canvas-agent-storage-unavailable"))?;
+            // Windows' MOVEFILE_WRITE_THROUGH makes the replacement durable as
+            // part of the move. The Linux equivalent is an fsync of the
+            // directory entry that now carries the target name; the staged file
+            // itself was already synced above. macOS keeps its previous
+            // behaviour.
+            #[cfg(target_os = "linux")]
+            crate::linux_fs::sync_directory(
+                path.parent()
+                    .ok_or_else(|| CanvasAgentError::new("canvas-agent-storage-unavailable"))?,
+            )
             .map_err(|_| CanvasAgentError::new("canvas-agent-storage-unavailable"))?;
+        }
         Ok(())
     })();
     if result.is_err() {
@@ -2458,5 +2471,95 @@ mod tests {
         assert!(!serialized.contains("PRIVATE"));
         assert!(!serialized.contains("secret"));
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+/// Linux-only coverage of the write-through replace (T14). These run in the
+/// offline filesystem crate and in the full Linux build; they exercise the real
+/// `atomic_write`, so a regression in the temp lifecycle or the replace cannot
+/// pass silently.
+#[cfg(all(test, target_os = "linux"))]
+mod linux_replace_tests {
+    use super::*;
+
+    fn canvas_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "luckyray-canvas-write-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).expect("synthetic canvas root");
+        root
+    }
+
+    fn leftover_temporaries(root: &Path) -> Vec<PathBuf> {
+        let mut entries: Vec<PathBuf> = fs::read_dir(root)
+            .expect("canvas root readable")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.contains(".agent-") && name.ends_with(".tmp"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    #[test]
+    fn replace_creates_reads_back_and_leaves_no_temporary() {
+        let root = canvas_root();
+        let target = root.join("canvases");
+        fs::create_dir_all(&target).expect("canvas directory");
+        let path = target.join("canvas-1.json");
+        let first = br#"{"nodes":[],"revision":1}"#;
+        atomic_write(&path, first).expect("first save must succeed");
+        assert_eq!(fs::read(&path).unwrap(), first);
+        assert!(leftover_temporaries(&target).is_empty());
+
+        // A second save replaces the existing document in place.
+        let second = br#"{"nodes":[{"id":"n1"}],"revision":2}"#;
+        atomic_write(&path, second).expect("replace must succeed");
+        assert_eq!(fs::read(&path).unwrap(), second);
+        assert_eq!(fs::metadata(&path).unwrap().is_file(), true);
+        assert!(leftover_temporaries(&target).is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_replace_keeps_the_previous_document_and_cleans_the_temporary() {
+        let root = canvas_root();
+        let target = root.join("canvases");
+        fs::create_dir_all(&target).expect("canvas directory");
+        let path = target.join("canvas-2.json");
+        let original = br#"{"nodes":[],"revision":1}"#;
+        atomic_write(&path, original).expect("first save must succeed");
+
+        // A directory at the target name makes the replacing rename fail, which
+        // is the one failure the caller can reach without a fault-injection
+        // hook. The previous document must survive and no temporary may remain.
+        let blocker = target.join("canvas-3.json");
+        fs::create_dir_all(&blocker).expect("blocker");
+        let blocked = target.join("canvas-3.json");
+        let failure = atomic_write(&blocked, b"{}").expect_err("a directory cannot be replaced");
+        assert_eq!(failure.code, "canvas-agent-storage-unavailable");
+        assert!(blocker.is_dir());
+        assert!(leftover_temporaries(&target).is_empty());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replace_needs_an_existing_parent_directory() {
+        let root = canvas_root();
+        let missing = root.join("not-created").join("canvas-4.json");
+        let failure =
+            atomic_write(&missing, b"{}").expect_err("a missing directory must be refused");
+        assert_eq!(failure.code, "canvas-agent-storage-unavailable");
+        assert!(!missing.exists());
+        assert!(!root.join("not-created").exists());
+        let _ = fs::remove_dir_all(&root);
     }
 }

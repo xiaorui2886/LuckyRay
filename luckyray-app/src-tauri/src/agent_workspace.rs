@@ -3253,6 +3253,9 @@ fn move_file_no_replace(temporary: &Path, target: &Path) -> Result<(), Workspace
 #[cfg(not(windows))]
 fn move_file_no_replace(temporary: &Path, target: &Path) -> Result<(), WorkspaceError> {
     // hard_link is atomic and fails with AlreadyExists when the target exists.
+    // Windows moves with MOVEFILE_WRITE_THROUGH, so both directory entries (the
+    // new link and the removed temporary) are fsynced here before the write
+    // counts as durable.
     fs::hard_link(temporary, target).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             workspace_file_exists()
@@ -3261,6 +3264,9 @@ fn move_file_no_replace(temporary: &Path, target: &Path) -> Result<(), Workspace
         }
     })?;
     let _ = fs::remove_file(temporary);
+    #[cfg(target_os = "linux")]
+    crate::linux_fs::sync_directory(target.parent().ok_or_else(workspace_path_invalid)?)
+        .map_err(|_| workspace_write_failed())?;
     Ok(())
 }
 
@@ -3508,7 +3514,14 @@ fn recover_workspace_patch(_target: &Path) -> Result<(), WorkspaceError> {
 #[cfg(not(windows))]
 fn replace_file_atomic(temporary: &Path, target: &Path) -> Result<(), WorkspaceError> {
     // POSIX rename replaces the target path atomically and never follows it.
-    fs::rename(temporary, target).map_err(|_| workspace_write_failed())
+    // Windows commits workspace writes with MOVEFILE_WRITE_THROUGH / the
+    // write-through commit handle, so the directory entry must be fsynced here
+    // too before the replacement counts as durable.
+    fs::rename(temporary, target).map_err(|_| workspace_write_failed())?;
+    #[cfg(target_os = "linux")]
+    crate::linux_fs::sync_directory(target.parent().ok_or_else(workspace_path_invalid)?)
+        .map_err(|_| workspace_write_failed())?;
+    Ok(())
 }
 
 /// Per-target trusted lock shared across all grant operations in this
