@@ -4,8 +4,7 @@
 //! permanent delete (no system trash). Linux adds proof that the object being
 //! quarantined, restored or purged is the one that was checked:
 //! - quarantine: the leaf is opened without following a link, must be a
-//!   regular file with one link whose held bytes match the catalog hash, and is
-//!   renamed with `renameat2(RENAME_NOREPLACE)` (fsync + landed-inode check
+//!   regular file with one link, and is renamed with `renameat2(RENAME_NOREPLACE)` (fsync + landed-inode check
 //!   come from the material move primitive);
 //! - a side record `{dev, ino}` is written next to (not inside) the portable
 //!   pending manifest;
@@ -13,10 +12,9 @@
 //! - restore is a no-replace rename back and refuses an occupied original.
 //! This module never unlinks anything; the catalog keeps its own purge.
 use crate::linux_fs::{conflict, owned_fd, Directory};
-use sha2::{Digest, Sha256};
 use std::ffi::{CString, OsStr};
 use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
@@ -60,19 +58,6 @@ fn single(file: &File) -> io::Result<Identity> {
     Ok(Identity { device: m.dev(), inode: m.ino() })
 }
 
-fn sha256_held(file: &mut File) -> io::Result<String> {
-    let mut hash = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hash.update(&buffer[..count]);
-    }
-    Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
-}
-
 /// What a name denotes now, without following a link.
 pub(crate) fn identity_at(path: &Path) -> io::Result<Identity> {
     let (directory, name) = leaf(path)?;
@@ -80,16 +65,16 @@ pub(crate) fn identity_at(path: &Path) -> io::Result<Identity> {
 }
 
 /// Rename the checked original into the quarantine name in the same parent.
-pub(crate) fn quarantine(original: &Path, quarantine: &Path, expected_sha256: &str) -> io::Result<Identity> {
+/// Like Windows v1.9.9, a content difference does not block quarantine: the
+/// catalog's restore/purge steps compare the hash and keep the file when it
+/// differs. Link type, link count and object identity are still required.
+pub(crate) fn quarantine(original: &Path, quarantine: &Path) -> io::Result<Identity> {
     if original.parent() != quarantine.parent() {
         return Err(conflict());
     }
     let (directory, name) = leaf(original)?;
-    let mut file = open_leaf(&directory, &name)?;
+    let file = open_leaf(&directory, &name)?;
     let identity = single(&file)?;
-    if !sha256_held(&mut file)?.eq_ignore_ascii_case(expected_sha256) || single(&file)? != identity {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "delete-content-mismatch"));
-    }
     crate::linux_material_move::move_held_no_replace(&file, original, quarantine)?;
     if identity_at(quarantine)? != identity {
         return Err(conflict());

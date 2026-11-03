@@ -1385,10 +1385,19 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         publish = self.read("linux_attachment_publish.rs")
         delete = self.read("linux_material_delete.rs")
         for source in (publish, delete):
-            for forbidden in ("remove_file", "unlinkat", "unlink(", "remove_dir", "O_TRUNC", "trash::", "gio trash"):
+            for forbidden in ("remove_file", "unlink(", "remove_dir", "O_TRUNC", "trash::", "gio trash"):
                 self.assertNotIn(forbidden, source)
+        self.assertNotIn("unlinkat", delete)
+        # The only unlink is this call's own failed stage, after a no-follow
+        # dev+inode match against the held handle (Windows removes its temp).
+        self.assertEqual(publish.count("unlinkat"), 1)
+        discard = publish.split("fn discard_own_stage", 1)[1].split("fn publish_stage", 1)[0]
+        self.assertIn("libc::unlinkat", discard)
+        for check in ("AT_SYMLINK_NOFOLLOW", "stat.st_dev as u64 != std::os::unix::fs::MetadataExt::dev(&held)",
+                      "stat.st_ino as u64 != std::os::unix::fs::MetadataExt::ino(&held)", "S_IFREG"):
+            self.assertLess(discard.index(check), discard.index("libc::unlinkat"))
         self.assertIn("create_private(&stage", publish)
-        self.assertIn("rename_new(&stage, &self.attachments, name)", publish)
+        self.assertIn("rename_new(stage, &self.attachments, name)", publish)
         self.assertIn("root.lock()?", publish)
         self.assertIn("move_held_no_replace(&file, original, quarantine)", delete)
         self.assertIn("move_path_no_replace(quarantine, original)", delete)

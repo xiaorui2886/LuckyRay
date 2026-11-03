@@ -7,9 +7,10 @@
 //! verified, and published with `renameat2(RENAME_NOREPLACE)`. The published
 //! name is then proved to denote the staged object with the expected bytes.
 //!
-//! There is no journal: the only change is one new name. Nothing here unlinks
-//! or truncates; a failure leaves at most a hidden `.lrk-attachment-*.tmp`
-//! stage, which the attachment inventory ignores.
+//! There is no journal: the only change is one new name. Nothing is truncated.
+//! As on Windows, a failed stage is removed, but only while its name still
+//! denotes the object this call created (dev + inode, no-follow); otherwise it
+//! is left as a hidden `.lrk-` file, which the attachment inventory ignores.
 use crate::linux_fs::{conflict, no_default_acl, private_file_metadata, Directory, Version};
 use sha2::{Digest, Sha256};
 use std::ffi::{OsStr, OsString};
@@ -113,17 +114,46 @@ impl PublishTarget {
         let stage = stage_name();
         // 0600, O_EXCL|O_NOFOLLOW, ACL/xattr refused before any payload byte.
         let mut staged = self.attachments.create_private(&stage, b"")?;
-        let copied = io::copy(&mut source.take(size + 1), &mut staged)?;
+        let outcome = self.publish_stage(&stage, &mut staged, name, source, size, digest);
+        if outcome.is_err() {
+            // Windows v1.9.9 removes its failed temp file; only ours is removed.
+            self.discard_own_stage(&stage, &staged);
+        }
+        outcome
+    }
+
+    /// Unlink the failed stage only while the name (no-follow) still denotes
+    /// the held object this call created; otherwise leave whatever is there.
+    fn discard_own_stage(&self, stage: &OsStr, staged: &File) {
+        let Ok(held) = staged.metadata() else { return };
+        let Ok(component) = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(stage)) else { return };
+        let directory = std::os::fd::AsRawFd::as_raw_fd(&self.attachments.file);
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        if self.attachments.verify().is_err()
+            || unsafe { libc::fstatat(directory, component.as_ptr(), &mut stat, libc::AT_SYMLINK_NOFOLLOW) } != 0
+            || stat.st_mode & libc::S_IFMT != libc::S_IFREG
+            || stat.st_dev as u64 != std::os::unix::fs::MetadataExt::dev(&held)
+            || stat.st_ino as u64 != std::os::unix::fs::MetadataExt::ino(&held)
+        {
+            return;
+        }
+        if unsafe { libc::unlinkat(directory, component.as_ptr(), 0) } == 0 {
+            let _ = self.attachments.file.sync_all();
+        }
+    }
+
+    fn publish_stage(&self, stage: &OsStr, staged: &mut File, name: &OsStr, source: &mut dyn Read, size: u64, digest: &str) -> io::Result<()> {
+        let copied = io::copy(&mut source.take(size + 1), staged)?;
         staged.sync_all()?;
-        private_file_metadata(&staged)?;
-        if copied != size || !digest_of(&mut staged, size)?.eq_ignore_ascii_case(digest) {
+        private_file_metadata(staged)?;
+        if copied != size || !digest_of(staged, size)?.eq_ignore_ascii_case(digest) {
             return Err(conflict());
         }
-        let held = Version::of(&staged)?;
-        self.attachments.verify_named(&stage, &staged)?;
+        let held = Version::of(staged)?;
+        self.attachments.verify_named(stage, staged)?;
         self.verify()?;
         // The kernel refuses an occupied name even if it appeared after `vacant`.
-        self.attachments.rename_new(&stage, &self.attachments, name)?;
+        self.attachments.rename_new(stage, &self.attachments, name)?;
         let mut published = self.attachments.open_file(name, true)?;
         if !Version::of(&published)?.same_object(&held)
             || !digest_of(&mut published, size)?.eq_ignore_ascii_case(digest)
@@ -131,7 +161,7 @@ impl PublishTarget {
             return Err(conflict());
         }
         private_file_metadata(&published)?;
-        self.attachments.verify_named(name, &staged)?;
+        self.attachments.verify_named(name, staged)?;
         staged.flush()?;
         self.verify()
     }

@@ -1259,18 +1259,20 @@ mod tests {
         assert!(!dir.path().join("attachments/v.mp4").exists());
         target.publish_from(OsStr::new("v.mp4"), &mut &data[..], 200_000, &digest.to_uppercase()).unwrap();
         assert_eq!(fs::read(dir.path().join("attachments/v.mp4")).unwrap(), data);
-        // Failed stages are hidden `.lrk-` files and are not removed (no unlink).
+        // As on Windows, this call's own failed stages are removed; the good
+        // stage was renamed, so nothing hidden remains.
         let stages = fs::read_dir(dir.path().join("attachments")).unwrap()
             .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with(".lrk-attachment-")).count();
-        assert_eq!(stages, 2); // the two refused attempts; the good stage was renamed
+        assert_eq!(stages, 0);
+        // A foreign hidden file is never touched by a failed publish.
+        fs::write(dir.path().join("attachments/.lrk-attachment-foreign.tmp"), b"keep").unwrap();
+        assert!(target.publish_from(OsStr::new("w.mp4"), &mut &data[..], 1, &digest).is_err());
+        assert_eq!(fs::read(dir.path().join("attachments/.lrk-attachment-foreign.tmp")).unwrap(), b"keep");
+        assert!(!dir.path().join("attachments/w.mp4").exists());
     }
 
     // ---- step 4: delete quarantine identity -------------------------------
     use super::linux_material_delete as delete;
-
-    fn hex(bytes: &[u8]) -> String {
-        Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
-    }
 
     #[test]
     fn step4_quarantine_records_identity_and_restore_is_no_replace() {
@@ -1278,7 +1280,7 @@ mod tests {
         let original = dir.path().join("m.bin");
         let quarantine = dir.path().join(".luckyray-delete-pending-delete-1-m.bin");
         fs::write(&original, b"synthetic-material").unwrap();
-        let identity = delete::quarantine(&original, &quarantine, &hex(b"synthetic-material")).unwrap();
+        let identity = delete::quarantine(&original, &quarantine).unwrap();
         assert!(!original.exists());
         let records = dir.path().join("identity");
         delete::write_record(&records, "delete-1", identity).unwrap();
@@ -1304,17 +1306,15 @@ mod tests {
         fs::write(&target, b"abc").unwrap();
         let link = dir.path().join("l.bin");
         symlink(&target, &link).unwrap();
-        assert!(delete::quarantine(&link, &dir.path().join(".q-l"), &hex(b"abc")).is_err());
+        assert!(delete::quarantine(&link, &dir.path().join(".q-l")).is_err());
         assert!(link.symlink_metadata().is_ok() && target.exists());
-        assert!(delete::quarantine(&target, &dir.path().join(".q-t"), &hex(b"other")).is_err());
-        assert!(target.exists());
         fs::hard_link(&target, dir.path().join("h.bin")).unwrap();
-        assert!(delete::quarantine(&target, &dir.path().join(".q-t"), &hex(b"abc")).is_err());
+        assert!(delete::quarantine(&target, &dir.path().join(".q-t")).is_err());
         fs::remove_file(dir.path().join("h.bin")).unwrap();
         fs::create_dir(dir.path().join("sub")).unwrap();
-        assert!(delete::quarantine(&target, &dir.path().join("sub/.q-t"), &hex(b"abc")).is_err());
+        assert!(delete::quarantine(&target, &dir.path().join("sub/.q-t")).is_err());
         fs::write(dir.path().join(".q-t"), b"occupied").unwrap();
-        assert!(delete::quarantine(&target, &dir.path().join(".q-t"), &hex(b"abc")).is_err());
+        assert!(delete::quarantine(&target, &dir.path().join(".q-t")).is_err());
         assert_eq!(fs::read(&target).unwrap(), b"abc");
         assert_eq!(fs::read(dir.path().join(".q-t")).unwrap(), b"occupied");
     }
@@ -1325,7 +1325,7 @@ mod tests {
         let original = dir.path().join("m.bin");
         let quarantine = dir.path().join(".q-m");
         fs::write(&original, b"one").unwrap();
-        let identity = delete::quarantine(&original, &quarantine, &hex(b"one")).unwrap();
+        let identity = delete::quarantine(&original, &quarantine).unwrap();
         assert!(delete::verify_before_purge(None, &quarantine).is_err());
         // A swapped object at the quarantine name is refused.
         fs::rename(&quarantine, dir.path().join("moved")).unwrap();
@@ -1338,5 +1338,19 @@ mod tests {
             assert!(delete::decode(bad).is_err());
         }
         assert_eq!(delete::decode(&delete::encode(identity)).unwrap(), identity);
+    }
+
+    #[test]
+    fn step4_quarantine_does_not_block_on_changed_content_like_windows() {
+        let dir = vault();
+        let original = dir.path().join("m.bin");
+        let quarantine = dir.path().join(".q-m");
+        fs::write(&original, b"edited-outside-the-app").unwrap();
+        let identity = delete::quarantine(&original, &quarantine).unwrap();
+        // Identity, not content, gates purge and restore; the catalog compares
+        // the hash afterwards and keeps a mismatching file pending.
+        delete::verify_before_purge(Some(identity), &quarantine).unwrap();
+        delete::restore(Some(identity), &quarantine, &original).unwrap();
+        assert_eq!(fs::read(&original).unwrap(), b"edited-outside-the-app");
     }
 }

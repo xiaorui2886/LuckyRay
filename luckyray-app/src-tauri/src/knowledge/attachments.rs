@@ -654,8 +654,8 @@ impl KnowledgeService {
 
 // Linux copy-publish (T02 §5.3.b): same size limit, reuse scan and name
 // policy as above; the write itself goes through the held, owned Vault root,
-// a private 0600 stage and a no-replace rename. A failed stage is left as a
-// hidden `.lrk-` file (never unlinked here); the inventory ignores it.
+// a private 0600 stage and a no-replace rename. A failed stage is removed only
+// while it is still this call's own object (see linux_attachment_publish).
 #[cfg(target_os = "linux")]
 fn linux_publish_failure(failure: std::io::Error) -> KnowledgeError {
     super::linux_transactions::failure(failure)

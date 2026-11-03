@@ -62,18 +62,23 @@ Linux the Vault root is held as an owned directory under the write lease,
 without following a link, and the bytes are staged in a private 0600
 `.lrk-attachment-*.tmp` file, verified, and published with a no-replace
 rename. An occupied name, including a symbolic link, is never overwritten.
-A refused or interrupted stage stays as a hidden `.lrk-` file; it is not
-removed automatically and is ignored by the attachment list.
+As on Windows, a failed stage is removed, but only while its name still
+denotes the file this operation created (device and inode, without following
+a link); anything else is left as a hidden `.lrk-` file, which the attachment
+list ignores.
 
 Deleting a material file keeps the Windows sequence: move the file to a
 hidden quarantine name in the same folder, commit the catalog change, then
 delete permanently. Linux does not use the desktop trash. Before the move,
 the file is opened without following a link and must be a regular file with
-one link whose content matches the catalog hash. The move is a no-replace
+one link. As on Windows, changed content does not block the quarantine
+move; restore and permanent deletion compare the catalog hash and keep a
+mismatching file pending. The move is a no-replace
 rename. The quarantined object's device and inode are recorded in
 `material-delete-identity/` next to the portable recovery manifest. Permanent
 deletion requires that record and the quarantined name to still denote the
-same object; otherwise the file is kept and cleanup stays pending. Restoring
+same object; otherwise the file is kept and cleanup stays pending (reported
+by the existing delete result and pending-deletion retry count). Restoring
 a quarantined file refuses an occupied original name. Tombstones from removed
 attachments are not cleaned up automatically.
 

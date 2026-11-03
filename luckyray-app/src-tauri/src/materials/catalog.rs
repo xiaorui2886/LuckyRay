@@ -5432,7 +5432,7 @@ impl MaterialCatalog {
     }
 
     fn linux_quarantine_for_delete(&self, owned_file: &OwnedPhysicalFile, quarantine_path: &Path, manifest_path: &Path, token: &str) -> MaterialResult<()> {
-        let identity = match crate::linux_material_delete::quarantine(&owned_file.file_path, quarantine_path, &owned_file.content_hash) {
+        let identity = match crate::linux_material_delete::quarantine(&owned_file.file_path, quarantine_path) {
             Ok(identity) => identity,
             Err(error) => {
                 // Nothing was renamed (or the move primitive put it back).
