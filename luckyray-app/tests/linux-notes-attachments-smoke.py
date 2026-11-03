@@ -136,9 +136,12 @@ OBSERVED_ENUMS = {
     "storageMode": ("ABSENT", "OTHER", "managed", "linked", "source"),
     "catalogOriginalPath": ("ABSENT", "OTHER", "SOURCE", "RENAMED"),
     "catalogLibraryPath": ("ABSENT", "OTHER", "SOURCE", "RENAMED"),
-    **{name: FILE_STATES for name in ("oldFile", "newFile", "note", "materialSource", "materialRenamed")}}
+    **{name: FILE_STATES for name in ("oldFile", "newFile", "note", "materialSource", "materialRenamed")},
+    # Which event the viewer (re)appeared after during the context gesture; fixed labels only.
+    "viewerOpenedAfter": ("NOT_OPENED", "BEFORE_GESTURE", "CARD_CLICK", "MENU_CLICK", "AUXCLICK", "CONTEXTMENU", "POINTERUP", "OTHER")}
 OBSERVED_FLAGS = ("maintenanceAlert", "recordOptionPresent")
-OBSERVED_COUNTS = ("recordCount", "tombstones", "materialMatches", "quarantineLeftovers", "materialViewerDismissed")
+OBSERVED_COUNTS = ("recordCount", "tombstones", "materialMatches", "quarantineLeftovers", "materialViewerDismissed",
+                   "gestureCardClicks", "gestureMenuClicks", "gestureAuxclicks", "gestureContextmenus")
 
 
 def bounded_observed(raw):
@@ -163,6 +166,20 @@ def file_state(path, expected):
     except OSError:
         return "MISSING"
 
+
+# Read-only passive capture listeners (never preventDefault/stopPropagation): record which real event the
+# material viewer appeared after during the WebDriver context gesture. Exported only as fixed labels and counts.
+CONTEXT_GESTURE_TAP = """
+const card=document.querySelector(arguments[0]);
+const tap={card:0,menu:0,aux:0,ctx:0,last:'NONE',opened:document.querySelector('.material-viewer-react')?'BEFORE_GESTURE':'NOT_OPENED'};
+const label=e=>e.type==='click'?(card&&card.contains(e.target)?'CARD_CLICK':e.target.closest&&e.target.closest('.asset-ctx-react')?'MENU_CLICK':'OTHER'):
+  e.type==='auxclick'?'AUXCLICK':e.type==='contextmenu'?'CONTEXTMENU':e.type==='pointerup'?'POINTERUP':'OTHER';
+for(const t of ['pointerup','click','auxclick','contextmenu'])window.addEventListener(t,e=>{tap.last=label(e);
+  if(tap.last==='CARD_CLICK')tap.card++;else if(tap.last==='MENU_CLICK')tap.menu++;else if(t==='auxclick')tap.aux++;else if(t==='contextmenu')tap.ctx++;},{capture:true,passive:true});
+const seen=new MutationObserver(()=>{if(tap.opened==='NOT_OPENED'&&document.querySelector('.material-viewer-react'))tap.opened=tap.last==='NONE'?'OTHER':tap.last;});
+seen.observe(document.body,{childList:true});
+window.__luckyrayContextGestureTap=tap;return true;
+"""
 
 MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance:not(.attachment-portability)"
 DIAGNOSED_PHASES = frozenset({"material-maintenance", "attachment-rollback", "attachment-rename", })
@@ -1191,6 +1208,19 @@ def main():
             ui_click(".material-viewer-react .qp-close-react")
             until("return !document.querySelector('.material-viewer-react');")
 
+    def checked_context_click(selector):
+        """The real right-click must open the menu and nothing else; a viewer appearing is a distinct failure."""
+        require(execute(CONTEXT_GESTURE_TAP, [selector]) is True, "ui-observation-timeout")
+        context_click(selector)
+        until("return !!document.querySelector('.asset-ctx-react')||!!document.querySelector('.material-viewer-react');")
+        execute("return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))));")
+        tap = execute("return window.__luckyrayContextGestureTap||null;")
+        tap = tap if isinstance(tap, dict) else {}
+        observed["viewerOpenedAfter"] = tap.get("opened")
+        for key, name in (("card", "gestureCardClicks"), ("menu", "gestureMenuClicks"), ("aux", "gestureAuxclicks"), ("ctx", "gestureContextmenus")):
+            observed[name] = min(tap[key], 8) if type(tap.get(key)) is int and tap[key] >= 0 else None
+        require(not execute("return !!document.querySelector('.material-viewer-react');"), "material-viewer-opened-by-context-gesture")
+
     def maintenance_status(expected):
         until("return document.querySelector(arguments[0])?.textContent.trim()===arguments[1];",
               [MAINTENANCE_PANEL + " .vault-attachment-state > strong", expected], seconds=60)
@@ -1621,7 +1651,7 @@ def main():
         until("const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [card], seconds=30)
         action = "materials-context"
         dismiss_material_viewer()
-        context_click(card)
+        checked_context_click(card)
         # 重命名真实文件 lives in the 整理 (organize) submenu, not the main menu.
         ui_click(".asset-ctx-react [data-material-submenu=organize]")
         ui_click(".asset-ctx-react-submenu[data-material-context-submenu=organize] [data-material-context-action=renameFile]")
@@ -1649,7 +1679,7 @@ def main():
         until("return !document.querySelector('[role=dialog] .modal-footer-react');")
         until("const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [card], seconds=30)
         dismiss_material_viewer()
-        context_click(card)
+        checked_context_click(card)
         ui_click(".asset-ctx-react[data-material-context-root] [data-material-context-action=delete]")
         action = "materials-delete-confirm"
         deletion = maintenance["materialDelete"]

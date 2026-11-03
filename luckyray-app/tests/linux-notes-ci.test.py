@@ -213,11 +213,28 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
         self.assertIn("return !document.querySelector('.material-viewer-react');", helper)
         self.assertNotIn(".click()", helper)
         body = source[source.index('action = "materials-context"'):]
-        self.assertEqual(body.count("dismiss_material_viewer()\n        context_click(card)"), 2)
+        self.assertEqual(body.count("dismiss_material_viewer()\n        checked_context_click(card)"), 2)
         app = Path(__file__).resolve().parents[1] / "src" / "features" / "materials" / "MaterialsPage.tsx"
         text = app.read_text(encoding="utf-8")
         self.assertIn('className="qp-close-react" onClick={onClose}', text)
         self.assertIn('className={`material-viewer-react ${mode}`}', text)
+
+    def test_context_gesture_viewer_is_a_distinct_failure_with_passive_tap(self):
+        source = Path(__file__).with_name("linux-notes-attachments-smoke.py").read_text()
+        tap = ci.smoke.CONTEXT_GESTURE_TAP
+        self.assertIn("passive:true", tap)
+        for forbidden in ("preventDefault", "stopPropagation", ".click(", "dispatchEvent"):
+            self.assertNotIn(forbidden, tap)
+        helper = source[source.index("def checked_context_click("):source.index("def maintenance_status(")]
+        self.assertIn("context_click(selector)", helper)
+        self.assertIn('"material-viewer-opened-by-context-gesture"', helper)
+        self.assertNotIn(".click()", helper)
+        self.assertIn("material-viewer-opened-by-context-gesture", ci.FAILURES)
+        bounded = ci.smoke.bounded_observed({"viewerOpenedAfter": "CARD_CLICK", "gestureCardClicks": 1, "gestureMenuClicks": 99,
+                                             "gestureAuxclicks": "1", "gestureContextmenus": 1, "secret": "/home/x"})
+        self.assertEqual(bounded, {"viewerOpenedAfter": "CARD_CLICK", "gestureCardClicks": 1, "gestureMenuClicks": None,
+                                   "gestureAuxclicks": None, "gestureContextmenus": 1})
+        self.assertEqual(ci.smoke.bounded_observed({"viewerOpenedAfter": "/tmp/leak"}), {"viewerOpenedAfter": "INVALID"})
 
     def test_asset_id_shape_is_closed_and_redacted(self):
         shape = ci.smoke.asset_id_shape

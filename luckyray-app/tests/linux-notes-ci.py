@@ -50,7 +50,7 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "webdriver-command-failed", "editor-not-ready", "editor-input-mismatch", "maintenance-precondition-mismatch",
     "maintenance-control-rejected", "recovery-records-invalid", "recovery-summary-invalid", "attachment-rename-not-confirmed",
     "attachment-rollback-not-confirmed", "material-catalog-read-invalid", "material-import-not-observed", "material-source-mode-not-applied",
-    "material-rename-not-observed", "material-rename-not-confirmed", "material-delete-not-observed", "material-delete-not-confirmed",
+    "material-rename-not-observed", "material-rename-not-confirmed", "material-delete-not-observed", "material-delete-not-confirmed", "material-viewer-opened-by-context-gesture",
     "control-not-interactable", "unexpected-error"))
 
 
