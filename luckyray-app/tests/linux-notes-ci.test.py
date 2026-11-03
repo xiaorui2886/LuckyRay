@@ -169,16 +169,40 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
     def test_interactability_diagnostic_is_redacted_and_bounded(self):
         state = ci.smoke.interactability({"element": {"x": 1}, "enabled": True, "inViewport": False, "hitKind": "<b>secret</b>",
                                           "styleVisible": True, "text": "/home/runner/x"}, True)
-        self.assertEqual(state, {"found": True, "displayed": True, "enabled": True, "inViewport": False, "styleVisible": True, "hit": "NONE"})
+        self.assertEqual(state, {"found": True, "displayed": True, "enabled": True, "inViewport": False, "styleVisible": True, "hit": "NONE",
+                                 "geometry": None})
         raw = copy.deepcopy(self.fixture.raw)
         raw["status"] = "FAIL"
         raw["failure"] = {"phase": "attachment-rename", "action": "maintenance-plan", "code": "control-not-interactable",
                           "interactability": {**state, "inViewport": "yes", "path": "/home/runner/secret", "hit": "BACKDROP"}}
         projected = ci.bounded_report(raw)["failure"]
         self.assertEqual(projected["interactability"], {"found": True, "displayed": True, "enabled": True, "inViewport": None,
-                                                         "styleVisible": True, "hit": "BACKDROP"})
+                                                         "styleVisible": True, "hit": "BACKDROP", "geometry": None})
         self.assertEqual(projected["code"], "control-not-interactable")
         self.assertNotIn("secret", json.dumps(projected))
+
+    def test_geometry_diagnostic_is_closed_integer_only(self):
+        geometry = {"viewportWidth": 1440, "viewportHeight": 900.0, "screenWidth": 1440, "screenHeight": 900, "outerWidth": "1440",
+                    "outerHeight": 10 ** 9, "rectLeft": 600, "rectTop": 1210, "rectWidth": 96, "rectHeight": 30, "title": "/home/runner/x",
+                    "containers": [{"role": "notes-vault-page", "overflowY": "auto", "clientHeight": 400, "scrollHeight": 1200,
+                                    "scrollTop": 0, "top": 160, "bottom": 560, "clipsControl": True, "text": "secret"},
+                                   {"role": "<i>secret</i>", "overflowY": "expression(x)", "clientHeight": True, "clipsControl": "yes"}] * 6}
+        state = ci.smoke.interactability({"element": {}, "enabled": True, "inViewport": False, "hitKind": "NONE", "styleVisible": True,
+                                          "geometry": geometry}, True)
+        raw = copy.deepcopy(self.fixture.raw)
+        raw["status"] = "FAIL"
+        raw["failure"] = {"phase": "attachment-rename", "action": "maintenance-plan", "code": "control-not-interactable",
+                          "interactability": state}
+        projected = ci.bounded_report(raw)["failure"]["interactability"]["geometry"]
+        self.assertEqual(len(projected["containers"]), 8)
+        self.assertEqual(projected["containers"][0], {"role": "notes-vault-page", "overflowY": "auto", "clientHeight": 400,
+                                                      "scrollHeight": 1200, "scrollTop": 0, "top": 160, "bottom": 560, "clipsControl": True})
+        self.assertEqual(projected["containers"][1], {"role": "OTHER", "overflowY": "OTHER", "clientHeight": None, "scrollHeight": None,
+                                                      "scrollTop": None, "top": None, "bottom": None, "clipsControl": None})
+        self.assertEqual((projected["viewportHeight"], projected["outerWidth"], projected["outerHeight"], projected["rectTop"]),
+                         (900, None, None, 1210))
+        self.assertNotIn("secret", json.dumps(projected))
+        self.assertNotIn("/home", json.dumps(projected))
 
     def test_image_link_parser_is_exact(self):
         self.assertEqual(ci.smoke.image_link("x ![synthetic PNG](<attachments/改名 图.png>) y"), "attachments/改名 图.png")

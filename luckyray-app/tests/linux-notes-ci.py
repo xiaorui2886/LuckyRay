@@ -55,11 +55,12 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
 
 
 def bounded_interactability(raw):
-    """Redacted not-interactable diagnostic: five booleans and one fixed hit kind."""
+    """Redacted not-interactable diagnostic: five booleans, one fixed hit kind and integer-only geometry."""
     raw = raw if isinstance(raw, dict) else {}
     result = {name: raw.get(name) if type(raw.get(name)) is bool else None
               for name in ("found", "displayed", "enabled", "inViewport", "styleVisible")}
     result["hit"] = raw.get("hit") if raw.get("hit") in smoke.HIT_KINDS else "NONE"
+    result["geometry"] = smoke.bounded_geometry(raw.get("geometry"))
     return result
 
 

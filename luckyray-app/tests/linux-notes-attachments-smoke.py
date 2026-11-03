@@ -113,11 +113,32 @@ return e.value===arguments[1];
 """
 # Read-only probe (optionally scrolls the control to the centre of its scrollers).
 # Returns the element plus a redacted interactability summary; never text or paths.
+GEOMETRY_ROLES = ("vault-attachment-maintenance", "vault-attachment-actions", "notes-vault-page", "notes-vault-dialog-body",
+    "notes-vault-dialog", "editorial-dialog-body", "editorial-dialog", "editorial-dialog-backdrop", "asset-ctx-react-submenu",
+    "asset-ctx-react", "modal-body-react", "modal-box-react", "modal-overlay-react", "experience-dialog-backdrop")
+OVERFLOW_KINDS = ("visible", "hidden", "clip", "auto", "scroll", "overlay")
 CONTROL_PROBE = """
 const [sel,text,scroll]=arguments;
 const e=[...document.querySelectorAll(sel)].find(x=>(text===null||x.textContent.trim()===text)&&x.getClientRects().length>0);
 if(!e)return null;
-if(scroll)e.scrollIntoView({block:'center',inline:'nearest'});
+const known=%s;
+const role=a=>known.find(k=>a.classList&&a.classList.contains(k))||(a===document.scrollingElement?'DOCUMENT':'OTHER');
+const chain=[];
+for(let a=e.parentElement;a&&chain.length<8;a=a.parentElement){
+ const oy=getComputedStyle(a).overflowY;
+ if(oy!=='visible'||a.scrollHeight>a.clientHeight+1)chain.push(a);
+}
+const userScrollable=a=>['auto','scroll','overlay'].includes(getComputedStyle(a).overflowY)&&a.scrollHeight>a.clientHeight;
+if(scroll){
+ e.scrollIntoView({block:'center',inline:'nearest'});
+ // Then centre it explicitly in each user-scrollable ancestor, inner to outer.
+ // overflow:hidden ancestors are never scrolled: a user could not do that either.
+ for(const a of chain){
+  if(!userScrollable(a))continue;
+  const ar=a.getBoundingClientRect(),er=e.getBoundingClientRect();
+  a.scrollTop+=Math.round((er.top+er.height/2)-(ar.top+Math.min(ar.height,a.clientHeight)/2));
+ }
+}
 const r=e.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
 const inViewport=r.width>0&&r.height>0&&cx>=0&&cy>=0&&cx<innerWidth&&cy<innerHeight;
 const hit=inViewport?document.elementFromPoint(cx,cy):null;
@@ -126,8 +147,14 @@ const hitKind=!hit?'NONE':hit===e?'SELF':e.contains(hit)?'DESCENDANT':hit.contai
  :hit.closest('button,input,select,summary,a,[role=menuitem]')?'OTHER_CONTROL':'OTHER';
 const enabled=!e.disabled&&!e.closest('fieldset:disabled')&&e.getAttribute('aria-disabled')!=='true';
 const styleVisible=getComputedStyle(e).visibility==='visible';
-return {element:e,enabled,inViewport,hitKind,styleVisible};
-"""
+const n=v=>Math.round(v);
+const geometry={viewportWidth:innerWidth,viewportHeight:innerHeight,screenWidth:screen.width,screenHeight:screen.height,
+ outerWidth:outerWidth,outerHeight:outerHeight,rectLeft:n(r.left),rectTop:n(r.top),rectWidth:n(r.width),rectHeight:n(r.height),
+ containers:chain.map(a=>{const ar=a.getBoundingClientRect();return {role:role(a),overflowY:getComputedStyle(a).overflowY,
+  clientHeight:a.clientHeight,scrollHeight:a.scrollHeight,scrollTop:n(a.scrollTop),top:n(ar.top),bottom:n(ar.bottom),
+  clipsControl:r.top<ar.top||r.bottom>ar.bottom};})};
+return {element:e,enabled,inViewport,hitKind,styleVisible,geometry};
+""" % json.dumps(GEOMETRY_ROLES)
 HIT_KINDS = ("SELF", "DESCENDANT", "ANCESTOR", "BACKDROP", "OTHER_CONTROL", "OTHER", "NONE")
 
 
@@ -138,7 +165,31 @@ def interactability(probe, displayed):
             "enabled": probe.get("enabled") if type(probe.get("enabled")) is bool else None,
             "inViewport": probe.get("inViewport") if type(probe.get("inViewport")) is bool else None,
             "styleVisible": probe.get("styleVisible") if type(probe.get("styleVisible")) is bool else None,
-            "hit": probe.get("hitKind") if probe.get("hitKind") in HIT_KINDS else "NONE"}
+            "hit": probe.get("hitKind") if probe.get("hitKind") in HIT_KINDS else "NONE",
+            "geometry": bounded_geometry(probe.get("geometry"))}
+
+
+def _px(value):
+    return int(value) if type(value) in (int, float) and abs(value) <= 100000 else None
+
+
+GEOMETRY_NUMBERS = ("viewportWidth", "viewportHeight", "screenWidth", "screenHeight", "outerWidth", "outerHeight",
+                    "rectLeft", "rectTop", "rectWidth", "rectHeight")
+CONTAINER_NUMBERS = ("clientHeight", "scrollHeight", "scrollTop", "top", "bottom")
+
+
+def bounded_geometry(value):
+    """Closed, redacted geometry: integer pixels, known class roles and overflow keywords only; no text or paths."""
+    if not isinstance(value, dict):
+        return None
+    containers = []
+    for item in (value.get("containers") if isinstance(value.get("containers"), list) else [])[:8]:
+        item = item if isinstance(item, dict) else {}
+        containers.append({"role": item.get("role") if item.get("role") in GEOMETRY_ROLES + ("DOCUMENT",) else "OTHER",
+                           "overflowY": item.get("overflowY") if item.get("overflowY") in OVERFLOW_KINDS else "OTHER",
+                           **{k: _px(item.get(k)) for k in CONTAINER_NUMBERS},
+                           "clipsControl": item.get("clipsControl") if type(item.get("clipsControl")) is bool else None})
+    return {**{k: _px(value.get(k)) for k in GEOMETRY_NUMBERS}, "containers": containers}
 
 
 def control_ready(state):
