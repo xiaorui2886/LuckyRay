@@ -15,6 +15,9 @@ mod linux_managed_record;
 // exercised here without a running knowledge service.
 #[path = "../../../src-tauri/src/knowledge/attachment_witness.rs"]
 mod attachment_witness;
+// The material file move primitive (step 3) only needs linux_fs and libc.
+#[path = "../../../src-tauri/src/linux_material_move.rs"]
+mod linux_material_move;
 
 #[cfg(test)]
 mod tests {
@@ -1019,5 +1022,169 @@ mod tests {
                 .join(format!(".lrk-import-{ID}-0.tmp"))
                 .exists());
         }
+    }
+
+    // ---- Material file move (素材详情 → 移动或重命名文件), step 3 ----
+    use super::linux_material_move::{
+        hold_parents, is_cross_device, move_held_no_replace, move_path_no_replace, PreparedMove,
+    };
+
+    fn material(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let from = root.join("library").join("photos");
+        let to = root.join("archive").join("2026");
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&to).unwrap();
+        let source = from.join("synthetic-cover.png");
+        fs::write(&source, b"synthetic material bytes").unwrap();
+        (source, to.join("renamed-cover.png"))
+    }
+
+    #[test]
+    fn material_move_on_one_filesystem_keeps_the_inode_and_bytes() {
+        let root = temporary();
+        let (source, destination) = material(root.path());
+        let before = fs::metadata(&source).unwrap();
+        let held = fs::File::open(&source).unwrap();
+        move_held_no_replace(&held, &source, &destination).unwrap();
+        assert!(!source.exists());
+        let after = fs::metadata(&destination).unwrap();
+        assert_eq!((before.dev(), before.ino()), (after.dev(), after.ino()));
+        assert_eq!(after.mode(), before.mode());
+        assert_eq!(fs::read(&destination).unwrap(), b"synthetic material bytes");
+        // A pure rename inside one directory is the same primitive.
+        let renamed = destination.with_file_name("cover-final.png");
+        let held = fs::File::open(&destination).unwrap();
+        move_held_no_replace(&held, &destination, &renamed).unwrap();
+        assert_eq!(fs::metadata(&renamed).unwrap().ino(), before.ino());
+    }
+
+    #[test]
+    fn material_move_never_replaces_an_existing_destination() {
+        let root = temporary();
+        let (source, destination) = material(root.path());
+        fs::write(&destination, b"someone else's file").unwrap();
+        let held = fs::File::open(&source).unwrap();
+        let error = move_held_no_replace(&held, &source, &destination).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&source).unwrap(), b"synthetic material bytes");
+        assert_eq!(fs::read(&destination).unwrap(), b"someone else's file");
+        // A name that appears after the checks is still not replaced: the
+        // kernel's RENAME_NOREPLACE refuses it.
+        let late = destination.with_file_name("late.png");
+        let prepared = PreparedMove::prepare(&held, &source, &late).unwrap();
+        fs::write(&late, b"created concurrently").unwrap();
+        let error = prepared.commit().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&source).unwrap(), b"synthetic material bytes");
+        assert_eq!(fs::read(&late).unwrap(), b"created concurrently");
+    }
+
+    #[test]
+    fn material_move_to_another_filesystem_is_refused_without_a_copy() {
+        let root = temporary();
+        let (source, _) = material(root.path());
+        let inode = fs::metadata(&source).unwrap().ino();
+        // /proc is always another filesystem and nothing can be created in it,
+        // so even a broken refusal could not leave a copy behind.
+        let other = Path::new("/proc").join("luckyray-synthetic-move.png");
+        assert_ne!(fs::metadata("/proc").unwrap().dev(), fs::metadata(&source).unwrap().dev());
+        let held = fs::File::open(&source).unwrap();
+        let error = move_held_no_replace(&held, &source, &other).unwrap_err();
+        assert!(is_cross_device(&error), "{error:?}");
+        assert_eq!(error.to_string(), "attachment-move-cross-device");
+        assert_eq!(fs::metadata(&source).unwrap().ino(), inode);
+        assert_eq!(fs::read(&source).unwrap(), b"synthetic material bytes");
+        assert!(!other.exists());
+        // A kernel EXDEV (two mounts of one filesystem) is read the same way.
+        assert!(is_cross_device(&io::Error::from_raw_os_error(libc::EXDEV)));
+        assert!(!is_cross_device(&io::Error::from_raw_os_error(libc::EEXIST)));
+    }
+
+    #[test]
+    fn failed_catalog_commit_moves_the_same_file_back() {
+        // rename_asset_file_internal keeps `renamed_paths` and calls the path
+        // form in the other direction when the SQLite update/commit fails.
+        let root = temporary();
+        let (source, destination) = material(root.path());
+        let inode = fs::metadata(&source).unwrap().ino();
+        let held = fs::File::open(&source).unwrap();
+        move_held_no_replace(&held, &source, &destination).unwrap();
+        move_path_no_replace(&destination, &source).unwrap();
+        assert!(!destination.exists());
+        assert_eq!(fs::metadata(&source).unwrap().ino(), inode);
+        assert_eq!(fs::read(&source).unwrap(), b"synthetic material bytes");
+        // If the original name was taken meanwhile, recovery refuses and keeps
+        // both files; nothing is deleted to make room.
+        move_held_no_replace(&held, &source, &destination).unwrap();
+        fs::write(&source, b"new file at the old name").unwrap();
+        let error = move_path_no_replace(&destination, &source).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&destination).unwrap(), b"synthetic material bytes");
+        assert_eq!(fs::read(&source).unwrap(), b"new file at the old name");
+    }
+
+    #[test]
+    fn replaced_or_linked_ancestor_is_refused_and_nothing_moves() {
+        let root = temporary();
+        let (source, destination) = material(root.path());
+        let library = root.path().join("library");
+        let held = fs::File::open(&source).unwrap();
+        let prepared = PreparedMove::prepare(&held, &source, &destination).unwrap();
+        // Swap an ancestor of the source for a look-alike after the checks.
+        let aside = root.path().join("library-aside");
+        fs::rename(&library, &aside).unwrap();
+        fs::create_dir_all(library.join("photos")).unwrap();
+        fs::write(&source, b"look-alike").unwrap();
+        let error = prepared.commit().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            fs::read(aside.join("photos").join("synthetic-cover.png")).unwrap(),
+            b"synthetic material bytes"
+        );
+        assert_eq!(fs::read(&source).unwrap(), b"look-alike");
+        assert!(!destination.exists());
+        // The same for the destination's ancestor.
+        let moved = aside.join("photos").join("synthetic-cover.png");
+        let held = fs::File::open(&moved).unwrap();
+        let prepared = PreparedMove::prepare(&held, &moved, &destination).unwrap();
+        let archive = root.path().join("archive");
+        fs::rename(&archive, root.path().join("archive-aside")).unwrap();
+        fs::create_dir_all(archive.join("2026")).unwrap();
+        assert_eq!(prepared.commit().unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&moved).unwrap(), b"synthetic material bytes");
+        assert!(!destination.exists());
+        assert!(!root.path().join("archive-aside").join("2026").join("renamed-cover.png").exists());
+        // A symlinked ancestor or a symlinked leaf is refused before anything.
+        symlink(root.path().join("archive"), root.path().join("linked")).unwrap();
+        let through_link = root.path().join("linked").join("2026").join("x.png");
+        assert!(hold_parents(&moved, &through_link).is_err());
+        assert!(move_held_no_replace(&held, &moved, &through_link).is_err());
+        let leaf_link = aside.join("photos").join("leaf-link.png");
+        symlink(&moved, &leaf_link).unwrap();
+        assert!(move_held_no_replace(&held, &leaf_link, &destination).is_err());
+        assert!(move_path_no_replace(&leaf_link, &destination).is_err());
+        assert_eq!(fs::read(&moved).unwrap(), b"synthetic material bytes");
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn a_held_source_must_still_be_the_named_object() {
+        let root = temporary();
+        let (source, destination) = material(root.path());
+        let held = fs::File::open(&source).unwrap();
+        // The name now denotes another inode: refuse, move nothing.
+        fs::rename(&source, source.with_file_name("old.png")).unwrap();
+        fs::write(&source, b"replacement").unwrap();
+        assert_eq!(
+            move_held_no_replace(&held, &source, &destination).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        // Access metadata changed after the checks: refuse at commit.
+        let held = fs::File::open(&source).unwrap();
+        let prepared = PreparedMove::prepare(&held, &source, &destination).unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(prepared.commit().unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&source).unwrap(), b"replacement");
+        assert!(!destination.exists());
     }
 }

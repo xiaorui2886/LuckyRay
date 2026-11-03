@@ -1322,7 +1322,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
 
     def test_attachment_mutation_sources_never_unlink_a_user_object(self):
         files = ("linux_attachment_store.rs", "knowledge/linux_attachment_mutations.rs",
-                 "knowledge/linux_attachment_import.rs")
+                 "knowledge/linux_attachment_import.rs", "linux_material_move.rs")
         banned = ("remove_file(", "remove_dir(", "fs::remove_", "unlinkat(", "libc::unlink",
                   "RENAME_EXCHANGE", "shutil.")
         for name in files:
@@ -1340,14 +1340,15 @@ class AttachmentMutationSourceTests(unittest.TestCase):
     def test_attachment_kind_whitelist_is_closed_and_rollback_is_routed(self):
         admit = self.read("knowledge/linux_attachment_import.rs")
         self.assertEqual(sorted(set(re.findall(r'"([a-z-]+)" =>', admit))),
-                         ["attachment-rename", "conversion", "external-reference-update",
-                          "import", "note-move"])
+                         ["attachment-relink", "attachment-rename", "conversion",
+                          "external-reference-update", "import", "note-move"])
         self.assertIn("_ => Err(linux_knowledge_write_unavailable())", admit)
         mutations = self.read("knowledge/linux_attachment_mutations.rs")
         execute = mutations.split("fn execute_linux_attachment_operation_unlocked", 1)[1].split(
             "fn recover_linux_attachment_operation_unlocked", 1)[0]
         self.assertIn('"import" => self.execute_linux_attachment_import_unlocked', execute)
-        for kind in ("attachment-rename", "conversion", "note-move", "external-reference-update"):
+        for kind in ("attachment-rename", "conversion", "note-move", "external-reference-update",
+                     "attachment-relink"):
             self.assertIn('"{}"'.format(kind), execute)
         self.assertIn(".execute_linux_attachment_mutation_unlocked(", execute)
         self.assertIn("_ => Err(linux_knowledge_write_unavailable())", execute)
@@ -1380,6 +1381,65 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         external = admit.split("fn admit_external_reference_update", 1)[1]
         self.assertIn('if !file.relative_path.to_ascii_lowercase().ends_with(".md") {', external)
         self.assertIn("!operation.external_paths.is_empty()", external)
+
+    def test_material_file_move_admission_is_closed(self):
+        admit = self.read("knowledge/linux_attachment_import.rs")
+        relink = admit.split("fn admit_material_file_move", 1)[1].split("impl KnowledgeService", 1)[0]
+        # Only the material file move; the relocation shape (恢复附件位置) stays out.
+        self.assertIn("let Some(movement) = operation.material_file_move.as_ref() else {", relink)
+        for token in ("|| operation.material_relocation.is_some()",
+                      "|| operation.material_revision.is_some()",
+                      "|| operation.material_original_path.is_some()",
+                      "|| !operation.attachment_dependencies.is_empty()",
+                      "|| operation.external_dependencies.len() != 1",
+                      "|| operation.external_dependencies[0].0 != movement.original_path",
+                      "|| operation.external_dependencies[0].1 != movement.expected_hash",
+                      "|| operation.external_paths.len() != operation.files.len()",
+                      "if path != &movement.destination_path",
+                      'if !file.relative_path.to_ascii_lowercase().ends_with(".md") {',
+                      "let before = bytes(&file.before)?.ok_or_else(linux_knowledge_write_unavailable)?;",
+                      "let after = bytes(&file.after)?.ok_or_else(linux_knowledge_write_unavailable)?;"):
+            with self.subTest(token=token):
+                self.assertIn(token, relink)
+        # The durable result stays pending until the catalog has moved the file,
+        # exactly like the Windows runner.
+        mutations = self.read("knowledge/linux_attachment_mutations.rs")
+        runner = mutations.split("fn run_linux_attachment_mutation(", 1)[1].split("\n    fn ", 1)[0]
+        self.assertIn("|| operation.material_file_move.is_some()", runner)
+        self.assertIn('status: "attachment-projection-pending".into(),', runner)
+        self.assertIn("serde_json::to_vec(&durable_result)", runner)
+        self.assertIn("Ok(result)", runner)
+
+    def test_material_file_move_is_linux_gated_and_same_filesystem_only(self):
+        lib = self.read("lib.rs")
+        self.assertIn('#[cfg(target_os = "linux")]\nmod linux_material_move;', lib)
+        primitive = self.read("linux_material_move.rs")
+        self.assertIn("libc::RENAME_NOREPLACE", primitive)
+        self.assertIn("libc::AT_SYMLINK_NOFOLLOW", primitive)
+        self.assertIn("libc::O_NOFOLLOW", primitive)
+        self.assertIn("return Err(cross_device());", primitive)
+        for token in ("std::io::copy", "fs::copy", "set_len(", ".truncate(", "O_TRUNC", "write("):
+            with self.subTest(token=token):
+                self.assertNotIn(token, primitive)
+        catalog = self.read("materials/catalog.rs")
+        handle = catalog.split("fn move_owned_handle_no_replace(", 1)[1].split("\nfn ", 1)[0]
+        self.assertIn("#[cfg(target_os = \"linux\")] {crate::linux_material_move::move_held_no_replace(",
+                      handle)
+        self.assertIn("#[cfg(not(any(windows, target_os = \"linux\")))]", handle)
+        restore = catalog.split("fn move_owned_file_no_replace(", 1)[1].split("\nfn ", 1)[0]
+        self.assertIn("crate::linux_material_move::move_path_no_replace(source,destination)", restore)
+        parents = catalog.split("fn hold_material_parent_directories(", 1)[1].split("\nfn ", 1)[0]
+        self.assertIn("crate::linux_material_move::hold_parents(source,destination)", parents)
+        # Cross-filesystem is refused at preview, before any note is rewritten.
+        prepare = catalog.split("fn prepare_note_file_move(", 1)[1].split("pub(crate) fn ", 1)[0]
+        self.assertIn("linux_reject_cross_device(&owned.file_path,&destination)?;", prepare)
+        self.assertIn('MaterialError::new("attachment-move-cross-device",LINUX_CROSS_DEVICE_MESSAGE)',
+                      catalog)
+        # The SQLite-failure recovery still moves the renamed file back.
+        rename = catalog.split("fn rename_asset_file_internal(", 1)[1].split("\n    pub", 1)[0]
+        self.assertIn("move_owned_file_no_replace(&renamed, &original)", rename)
+        self.assertIn('return Err(MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖"))',
+                      catalog)
 
     def test_note_move_uses_the_sealed_runner_not_the_windows_journal(self):
         operations = self.read("knowledge/attachment_operations.rs")
@@ -1438,6 +1498,10 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                       errors)
         self.assertIn('"knowledge-linux-rollback-unprovable"', errors)
         self.assertIn('"knowledge-linux-fs-unsupported"', errors)
+        move = errors.split('"attachment-move-cross-device":', 1)[1].split("\n", 1)[0]
+        self.assertIn("未移动文件", move)
+        catalog = self.read("materials/catalog.rs")
+        self.assertIn("目标位置与原文件不在同一文件系统，未移动文件。", catalog)
         # The unprovable-rollback message must promise that nothing was written.
         rollback = errors.split('"knowledge-linux-rollback-unprovable":', 1)[1].split("\n", 1)[0]
         self.assertIn("现场已保留", rollback)
