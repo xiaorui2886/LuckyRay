@@ -2471,7 +2471,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertNotIn("attachment-move-cross-device", errors)
         self.assertIn("/[\\u4e00-\\u9fff]/.test(error.message)", errors)
         catalog = self.read("materials/catalog.rs")
-        self.assertIn("目标位置与原文件不在同一文件系统，未移动文件。", catalog)
+        self.assertIn("目标位置与原文件不在同一文件系统，未移动文件，未做任何修改。", catalog)
         # The unprovable-rollback message must promise that nothing was written.
         rollback = errors.split('"knowledge-linux-rollback-unprovable":', 1)[1].split("\n", 1)[0]
         self.assertIn("现场已保留", rollback)

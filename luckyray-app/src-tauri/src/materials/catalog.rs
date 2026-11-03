@@ -5407,7 +5407,7 @@ fn linux_move_owned_file_no_replace(source:&Path,destination:&Path)->std::io::Re
 /// Shown when a move would leave the source filesystem. Nothing is moved and
 /// nothing is copied (D4, same as the Windows release's single-volume move).
 #[cfg(target_os = "linux")]
-const LINUX_CROSS_DEVICE_MESSAGE:&str="目标位置与原文件不在同一文件系统，未移动文件。暂不支持跨文件系统移动，请选择同一磁盘分区内的位置。";
+const LINUX_CROSS_DEVICE_MESSAGE:&str="目标位置与原文件不在同一文件系统，未移动文件，未做任何修改。暂不支持跨文件系统移动，请选择同一磁盘分区内的位置。";
 
 #[cfg(target_os = "linux")]
 fn linux_cross_device_error()->MaterialError {
@@ -5440,7 +5440,7 @@ impl MaterialCatalog {
             Err(error) => {
                 // Nothing was renamed (or the move primitive put it back).
                 let _ = std::fs::remove_file(manifest_path);
-                return Err(MaterialError::io("delete-quarantine-failed", "隔离素材文件失败", error));
+                return Err(MaterialError::io("delete-quarantine-failed", "隔离素材文件失败，未做任何修改", error));
             }
         };
         let recorded = self
