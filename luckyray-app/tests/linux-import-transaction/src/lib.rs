@@ -28,6 +28,10 @@ mod linux_material_delete;
 // exercised without Tauri. The module is self-contained apart from chrono.
 #[path = "../../../src-tauri/src/canvas_agent.rs"]
 mod canvas_agent;
+// Linux native-media gating (T16): the error payloads are pure code and the
+// media-engine verification building blocks are exercised on CI.
+#[path = "../../../src-tauri/src/linux_media_runtime.rs"]
+mod linux_media_runtime;
 
 #[cfg(test)]
 mod tests {
@@ -1197,6 +1201,30 @@ mod tests {
         assert_eq!(prepared.commit().unwrap_err().kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&source).unwrap(), b"replacement");
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn linux_media_component_error_is_reported_only_without_a_verified_runtime() {
+        use super::linux_media_runtime;
+        let verified: Result<std::path::PathBuf, String> =
+            Ok(std::path::PathBuf::from("/synthetic/media-engine"));
+        assert!(linux_media_runtime::component_missing_error(&verified).is_none());
+        let unverified: Result<std::path::PathBuf, String> =
+            Err("native-video-tools-unavailable".into());
+        let payload = linux_media_runtime::component_missing_error(&unverified)
+            .expect("a missing runtime must be reported");
+        let parsed: serde_json::Value = serde_json::from_str(&payload).expect("envelope");
+        assert_eq!(parsed["code"], "native-media-component-missing");
+        assert_eq!(parsed["message"], "未找到媒体组件，未做任何修改");
+        // Capability stays honest: the Linux player is not wired yet.
+        let capability = linux_media_runtime::capability_payload(&verified);
+        assert_eq!(capability["available"], false);
+        assert_eq!(capability["runtimeVerified"], true);
+        assert_eq!(capability["reason"], "native-video-player-unported");
+        let capability = linux_media_runtime::capability_payload(&unverified);
+        assert_eq!(capability["available"], false);
+        assert_eq!(capability["runtimeVerified"], false);
+        assert_eq!(capability["reason"], "native-media-component-missing");
     }
 
     #[test]

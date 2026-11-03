@@ -474,7 +474,8 @@ class Run(runtime.Run):
 
     def layout(self):
         source, scripts = self.source(), self.scripts()
-        (self.private / "component-layout.attempt").open("x").close()
+        with (self.private / "component-layout.attempt").open("x"):
+            pass
         wrapper = {"status": "FAIL", "source": source, "scripts": scripts, "attempts": 1}
         report = {"status": "NOT_RUN", "scope": SCOPE, "source": source, "attempts": 0, "flowCount": 0,
                   "componentLayout": wrapper}
@@ -535,7 +536,8 @@ class Run(runtime.Run):
         source = self.source()
         component = read_json(self.evidence / "notes.json").get("componentLayout")
         media_layout.validate(component, source, self.scripts())
-        (self.private / "notes.attempt").open("x").close()
+        with (self.private / "notes.attempt").open("x"):
+            pass
         build, resources = read_json(self.evidence / "build.json"), read_json(self.evidence / "resources.json")
         layout = read_json(self.private / "layout.json")
         require(build.get("status") == "PASS" and resources.get("status") == "PASS"

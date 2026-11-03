@@ -298,7 +298,7 @@ trait MediaResolver: Send + Sync {
     ) -> MediaTransferResult<TransferOutput>;
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 struct ExternalMediaResolver {
     executable: PathBuf,
     root: PathBuf,
@@ -310,7 +310,7 @@ struct ExternalMediaResolver {
     allow_loopback: bool,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 impl ExternalMediaResolver {
     #[cfg(test)]
     fn for_test(executable: PathBuf, root: PathBuf, runner_name: impl Into<OsString>) -> Self {
@@ -410,13 +410,13 @@ impl ExternalMediaResolver {
 
 /// Reuse the shipped media-engine inventory/manifest authority for local video.
 /// This never falls back to PATH, a downloaded executable or a developer tool.
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 pub(crate) fn verified_local_video_tools(resource_dir: &Path) -> Result<PathBuf, String> {
     ExternalMediaResolver::app_owned(resource_dir).map_err(|e|e.message)?
         .map(|runtime|runtime.ffmpeg_dir).ok_or_else(||"native-video-tools-unavailable".into())
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MediaEngineRuntimeManifest {
@@ -432,7 +432,7 @@ struct MediaEngineRuntimeManifest {
     files: Vec<MediaEngineRuntimeFile>,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MediaEngineRuntimeFile {
@@ -832,7 +832,7 @@ fn resolver_environment(
     Ok(environment)
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 fn safe_runtime_path(root: &Path, relative: &str) -> MediaTransferResult<PathBuf> {
     if relative.is_empty()
         || relative.len() > 260
@@ -852,7 +852,7 @@ fn safe_runtime_path(root: &Path, relative: &str) -> MediaTransferResult<PathBuf
     Ok(canonical)
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 fn enumerate_runtime_files(root: &Path) -> MediaTransferResult<HashSet<String>> {
     let mut files = HashSet::new();
     let mut pending = vec![root.to_path_buf()];
@@ -4031,5 +4031,128 @@ mod tests {
             fixture_mp4(b"external")
         );
         server.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod media_engine_tests {
+    // T16: the packaged media-engine authority is pure code, so its pinned
+    // versions, per-file digests and inventory comparison are exercised with
+    // synthetic files. `ExternalMediaResolver::app_owned` itself is gated on the
+    // packaging-phase `LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256` digest, so these
+    // tests drive the exact building blocks it calls (safe_runtime_path,
+    // enumerate_runtime_files, manifest deserialization) instead.
+    use super::*;
+    use std::collections::BTreeMap;
+
+    struct Synthetic {
+        root: PathBuf,
+        declared: BTreeMap<String, String>,
+    }
+
+    impl Synthetic {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "luckyray-media-engine-{}-{}",
+                std::process::id(),
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            ));
+            std::fs::create_dir_all(root.join("bin")).expect("bin");
+            std::fs::create_dir_all(root.join("wheels")).expect("wheels");
+            std::fs::create_dir_all(root.join("ffmpeg")).expect("ffmpeg");
+            Self { root, declared: BTreeMap::new() }
+        }
+
+        fn add(&mut self, relative: &str, bytes: &[u8]) {
+            let path = self.root.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("parent");
+            }
+            std::fs::write(&path, bytes).expect("synthetic file");
+            self.declared
+                .insert(relative.to_owned(), format!("{:x}", Sha256::digest(bytes)));
+        }
+
+        fn manifest(&self) -> Vec<u8> {
+            let listed: Vec<String> = self
+                .declared
+                .iter()
+                .map(|(path, digest)| {
+                    format!(r#"{{"path":"{path}","sha256":"{digest}"}},"#)
+                })
+                .collect();
+            format!(
+                r#"{{"schemaVersion":1,"sourceManifestSha256":"{}","pythonVersion":"3.11.8","python":"bin/python3","ytDlpVersion":"2026.7.4","ytDlpWheel":"wheels/yt_dlp.whl","ytDlpEjsWheel":"wheels/ejs.whl","deno":"bin/deno","ffmpeg":"ffmpeg/ffmpeg","files":[{}]}}"#,
+                "0".repeat(64),
+                listed.concat().trim_end_matches(','),
+            )
+            .into_bytes()
+        }
+    }
+
+    impl Drop for Synthetic {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn complete_synthetic() -> Synthetic {
+        let mut engine = Synthetic::new();
+        engine.add("bin/python3", b"elf");
+        engine.add("runner.py", b"print('runner')");
+        engine.add("wheels/yt_dlp.whl", b"wheel");
+        engine.add("wheels/ejs.whl", b"ejs");
+        engine.add("ffmpeg/ffmpeg", b"ffmpeg");
+        engine.add("bin/deno", b"deno");
+        engine
+    }
+
+    #[test]
+    fn the_manifest_deserializes_with_the_pinned_runtime_versions() {
+        let engine = complete_synthetic();
+        let manifest: MediaEngineRuntimeManifest =
+            serde_json::from_slice(&engine.manifest()).expect("manifest");
+        assert_eq!(manifest.schema_version, 1);
+        assert_eq!(manifest.python_version, "3.11.8");
+        assert_eq!(manifest.yt_dlp_version, "2026.7.4");
+        assert_eq!(manifest.source_manifest_sha256.len(), 64);
+        assert_eq!(manifest.files.len(), 6);
+    }
+
+    #[test]
+    fn the_runtime_inventory_must_match_the_manifest_exactly() {
+        let engine = complete_synthetic();
+        let root = engine.seal();
+        let declared: HashSet<String> = engine.declared.keys().cloned().collect();
+        assert_eq!(enumerate_runtime_files(&root).expect("inventory"), declared);
+        // One undeclared extra file is enough to refuse the runtime.
+        std::fs::write(root.join("bin/extra.dll"), b"extra").expect("extra");
+        assert_ne!(enumerate_runtime_files(&root).expect("inventory"), declared);
+    }
+
+    #[test]
+    fn unsafe_paths_symlinks_and_missing_files_are_refused() {
+        let engine = complete_synthetic();
+        let root = engine.seal();
+        // A declared path that escapes the root, or a missing one, is refused by
+        // safe_runtime_path with the resolver-unavailable code.
+        assert_eq!(
+            safe_runtime_path(&root, "../outside/python3")
+                .err()
+                .expect("an escaping path must be refused")
+                .code,
+            "media-resolver-unavailable"
+        );
+        assert!(safe_runtime_path(&root, "bin/absent").is_err());
+        assert!(safe_runtime_path(&root, "bin/../bin/python3").is_err());
+        // A symlink standing in for a declared file is refused by the inventory
+        // walk before any digest is trusted.
+        let linked = root.join("bin/link-python3");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("bin/python3"), &linked).expect("symlink");
+        let error = enumerate_runtime_files(&root)
+            .err()
+            .expect("a symlink must be refused");
+        assert_eq!(error.code, "media-resolver-unavailable");
     }
 }

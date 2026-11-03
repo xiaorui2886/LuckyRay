@@ -166,7 +166,24 @@ pub(crate) async fn material_video_preview_command(
         .map_err(|_| "native-video-preview-worker-failed".to_string())?;
     #[cfg(not(all(windows, feature = "browser-host-runtime")))]
     {
-        let _ = (caller, app, request);
+        use tauri::Manager;
+        let _ = (&caller, &request, &app);
+        // Linux: the packaged media engine is verified exactly like Windows, so
+        // a missing or unverified runtime is reported as its own capability
+        // refusal. A verified runtime still reports the preview as unavailable
+        // until the Linux FFmpeg slice lands (T16 lists it).
+        #[cfg(target_os = "linux")]
+        {
+            let resources = app
+                .path()
+                .resource_dir()
+                .map_err(|_| "native-video-resources-unavailable".to_string())?;
+            let verified =
+                crate::media_transfer::verified_local_video_tools(&resources);
+            if let Some(payload) = crate::linux_media_runtime::component_missing_error(&verified) {
+                return Err(payload);
+            }
+        }
         Err("native-video-preview-unavailable".into())
     }
 }
@@ -186,7 +203,25 @@ pub(crate) async fn material_native_video_command(
     .map_err(|_| "native-video-worker-failed".to_string())?;
     #[cfg(not(all(windows, feature = "browser-host-runtime")))]
     {
-        let _ = (caller, app);
+        use tauri::Manager;
+        let _ = (&caller, &request, &app);
+        // Linux: capability stays honest (the player is not ported yet) while
+        // the packaged runtime is verified exactly like Windows; a missing or
+        // unverified runtime is its own capability refusal.
+        #[cfg(target_os = "linux")]
+        {
+            let resources = app
+                .path()
+                .resource_dir()
+                .map_err(|_| "native-video-resources-unavailable".to_string())?;
+            let verified = crate::media_transfer::verified_local_video_tools(&resources);
+            if matches!(request, Request::Capability) {
+                return Ok(crate::linux_media_runtime::capability_payload(&verified));
+            }
+            if let Some(payload) = crate::linux_media_runtime::component_missing_error(&verified) {
+                return Err(payload);
+            }
+        }
         if matches!(request, Request::Capability) {
             Ok(serde_json::json!({"available":false}))
         } else {

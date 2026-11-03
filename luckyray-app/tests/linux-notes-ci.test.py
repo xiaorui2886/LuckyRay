@@ -1942,6 +1942,43 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                      "replace_needs_an_existing_parent_directory"):
             self.assertIn(f"fn {name}()", canvas)
 
+    def test_native_media_linux_gate_is_wired_without_touching_windows(self):
+        # T16 pure-code slice: the media-engine verification authority is
+        # compiled on Linux with the same pinned-version + digest checks, the
+        # two native video commands report a missing runtime with their own
+        # code and "未做任何修改", and the runner/player stay Windows-gated.
+        gate = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
+        transfer = self.read("media_transfer.rs")
+        self.assertEqual(transfer.count(gate), 7, "only the verification gates widen")
+        for name in ("struct ExternalMediaResolver {", "impl ExternalMediaResolver {",
+                     "pub(crate) fn verified_local_video_tools(resource_dir: &Path)",
+                     "fn safe_runtime_path(root: &Path, relative: &str)",
+                     "fn enumerate_runtime_files(root: &Path)"):
+            self.assertIn(name, transfer)
+        # The runner (probe/transfer) and the player stay Windows-only.
+        self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\n'
+                      "impl MediaResolver for ExternalMediaResolver {", transfer)
+        runtime = self.read("linux_media_runtime.rs")
+        self.assertIn('pub(crate) const COMPONENT_MISSING: &str = "native-media-component-missing";',
+                      runtime)
+        self.assertIn('pub(crate) const COMPONENT_MISSING_MESSAGE: &str = "未找到媒体组件，未做任何修改";',
+                      runtime)
+        self.assertIn('json!({"code": COMPONENT_MISSING, "message": COMPONENT_MISSING_MESSAGE})',
+                      runtime)
+        lib = self.read("lib.rs")
+        self.assertIn('#[cfg(target_os = "linux")]\nmod linux_media_runtime;', lib)
+        offline = (Path(__file__).resolve().parents[1] /
+                   "tests/linux-import-transaction/src/lib.rs").read_text()
+        self.assertIn('#[path = "../../../src-tauri/src/linux_media_runtime.rs"]\n'
+                      "mod linux_media_runtime;", offline)
+        commands = self.read("material_native_video/mod.rs")
+        self.assertIn("crate::media_transfer::verified_local_video_tools(&resources)", commands)
+        self.assertIn("crate::linux_media_runtime::component_missing_error(&verified)", commands)
+        self.assertIn("crate::linux_media_runtime::capability_payload(&verified)", commands)
+        # macOS keeps its previous refusals byte-identically.
+        self.assertIn('Err("native-video-preview-unavailable".into())', commands)
+        self.assertIn('Err("native-video-platform-unavailable".into())', commands)
+
     def test_canvas_temporary_name_is_tied_to_the_rust_writer(self):
         # The canvas writer (canvas_agent.rs::atomic_write) stages
         # `.{file_name}.agent-{pid}-{nanos}.tmp`. The scan predicate must match
