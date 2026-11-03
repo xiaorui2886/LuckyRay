@@ -24,6 +24,7 @@ export function attachmentErrorMessage(cause: unknown, locale?: Locale) {
     "knowledge-name-conflict": "目标位置已有文件，未覆盖。请换一个名称后重试。",
     "knowledge-linux-rollback-unprovable": "回滚未执行：当前状态无法证明可以安全恢复，现场已保留。请改用“继续操作”，或先处理被占用的文件。",
     "knowledge-linux-fs-unsupported": "当前文件系统不支持安全回滚，未做任何修改。",
+    "attachment-move-cross-device": "目标位置与原文件不在同一文件系统，未移动文件。暂不支持跨文件系统移动，请选择同一磁盘分区内的位置。",
     "knowledge-operation-partial": "操作未全部完成，现场已保留。请在“附件维护 → 恢复已有操作”中继续或回滚。",
   };
   if (messages[error.code]) return messages[error.code];

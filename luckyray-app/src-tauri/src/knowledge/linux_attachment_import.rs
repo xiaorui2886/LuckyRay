@@ -1,7 +1,7 @@
 //! Linux admission and execution for the attachment kinds that are open:
-//! new-file imports, in-Vault attachment renames, conversions, note moves and
-//! external reference updates. Real file moves and relinks stay refused until
-//! the platform rename primitive is implemented for them.
+//! new-file imports, in-Vault attachment renames, conversions, note moves,
+//! external reference updates and the material file move (素材详情 → 移动或重命名
+//! 文件). The other relink shape (恢复附件位置) stays refused.
 use super::attachment_operations::{bytes, validate_plan, AttachmentOperationIssue};
 use super::*;
 use crate::linux_attachment_store::{Dependency, ImportStore, MAX_FILE, MAX_INTENT};
@@ -32,6 +32,7 @@ pub(super) fn admit_linux_attachment_operation(
         "conversion" => admit_conversion(operation),
         "note-move" => admit_note_move(operation),
         "external-reference-update" => admit_external_reference_update(operation),
+        "attachment-relink" => admit_material_file_move(operation),
         _ => Err(linux_knowledge_write_unavailable()),
     }
 }
@@ -283,6 +284,57 @@ fn admit_external_reference_update(
         || !operation.external_dependencies.is_empty()
     {
         return Err(linux_knowledge_write_unavailable());
+    }
+    let mut total = 0usize;
+    for file in &operation.files {
+        if !file.relative_path.to_ascii_lowercase().ends_with(".md") {
+            return Err(linux_knowledge_write_unavailable());
+        }
+        let before = bytes(&file.before)?.ok_or_else(linux_knowledge_write_unavailable)?;
+        let after = bytes(&file.after)?.ok_or_else(linux_knowledge_write_unavailable)?;
+        if before.len() > MAX_FILE || after.len() > MAX_FILE {
+            return Err(linux_knowledge_write_unavailable());
+        }
+        total = total
+            .checked_add(before.len() + after.len())
+            .ok_or_else(linux_knowledge_write_unavailable)?;
+        if total > 128 * 1024 * 1024 {
+            return Err(linux_knowledge_write_unavailable());
+        }
+    }
+    Ok(())
+}
+
+/// Moving a material's real file: only the Markdown rewrites run here, one per
+/// note that points at the file. The file itself is moved afterwards by the
+/// catalog's no-replace rename, so the plan must name exactly one source (the
+/// sealed original and its digest) and every rewritten note must point at the
+/// one destination. The relocation shape (恢复附件位置) is not admitted.
+fn admit_material_file_move(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
+    let Some(movement) = operation.material_file_move.as_ref() else {
+        return Err(linux_knowledge_write_unavailable());
+    };
+    if operation.files.is_empty()
+        || operation.files.len() > 1024
+        || operation.material_relocation.is_some()
+        || operation.material_revision.is_some()
+        || operation.material_original_path.is_some()
+        || !operation.attachment_dependencies.is_empty()
+        || operation.external_dependencies.len() != 1
+        || operation.external_dependencies[0].0 != movement.original_path
+        || operation.external_dependencies[0].1 != movement.expected_hash
+        || operation.external_paths.len() != operation.files.len()
+        || !matches!(movement.storage_mode.as_str(), "source" | "managed")
+    {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    for (note, path) in &operation.external_paths {
+        if path != &movement.destination_path
+            || operation.external_paths.iter().filter(|(other, _)| other == note).count() != 1
+            || !operation.files.iter().any(|file| &file.relative_path == note)
+        {
+            return Err(linux_knowledge_write_unavailable());
+        }
     }
     let mut total = 0usize;
     for file in &operation.files {

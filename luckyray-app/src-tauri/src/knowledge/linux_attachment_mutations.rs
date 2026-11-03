@@ -86,7 +86,8 @@ impl KnowledgeService {
     ) -> Result<AttachmentOperationResult, KnowledgeError> {
         match operation.kind.as_str() {
             "import" => self.execute_linux_attachment_import_unlocked(vault, operation, cancelled),
-            "attachment-rename" | "conversion" | "note-move" | "external-reference-update" => self
+            "attachment-rename" | "conversion" | "note-move" | "external-reference-update"
+            | "attachment-relink" => self
                 .execute_linux_attachment_mutation_unlocked(
                     vault,
                     operation,
@@ -129,7 +130,8 @@ impl KnowledgeService {
                     cancelled,
                 )
             }
-            "attachment-rename" | "conversion" | "note-move" | "external-reference-update" => self
+            "attachment-rename" | "conversion" | "note-move" | "external-reference-update"
+            | "attachment-relink" => self
                 .run_linux_attachment_mutation(
                     vault,
                     &operation,
@@ -261,7 +263,23 @@ impl KnowledgeService {
                 }
             }
         }
-        let encoded = serde_json::to_vec(&result)
+        // Same rule as Windows: when the catalog still has to move a file (or
+        // record a path outside the Vault), the durable result stays pending
+        // until that projection appends its own result. The caller still gets
+        // the Markdown outcome. Only a material file move has such a step here.
+        let mut durable_result = result.clone();
+        if !operation.external_paths.is_empty()
+            || operation.material_relocation.is_some()
+            || operation.material_file_move.is_some()
+        {
+            durable_result.status = "partial".into();
+            durable_result.issues.push(AttachmentOperationIssue {
+                document: String::new(),
+                target: String::new(),
+                status: "attachment-projection-pending".into(),
+            });
+        }
+        let encoded = serde_json::to_vec(&durable_result)
             .map_err(|_| error("knowledge-recovery-invalid", "Cannot encode attachment result"))?;
         store
             .append_result(&format!("{:032x}", rand::random::<u128>()), &encoded)
