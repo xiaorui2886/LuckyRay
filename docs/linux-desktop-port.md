@@ -136,6 +136,12 @@ results separately from HTTP protocol failures, with two focused HTTP tests.
   exclusion is not provided. The sixth preflight passed the focused native
   note and file-store tests; see [Linux integration](linux-desktop-port-notes.md)
   for their boundaries and remaining runtime requirements.
+- Linux attachment copy-publish and material-file deletion are implemented
+  locally with private staging, no-replace renames and recorded quarantine
+  identity (see [Linux integration](linux-desktop-port-notes.md)). Deletion
+  matches Windows (quarantine, then permanent delete) and does not use the
+  system trash. Their offline filesystem tests pass; the full application
+  build and native flows for these paths are verified only on CI.
 - `tests/linux-security/atomic_create_probe.c` explores an unnamed inode and a
   previously opened directory descriptor, with no-overwrite tests after a
   synthetic directory rename. It does not establish how to acquire a trusted

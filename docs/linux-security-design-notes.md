@@ -65,6 +65,11 @@ Potential directions need separate threat-model and compatibility review:
 - Optimistic conflict detection is the Linux note-write contract. External
   edits are handled through conflict detection and retained recovery material;
   this does not provide mandatory exclusion for the whole edit window.
+- New attachments and their staging files are created 0600 inside an owned
+  Vault root; a published name is never overwritten. Material deletion proves
+  object identity before quarantine and again before permanent delete, and
+  keeps the file when it cannot. These checks, like the others, do not stop a
+  same-user process between checks.
 
 The current Linux implementation uses process groups and descriptor-relative,
 optimistic file transactions with independent backups and recovery journals.
