@@ -1811,11 +1811,11 @@ def main():
         report["checks"]["materialDeleteSourceRemoved"] = "PASS"
         phase = "canvas-flow"
         action = "canvas-open-home"
-        # T18: the canvas editor is a boot-level route. Entering it is a real
+        # T18: the canvas home is the AppShell #canvas route. Entering it is a real
         # navigation (hash + real page refresh), the same jump the page-canvas
         # entry performs in production; every click below is a real WebDriver
         # click and the save is the editor's own Ctrl+S shortcut.
-        execute("location.hash='#canvas-main';return true;")
+        execute("location.hash='#canvas';return true;")
         wd("POST", f"/session/{session}/refresh", {})
         until("return !!document.querySelector('.canvas-home-primary');", seconds=40)
         report["canvasFlow"]["homeRendered"] = True
@@ -1859,7 +1859,7 @@ def main():
         wd("POST", f"/session/{session}/refresh", {})
         until("return !document.querySelector('.react-flow__pane');", seconds=40)
         action = "canvas-reopen-editor"
-        execute("location.hash='#canvas-main';return true;")
+        execute("location.hash='#canvas';return true;")
         wd("POST", f"/session/{session}/refresh", {})
         until("return !!document.querySelector('.canvas-home-primary');", seconds=40)
         ui_click(".canvas-home-list-open", seconds=40)
