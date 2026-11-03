@@ -280,7 +280,7 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
             raw = passing_maintenance()
             raw["noteRename"]["materialAssetIdShape"]["before"] = before
             self.assertNotEqual(ci.bounded_maintenance(raw), expected)
-        smoke_src = open(ci.smoke.__file__, encoding="utf-8").read()
+        smoke_src = Path(ci.smoke.__file__).read_text()
         self.assertIn('rename["materialAssetNoteOnly"] = (image_identity["materialAssetId"] is None', smoke_src)
 
     def test_failure_diagnostics_are_closed_and_redacted(self):
@@ -1850,6 +1850,31 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("move_owned_file_no_replace(&renamed, &original)", rename)
         self.assertIn('return Err(MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖"))',
                       catalog)
+
+    def test_material_move_proves_one_link_and_refuses_unsupported_renameat2(self):
+        # T02 §5.2.c: the held object's identity includes nlink==1 (the same
+        # rule as linux_fs::Version and the delete quarantine). Both the held
+        # handle and the no-follow name proof must carry it.
+        primitive = self.read("linux_material_move.rs")
+        self.assertIn("links: u64", primitive)
+        self.assertIn("if !m.is_file() || m.nlink() != 1 {", primitive)
+        self.assertIn("links: m.nlink(),", primitive)
+        self.assertIn("stat.st_nlink as u64 != 1", primitive)
+        self.assertIn("links: stat.st_nlink as u64,", primitive)
+        # T02 §5.6.2/§5.6.4: a kernel/filesystem without RENAME_NOREPLACE is
+        # an explicit capability refusal, not a generic rename error.
+        self.assertIn("Some(libc::ENOSYS) | Some(libc::EINVAL)", primitive)
+        self.assertIn("rename_capability_error(error)", primitive)
+        catalog = self.read("materials/catalog.rs")
+        handle = catalog.split("fn linux_move_owned_handle_no_replace(", 1)[1].split("\nfn ", 1)[0]
+        self.assertIn('MaterialError::new("knowledge-linux-fs-unsupported",'
+                      '"当前文件系统不支持安全的文件移动，未做任何修改")', handle)
+        self.assertIn("error.kind()==std::io::ErrorKind::Unsupported", handle)
+        # The offline crate proves both rules are executable, not only textual.
+        tests = (Path(__file__).resolve().parents[1] /
+                 "tests/linux-import-transaction/src/lib.rs").read_text()
+        self.assertIn("fn material_move_refuses_a_source_with_a_second_link()", tests)
+        self.assertIn("fn renameat2_capability_failure_is_explicit_and_never_confused_with_a_conflict()", tests)
 
     def test_note_move_uses_the_sealed_runner_not_the_windows_journal(self):
         operations = self.read("knowledge/attachment_operations.rs")

@@ -1032,6 +1032,7 @@ mod tests {
     // ---- Material file move (素材详情 → 移动或重命名文件), step 3 ----
     use super::linux_material_move::{
         hold_parents, is_cross_device, move_held_no_replace, move_path_no_replace, PreparedMove,
+        rename_capability_error,
     };
 
     fn material(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -1191,6 +1192,43 @@ mod tests {
         assert_eq!(prepared.commit().unwrap_err().kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&source).unwrap(), b"replacement");
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn material_move_refuses_a_source_with_a_second_link() {
+        // T02 §5.2.c requires nlink==1 as part of the held object's identity.
+        // A rename must not move an object still reachable under another name;
+        // both the held handle and the name proof must reject it.
+        let root = temporary();
+        let (source, destination) = material(root.path());
+        let second = source.with_file_name("second-link.png");
+        fs::hard_link(&source, &second).unwrap();
+        let held = fs::File::open(&source).unwrap();
+        assert_eq!(
+            move_held_no_replace(&held, &source, &destination)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(&source).unwrap(), b"synthetic material bytes");
+        assert_eq!(fs::read(&second).unwrap(), b"synthetic material bytes");
+        assert!(!destination.exists());
+        assert!(PreparedMove::prepare(&held, &source, &destination).is_err());
+    }
+
+    #[test]
+    fn renameat2_capability_failure_is_explicit_and_never_confused_with_a_conflict() {
+        // A kernel/filesystem without RENAME_NOREPLACE refuses as Unsupported,
+        // while EXDEV, EEXIST and ordinary failures keep their own meaning.
+        for raw in [libc::ENOSYS, libc::EINVAL] {
+            let mapped = rename_capability_error(io::Error::from_raw_os_error(raw));
+            assert_eq!(mapped.kind(), io::ErrorKind::Unsupported);
+            assert_eq!(mapped.to_string(), "linux-renameat2-unsupported");
+        }
+        let already = rename_capability_error(io::Error::from_raw_os_error(libc::EEXIST));
+        assert_eq!(already.kind(), io::ErrorKind::AlreadyExists);
+        let reset = rename_capability_error(io::Error::from_raw_os_error(libc::ECONNRESET));
+        assert_eq!(reset.raw_os_error(), Some(libc::ECONNRESET));
     }
 
     // ---- step 4: copy-publish -------------------------------------------

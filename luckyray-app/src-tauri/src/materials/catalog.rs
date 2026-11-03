@@ -5387,6 +5387,9 @@ fn move_owned_file_no_replace(source:&Path,destination:&Path)->std::io::Result<(
 fn linux_move_owned_handle_no_replace(source:&mut std::fs::File,source_path:&Path,destination:&Path)->MaterialResult<Option<std::fs::File>> {
     crate::linux_material_move::move_held_no_replace(source,source_path,destination).map_err(|error| {
         if crate::linux_material_move::is_cross_device(&error) {return linux_cross_device_error()}
+        // No byte moved: make an unsupported RENAME_NOREPLACE an explicit
+        // capability refusal instead of a generic "rename failed".
+        if error.kind()==std::io::ErrorKind::Unsupported {return MaterialError::new("knowledge-linux-fs-unsupported","当前文件系统不支持安全的文件移动，未做任何修改")}
         if error.kind()==std::io::ErrorKind::AlreadyExists {return MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖")}
         MaterialError::io("rename-file-failed", "重命名素材真实文件失败", error)
     })?;

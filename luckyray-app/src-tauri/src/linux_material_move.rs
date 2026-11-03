@@ -30,7 +30,9 @@ pub(crate) fn is_cross_device(error: &io::Error) -> bool {
 }
 
 /// The object a name must keep denoting. ctime is deliberately absent: the
-/// rename itself changes it.
+/// rename itself changes it. `links` is part of the identity: a rename must
+/// never move an object that is still reachable under a second name (the same
+/// `nlink == 1` rule as `linux_fs::Version` and the delete quarantine).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Object {
     device: u64,
@@ -38,14 +40,22 @@ struct Object {
     mode: u32,
     uid: u32,
     gid: u32,
+    links: u64,
 }
 
 fn object_of(file: &File) -> io::Result<Object> {
     let m = file.metadata()?;
-    if !m.is_file() {
+    if !m.is_file() || m.nlink() != 1 {
         return Err(conflict());
     }
-    Ok(Object { device: m.dev(), inode: m.ino(), mode: m.mode(), uid: m.uid(), gid: m.gid() })
+    Ok(Object {
+        device: m.dev(),
+        inode: m.ino(),
+        mode: m.mode(),
+        uid: m.uid(),
+        gid: m.gid(),
+        links: m.nlink(),
+    })
 }
 
 fn component(name: &OsStr) -> io::Result<CString> {
@@ -67,7 +77,7 @@ fn named(directory: &Directory, name: &CString) -> io::Result<Object> {
     {
         return Err(io::Error::last_os_error());
     }
-    if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
+    if stat.st_mode & libc::S_IFMT != libc::S_IFREG || stat.st_nlink as u64 != 1 {
         return Err(conflict());
     }
     Ok(Object {
@@ -76,6 +86,7 @@ fn named(directory: &Directory, name: &CString) -> io::Result<Object> {
         mode: stat.st_mode as u32,
         uid: stat.st_uid as u32,
         gid: stat.st_gid as u32,
+        links: stat.st_nlink as u64,
     })
 }
 
@@ -83,6 +94,19 @@ fn leaf(path: &Path) -> io::Result<(Directory, CString)> {
     let parent = path.parent().ok_or_else(conflict)?;
     let name = path.file_name().ok_or_else(conflict)?;
     Ok((Directory::open(parent)?, component(name)?))
+}
+
+/// A kernel or filesystem without `RENAME_NOREPLACE` must be refused as a
+/// capability failure, not reported as an ordinary rename error. Nothing has
+/// moved in that case and there is no copy fallback (T02 §5.6.2/§5.6.4).
+pub(crate) fn rename_capability_error(error: io::Error) -> io::Error {
+    if matches!(error.raw_os_error(), Some(libc::ENOSYS) | Some(libc::EINVAL))
+        || error.kind() == io::ErrorKind::Unsupported
+    {
+        io::Error::new(io::ErrorKind::Unsupported, "linux-renameat2-unsupported")
+    } else {
+        error
+    }
 }
 
 fn rename_no_replace(
@@ -103,7 +127,10 @@ fn rename_no_replace(
     };
     if result != 0 {
         let error = io::Error::last_os_error();
-        return Err(if error.raw_os_error() == Some(libc::EXDEV) { cross_device() } else { error });
+        if error.raw_os_error() == Some(libc::EXDEV) {
+            return Err(cross_device());
+        }
+        return Err(rename_capability_error(error));
     }
     Ok(())
 }
