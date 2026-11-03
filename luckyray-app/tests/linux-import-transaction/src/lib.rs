@@ -36,6 +36,7 @@ mod linux_media_runtime;
     /// T27: the cross-filesystem material move, against a real EXDEV boundary.
     /// The checkout is ext4 and /dev/shm is tmpfs, so `rename` genuinely fails
     /// with EXDEV here instead of being injected.
+    #[cfg(test)]
     mod cross_device_move {
         use crate::linux_material_move::{copy_held_no_replace, is_cross_device};
         use sha2::{Digest, Sha256};
@@ -200,6 +201,7 @@ mod linux_media_runtime;
         /// seam fires synchronously inside the copy loop, after the first chunk
         /// and before anything is flushed or published, so both races are
         /// deterministic without weakening production code.
+        #[cfg(test)]
         mod mid_copy_race {
             use crate::linux_material_move::{copy_held_no_replace, mid_copy_hook};
             use sha2::{Digest, Sha256};
