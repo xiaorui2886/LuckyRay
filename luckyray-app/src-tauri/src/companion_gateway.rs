@@ -256,10 +256,12 @@ trait ProtectedIdentityStore: Send + Sync {
     fn remove(&self) -> Result<(), GatewayError>;
 }
 
+#[cfg(not(target_os = "linux"))]
 struct DpapiIdentityStore {
     path: PathBuf,
 }
 
+#[cfg(not(target_os = "linux"))]
 impl DpapiIdentityStore {
     fn new(app_data_dir: &Path) -> Self {
         Self {
@@ -268,6 +270,7 @@ impl DpapiIdentityStore {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 impl ProtectedIdentityStore for DpapiIdentityStore {
     fn load(&self) -> Result<Option<Zeroizing<Vec<u8>>>, GatewayError> {
         if !self.path.exists() {
