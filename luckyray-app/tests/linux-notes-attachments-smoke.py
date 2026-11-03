@@ -181,6 +181,16 @@ seen.observe(document.body,{childList:true});
 window.__luckyrayContextGestureTap=tap;return true;
 """
 
+# Read-only: a viewport point just left of / above the card (then right / below) that is inside the viewport and
+# not over the card, a menu or a dialog. Only two integers leave the page.
+CONTEXT_RELEASE_POINT = """
+const e=document.querySelector(arguments[0]);if(!e)return null;const r=e.getBoundingClientRect();
+const c=[[r.left-6,r.top+r.height/2],[r.left+r.width/2,r.top-6],[r.right+6,r.top+r.height/2],[r.left+r.width/2,r.bottom+6]];
+for(const [fx,fy] of c){const x=Math.round(fx),y=Math.round(fy);if(x<1||y<1||x>innerWidth-2||y>innerHeight-2)continue;
+  const h=document.elementFromPoint(x,y);if(h&&!e.contains(h)&&!h.closest('.asset-ctx-react,[role=dialog]'))return {x,y};}
+return null;
+"""
+
 MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance:not(.attachment-portability)"
 DIAGNOSED_PHASES = frozenset({"material-maintenance", "attachment-rollback", "attachment-rename", })
 # Read-only: status heading text (mapped to a closed label before export), open dialog label,
@@ -1192,11 +1202,22 @@ def main():
         ui_click(selector, text)
 
     def context_click(selector):
+        """Real right-button press on the card, released just outside it.
+
+        On the CI WebKitWebDriver a button-2 down/up on the same card also yields a primary `click` on the card
+        (CI 41597537016: viewerOpenedAfter=CARD_CLICK), and the card's v1.9.9 onClick opens the detail viewer.
+        The contextmenu fires on press, so releasing off the card keeps the gesture a pure right-button gesture: a
+        click only targets the pressed element (or a common ancestor), never the card. Read-only geometry; no JS click."""
         target = ready_control(selector, None, 30)
+        release = execute(CONTEXT_RELEASE_POINT, [selector])
+        require(isinstance(release, dict) and type(release.get("x")) is int and type(release.get("y")) is int,
+                "context-release-point-unavailable")
         guarded(selector, None, lambda: wd("POST", f"/session/{session}/actions", {"actions": [{"type": "pointer", "id": "context",
             "parameters": {"pointerType": "mouse"},
             "actions": [{"type": "pointerMove", "origin": {"element-6066-11e4-a52e-4f735466cecf": target}, "x": 0, "y": 0},
-                        {"type": "pointerDown", "button": 2}, {"type": "pointerUp", "button": 2}]}]}))
+                        {"type": "pointerDown", "button": 2},
+                        {"type": "pointerMove", "origin": "viewport", "x": release["x"], "y": release["y"], "duration": 0},
+                        {"type": "pointerUp", "button": 2}]}]}))
 
     def dismiss_material_viewer():
         """A material viewer (role=dialog aria-modal, portaled) left open by an earlier gesture sits over the

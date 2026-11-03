@@ -236,6 +236,30 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
                                    "gestureAuxclicks": None, "gestureContextmenus": 1})
         self.assertEqual(ci.smoke.bounded_observed({"viewerOpenedAfter": "/tmp/leak"}), {"viewerOpenedAfter": "INVALID"})
 
+    def test_context_gesture_is_right_button_only_and_released_off_the_card(self):
+        source = Path(__file__).with_name("linux-notes-attachments-smoke.py").read_text()
+        helper = source[source.index("    def context_click(selector):"):source.index("    def dismiss_material_viewer():")]
+        self.assertIn('{"type": "pointerDown", "button": 2}', helper)
+        self.assertIn('{"type": "pointerUp", "button": 2}', helper)
+        self.assertNotIn('"button": 0', helper)
+        self.assertLess(helper.index('"pointerDown"'), helper.index('"origin": "viewport"'))
+        self.assertLess(helper.index('"origin": "viewport"'), helper.index('"pointerUp"'))
+        for forbidden in (".click()", "dispatchEvent", "context_click(", "ActionChains"):
+            self.assertNotIn(forbidden, helper.replace("def context_click(", ""))
+        point = ci.smoke.CONTEXT_RELEASE_POINT
+        self.assertIn("!e.contains(h)", point)
+        self.assertIn(".asset-ctx-react,[role=dialog]", point)
+        for forbidden in (".click(", "dispatchEvent", "focus("):
+            self.assertNotIn(forbidden, point)
+        self.assertIn("context-release-point-unavailable", ci.FAILURES)
+        # The viewer check and passive tap still wrap every context gesture.
+        checked = source[source.index("def checked_context_click("):source.index("def maintenance_status(")]
+        self.assertIn("CONTEXT_GESTURE_TAP", checked)
+        self.assertIn('"material-viewer-opened-by-context-gesture"', checked)
+        app = (Path(__file__).resolve().parents[1] / "src" / "features" / "materials" / "MaterialsPage.tsx").read_text(encoding="utf-8")
+        self.assertIn("onClick={(event) => onClick(asset, event)}", app)
+        self.assertIn("onContextMenu={(event) => onContextMenu(event, asset)}", app)
+
     def test_asset_id_shape_is_closed_and_redacted(self):
         shape = ci.smoke.asset_id_shape
         self.assertEqual(shape({"materialAssetId": None}, "asset-1"), "NULL")
