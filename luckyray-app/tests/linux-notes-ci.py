@@ -171,6 +171,21 @@ def bounded_drop_trace(raw):
     return result
 
 
+def bounded_preview_geometry(raw):
+    """At most one geometry probe per app session, closed fields only."""
+    rows = raw if isinstance(raw, list) and len(raw) <= 2 else []
+    result = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        session = item.get("session")
+        result.append({"session": session if type(session) is int and 1 <= session <= 2 else None,
+                       "found": item.get("found") is True, "replaced": item.get("replaced") is True,
+                       "hit": item.get("hit") if item.get("hit") in smoke.PREVIEW_HITS else None,
+                       "centerInViewport": item.get("centerInViewport") is True})
+    return result
+
+
 def bounded_preview_toggle(raw):
     """Closed projection of the preview-toggle attempts.
 
@@ -271,6 +286,7 @@ def bounded_report(raw):
         result["previews"].append(item)
     clipboard = raw.get("clipboard") if isinstance(raw.get("clipboard"), dict) else {}
     result["previewToggle"] = bounded_preview_toggle(raw.get("previewToggle"))
+    result["previewGeometry"] = bounded_preview_geometry(raw.get("previewGeometry"))
     result["clipboard"] = {"source": "REAL_NOTE_CONTEXT_MENU" if clipboard.get("source") == "REAL_NOTE_CONTEXT_MENU" else "INVALID",
                            "systemRead": "XCLIP" if clipboard.get("systemRead") == "XCLIP" else "INVALID",
                            "exactAbsolutePath": clipboard.get("exactAbsolutePath") is True}
@@ -338,6 +354,8 @@ def validate_notes(raw, build, source, scripts):
     expected_preview = lambda session: {"session": session, "naturalWidth": 32, "naturalHeight": 24,
         "sampled": 5, "matched": 5, "visible": True, "method": "WEBVIEW_SCREENSHOT_PIXELS"}
     require(raw.get("previews") == [expected_preview(1), expected_preview(2)], "real-preview-pixel-evidence-missing")
+    require([(item["session"], item["found"], item["hit"], item["centerInViewport"]) for item in raw.get("previewGeometry", [])]
+            == [(1, True, "SELF", True), (2, True, "SELF", True)], "real-preview-pixel-evidence-missing")
     require(raw.get("clipboard") == {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True}, "real-clipboard-evidence-missing")
     handoff = raw.get("handoff", {})
     require(handoff.get("kind") == "OWNED_XDG_RECEIVER_READBACK" and handoff.get("exactExpectedFile") is True

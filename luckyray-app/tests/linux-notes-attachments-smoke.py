@@ -296,6 +296,39 @@ def preview_toggle_retriable(observation):
             and observation.get("responseState") == "UNCONFIRMED")
 
 
+# The note preview may swap its decoded <img> node for an equal one at any time
+# (a watcher re-versions the URL, or the widget remounts and leases a pooled
+# node). Holding the node found before scrolling across two animation frames
+# measured a detached element in that case (an all-zero rect, never the hit).
+# So: scroll the current image into view, wait two frames, then find the
+# CURRENT decoded 32x24 image again and hit-test it in the same task. If the
+# node was replaced, scroll the replacement into view once and measure again.
+# The pass condition is unchanged: a decoded 32x24 preview image is the top
+# element at its own centre, inside the viewport. Read and scroll only.
+PREVIEW_GEOMETRY = """return (async()=>{
+const find=()=>[...document.querySelectorAll('#page-notes .note-preview .note-media[data-kind=image] img')].find(e=>e.isConnected&&e.complete&&e.naturalWidth===32&&e.naturalHeight===24&&e.getBoundingClientRect().width>0)||null;
+const frames=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+const measure=(e,replaced)=>{const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);
+return {found:true,replaced,centerX:x,centerY:y,viewportWidth:innerWidth,viewportHeight:innerHeight,naturalWidth:e.naturalWidth,naturalHeight:e.naturalHeight,
+visible:hit===e,hit:hit===e?'SELF':hit===null?'NONE':e.contains(hit)?'CHILD':hit.closest('.note-media')?'MEDIA':'OTHER'};};
+const first=find();if(!first)return {found:false,replaced:false};
+first.scrollIntoView({block:'center'});await frames();
+let live=find();if(live===first)return measure(live,false);if(!live)return {found:false,replaced:true};
+live.scrollIntoView({block:'center'});await frames();
+live=find();return live?measure(live,true):{found:false,replaced:true};
+})();"""
+PREVIEW_HITS = ("SELF", "CHILD", "MEDIA", "OTHER", "NONE")
+
+
+def preview_geometry_observation(rect):
+    """Closed, bounded projection of one preview-geometry probe (no text, no DOM)."""
+    rect = rect if isinstance(rect, dict) else {}
+    numbers = all(type(rect.get(name)) in (int, float) for name in ("centerX", "centerY", "viewportWidth", "viewportHeight"))
+    return {"found": rect.get("found") is True, "replaced": rect.get("replaced") is True,
+            "hit": rect.get("hit") if rect.get("hit") in PREVIEW_HITS else None,
+            "centerInViewport": bool(numbers and 0 < rect["centerX"] < rect["viewportWidth"] and 0 < rect["centerY"] < rect["viewportHeight"])}
+
+
 def webdriver_command(opener, request, timeout):
     """Never retry a mutation or retain a raw WebDriver response/error message."""
     operation = driver_operation(request)
@@ -713,7 +746,7 @@ def main():
               "helperSha256": digest(Path(__file__).with_name("linux-desktop-smoke.py")),
               "flowCount": 1, "appSessions": 0, "checks": {name: "NOT_RUN" for name in CHECKS},
               "drop": {"transport": "TAURI_EVENT_IPC", "nativePointerDrag": "NOT_RUN", "gestures": 0},
-              "previews": [], "previewToggle": [], "imageCopies": [], "quitRequests": [], "externalApplicationDisplay": "NOT_RUN",
+              "previews": [], "previewGeometry": [], "previewToggle": [], "imageCopies": [], "quitRequests": [], "externalApplicationDisplay": "NOT_RUN",
               "trimmedFilenameEndToEnd": "NOT_RUN", "waylandHardware": "NOT_RUN", "installer": "NOT_RUN"}
 
     def wd(method, suffix, body=None, timeout=45):
@@ -834,8 +867,12 @@ def main():
         action = "preview-ready"
         until("return [...document.querySelectorAll('#page-notes .note-preview .note-media[data-kind=image] img')].some(e=>e.complete&&e.naturalWidth===32&&e.naturalHeight===24&&e.getBoundingClientRect().width>0);")
         action = "preview-geometry"
-        rect = execute("const e=[...document.querySelectorAll('#page-notes .note-preview .note-media[data-kind=image] img')].find(e=>e.complete&&e.naturalWidth===32&&e.naturalHeight===24&&e.getBoundingClientRect().width>0);e.scrollIntoView({block:'center'});return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;resolve({centerX:x,centerY:y,viewportWidth:innerWidth,viewportHeight:innerHeight,naturalWidth:e.naturalWidth,naturalHeight:e.naturalHeight,visible:document.elementFromPoint(x,y)===e});}))); ")
-        require(rect["visible"] and 0 < rect["centerX"] < rect["viewportWidth"] and 0 < rect["centerY"] < rect["viewportHeight"], "preview-not-visible")
+        rect = execute(PREVIEW_GEOMETRY)
+        rect = rect if isinstance(rect, dict) else {}
+        report["previewGeometry"].append({"session": report["appSessions"], **preview_geometry_observation(rect)})
+        require(rect.get("found") is True and rect.get("visible") is True
+                and all(type(rect.get(name)) in (int, float) for name in ("centerX", "centerY", "viewportWidth", "viewportHeight"))
+                and 0 < rect["centerX"] < rect["viewportWidth"] and 0 < rect["centerY"] < rect["viewportHeight"], "preview-not-visible")
         action = "preview-screenshot"
         probe = screenshot_pixels(wd("GET", f"/session/{session}/screenshot"), rect)
         require(probe["matched"] == 5, "preview-pixels-mismatch")

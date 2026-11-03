@@ -85,6 +85,7 @@ class EvidenceTests(unittest.TestCase):
                 "noteLinkRewritten": True, "sourceImageUnchanged": True, "sourceNotesUnchanged": True, "productionResolved": True} for n in (1, 2)],
             "previews": [{"session": n, "naturalWidth": 32, "naturalHeight": 24, "sampled": 5, "matched": 5,
                 "visible": True, "method": "WEBVIEW_SCREENSHOT_PIXELS"} for n in (1, 2)],
+            "previewGeometry": [{"session": n, "found": True, "replaced": n == 2, "hit": "SELF", "centerInViewport": True} for n in (1, 2)],
             "clipboard": {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True},
             "handoff": {"kind": "OWNED_XDG_RECEIVER_READBACK", "exactExpectedFile": True,
                 "uiRoute": "NOTE_PREVIEW_OPEN",
@@ -1136,6 +1137,42 @@ class ForwardingDiagnosticsTests(unittest.TestCase):
                 source.patch_sources(main, broken)
         with self.assertRaises(RuntimeError):
             source.patch_sources(main + "mod server;\n", server)
+
+    def test_preview_geometry_measures_the_live_image_and_keeps_its_pass_condition(self):
+        # CI 41558569342 attempt 2: preview-ready saw the decoded 32x24 image, then
+        # preview-geometry failed. The probe must re-find the live node after the
+        # two frames rather than measure a node the widget may have replaced.
+        smoke = ci.smoke
+        script = smoke.PREVIEW_GEOMETRY
+        self.assertEqual(script.count("first.scrollIntoView"), 1)
+        self.assertEqual(script.count("live.scrollIntoView"), 1)
+        self.assertEqual(script.count("await frames()"), 2)
+        self.assertIn("e.isConnected&&e.complete&&e.naturalWidth===32&&e.naturalHeight===24", script)
+        self.assertIn("visible:hit===e", script)
+        self.assertNotIn("click", script); self.assertNotIn("invoke", script); self.assertNotIn("dispatchEvent", script)
+        preview = Path(smoke.__file__).read_text().split("def preview():", 1)[1].split("def verify_image_copy", 1)[0]
+        self.assertIn('rect.get("found") is True and rect.get("visible") is True', preview)
+        self.assertIn('0 < rect["centerX"] < rect["viewportWidth"] and 0 < rect["centerY"] < rect["viewportHeight"], "preview-not-visible"', preview)
+        self.assertLess(preview.index('report["previewGeometry"].append'), preview.index('"preview-not-visible"'))
+        # Closed projection; foreign or oversized values never leave the child.
+        good = {"centerX": 10, "centerY": 10, "viewportWidth": 100, "viewportHeight": 100, "found": True, "replaced": True, "hit": "SELF"}
+        self.assertEqual(smoke.preview_geometry_observation(good), {"found": True, "replaced": True, "hit": "SELF", "centerInViewport": True})
+        self.assertEqual(smoke.preview_geometry_observation({"centerX": 0, "centerY": 0, "viewportWidth": 100, "viewportHeight": 100,
+                                                             "found": True, "hit": "hunter2"}),
+                         {"found": True, "replaced": False, "hit": None, "centerInViewport": False})
+        self.assertEqual(smoke.preview_geometry_observation(None), {"found": False, "replaced": False, "hit": None, "centerInViewport": False})
+        raw = [{"session": 1, "found": True, "replaced": False, "hit": "OTHER", "centerInViewport": True, "html": "hunter2"}]
+        self.assertEqual(ci.bounded_preview_geometry(raw), [{"session": 1, "found": True, "replaced": False, "hit": "OTHER", "centerInViewport": True}])
+        self.assertEqual(ci.bounded_preview_geometry([{}] * 3), [])
+        self.assertNotIn("hunter2", json.dumps(ci.bounded_report({"previewGeometry": raw})))
+        # The gate still needs a self-hit, in-viewport probe in both sessions.
+        fixture = EvidenceTests(methodName="runTest"); fixture.setUp()
+        fixture.validate(fixture.raw)
+        for change in (lambda r: r["previewGeometry"][0].update(hit="OTHER"), lambda r: r["previewGeometry"][1].update(centerInViewport=False),
+                       lambda r: r["previewGeometry"][0].update(found=False), lambda r: r["previewGeometry"].pop()):
+            raw = copy.deepcopy(fixture.raw); change(raw)
+            with self.assertRaisesRegex(RuntimeError, "real-preview-pixel-evidence-missing"):
+                fixture.validate(raw)
 
 
 class ComponentLayoutGateTests(unittest.TestCase):
