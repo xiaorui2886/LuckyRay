@@ -42,6 +42,25 @@ struct Bound {
 // document contents or unbounded error messages.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PreviewInteraction {
+    selection_ready_event: bool,
+    target_host_matched: bool,
+    click_called: bool,
+    click_returned: bool,
+    click_event_observed: bool,
+    preview_observed_visible: bool,
+}
+impl PreviewInteraction {
+    fn valid(&self) -> bool {
+        (!self.target_host_matched || self.selection_ready_event)
+            && (!self.click_called || self.target_host_matched)
+            && (!self.preview_observed_visible || self.target_host_matched)
+            && (!self.click_returned || self.click_called)
+            && (!self.click_event_observed || self.click_called)
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PreviewObservation {
     action: String,
     synthetic_row_active: bool,
@@ -61,6 +80,8 @@ struct PreviewObservation {
     fixture_decode: String,
     reconstructed_uri_kind: String,
     reconstructed_asset_decode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    interaction: Option<PreviewInteraction>,
 }
 impl PreviewObservation {
     fn valid(&self) -> bool {
@@ -76,6 +97,7 @@ impl PreviewObservation {
             && (!self.preview_visible || self.preview_present)
             && (self.image_present || (!self.image_visible && !self.image_complete && self.width == 0 && self.height == 0 && self.uri_kind == "missing"))
             && (!self.image_present || self.uri_kind != "missing")
+            && self.interaction.as_ref().is_none_or(PreviewInteraction::valid)
     }
 }
 #[derive(Serialize, Deserialize)]

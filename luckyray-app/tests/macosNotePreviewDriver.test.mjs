@@ -9,12 +9,25 @@ import { PHASES, publishableReport, summarizeBuildResult } from "../scripts/chec
 import { NOTE_DATA_CASES } from "../scripts/check-macos-note-data.mjs";
 
 const source = await readFile(new URL("../src-tauri/src/macos_note_flow_driver.js", import.meta.url), "utf8");
+const pageSource = await readFile(new URL("../src/features/notes/NotesPage.tsx", import.meta.url), "utf8");
+const toggleBody = pageSource.match(/const togglePreviewMode = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[commitCurrentEditorDraft, selectedNote\]\);/)?.[1];
+assert(toggleBody, "production preview handler must remain identifiable");
+const productionToggle = new Function("selectedNote", "commitCurrentEditorDraft", "setSourceContentDraft", "setEditorMode", toggleBody);
 const canary = "private-path-or-url-must-not-escape";
 
 async function runDriver({ startsPreview = true, loadAt = 3, sourceUrl = "asset://localhost/fixture", mediaMessage = "图片加载中",
   resolver = { status: "resolved", relativePath: "attachments/note-flow.png", absolutePath: "/synthetic/attachments/note-flow.png" },
-  decode = "passed", assetDecode = "passed", convertedUrl = "asset://localhost/synthetic-fixture", missingAsset = false, button = true, selectionSticks = true } = {}) {
-  const state = { modal: true, imported: false, selected: null, preview: startsPreview, ticks: 0, toggles: 0, reports: [], revoked: 0, blobBytes: 0, assetRequests: 0 };
+  decode = "passed", assetDecode = "passed", convertedUrl = "asset://localhost/synthetic-fixture", missingAsset = false, button = true, selectionSticks = true,
+  hydrationDelay = 0, useProductionToggle = false, selectionEvent = "matching", hostMatches = true, deliverClickEvent = true,
+  ignoreClick = false, detachAfterLookup = false, collapseAt = Infinity, width = 32, height = 24, complete = true, imageVisible = true } = {}) {
+  const state = { modal: true, imported: false, selected: null, hydrated: hydrationDelay === 0, preview: startsPreview, ticks: 0, toggles: 0, ignored: 0,
+    reports: [], revoked: 0, blobBytes: 0, assetRequests: 0, detached: false };
+  const listeners = new Map();
+  const emit = (name, event) => { for (const listener of listeners.get(name) || []) listener(event); };
+  const emitSelection = title => {if (selectionEvent !== "none") emit("luckyray:notes-active-note", { detail: { noteId: selectionEvent === "wrong" ? "fixed:Other" : `fixed:${title}` } });};
+  const browserWindow = { __TAURI_INTERNALS__: null,
+    addEventListener(name, listener) {if (!listeners.has(name)) listeners.set(name, new Set());listeners.get(name).add(listener);},
+    removeEventListener(name, listener) {listeners.get(name)?.delete(listener);} };
   class Element {
     getClientRects() { return [1]; }
     click() {}
@@ -31,14 +44,32 @@ async function runDriver({ startsPreview = true, loadAt = 3, sourceUrl = "asset:
   const chooser = new Element();chooser.querySelectorAll = () => [{ click() { state.modal = false; } }, {}, {}];
   const notes = ["Synthetic", "Delete"].map(title => {
     const el = new Element();el.querySelector = () => ({ textContent: `${title}.md` });
+    el.getAttribute = name => name === "data-folder-document-id" ? `fixed:${title}` : null;
     el.classList = { contains: name => name === "active" && state.selected === title };
-    el.click = () => {if (selectionSticks) state.selected = title;};return el;
+    el.click = () => {
+      if (!selectionSticks) return;
+      state.selected = title;state.hydrated = hydrationDelay === 0;
+      if (state.hydrated) queueMicrotask(() => emitSelection(title));
+    };return el;
   });
-  const previewControl = new Element();previewControl.click = () => {state.toggles++;state.preview = !state.preview;};
+  const previewControl = new Element();previewControl.click = () => {
+    state.toggles++;
+    if (state.detached || ignoreClick) {state.ignored++;return;}
+    if (deliverClickEvent) emit("click", { target: previewControl });
+    if (!useProductionToggle) {state.preview = !state.preview;return;}
+    const before = state.preview;
+    productionToggle(state.hydrated ? { id: "synthetic" } : null, () => {}, () => {}, update => {state.preview = update(state.preview ? "preview" : "live") === "preview";});
+    if (state.preview === before) state.ignored++;
+  };
   const media = new Element();media.querySelector = selector => selector === ".note-media-status" && mediaMessage ? { textContent: mediaMessage } : null;
   const root = new Element();root.querySelector = selector => selector === '.note-media[data-kind="image"]' ? media
     : selector === ".note-preview-asset-link.missing" && missingAsset ? generic : null;
-  const image = new Element();Object.assign(image, { complete: true, naturalWidth: 32, naturalHeight: 24, src: sourceUrl });
+  const image = new Element();Object.assign(image, { complete, naturalWidth: width, naturalHeight: height, src: sourceUrl });
+  image.getClientRects = () => imageVisible ? [1] : [];
+  const host = new Element();host.hidden = false;host.getAttribute = name => name === "data-notes-view-document" ? hostMatches ? `fixed:${state.selected}` : "fixed:Other" : null;
+  host.querySelectorAll = selector => selector === ".note-preview" ? state.preview ? [root] : []
+    : selector === ".note-preview img" ? state.preview && state.ticks >= loadAt ? [image] : []
+    : selector === '[data-note-action="preview"]' ? button ? (() => {if (detachAfterLookup) queueMicrotask(() => {state.detached = true;});return [previewControl];})() : [] : [];
   const page = new Element();page.dispatchEvent = () => {state.imported = true;};
   const document = { querySelectorAll(selector) {
     if (selector === ".material-import-mode-modal") return state.modal ? [chooser] : [];
@@ -46,6 +77,7 @@ async function runDriver({ startsPreview = true, loadAt = 3, sourceUrl = "asset:
     if (selector === '#page-notes .note-preview') return state.preview ? [root] : [];
     if (selector === '#page-notes .note-preview img') return state.preview && state.ticks >= loadAt ? [image] : [];
     if (selector === '#page-notes [data-note-action="preview"]') return button ? [previewControl] : [];
+    if (selector === '#page-notes [data-notes-view-document]') return state.selected ? [host] : [];
     if (selector === '#page-notes') return [page];
     if (selector === '#page-notes .notes-vault-title') return [{ ...generic, getClientRects: () => [1], textContent: "Synthetic notes flow" }];
     if (selector === '.attachment-handling-control select') return [policy];
@@ -76,17 +108,34 @@ async function runDriver({ startsPreview = true, loadAt = 3, sourceUrl = "asset:
   class DataTransfer { items = { add() {} }; }
   class File { constructor() {} }
   class Event { constructor() {} }
-  const context = { window: { __TAURI_INTERNALS__: { invoke, convertFileSrc: () => convertedUrl } }, document, HTMLSelectElement, HTMLInputElement, HTMLTextAreaElement,
+  browserWindow.__TAURI_INTERNALS__ = { invoke, convertFileSrc: () => convertedUrl };
+  const context = { window: browserWindow, document, HTMLSelectElement, HTMLInputElement, HTMLTextAreaElement,
     Event, DragEvent: Event, DataTransfer, File, Image: MockImage, Blob, Uint8Array, atob,
     URL: { createObjectURL(blob) {state.blobBytes = blob.size;return `blob:${canary}`;}, revokeObjectURL() {state.revoked++;} },
     setTimeout(callback, ms) {
       if (ms === 3000) return setTimeout(callback, 10);
-      queueMicrotask(() => { if (ms === 100) state.ticks++; callback(); });return null;
+      queueMicrotask(() => {
+        if (ms === 100) {
+          state.ticks++;
+          if (state.selected && !state.hydrated && state.ticks >= hydrationDelay) {
+            state.hydrated = true;emitSelection(state.selected);
+          }
+          if (state.ticks >= collapseAt) state.preview = false;
+        }
+        callback();
+      });return null;
     }, clearTimeout };
   await vm.runInNewContext(source, context)({ phase: "exercise", sourcePaths: ["/synthetic/Synthetic.md", "/synthetic/Delete.md"] });
+  assert([...listeners.values()].every(set => set.size === 0));
   assert.equal(state.reports.length, 1);
   return state;
 }
+
+test("preview waits for the actual selected note to finish loading", async () => {
+  const state = await runDriver({ startsPreview: false, loadAt: 0, hydrationDelay: 3, useProductionToggle: true });
+  assert.equal(state.reports[0].step, "save");assert.equal(state.reports[0].uiFlags[0], true);assert.equal(state.reports[0].uiFlags[1], true);
+  assert.equal(state.toggles, 1);assert.equal(state.ignored, 0);assert.equal(state.hydrated, true);
+});
 
 test("already-open preview is not toggled off while its image loads", async () => {
   const state = await runDriver();
@@ -99,6 +148,41 @@ test("closed preview is opened once; the decoded image gate remains required", a
   const state = await runDriver({ startsPreview: false });
   assert.equal(state.toggles, 1);assert.equal(state.reports[0].step, "save");
   assert.deepEqual(state.reports[0].uiFlags.slice(0, 3), [true, true, false]);
+});
+
+test("wrong dimensions, incomplete or invisible images never satisfy preview", async () => {
+  for (const options of [{ width: 31 }, { height: 25 }, { complete: false }, { imageVisible: false }]) {
+    const state = await runDriver({ startsPreview: true, loadAt: 0, ...options });
+    assert.equal(state.reports[0].step, "preview");assert.equal(state.reports[0].uiFlags[1], false);
+    assert.equal(state.reports[0].previewObservation.interaction.previewObservedVisible, true);
+  }
+});
+
+test("unmatched or absent readiness and an unmatched host never click preview", async () => {
+  for (const options of [{ selectionEvent: "wrong" }, { selectionEvent: "none" }, { hostMatches: false }]) {
+    const state = await runDriver({ startsPreview: false, ...options });
+    assert.equal(state.reports[0].step, "preview");assert.equal(state.reports[0].uiFlags[1], false);assert.equal(state.toggles, 0);
+    const interaction = state.reports[0].previewObservation.interaction;
+    assert.equal(interaction.selectionReadyEvent, options.hostMatches === false);assert.equal(interaction.targetHostMatched, false);
+    assert.equal(interaction.clickCalled, false);assert.equal(interaction.clickEventObserved, false);
+  }
+});
+
+test("a replaced control is reacquired and clicked before another render can detach it", async () => {
+  const state = await runDriver({ startsPreview: false, loadAt: 0, detachAfterLookup: true, useProductionToggle: true });
+  assert.equal(state.reports[0].step, "save");assert.equal(state.reports[0].uiFlags[1], true);
+  assert.equal(state.toggles, 1);assert.equal(state.ignored, 0);assert.equal(state.detached, true);
+});
+
+test("diagnostics distinguish a returned click, DOM event, and preview that later disappears", async () => {
+  const ignored = await runDriver({ startsPreview: false, ignoreClick: true });
+  const a = ignored.reports[0].previewObservation.interaction;
+  assert.equal(a.selectionReadyEvent, true);assert.equal(a.targetHostMatched, true);assert.equal(a.clickCalled, true);
+  assert.equal(a.clickReturned, true);assert.equal(a.clickEventObserved, false);assert.equal(a.previewObservedVisible, false);
+  const vanished = await runDriver({ startsPreview: false, loadAt: Infinity, collapseAt: 1 });
+  const b = vanished.reports[0].previewObservation.interaction;
+  assert.equal(vanished.reports[0].previewObservation.previewPresent, false);assert.equal(b.clickEventObserved, true);assert.equal(b.previewObservedVisible, true);
+  assert.equal(vanished.reports[0].uiFlags[1], false);
 });
 
 test("preview failure distinguishes states without leaking URLs, errors or text", async () => {
@@ -141,7 +225,7 @@ test("missing control is reported separately and does not satisfy the preview ga
 test("only bounded failure observations survive both report projections", async () => {
   const state = await runDriver({ loadAt: Infinity });const observed = state.reports[0];
   const record = { schemaVersion: 1, mode: "macos-note-flow", ...observed, status: "failed", backendVerified: false,
-    previewObservation: { ...observed.previewObservation, raw: canary } };
+    previewObservation: { ...observed.previewObservation, raw: canary, interaction: { ...observed.previewObservation.interaction, raw: canary } } };
   const projected = noteScenarioRecord(record, "exercise");
   const phase = safeNotePhase({ ...emptyNoteFlow().exercise, ...projected, failure: "scenario-failed" }, "exercise");
   assert.equal(phase.previewObservation.mediaState, "loading");assert(!JSON.stringify(phase).includes(canary));
@@ -156,6 +240,23 @@ test("only bounded failure observations survive both report projections", async 
   assert.equal(published.notesUi.exercise.previewObservation.fixtureDecode, "passed");assert(!JSON.stringify(published).includes(canary));
   for (const bad of [{ uriKind: canary }, { width: 32769 }, { imageVisible: true }, { previewPresent: false }])
     assert.throws(() => noteScenarioRecord({ ...record, previewObservation: { ...record.previewObservation, ...bad } }, "exercise"), /result-invalid/);
+  for (const bad of [{ targetHostMatched: true, selectionReadyEvent: false }, { clickCalled: false, clickReturned: true }, { clickEventObserved: canary }])
+    assert.throws(() => noteScenarioRecord({ ...record, previewObservation: { ...record.previewObservation,
+      interaction: { ...record.previewObservation.interaction, ...bad } } }, "exercise"), /result-invalid/);
+  const oldObservation = { ...record.previewObservation };delete oldObservation.interaction;
+  assert(!("interaction" in noteScenarioRecord({ ...record, previewObservation: oldObservation }, "exercise").previewObservation));
   assert.throws(() => noteScenarioRecord({ ...record, step: "save" }, "exercise"), /result-invalid/);
   assert(source.includes(FIXTURE.base64));
+});
+
+test("production selection publishes the note after asynchronous hydration", async () => {
+  assert(toggleBody.includes('if (!selectedNote) return;'));
+  const start = pageSource.indexOf('const selectNote = useCallback('), end = pageSource.indexOf('if (!bridge?.getNote)', start);
+  const selection = pageSource.slice(start, end);
+  const positions = ['setSelectedNoteId(realNoteId)', 'await realVaultDocumentSource.openDocument(relativePath)', 'setSelectedNote(note)',
+    'window.dispatchEvent(new CustomEvent("luckyray:notes-active-note"'].map(part => selection.indexOf(part));
+  assert(positions.every(n => n >= 0));assert(positions.every((n, i) => i === 0 || n > positions[i - 1]));
+  const surface = await readFile(new URL('../src/features/notes/NoteDocumentSurface.tsx', import.meta.url), 'utf8');
+  const status = surface.slice(surface.indexOf('<div className="editor-status">'));
+  assert.match(status, /data-note-action="preview"\s+onClick=\{\(\) => actions\.togglePreview\(\)\}/);
 });

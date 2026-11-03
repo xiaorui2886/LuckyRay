@@ -19,21 +19,63 @@
   };
   const note = title => [...document.querySelectorAll('[data-folder-document-id]')]
     .find(el => visible(el) && el.querySelector('.folder-document-title')?.textContent.replace(/\.(?:md|markdown)$/i, '') === title);
-  const image = () => [...document.querySelectorAll('#page-notes .note-preview img')].find(el => visible(el)
+  let syntheticId = null;
+  let interaction = { selectionReadyEvent: false, targetHostMatched: false, clickCalled: false,
+    clickReturned: false, clickEventObserved: false, previewObservedVisible: false };
+  const syntheticHost = () => {
+    const row = note("Synthetic");
+    if (!syntheticId || !row?.classList.contains("active") || row.getAttribute("data-folder-document-id") !== syntheticId) return null;
+    return [...document.querySelectorAll('#page-notes [data-notes-view-document]')]
+      .find(el => !el.hidden && visible(el) && el.getAttribute("data-notes-view-document") === syntheticId) || null;
+  };
+  const inSyntheticHost = selector => [...syntheticHost()?.querySelectorAll(selector) || []].find(visible);
+  const image = () => [...syntheticHost()?.querySelectorAll('.note-preview img') || []].find(el => visible(el)
     && el.complete && el.naturalWidth === 32 && el.naturalHeight === 24
     && (/^asset:/.test(el.src) || /^https?:\/\/asset\.localhost(?:[:/]|$)/.test(el.src)));
   const checkpoint = stage => wait(() => invoke("macos_note_flow_checkpoint", { stage }));
+  const selectSynthetic = async () => {
+    const row = await wait(() => note("Synthetic"));
+    const id = row.getAttribute("data-folder-document-id");
+    if (!id) throw new Error("fixed-note-selection-invalid");
+    syntheticId = id;
+    interaction = { selectionReadyEvent: false, targetHostMatched: false, clickCalled: false,
+      clickReturned: false, clickEventObserved: false, previewObservedVisible: false };
+    const onReady = event => { if (event?.detail?.noteId === id) interaction.selectionReadyEvent = true; };
+    window.addEventListener("luckyray:notes-active-note", onReady);
+    try {
+      const current = note("Synthetic");
+      if (!current || current.getAttribute("data-folder-document-id") !== id) throw new Error("fixed-note-selection-changed");
+      current.click();
+      await wait(() => interaction.selectionReadyEvent && syntheticHost());
+      // The event follows the real document read; let React commit its state,
+      // then recheck that the visible host still belongs to the selected row.
+      await delay(0);
+      await wait(() => syntheticHost());
+      interaction.targetHostMatched = true;
+    } finally { window.removeEventListener("luckyray:notes-active-note", onReady); }
+  };
   const openMoved = async () => {
     const chevron = await wait(() => find('[data-folder-id="Moved"] .folder-chevron'));
     if (!chevron.classList.contains("open")) chevron.click();
-    (await wait(() => note("Synthetic"))).click();
+    await selectSynthetic();
   };
   let previewAction = "not-entered";
   const preview = async () => {
     // This control toggles the mode. An existing preview may still be loading.
-    if (find('#page-notes .note-preview')) previewAction = "already-visible";
-    else { previewAction = "toggle-requested"; await click('#page-notes [data-note-action="preview"]'); }
-    await wait(image);
+    if (inSyntheticHost('.note-preview')) previewAction = "already-visible";
+    else {
+      previewAction = "toggle-requested";
+      await wait(() => {
+        const control = inSyntheticHost('[data-note-action="preview"]');
+        if (!control) return false;
+        const onClick = event => { if (event.target === control) interaction.clickEventObserved = true; };
+        window.addEventListener("click", onClick, true);
+        try { interaction.clickCalled = true; control.click(); interaction.clickReturned = true; }
+        finally { window.removeEventListener("click", onClick, true); }
+        return true;
+      });
+    }
+    await wait(() => { if (inSyntheticHost('.note-preview')) interaction.previewObservedVisible = true; return image(); });
   };
   const boundedProbe = async work => {
     let timer;
@@ -107,7 +149,7 @@
       }); } finally { if (url) URL.revokeObjectURL(url); }
     })();
     const [resolution, fixtureDecode, reconstructedAssetDecode] = await Promise.all([resolve, decode, reconstructed]);
-    return { ...dom, resolution, fixtureDecode, reconstructedUriKind, reconstructedAssetDecode };
+    return { ...dom, resolution, fixtureDecode, reconstructedUriKind, reconstructedAssetDecode, interaction: { ...interaction } };
   };
   const refreshTree = async () => {
     await click('#page-notes .notes-vault-entry');
@@ -144,8 +186,7 @@
       }
       root.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }));
       await wait(() => note("Synthetic") && note("Delete")); await checkpoint("imported"); uiFlags[0] = true;
-      (await wait(() => note("Synthetic"))).click();
-      step = "preview"; await preview(); uiFlags[1] = true;
+      step = "preview"; await selectSynthetic(); await preview(); uiFlags[1] = true;
       step = "save"; await click('#page-notes [data-note-action="source"]');
       const editor = await wait(() => find('#page-notes .note-content-area textarea'));
       if (!editor.value.includes("note-flow.png")) throw new Error("fixed-note-source-invalid");

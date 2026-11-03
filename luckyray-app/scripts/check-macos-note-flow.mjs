@@ -18,6 +18,7 @@ export const NOTE_CLEANUP_MS = 90000;
 const FAILURE = ["none", "spawn-failed", "timeout", "cancelled", "forced-termination", "output-invalid", "scenario-failed", "files-changed", "quit-failed", "window-failed", "context-invalid", "driver-unavailable"];
 const BOOLS = ["backendVerified", "filesVerified", "normalSavedQuit", "screenshotCaptured", "timedOut", "cancelRequested", "forcedTermination", "spawnFailed", "outputInvalid"];
 const PREVIEW_BOOLS = ["syntheticRowActive", "controlPresent", "controlVisible", "previewPresent", "previewVisible", "missingAsset", "imagePresent", "imageVisible", "imageComplete"];
+const PREVIEW_INTERACTION_BOOLS = ["selectionReadyEvent", "targetHostMatched", "clickCalled", "clickReturned", "clickEventObserved", "previewObservedVisible"];
 const PREVIEW_ENUMS = { action: ["not-entered", "already-visible", "toggle-requested"], mediaState: ["missing", "loading", "error", "unavailable", "other", "no-status"],
   uriKind: ["missing", "asset", "asset-localhost", "workspace-attachment", "blob", "data", "other"],
   resolution: ["resolved-fixture", "resolved-other", "missing", "ambiguous", "other", "error", "timeout"],
@@ -38,8 +39,15 @@ export function safePreviewObservation(value) {
       || value.controlVisible && !value.controlPresent || value.previewVisible && !value.previewPresent
       || !value.imagePresent && (value.imageVisible || value.imageComplete || value.width !== 0 || value.height !== 0 || value.uriKind !== "missing")
       || value.imagePresent && value.uriKind === "missing") invalid();
+  const interaction = value.interaction;
+  if (interaction != null && (typeof interaction !== "object" || Array.isArray(interaction)
+      || PREVIEW_INTERACTION_BOOLS.some(key => typeof interaction[key] !== "boolean")
+      || interaction.targetHostMatched && !interaction.selectionReadyEvent
+      || (interaction.clickCalled || interaction.previewObservedVisible) && !interaction.targetHostMatched
+      || (interaction.clickReturned || interaction.clickEventObserved) && !interaction.clickCalled)) invalid();
   return { ...Object.fromEntries(PREVIEW_BOOLS.map(key => [key, value[key]])), ...Object.fromEntries(Object.keys(PREVIEW_ENUMS).map(key => [key, value[key]])),
-    width: value.width, height: value.height };
+    width: value.width, height: value.height,
+    ...(interaction == null ? {} : { interaction: Object.fromEntries(PREVIEW_INTERACTION_BOOLS.map(key => [key, interaction[key]])) }) };
 }
 export function safeNotePhase(value, phase) {
   if (!NOTE_PHASES.includes(phase) || value?.phase !== phase || !["not-run", "failed", "passed"].includes(value.status)
