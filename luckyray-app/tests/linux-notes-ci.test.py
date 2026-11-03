@@ -52,6 +52,106 @@ def component_unit_payload(source, scripts):
             "fixtureSha256": "a" * 64, "observations": raw}
 
 
+def passing_maintenance():
+    """Literal T11 evidence; deliberately not derived from the validator."""
+    return {"noteRename": {"method": "REAL_SETTINGS_UI", "inputMethod": "DOM_VALUE_EVENT", "reviewShown": True, "statusComplete": True,
+                           "newFileDigestMatches": True, "oldPathGone": True, "noteLinkRewritten": True, "noteOtherwiseUnchanged": True,
+                           "productionResolved": True, "materialAssetRetained": True, "newRecords": 1, "tombstones": 1},
+            "rollback": {"method": "REAL_RECOVERY_UI", "recordListed": True, "statusRolledBack": True, "oldFileRestored": True,
+                         "noteBytesRestored": True, "renamedCopyRetained": True, "productionResolved": True, "tombstones": 0},
+            "materialRename": {"method": "REAL_MATERIAL_CONTEXT_MENU", "inputMethod": "DOM_VALUE_EVENT", "importModeChosenInUi": True,
+                               "storageModeSource": True, "oldPathGone": True, "newDigestMatches": True, "sameInode": True,
+                               "catalogPathUpdated": True},
+            "materialDelete": {"method": "REAL_MATERIAL_CONTEXT_MENU", "choice": "DELETE_SOURCE_FILE", "physicalChoiceOffered": True,
+                               "fileGone": True, "catalogRecordGone": True, "quarantineLeftovers": 0},
+            "notRun": {"deleteQuarantineIntermediate": "OFFLINE_ONLY", "crashResume": "OFFLINE_ONLY", "legacyConversion": "NOT_RUN",
+                       "noteMove": "NOT_RUN", "materialCrossDirectoryMove": "NOT_RUN", "materialInsertCopyPublish": "NOT_RUN"}}
+
+
+class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        fixture = EvidenceTests("validate")
+        fixture.setUp()
+        self.fixture = fixture
+
+    def rejects(self, mutate, code="attachment-maintenance-ui-evidence-missing"):
+        raw = copy.deepcopy(self.fixture.raw)
+        mutate(raw["attachmentMaintenance"])
+        with self.assertRaisesRegex(RuntimeError, code):
+            self.fixture.validate(raw)
+
+    def test_full_literal_evidence_passes_and_projection_is_identity(self):
+        self.fixture.validate(self.fixture.raw)
+        self.assertEqual(ci.bounded_report(self.fixture.raw)["attachmentMaintenance"], passing_maintenance())
+        self.assertEqual(ci.expected_maintenance(), passing_maintenance())
+
+    def test_every_flag_false_or_missing_fails(self):
+        for section, values in passing_maintenance().items():
+            for key, value in values.items():
+                if value is True:
+                    self.rejects(lambda m, s=section, k=key: m[s].__setitem__(k, False))
+                    self.rejects(lambda m, s=section, k=key: m[s].pop(k))
+                    self.rejects(lambda m, s=section, k=key: m[s].__setitem__(k, 1))
+
+    def test_counts_and_methods_are_exact(self):
+        for section, key, value in (("noteRename", "newRecords", 2), ("noteRename", "newRecords", 0), ("noteRename", "tombstones", 2),
+                                    ("noteRename", "tombstones", 0), ("rollback", "tombstones", 1), ("materialDelete", "quarantineLeftovers", 1),
+                                    ("noteRename", "method", "SCRIPTED_IPC"), ("materialDelete", "choice", "REMOVE_RECORD_ONLY"),
+                                    ("notRun", "noteMove", "PASS"), ("notRun", "crashResume", "NOT_RUN")):
+            self.rejects(lambda m, s=section, k=key, v=value: m[s].__setitem__(k, v))
+        self.rejects(lambda m: m.pop("rollback"))
+        self.rejects(lambda m: m.clear())
+
+    def test_projection_drops_paths_and_unknown_fields(self):
+        raw = copy.deepcopy(self.fixture.raw)
+        raw["attachmentMaintenance"]["noteRename"]["path"] = "/home/runner/secret"
+        raw["attachmentMaintenance"]["noteRename"]["tombstones"] = 10 ** 6
+        raw["attachmentMaintenance"]["leak"] = {"token": "x"}
+        projected = ci.bounded_report(raw)["attachmentMaintenance"]
+        text = json.dumps(projected)
+        self.assertNotIn("secret", text)
+        self.assertNotIn("leak", projected)
+        self.assertIsNone(projected["noteRename"]["tombstones"])
+        with self.assertRaisesRegex(RuntimeError, "notes-report-shape-invalid"):
+            ci.validate_notes(raw, self.fixture.build, self.fixture.source, self.fixture.scripts)
+
+    def test_smoke_template_starts_unproven(self):
+        template = ci.smoke.maintenance_template()
+        self.assertNotEqual(ci.bounded_report({"attachmentMaintenance": template})["attachmentMaintenance"], passing_maintenance())
+        for name in ci.smoke.MAINTENANCE_FIELDS:
+            self.assertFalse(ci.smoke.maintenance_passed(template, name))
+            self.assertTrue(ci.smoke.maintenance_passed(passing_maintenance(), name))
+
+    def test_new_checks_phases_actions_and_codes_are_declared(self):
+        for name in ("attachmentRenameRewritesNote", "attachmentRenameRollbackUi", "materialFileRenamed", "materialDeleteSourceRemoved"):
+            self.assertIn(name, ci.smoke.CHECKS)
+        source = Path(__file__).with_name("linux-notes-attachments-smoke.py").read_text()
+        for phase in set(re.findall(r'phase = "([a-z-]+)"', source)):
+            self.assertIn(phase, ci.PHASES)
+        for action in set(re.findall(r'action = "([a-z-]+)"', source)):
+            self.assertIn(action, ci.smoke.ACTIONS)
+        for code in set(re.findall(r'"((?:maintenance|recovery|attachment|material)-[a-z-]+)"\)', source)):
+            self.assertIn(code, ci.FAILURES)
+
+    def test_smoke_uses_real_ui_controls_and_reads_only_for_state(self):
+        source = Path(__file__).with_name("linux-notes-attachments-smoke.py").read_text()
+        body = source[source.index('phase = "attachment-rename"'):source.index('phase = "quit"')]
+        for text in ("检查引用更新", "确认执行", "回滚引用", "删除源文件并移除", "重命名真实文件",
+                     "data-material-context-action=renameFile", "data-material-context-action=delete"):
+            self.assertIn(text, body)
+        invoked = set(re.findall(r'invoke\("([a-z_]+)"', source[source.index("def resolve(destination)"):source.index("def verify_image_copy")] + body))
+        self.assertEqual(invoked, {"knowledge_resolve_attachment", "knowledge_attachment_recovery_summary", "material_catalog_list_assets",
+                                   "knowledge_list_attachment_operations"})
+        self.assertNotIn(":has(", source)
+        self.assertNotIn("/value", body)
+
+    def test_image_link_parser_is_exact(self):
+        self.assertEqual(ci.smoke.image_link("x ![synthetic PNG](<attachments/改名 图.png>) y"), "attachments/改名 图.png")
+        self.assertEqual(ci.smoke.image_link("![synthetic PNG](a.png)"), "a.png")
+        self.assertIsNone(ci.smoke.image_link("![synthetic PNG](a.png) ![synthetic PNG](b.png)"))
+        self.assertIsNone(ci.smoke.image_link("no image"))
+
+
 class EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.source = {"commit": "1" * 40, "tree": "2" * 40}
@@ -92,7 +192,8 @@ class EvidenceTests(unittest.TestCase):
                 "bytes": len(ci.smoke.png_bytes()), "sha256": hashlib.sha256(ci.smoke.png_bytes()).hexdigest(),
                 "externalApplicationDisplay": "NOT_RUN"},
             "quitRequests": [{"ipcReplyObserved": True, "priorProcessIdentitiesGone": True, "exitStatus": "NOT_OBSERVED"}] * 2,
-            **{name: "NOT_RUN" for name in ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer")}}
+            **{name: "NOT_RUN" for name in ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer")},
+            "attachmentMaintenance": passing_maintenance()}
 
     def validate(self, raw):
         ci.validate_notes(ci.bounded_report(raw), self.build, self.source, self.scripts)

@@ -38,7 +38,8 @@ STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENC
 EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "result.json")
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",
-                    "image-preview", "attachment-open", "reopen", "quit", "unknown"))
+                    "image-preview", "attachment-open", "reopen", "attachment-rename", "attachment-rollback",
+                    "material-maintenance", "quit", "unknown"))
 FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready", "backend-not-ready", "production-ipc-rejected", "visible-control-missing",
     "ui-observation-timeout", "drop-target-unavailable", "both-input-notes-not-retained", "case-distinct-content-mismatch",
     "special-name-png-not-retained", "imported-image-resolution-mismatch", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
@@ -46,7 +47,26 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "image-outside-screenshot", "attachment-open-not-interactable", "attachment-open-ui-not-observed", "attachment-detail-target-mismatch", "attachment-open-control-mismatch",
     "attachment-receiver-not-observed", "attachment-handoff-mismatch",
     "reopen-file-content-mismatch", "quit-process-remained", "quit-already-attempted", "driver-cleanup-incomplete",
-    "webdriver-command-failed", "editor-not-ready", "editor-input-mismatch", "unexpected-error"))
+    "webdriver-command-failed", "editor-not-ready", "editor-input-mismatch", "maintenance-precondition-mismatch",
+    "maintenance-control-rejected", "recovery-records-invalid", "recovery-summary-invalid", "attachment-rename-not-confirmed",
+    "attachment-rollback-not-confirmed", "material-catalog-read-invalid", "material-import-not-observed", "material-source-mode-not-applied",
+    "material-rename-not-observed", "material-rename-not-confirmed", "material-delete-not-observed", "material-delete-not-confirmed",
+    "unexpected-error"))
+
+
+def bounded_maintenance(raw):
+    """Closed projection of the UI maintenance evidence: fixed enums, booleans and counts 0..8."""
+    raw = raw if isinstance(raw, dict) else {}
+    result = {}
+    for name, (fixed, flags, counts) in smoke.MAINTENANCE_FIELDS.items():
+        value = raw.get(name) if isinstance(raw.get(name), dict) else {}
+        item = {key: expected if value.get(key) == expected else "INVALID" for key, expected in fixed.items()}
+        item.update({flag: value.get(flag) if type(value.get(flag)) is bool else None for flag in flags})
+        item.update({count: value.get(count) if type(value.get(count)) is int and 0 <= value[count] <= 8 else None for count in counts})
+        result[name] = item
+    not_run = raw.get("notRun") if isinstance(raw.get("notRun"), dict) else {}
+    result["notRun"] = {name: expected if not_run.get(name) == expected else "INVALID" for name, expected in smoke.MAINTENANCE_NOT_RUN.items()}
+    return result
 
 
 def bounded_driver(raw):
@@ -306,6 +326,7 @@ def bounded_report(raw):
                 "exitStatus": "NOT_OBSERVED" if item.get("exitStatus") == "NOT_OBSERVED" else "INVALID"})
     for name in ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer"):
         result[name] = "NOT_RUN" if raw.get(name) == "NOT_RUN" else "INVALID"
+    result["attachmentMaintenance"] = bounded_maintenance(raw.get("attachmentMaintenance"))
     if "failure" in raw:
         failure = raw["failure"] if isinstance(raw["failure"], dict) else {}
         result["failure"] = {"phase": failure.get("phase") if isinstance(failure.get("phase"), str) and failure["phase"] in PHASES else "unknown",
@@ -319,6 +340,17 @@ def bounded_report(raw):
         result["cleanupEvidence"] = bounded_cleanup(raw["cleanupEvidence"])
     if "cleanup" in raw:
         result["cleanup"] = "UNCONFIRMED"
+    return result
+
+
+def expected_maintenance():
+    result = {}
+    for name, (fixed, flags, counts) in smoke.MAINTENANCE_FIELDS.items():
+        result[name] = {**fixed, **{flag: True for flag in flags}}
+    result["noteRename"].update(newRecords=1, tombstones=1)
+    result["rollback"]["tombstones"] = 0
+    result["materialDelete"]["quarantineLeftovers"] = 0
+    result["notRun"] = dict(smoke.MAINTENANCE_NOT_RUN)
     return result
 
 
@@ -356,6 +388,7 @@ def validate_notes(raw, build, source, scripts):
     require(raw.get("previews") == [expected_preview(1), expected_preview(2)], "real-preview-pixel-evidence-missing")
     require([(item["session"], item["found"], item["hit"], item["centerInViewport"]) for item in raw.get("previewGeometry", [])]
             == [(1, True, "SELF", True), (2, True, "SELF", True)], "real-preview-pixel-evidence-missing")
+    require(raw.get("attachmentMaintenance") == expected_maintenance(), "attachment-maintenance-ui-evidence-missing")
     require(raw.get("clipboard") == {"source": "REAL_NOTE_CONTEXT_MENU", "systemRead": "XCLIP", "exactAbsolutePath": True}, "real-clipboard-evidence-missing")
     handoff = raw.get("handoff", {})
     require(handoff.get("kind") == "OWNED_XDG_RECEIVER_READBACK" and handoff.get("exactExpectedFile") is True
@@ -543,7 +576,10 @@ class Run(runtime.Run):
                        "owned isolated XDG receiver readback; external application display NOT_RUN",
                        "trailing-whitespace filenames, video codecs, embedded browser and packages NOT_RUN",
                        "quit IPC and process disappearance; clean exit status NOT_OBSERVED",
-                       "component layout is a precondition, not Main product acceptance"]})
+                       "component layout is a precondition, not Main product acceptance",
+                       "attachment rename and recovery rollback via real settings UI; path inputs set by DOM value events",
+                       "source-mode material import via declared Tauri drop IPC; real context-menu rename and source delete",
+                       "delete quarantine intermediate and crash resume OFFLINE_ONLY; conversion, note move, material move and insert-copy NOT_RUN"]})
         require(passed, "required-notes-product-flow-failed-or-not-run")
 
 

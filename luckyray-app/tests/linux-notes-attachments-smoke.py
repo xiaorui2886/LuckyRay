@@ -48,7 +48,11 @@ ACTIONS = frozenset(("setup", "session-start", "backend-ready", "vault-setup", "
     "editor-append", "editor-value-check", "editor-save", "editor-save-readback", "context-open", "context-menu-ready", "context-copy",
     "clipboard-readback", "preview-toggle", "preview-ready", "preview-geometry", "preview-screenshot", "attachment-hover", "attachment-hit-check", "attachment-open",
     "attachment-ui-ready", "attachment-detail-check", "attachment-system-open", "attachment-receiver", "reopen-value-check",
-    "reopen-files", "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
+    "reopen-files", "maintenance-open", "maintenance-select", "maintenance-input", "maintenance-plan", "maintenance-confirm",
+    "maintenance-result", "rename-files", "rename-resolve", "recovery-records", "recovery-select", "recovery-rollback",
+    "rollback-files", "rollback-resolve", "materials-open", "materials-mode", "materials-drop", "materials-catalog",
+    "materials-context", "materials-rename-input", "materials-rename-confirm", "materials-rename-files",
+    "materials-delete-confirm", "materials-delete-files", "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
 DRIVER_ERRORS = frozenset(("element click intercepted", "element not interactable", "invalid argument", "invalid element state", "invalid selector",
     "invalid session id", "javascript error", "no such element", "no such window", "stale element reference", "script timeout",
     "timeout", "unknown command", "unknown error", "unsupported operation", "unexpected alert open", "move target out of bounds"))
@@ -84,7 +88,32 @@ return {hoverApplied:media.matches(':hover'),toolbarVisible:Number(style.opacity
 """
 CHECKS = ("nativeStartup", "caseDistinctInputContentsRetained", "specialNameImagePreserved",
           "uiSavePersisted", "reopenPersisted", "absolutePathClipboard", "imagePreviewPixels",
-          "attachmentSystemHandoff", "quitProcessDisappearance")
+          "attachmentSystemHandoff", "attachmentRenameRewritesNote", "attachmentRenameRollbackUi",
+          "materialFileRenamed", "materialDeleteSourceRemoved", "quitProcessDisappearance")
+# T11: UI-driven attachment maintenance after reopen. Every typed path is a
+# fixed synthetic vault-relative value; nothing user-derived is reported.
+RENAMED_IMAGE_RELATIVE = "attachments/改名 图.png"
+MATERIAL_COLOR = (200, 64, 32)
+MATERIAL_SOURCE_NAME = "素材 移动 #1.png"
+MATERIAL_RENAMED_NAME = "素材 已改名.png"
+DELETE_QUARANTINE_PREFIX = ".luckyray-delete-pending-"
+IMAGE_LINK = re.compile(r"!\[synthetic PNG\]\((<[^<>\n]*>|[^()\s]*)\)")
+# Same fixed list the bounded CI projection accepts; each is reported as-is.
+MAINTENANCE_NOT_RUN = {"deleteQuarantineIntermediate": "OFFLINE_ONLY", "crashResume": "OFFLINE_ONLY",
+                       "legacyConversion": "NOT_RUN", "noteMove": "NOT_RUN", "materialCrossDirectoryMove": "NOT_RUN",
+                       "materialInsertCopyPublish": "NOT_RUN"}
+MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance"
+SET_CONTROL_VALUE = """
+const e=[...document.querySelectorAll(arguments[0])].find(x=>x.getBoundingClientRect().width>0&&(!(x instanceof HTMLSelectElement)||[...x.options].some(o=>o.value===arguments[1])));
+if(!e||e.disabled)return false;
+const proto=e instanceof HTMLSelectElement?HTMLSelectElement.prototype:HTMLInputElement.prototype;
+Object.getOwnPropertyDescriptor(proto,'value').set.call(e,arguments[1]);
+e.dispatchEvent(new Event(e instanceof HTMLSelectElement?'change':'input',{bubbles:true}));
+return e.value===arguments[1];
+"""
+FIND_BUTTON = """
+return [...document.querySelectorAll(arguments[0])].find(e=>e.textContent.trim()===arguments[1]&&!e.disabled&&e.getBoundingClientRect().width>0)||null;
+"""
 DROP_STAGES = frozenset(("listener-ready", "listener-failed", "listener-disabled", "enter", "drop", "classified", "import", "failed",
     "classify-start", "classified-files", "classified-dirs", "owner-stale", "import-route-start", "import-route-complete", "drop-rejected",
     "source-stale", "activation-start", "activation-error", "activation-ready", "native-import-start", "native-source-active",
@@ -622,10 +651,10 @@ def require(value, code):
         raise SmokeFailure(code)
 
 
-def png_bytes():
+def png_bytes(color=COLOR):
     def chunk(kind, value):
         return struct.pack(">I", len(value)) + kind + value + struct.pack(">I", zlib.crc32(kind + value))
-    pixels = (b"\0" + bytes(COLOR) * 32) * 24
+    pixels = (b"\0" + bytes(color) * 32) * 24
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 32, 24, 8, 2, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
 
@@ -655,6 +684,43 @@ def image_copy_probe(vault, source_image, note_content, expected_note_content):
     except OSError:
         pass
     return result
+
+
+MAINTENANCE_FIELDS = {
+    "noteRename": ({"method": "REAL_SETTINGS_UI", "inputMethod": "DOM_VALUE_EVENT"},
+                   ("reviewShown", "statusComplete", "newFileDigestMatches", "oldPathGone", "noteLinkRewritten",
+                    "noteOtherwiseUnchanged", "productionResolved", "materialAssetRetained"), ("newRecords", "tombstones")),
+    "rollback": ({"method": "REAL_RECOVERY_UI"},
+                 ("recordListed", "statusRolledBack", "oldFileRestored", "noteBytesRestored", "renamedCopyRetained",
+                  "productionResolved"), ("tombstones",)),
+    "materialRename": ({"method": "REAL_MATERIAL_CONTEXT_MENU", "inputMethod": "DOM_VALUE_EVENT"},
+                       ("importModeChosenInUi", "storageModeSource", "oldPathGone", "newDigestMatches", "sameInode",
+                        "catalogPathUpdated"), ()),
+    "materialDelete": ({"method": "REAL_MATERIAL_CONTEXT_MENU", "choice": "DELETE_SOURCE_FILE"},
+                       ("physicalChoiceOffered", "fileGone", "catalogRecordGone"), ("quarantineLeftovers",)),
+}
+
+
+def maintenance_template():
+    result = {name: {**fixed, **{flag: None for flag in flags}, **{count: None for count in counts}}
+              for name, (fixed, flags, counts) in MAINTENANCE_FIELDS.items()}
+    result["notRun"] = dict(MAINTENANCE_NOT_RUN)
+    return result
+
+
+def maintenance_passed(section, name):
+    fixed, flags, counts = MAINTENANCE_FIELDS[name]
+    value = section.get(name, {})
+    return all(value.get(flag) is True for flag in flags) and all(value.get(key) == expected for key, expected in fixed.items())
+
+
+def image_link(note_content):
+    """The single synthetic image link destination in a note, or None."""
+    matches = IMAGE_LINK.findall(note_content)
+    if len(matches) != 1:
+        return None
+    destination = matches[0]
+    return destination[1:-1] if destination.startswith("<") else destination
 
 
 def image_copy_retained(observation):
@@ -747,7 +813,9 @@ def main():
               "flowCount": 1, "appSessions": 0, "checks": {name: "NOT_RUN" for name in CHECKS},
               "drop": {"transport": "TAURI_EVENT_IPC", "nativePointerDrag": "NOT_RUN", "gestures": 0},
               "previews": [], "previewGeometry": [], "previewToggle": [], "imageCopies": [], "quitRequests": [], "externalApplicationDisplay": "NOT_RUN",
-              "trimmedFilenameEndToEnd": "NOT_RUN", "waylandHardware": "NOT_RUN", "installer": "NOT_RUN"}
+              "trimmedFilenameEndToEnd": "NOT_RUN", "waylandHardware": "NOT_RUN", "installer": "NOT_RUN",
+              "attachmentMaintenance": maintenance_template()}
+    maintenance = report["attachmentMaintenance"]
 
     def wd(method, suffix, body=None, timeout=45):
         request = urllib.request.Request(f"http://127.0.0.1:{port}" + suffix, method=method,
@@ -878,6 +946,41 @@ def main():
         require(probe["matched"] == 5, "preview-pixels-mismatch")
         report["previews"].append({"session": report["appSessions"], "naturalWidth": rect["naturalWidth"],
                                    "naturalHeight": rect["naturalHeight"], "visible": True, **probe})
+
+    def set_value(selector, value):
+        require(execute(SET_CONTROL_VALUE, [selector, value]), "maintenance-control-rejected")
+
+    def click_button(selector, text):
+        until("return !!(" + FIND_BUTTON.strip()[len("return "):].rstrip(";") + ");", [selector, text], seconds=20)
+        value = execute(FIND_BUTTON, [selector, text])
+        require(isinstance(value, dict) and "element-6066-11e4-a52e-4f735466cecf" in value, "visible-control-missing")
+        wd("POST", f"/session/{session}/element/{value['element-6066-11e4-a52e-4f735466cecf']}/click", {})
+
+    def context_click(selector):
+        target = element(selector)
+        wd("POST", f"/session/{session}/actions", {"actions": [{"type": "pointer", "id": "context", "parameters": {"pointerType": "mouse"},
+           "actions": [{"type": "pointerMove", "origin": {"element-6066-11e4-a52e-4f735466cecf": target}, "x": 0, "y": 0},
+                       {"type": "pointerDown", "button": 2}, {"type": "pointerUp", "button": 2}]}]})
+
+    def maintenance_status(expected):
+        until("return document.querySelector(arguments[0])?.textContent.trim()===arguments[1];",
+              [MAINTENANCE_PANEL + " .vault-attachment-state > strong", expected], seconds=60)
+
+    def resolve(destination):
+        # Idempotent read through the production resolver.
+        return invoke("knowledge_resolve_attachment", {"documentRef": {"vaultId": created_vault["id"], "relativePath": "Note.md"},
+                                                         "destination": destination, "wiki": False})
+
+    def tombstones():
+        value = invoke("knowledge_attachment_recovery_summary", {"vaultId": created_vault["id"]})
+        count = value.get("tombstones") if isinstance(value, dict) else None
+        require(type(count) is int and count >= 0, "recovery-summary-invalid")
+        return min(count, 8)
+
+    def material_assets():
+        value = invoke("material_catalog_list_assets", {})
+        require(isinstance(value, list), "material-catalog-read-invalid")
+        return value
 
     def verify_image_copy(expected_note_content):
         nonlocal action
@@ -1096,6 +1199,157 @@ def main():
         report["checks"]["reopenPersisted"] = "PASS"
         preview()
         report["checks"]["imagePreviewPixels"] = "PASS"
+        phase = "attachment-rename"
+        # Real Knowledge settings UI: 附件维护 → 移动或重命名附件 → review → 确认执行.
+        old_file, new_file = vault / COPIED_IMAGE_RELATIVE, vault / RENAMED_IMAGE_RELATIVE
+        before_rename = upper.read_bytes()
+        require(before_rename == expected.encode() and not new_file.exists(), "maintenance-precondition-mismatch")
+        records_before = invoke("knowledge_list_attachment_operations", {"vaultId": created_vault["id"]})
+        require(isinstance(records_before, list), "recovery-records-invalid")
+        action = "maintenance-open"
+        click("#page-notes .notes-vault-settings")
+        until("return !!document.querySelector(arguments[0]);", [MAINTENANCE_PANEL + " > summary"])
+        if not execute("return document.querySelector(arguments[0])?.open===true;", [MAINTENANCE_PANEL]):
+            click(MAINTENANCE_PANEL + " > summary")
+        until("return document.querySelector(arguments[0])?.open===true;", [MAINTENANCE_PANEL])
+        action = "maintenance-select"
+        action_select = MAINTENANCE_PANEL + " .vault-attachment-form select"
+        set_value(action_select, "rename")
+        action = "maintenance-input"
+        set_value(MAINTENANCE_PANEL + ' input[placeholder="attachments/图片.png"]', COPIED_IMAGE_RELATIVE)
+        set_value(MAINTENANCE_PANEL + ' input[placeholder="attachments/新名称.png"]', RENAMED_IMAGE_RELATIVE)
+        action = "maintenance-plan"
+        click_button(MAINTENANCE_PANEL + " .vault-attachment-actions button", "检查引用更新")
+        maintenance_status("移动或重命名附件 · 请确认影响范围")
+        maintenance["noteRename"]["reviewShown"] = True
+        action = "maintenance-confirm"
+        click_button(MAINTENANCE_PANEL + " .vault-attachment-actions button", "确认执行")
+        action = "maintenance-result"
+        maintenance_status("移动或重命名附件 · 已完成")
+        maintenance["noteRename"]["statusComplete"] = True
+        action = "rename-files"
+        renamed_note = upper.read_text()
+        destination = image_link(renamed_note)
+        rename = maintenance["noteRename"]
+        rename.update(newFileDigestMatches=new_file.is_file() and new_file.read_bytes() == png_bytes(),
+                      oldPathGone=not os.path.lexists(old_file),
+                      noteLinkRewritten=destination is not None and COPIED_IMAGE_TARGET not in renamed_note,
+                      noteOtherwiseUnchanged=destination is not None and IMAGE_LINK.sub(lambda match: COPIED_IMAGE_REFERENCE, renamed_note) == expected)
+        action = "rename-resolve"
+        resolved = resolve(destination) if destination is not None else None
+        rename["productionResolved"] = (isinstance(resolved, dict) and resolved.get("status") == "resolved"
+            and resolved.get("relativePath") == RENAMED_IMAGE_RELATIVE and resolved.get("absolutePath") == str(new_file.resolve()))
+        rename["materialAssetRetained"] = (isinstance(resolved, dict) and isinstance(image_identity["materialAssetId"], str)
+            and resolved.get("materialAssetId") == image_identity["materialAssetId"])
+        records_after = invoke("knowledge_list_attachment_operations", {"vaultId": created_vault["id"]})
+        require(isinstance(records_after, list), "recovery-records-invalid")
+        new_records = [record for record in records_after if record not in records_before]
+        rename["newRecords"] = min(len(new_records), 2)
+        rename["tombstones"] = tombstones()
+        require(maintenance_passed(maintenance, "noteRename") and rename["newRecords"] == 1 and rename["tombstones"] == 1,
+                "attachment-rename-not-confirmed")
+        report["checks"]["attachmentRenameRewritesNote"] = "PASS"
+        phase = "attachment-rollback"
+        # Windows v1.9.9 recovery UI: 恢复已有操作 → 记录 → 回滚引用.
+        action = "recovery-records"
+        click_button(MAINTENANCE_PANEL + " .vault-attachment-actions button", "返回维护选项")
+        set_value(action_select, "recover")
+        until("return [...document.querySelectorAll(arguments[0]+' option')].some(o=>o.value===arguments[1]);",
+              [action_select, new_records[0]], seconds=20)
+        maintenance["rollback"]["recordListed"] = True
+        action = "recovery-select"
+        set_value(action_select, new_records[0])
+        action = "recovery-rollback"
+        click_button(MAINTENANCE_PANEL + " .vault-attachment-actions button", "回滚引用")
+        maintenance_status("回滚引用变更 · 引用变更已回滚")
+        rollback = maintenance["rollback"]
+        rollback["statusRolledBack"] = True
+        action = "rollback-files"
+        # Windows keeps a file it created; the original returns and the note bytes are restored.
+        rollback.update(oldFileRestored=old_file.is_file() and old_file.read_bytes() == png_bytes(),
+                        noteBytesRestored=upper.read_bytes() == before_rename,
+                        renamedCopyRetained=new_file.is_file() and new_file.read_bytes() == png_bytes())
+        action = "rollback-resolve"
+        restored = resolve(COPIED_IMAGE_TARGET)
+        rollback["productionResolved"] = (isinstance(restored, dict) and restored.get("status") == "resolved"
+            and restored.get("relativePath") == COPIED_IMAGE_RELATIVE and restored.get("absolutePath") == str(old_file.resolve()))
+        rollback["tombstones"] = tombstones()
+        require(maintenance_passed(maintenance, "rollback") and rollback["tombstones"] == 0, "attachment-rollback-not-confirmed")
+        report["checks"]["attachmentRenameRollbackUi"] = "PASS"
+        phase = "material-maintenance"
+        material_dir = root / "material-source"
+        material_dir.mkdir(mode=0o700)
+        material_source, material_renamed = material_dir / MATERIAL_SOURCE_NAME, material_dir / MATERIAL_RENAMED_NAME
+        material_source.write_bytes(png_bytes(MATERIAL_COLOR))
+        material_inode = material_source.stat().st_ino
+        action = "materials-open"
+        execute("location.hash='#materials';return true;")
+        until("const e=document.getElementById('page-materials');return !!e&&e.getBoundingClientRect().width>0;", seconds=40)
+        action = "materials-mode"
+        # First visit asks for the management mode; choose 源文件 in the real prompt.
+        until("return !!document.querySelector('.material-import-mode-modal .import-mode-options');", seconds=20)
+        click(".material-import-mode-modal .import-mode-options > button:nth-child(3)")
+        until("return !document.querySelector('.material-import-mode-modal');")
+        maintenance["materialRename"]["importModeChosenInUi"] = True
+        action = "materials-drop"
+        spot = execute("const r=document.getElementById('page-materials').getBoundingClientRect();const x=r.x+r.width*0.6,y=r.y+r.height*0.6,hit=document.elementFromPoint(x,y);return {x:x*devicePixelRatio,y:y*devicePixelRatio,inside:!!hit&&document.getElementById('page-materials').contains(hit)&&!hit.closest('[data-folder-drop-id]')};")
+        require(isinstance(spot, dict) and spot.get("inside") is True, "drop-target-unavailable")
+        for kind in ("enter", "drop"):
+            execute("return window.__TAURI__.event.emitTo({kind:'Webview',label:'main'},arguments[0],arguments[1]);",
+                    ["tauri://drag-" + kind, {"paths": [str(material_source)], "position": {"x": spot["x"], "y": spot["y"]}}])
+            if kind == "enter":
+                execute("return new Promise(resolve=>setTimeout(resolve,100));")
+        action = "materials-catalog"
+        found = {}
+        def imported():
+            found["assets"] = [asset for asset in material_assets() if isinstance(asset, dict) and asset.get("originalPath") == str(material_source)]
+            return len(found["assets"]) == 1
+        require(helpers.wait_until(imported, 30), "material-import-not-observed")
+        asset = found["assets"][0]
+        asset_id = asset.get("id")
+        require(isinstance(asset_id, str) and asset_id, "material-import-not-observed")
+        maintenance["materialRename"]["storageModeSource"] = asset.get("storageMode") == "source"
+        require(maintenance["materialRename"]["storageModeSource"], "material-source-mode-not-applied")
+        card = "#page-materials [data-asset-id=" + json.dumps(asset_id) + "]"
+        until("const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [card], seconds=30)
+        action = "materials-context"
+        context_click(card)
+        click(".asset-ctx-react [data-material-context-action=renameFile]")
+        action = "materials-rename-input"
+        rename_dialog = '[role=dialog][aria-label="重命名真实文件"]'
+        until("return !!document.querySelector(arguments[0]);", [rename_dialog + " .modal-input-react"])
+        set_value(rename_dialog + " .modal-input-react", MATERIAL_RENAMED_NAME)
+        click_button(rename_dialog + " .modal-footer-react button", "继续")
+        action = "materials-rename-confirm"
+        click_button('[role=dialog] .modal-footer-react button', "重命名真实文件")
+        action = "materials-rename-files"
+        material = maintenance["materialRename"]
+        require(helpers.wait_until(lambda: material_renamed.is_file() and not os.path.lexists(material_source), 30), "material-rename-not-observed")
+        material.update(oldPathGone=not os.path.lexists(material_source),
+                        newDigestMatches=material_renamed.read_bytes() == png_bytes(MATERIAL_COLOR),
+                        sameInode=material_renamed.stat().st_ino == material_inode)
+        current = [item for item in material_assets() if isinstance(item, dict) and item.get("id") == asset_id]
+        material["catalogPathUpdated"] = len(current) == 1 and (current[0].get("libraryPath") or current[0].get("originalPath")) == str(material_renamed)
+        require(maintenance_passed(maintenance, "materialRename"), "material-rename-not-confirmed")
+        report["checks"]["materialFileRenamed"] = "PASS"
+        action = "materials-context"
+        until("return !document.querySelector('[role=dialog] .modal-footer-react');")
+        until("const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [card], seconds=30)
+        context_click(card)
+        click(".asset-ctx-react [data-material-context-action=delete]")
+        action = "materials-delete-confirm"
+        deletion = maintenance["materialDelete"]
+        click_button('[role=dialog] .modal-footer-react button', "删除源文件并移除")
+        deletion["physicalChoiceOffered"] = True
+        action = "materials-delete-files"
+        require(helpers.wait_until(lambda: not os.path.lexists(material_renamed), 30), "material-delete-not-observed")
+        deletion["fileGone"] = not os.path.lexists(material_renamed)
+        require(helpers.wait_until(lambda: not any(isinstance(item, dict) and item.get("id") == asset_id for item in material_assets()), 30),
+                "material-delete-not-observed")
+        deletion["catalogRecordGone"] = True
+        deletion["quarantineLeftovers"] = min(sum(1 for path in material_dir.iterdir() if path.name.startswith(DELETE_QUARANTINE_PREFIX)), 8)
+        require(maintenance_passed(maintenance, "materialDelete") and deletion["quarantineLeftovers"] == 0, "material-delete-not-confirmed")
+        report["checks"]["materialDeleteSourceRemoved"] = "PASS"
         phase = "quit"
         stop()
         report["checks"]["quitProcessDisappearance"] = "PASS"
