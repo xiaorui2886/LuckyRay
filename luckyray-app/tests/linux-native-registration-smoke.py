@@ -10,9 +10,46 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
+
+ROUND_TRIP_ORIGIN = "chrome-extension://bckeanklmbjhjjomobmfkfjmeokdcfid"
+ROUND_TRIP_VERSION = 1
+
+
+def round_trip(program, env, report):
+    """One real Native Messaging exchange with the host ELF.
+
+    The browser passes the extension origin as argv[1] and then speaks
+    4-byte-native-endian length + JSON over stdin/stdout. No application is
+    running in this synthetic profile, so the host must answer with a framed
+    refusal rather than a bootstrap config; what this proves is that the
+    built host reads our frame, dispatches it and writes a well-formed reply.
+    """
+    request = json.dumps({"type": "bootstrap", "protocolVersion": ROUND_TRIP_VERSION}).encode()
+    frame = len(request).to_bytes(4, byteorder=sys.byteorder) + request
+    result = subprocess.run([str(program), ROUND_TRIP_ORIGIN], input=frame, env=env,
+                            capture_output=True, timeout=15)
+    if result.returncode != 0:
+        raise RuntimeError("round-trip host exited non-zero: " + result.stderr.decode("utf-8", "replace").strip())
+    if len(result.stdout) < 5:
+        raise RuntimeError("round-trip host wrote no framed reply")
+    declared = int.from_bytes(result.stdout[:4], byteorder=sys.byteorder)
+    body = result.stdout[4:]
+    if declared != len(body):
+        raise RuntimeError("round-trip frame length does not match the body")
+    envelope = json.loads(body)
+    if envelope.get("ok") is not False:
+        raise RuntimeError("round-trip reply must be the refusal this profile produces")
+    error = envelope.get("error") or {}
+    code, message = error.get("code"), error.get("message")
+    if not (isinstance(code, str) and code and isinstance(message, str) and message):
+        raise RuntimeError("round-trip refusal has no code/message")
+    report["roundTrip"] = True
+    report["roundTripFrames"] = 1
+    report["roundTripRefusalCode"] = code
 
 def main():
     parser = argparse.ArgumentParser()
@@ -91,6 +128,7 @@ def main():
         report.update(registration="PASS", revocation="PASS", reenable="PASS", sourceIdentity="PASS",
                       conflictAndSymlinkPreservation="PASS", independentBackupAndOldInode="PASS",
                       credentialNamespaceUnchanged="PASS")
+        round_trip(program, env, report)
     except Exception as error:
         report["failure"] = str(error)
         raise

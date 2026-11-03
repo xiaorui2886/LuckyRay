@@ -453,7 +453,8 @@ class EvidenceTests(unittest.TestCase):
             self.assertNotIn(canary, json.dumps(ci.bounded_report(raw)))
 
     def test_finish_rejects_missing_step_nonzero_child_and_extra_artifact(self):
-        for case in ("complete-unit-payload", "step-skipped", "child-failed", "extra-artifact"):
+        for case in ("complete-unit-payload", "step-skipped", "child-failed", "extra-artifact",
+                     "native-step-skipped", "native-report-failed"):
             with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="notes-gate-offline-") as temporary:
                 run = ci.Run.__new__(ci.Run)
                 run.evidence = Path(temporary)
@@ -463,6 +464,8 @@ class EvidenceTests(unittest.TestCase):
                     body = {"status": "PASS", "source": self.source, "scope": ci.SCOPE}
                     if name == "build.json":
                         body.update(**self.build, scripts=self.scripts)
+                    if name == "nativeMessaging.json" and case == "native-report-failed":
+                        body["status"] = "FAIL"
                     if name == "notes.json":
                         body.update(attempts=1, flowCount=1, childExitCode=1 if case == "child-failed" else 0,
                                     observations=ci.bounded_report(self.raw), componentLayout=component_unit_payload(self.source, self.scripts),
@@ -473,6 +476,8 @@ class EvidenceTests(unittest.TestCase):
                 env = {"CI_" + name: "success" for name in ci.STEPS}
                 if case == "step-skipped":
                     env["CI_NOTES"] = "skipped"
+                if case == "native-step-skipped":
+                    env["CI_NATIVE_MESSAGING"] = "skipped"
                 with mock.patch.dict(os.environ, env):
                     if case == "complete-unit-payload":
                         run.finish()
@@ -482,6 +487,10 @@ class EvidenceTests(unittest.TestCase):
                 result = ci.read_json(run.evidence / "result.json")
                 self.assertEqual(result["status"], "PASS" if case == "complete-unit-payload" else "FAIL")
                 self.assertEqual(result["excluded"]["chromiumConsent"], "NOT_RUN")
+                # The excluded label is measured now, never a permanent NOT_RUN.
+                self.assertEqual(result["excluded"]["nativeMessaging"],
+                                 "NOT_RUN" if case == "native-report-failed" else "REGISTRATION_AND_ROUND_TRIP_PASS")
+                self.assertIn("nativeMessaging.json", result["artifactAllowlist"])
 
     def test_a_second_flow_attempt_is_rejected_before_any_process_launch(self):
         with tempfile.TemporaryDirectory(prefix="notes-attempt-offline-") as temporary:
@@ -1055,10 +1064,14 @@ class EvidenceTests(unittest.TestCase):
         jobs = re.findall(r"^  ([a-z0-9-]+):$", text.split("jobs:\n", 1)[1], re.M)
         self.assertEqual(jobs, ["linux-notes-attachments-validation"])
         self.assertNotIn("linux-browser-ci.py", text)
-        self.assertNotIn("--bin luckyray-native-host", text)
+        # The host is built only by the native-messaging step; the notes flow
+        # still runs against the Main binary alone.
+        self.assertEqual(text.count("--bin luckyray-native-host"), 1)
+        native = text.index("id: native-messaging")
+        self.assertGreater(text.index("--bin luckyray-native-host"), native)
         self.assertNotIn("--no-sandbox", text)
-        self.assertEqual(re.findall(r"/evidence/([a-z.]+)", text), list(ci.EXPORTS))
-        for stage in ("init", "layout", "binaries", "resources", "notes", "finish"):
+        self.assertEqual(re.findall(r"/evidence/([A-Za-z.]+)", text), list(ci.EXPORTS))
+        for stage in ("init", "layout", "binaries", "resources", "notes", "native-messaging", "finish"):
             self.assertIn("linux-notes-ci.py " + stage, text)
         self.assertLess(text.index("        id: frontend"), text.index("        id: layout"))
         self.assertLess(text.index("        id: layout"), text.index("        id: dependencies"))
@@ -1606,7 +1619,7 @@ class ComponentLayoutGateTests(unittest.TestCase):
             self.assertEqual((report["status"], report["flowCount"], report["attempts"]), ("NOT_RUN", 0, 0))
             self.assertEqual(report["componentLayout"]["failure"], "fixture-build-failed")
 
-    def test_layout_block_exports_same_five_json_with_native_reports_not_run(self):
+    def test_layout_block_exports_the_exact_json_set_with_native_reports_not_run(self):
         with tempfile.TemporaryDirectory(prefix="layout-finish-unit-") as temporary:
             run = ci.Run.__new__(ci.Run)
             run.evidence = Path(temporary)
@@ -1621,7 +1634,8 @@ class ComponentLayoutGateTests(unittest.TestCase):
                 run.finish()
             result = ci.read_json(run.evidence / "result.json")
             self.assertEqual(set(path.name for path in run.evidence.iterdir()), set(ci.EXPORTS))
-            self.assertEqual(result["reports"], {"source.json": "PASS", "build.json": "NOT_RUN", "resources.json": "NOT_RUN", "notes.json": "NOT_RUN"})
+            self.assertEqual(result["reports"], {"source.json": "PASS", "build.json": "NOT_RUN", "resources.json": "NOT_RUN",
+                                             "notes.json": "NOT_RUN", "nativeMessaging.json": "NOT_RUN"})
             self.assertEqual(result["included"], {"notesPngFlows": 0, "componentLayout": "FAIL"})
             self.assertEqual((result["status"], result["exportPolicy"], result["productAcceptance"]), ("FAIL", "PASS", "NOT_RUN"))
 
@@ -1944,6 +1958,69 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                      "failed_replace_keeps_the_previous_document_and_cleans_the_temporary",
                      "replace_needs_an_existing_parent_directory"):
             self.assertIn(f"fn {name}()", canvas)
+
+    def test_native_messaging_evidence_is_closed_and_gated(self):
+        # T21: the native-host registration + round-trip evidence is a closed
+        # projection, every step must be PASS, and the run must be source-bound
+        # to the smoke script that produced it.
+        self.assertEqual(ci.bounded_native_messaging({}), {
+            "registration": None, "revocation": None, "reenable": None, "sourceIdentity": None,
+            "conflictAndSymlinkPreservation": None, "independentBackupAndOldInode": None,
+            "credentialNamespaceUnchanged": None, "roundTrip": None,
+            "applicationSha256": None, "scriptSha256": None, "roundTripFrames": None,
+            "realBrowser": None, "roundTripRefusalCode": None})
+        passing = {"registration": True, "revocation": True, "reenable": True, "sourceIdentity": True,
+                   "conflictAndSymlinkPreservation": True, "independentBackupAndOldInode": True,
+                   "credentialNamespaceUnchanged": True, "roundTrip": True,
+                   "applicationSha256": "a" * 64,
+                   "scriptSha256": hashlib.sha256(Path(__file__).with_name(
+                       "linux-native-registration-smoke.py").read_bytes()).hexdigest(),
+                   "roundTripFrames": 1, "realBrowser": "NOT_RUN",
+                   "roundTripRefusalCode": "app-unavailable"}
+        projected = ci.bounded_native_messaging(passing)
+        self.assertEqual(projected, passing)
+        self.assertEqual(ci.bounded_native_messaging(projected), projected)
+        scripts = {"nativeMessaging": passing["scriptSha256"]}
+        ci.validate_native_messaging(projected, scripts)
+        for name in ("registration", "revocation", "reenable", "sourceIdentity",
+                     "conflictAndSymlinkPreservation", "independentBackupAndOldInode",
+                     "credentialNamespaceUnchanged", "roundTrip"):
+            broken = dict(passing); broken[name] = False
+            with self.subTest(flag=name), self.assertRaisesRegex(RuntimeError, "native-messaging-"):
+                ci.validate_native_messaging(ci.bounded_native_messaging(broken), scripts)
+        for name, value in (("roundTripFrames", 2), ("scriptSha256", "b" * 64),
+                            ("realBrowser", "CHROME"), ("roundTripRefusalCode", "")):
+            broken = dict(passing); broken[name] = value
+            with self.subTest(field=name), self.assertRaisesRegex(RuntimeError, "native-messaging-"):
+                ci.validate_native_messaging(ci.bounded_native_messaging(broken), scripts)
+        canary = "/home/runner/secret-profile"
+        raw = dict(passing, path=canary, manifest=canary, profile=canary, roundTripRefusalCode=canary * 4)
+        self.assertNotIn("runner", json.dumps(ci.bounded_native_messaging(raw)))
+
+    def test_native_messaging_is_wired_into_the_preflight_workflow(self):
+        # T21: a real step after BUILD builds the host from this source tree,
+        # runs the registration smoke, publishes the report, and finish() reads
+        # its outcome so a failure cannot be swallowed.
+        workflow = Path(__file__).resolve().parents[2] / ".github/workflows/linux-desktop-preflight.yml"
+        text = workflow.read_text()
+        build = text.index("Build the actual Main once for the focused product flow")
+        native = text.index("Register the built native host and complete one real Native Messaging exchange")
+        driver = text.index("Build the source-bound pinned WebDriver with closed diagnostics once")
+        self.assertLess(build, native)
+        self.assertLess(native, driver)
+        step = text[native:driver]
+        self.assertIn("id: native-messaging", step)
+        self.assertIn("cargo build --locked --bin luckyray-native-host", step)
+        self.assertIn("--features sidecar-binaries", step)
+        self.assertIn("linux-native-registration-smoke.py", step)
+        self.assertIn("--application", step)
+        self.assertIn("linux-notes-ci.py native-messaging --work", step)
+        self.assertNotIn("curl", step)  # nothing is downloaded for this step
+        self.assertIn("CI_NATIVE_MESSAGING", text)
+        self.assertIn("evidence/nativeMessaging.json", text)
+        self.assertIn("nativeMessaging.json", ci.EXPORTS)
+        self.assertIn("NATIVE_MESSAGING", ci.STEPS)
+        self.assertLess(ci.STEPS.index("BUILD"), ci.STEPS.index("NATIVE_MESSAGING"))
 
     def test_community_mcp_secrets_and_process_use_the_linux_seams(self):
         # T20: the plugin's two secrets live in the Secret Service through the

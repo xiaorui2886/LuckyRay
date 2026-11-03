@@ -34,8 +34,9 @@ SCOPE = smoke.SCOPE
 EXCLUDED = {name: "NOT_RUN" for name in ("chromiumConsent", "nativeMessaging", "nativePointerDrag",
     "externalApplicationDisplay", "trimmedFilenameEndToEnd", "videoCodecMatrix", "personalBrowserHost",
     "installer", "release", "waylandHardware", "oldMatrices", "lshFunctionalFlow")}
-STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENCIES", "RUST", "BUILD", "DRIVER", "RUNTIME", "RESOURCES", "NOTES")
-EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "result.json")
+STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENCIES", "RUST", "BUILD",
+         "NATIVE_MESSAGING", "DRIVER", "RUNTIME", "RESOURCES", "NOTES")
+EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "nativeMessaging.json", "result.json")
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",
                     "image-preview", "attachment-open", "reopen", "attachment-rename", "attachment-rollback",
@@ -64,6 +65,44 @@ def bounded_interactability(raw):
     result["hitDialog"] = raw.get("hitDialog") if raw.get("hitDialog") in ("NONE", "OTHER", *smoke.DIALOG_LABELS.values()) else "NONE"
     result["geometry"] = smoke.bounded_geometry(raw.get("geometry"))
     return result
+
+
+def bounded_native_messaging(raw):
+    """Closed projection of the real native-host registration + round-trip run.
+
+    Every step is a boolean; only the two script/binary digests and the framed
+    message count leave this function, so the evidence carries no path, no
+    manifest body and no browser profile name.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    result = {name: raw.get(name) if type(raw.get(name)) is bool else None
+              for name in ("registration", "revocation", "reenable", "sourceIdentity",
+                           "conflictAndSymlinkPreservation", "independentBackupAndOldInode",
+                           "credentialNamespaceUnchanged", "roundTrip")}
+    for name in ("applicationSha256", "scriptSha256"):
+        value = raw.get(name)
+        result[name] = value if type(value) is str and len(value) == 64 else None
+    frames = raw.get("roundTripFrames")
+    result["roundTripFrames"] = frames if type(frames) is int and 1 <= frames <= 8 else None
+    result["realBrowser"] = raw.get("realBrowser") if raw.get("realBrowser") == "NOT_RUN" else None
+    result["roundTripRefusalCode"] = (raw.get("roundTripRefusalCode")
+                                      if type(raw.get("roundTripRefusalCode")) is str
+                                      and 0 < len(raw["roundTripRefusalCode"]) <= 48 else None)
+    return result
+
+
+def validate_native_messaging(observed, scripts):
+    """The registration and round-trip evidence must all be PASS, and the run
+    must be source-bound to the smoke script that produced it."""
+    require(observed.get("realBrowser") == "NOT_RUN", "native-messaging-real-browser-claimed")
+    for name in ("registration", "revocation", "reenable", "sourceIdentity",
+                 "conflictAndSymlinkPreservation", "independentBackupAndOldInode",
+                 "credentialNamespaceUnchanged", "roundTrip"):
+        require(observed.get(name) is True, "native-messaging-" + name.lower() + "-failed")
+    require(observed.get("roundTripFrames") == 1, "native-messaging-round-trip-not-single")
+    require(observed.get("scriptSha256") == scripts["nativeMessaging"],
+            "native-messaging-script-identity-changed")
+    require(observed.get("roundTripRefusalCode"), "native-messaging-round-trip-no-response")
 
 
 def bounded_canvas_flow(raw):
@@ -478,7 +517,8 @@ class Run(runtime.Run):
                  "layoutEvidence": "luckyray-app/tests/linux-media-layout-evidence.py",
                  "cdpClient": "luckyray-app/tests/browser-extension-runtime/lib/cdp-client.mjs",
                  "driverPrep": "luckyray-app/tests/linux-tauri-driver-source.py",
-                 "driverDiagnostic": "luckyray-app/tests/linux-tauri-driver-forward-diagnostics.rs"}
+                 "driverDiagnostic": "luckyray-app/tests/linux-tauri-driver-forward-diagnostics.rs",
+                 "nativeMessaging": "luckyray-app/tests/linux-native-registration-smoke.py"}
         return {name: digest(self.repo / path) for name, path in paths.items()}
 
     def publish_notes(self, report):
@@ -552,6 +592,18 @@ class Run(runtime.Run):
             raise RuntimeError("component-layout-precondition-failed") from None
         finally:
             self.publish_notes(report)
+
+    def native_messaging(self):
+        """Build-time independent: the step already produced the host report."""
+        source = self.source()
+        report = {"status": "FAIL", "scope": SCOPE, "source": source}
+        try:
+            raw = read_json(self.private / "native-messaging-report/report.json")
+            report["observations"] = bounded_native_messaging(raw)
+            validate_native_messaging(report["observations"], self.scripts())
+            report["status"] = "PASS"
+        finally:
+            write_json(self.evidence / "nativeMessaging.json", report)
 
     def notes(self):
         source = self.source()
@@ -631,7 +683,9 @@ class Run(runtime.Run):
         write_json(self.evidence / "result.json", {"status": "PASS" if passed else "FAIL", "scope": SCOPE,
             "source": source, "stepOutcomes": outcomes, "reports": statuses, "artifactAllowlist": list(EXPORTS),
             "exportPolicy": "PASS" if safe else "FAIL", "included": {"notesPngFlows": 1 if bodies.get("notes.json", {}).get("flowCount") == 1 else 0,
-                "componentLayout": bodies.get("notes.json", {}).get("componentLayout", {}).get("status", "NOT_RUN")}, "excluded": EXCLUDED,
+                "componentLayout": bodies.get("notes.json", {}).get("componentLayout", {}).get("status", "NOT_RUN")},
+            "excluded": {**EXCLUDED, "nativeMessaging":
+                "REGISTRATION_AND_ROUND_TRIP_PASS" if bodies.get("nativeMessaging.json", {}).get("status") == "PASS" else EXCLUDED["nativeMessaging"]},
             "productAcceptance": "NOTES_PATH_ATTACHMENTS_PASS_ONLY" if passed else "NOT_RUN",
             "limits": ["drop is one declared Tauri event IPC injection; native pointer drag NOT_RUN",
                        "case-distinct input contents retained; existing importer collision rename preserved",
@@ -649,12 +703,13 @@ class Run(runtime.Run):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("init", "layout", "binaries", "resources", "notes", "finish"))
+    parser.add_argument("phase", choices=("init", "layout", "binaries", "resources", "notes",
+                                          "native-messaging", "finish"))
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--driver", type=Path)
     parser.add_argument("--node", default="node")
     args = parser.parse_args()
-    getattr(Run(args), args.phase)()
+    getattr(Run(args), args.phase.replace("-", "_"))()
 
 
 if __name__ == "__main__":

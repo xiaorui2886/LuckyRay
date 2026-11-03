@@ -87,6 +87,28 @@ jobs:
             --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml \
             --message-format=json-render-diagnostics > "$WORK_ROOT/private/native-artifacts.jsonl"
           python3 luckyray-app/tests/linux-notes-ci.py binaries --work "$WORK_ROOT"
+      - name: Register the built native host and complete one real Native Messaging exchange
+        id: native-messaging
+        if: ${{ success() && steps.build.outcome == 'success' }}
+        timeout-minutes: 25
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          # Same identifier as the Main build; the host refuses to borrow a
+          # production credential file.
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+        run: |
+          set -euo pipefail
+          # The host binary lives in this source tree, so it is built here
+          # instead of downloaded. It needs the sidecar feature Main does not.
+          rustup run 1.95.0 cargo build --locked --bin luckyray-native-host \
+            --features sidecar-binaries --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml
+          host="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-native-host"
+          test -f "$host"
+          python3 luckyray-app/tests/linux-native-registration-smoke.py \
+            --application "$host" --output "$WORK_ROOT/private/native-messaging-report"
+          python3 luckyray-app/tests/linux-notes-ci.py native-messaging --work "$WORK_ROOT"
       - name: Build the source-bound pinned WebDriver with closed diagnostics once
         id: driver
         timeout-minutes: 20
@@ -154,6 +176,7 @@ jobs:
           CI_FRONTEND: ${{ steps.frontend.outcome }}
           CI_LAYOUT: ${{ steps.layout.outcome }}
           CI_BUILD: ${{ steps.build.outcome }}
+          CI_NATIVE_MESSAGING: ${{ steps.native-messaging.outcome }}
           CI_DRIVER: ${{ steps.driver.outcome }}
           CI_RUNTIME: ${{ steps.runtime.outcome }}
           CI_RESOURCES: ${{ steps.resources.outcome }}
@@ -171,4 +194,5 @@ jobs:
             ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/build.json
             ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/resources.json
             ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/notes.json
+            ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/nativeMessaging.json
             ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/result.json
