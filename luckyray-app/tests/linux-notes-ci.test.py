@@ -181,6 +181,12 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
         self.assertEqual(projected["code"], "control-not-interactable")
         self.assertNotIn("secret", json.dumps(projected))
 
+    def test_maintenance_panel_excludes_portability_details(self):
+        # Both <details> carry .vault-attachment-maintenance; the portability one comes first in the DOM.
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "features", "notes", "AttachmentPortabilitySection.tsx"), encoding="utf-8").read()
+        self.assertIn('className=\"vault-attachment-maintenance attachment-portability\"', src)
+        self.assertIn(":not(.attachment-portability)", ci.smoke.MAINTENANCE_PANEL)
+
     def test_geometry_diagnostic_is_closed_integer_only(self):
         geometry = {"viewportWidth": 1440, "viewportHeight": 900.0, "screenWidth": 1440, "screenHeight": 900, "outerWidth": "1440",
                     "outerHeight": 10 ** 9, "rectLeft": 600, "rectTop": 1210, "rectWidth": 96, "rectHeight": 30, "title": "/home/runner/x",

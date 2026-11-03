@@ -102,7 +102,7 @@ IMAGE_LINK = re.compile(r"!\[synthetic PNG\]\((<[^<>\n]*>|[^()\s]*)\)")
 MAINTENANCE_NOT_RUN = {"deleteQuarantineIntermediate": "OFFLINE_ONLY", "crashResume": "OFFLINE_ONLY",
                        "legacyConversion": "NOT_RUN", "noteMove": "NOT_RUN", "materialCrossDirectoryMove": "NOT_RUN",
                        "materialInsertCopyPublish": "NOT_RUN"}
-MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance"
+MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance:not(.attachment-portability)"
 SET_CONTROL_VALUE = """
 const e=[...document.querySelectorAll(arguments[0])].find(x=>x.getBoundingClientRect().width>0&&(!(x instanceof HTMLSelectElement)||[...x.options].some(o=>o.value===arguments[1])));
 if(!e||e.disabled)return false;
