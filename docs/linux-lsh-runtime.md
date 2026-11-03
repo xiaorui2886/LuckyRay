@@ -83,11 +83,19 @@ positioned bounds. Linux geometry commands acknowledge their actual GTK
 mutation on Main; cancelled queued mutations cannot affect a later lifecycle.
 The existing main-caller command checks remain in force for the remote child.
 
-The optional compatibility *baseline trial* needs independent native group
-ownership to run alongside a live Linux carrier. Until that exists, it
-returns `baseline-trial-native-group-required` before starting a child.
-Static compatibility checks, the ordinary native probe and the real surface
-use their implemented paths.
+The optional compatibility *baseline trial* now runs on Linux with its own
+native group ownership: the trial child is spawned with `detached: true`, so
+`setsid` makes its process group id its own pid and that group is provably
+disjoint from the live carrier's. The sweep signals that group only while the
+leader is still unreaped (a reaped pid may be reused), then waits for the exit
+it was promised; anything else reports `owned-group-unsettled` instead of a
+settled verdict. The trial keeps the Windows semantics: a one-shot temp home
+with the same `AppData` layout, `minimalDshEnvironment`, no user data copied, a
+launch URL required and answered over HTTP, and the temp root removed
+afterwards. First boot, HTTP and cleanup are covered offline; the pinned real
+runtime still needs `DSH_TEST_RUNTIME_ROOT` (CI/QA). The *preload* feature is
+still Windows-only and off by default, exactly as in the shipped desktop
+build.
 
 ## Packaging work
 

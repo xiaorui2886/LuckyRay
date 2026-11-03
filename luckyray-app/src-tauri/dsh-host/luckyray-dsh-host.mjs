@@ -902,16 +902,39 @@ function surfaceFailure(reason, diagnostic = null) {
  * orphaned descendants unenumerable — that is reported as unconfirmed, and
  * the caller must refuse to start a new surface until cleanup succeeds.
  */
-async function killOwnedChildTree(child, waitMs = 8_000) {
+async function killOwnedChildTree(child, waitMs = 8_000, { ownedGroup = false } = {}) {
   if (!child || child.pid === undefined || child.pid === null) {
     return { confirmed: true, sweep: "no-child" };
   }
   if (process.platform === "linux") {
-    // Node reaps its child automatically, so it cannot reserve that child's
-    // numeric group identity. Never signal a reaped PID or invent a settled
-    // verdict here. The native owner retains the wrapper's WNOWAIT anchor and
-    // reclaims the original group before admitting a replacement generation.
-    return { confirmed: false, sweep: "native-owned-group-required" };
+    // Node reaps its own child, so it cannot reserve that child's numeric group
+    // identity: never signal a reaped PID or invent a settled verdict here. The
+    // native owner retains the wrapper's WNOWAIT anchor and reclaims the
+    // original group before admitting a replacement generation.
+    if (!ownedGroup) return { confirmed: false, sweep: "native-owned-group-required" };
+    // A detached child called setsid(), so its group id *is* its pid and can
+    // never be the live carrier's group. Signal only while the leader is still
+    // unreaped (its pid is then pinned and cannot be reused underneath us).
+    if (child.exitCode !== null || child.signalCode !== null) {
+      return { confirmed: true, sweep: "owned-group-exited" };
+    }
+    const exited = new Promise((resolveExit) => {
+      child.once("exit", () => resolveExit(true));
+    });
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if (error?.code !== "ESRCH") return { confirmed: false, sweep: "owned-group-signal-failed" };
+      return { confirmed: true, sweep: "owned-group-exited" };
+    }
+    const settled = await new Promise((resolveSettled) => {
+      const timer = setTimeout(() => resolveSettled(false), waitMs);
+      exited.then(() => {
+        clearTimeout(timer);
+        resolveSettled(true);
+      });
+    });
+    return { confirmed: settled, sweep: settled ? "owned-group" : "owned-group-unsettled" };
   }
   const stillAlive = child.exitCode === null;
   if (stillAlive) {
@@ -1527,12 +1550,12 @@ export function createNativeSurfaceOwner({
  * plugin combination was exercised.
  */
 export async function runBaselineSurfaceTrial({ runtimeRoot, timeoutMs = 90_000 }) {
-  // The optional compatibility baseline runs alongside a live carrier. It
-  // needs independent native group ownership before it can run on Linux;
-  // ordinary probes and the real surface already use the outer native group.
-  if (process.platform === "linux") return {
-    outcome: "fail", evidence: "baseline-boot+http", reason: "baseline-trial-native-group-required",
-  };
+  // The optional compatibility baseline runs alongside a live carrier, so its
+  // child must own a process group that is provably not the carrier's. Linux
+  // gets that from `detached: true` (setsid: the group id is the child's own
+  // pid); Windows keeps its hidden-window spawn in the wrapper's group and is
+  // reclaimed by the tree walk.
+  const ownsGroup = process.platform === "linux";
   const { mkdtemp } = await import("node:fs/promises");
   const root = resolve(runtimeRoot);
   const node = runtimeNodeExecutable(root);
@@ -1547,6 +1570,9 @@ export async function runBaselineSurfaceTrial({ runtimeRoot, timeoutMs = 90_000 
       env: minimalDshEnvironment(home),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      // Linux only: a fresh session/process group makes the trial's group
+      // disjoint from the live carrier's, so the sweep below can never reach it.
+      detached: ownsGroup,
     });
     // An unconsumed stderr pipe fills its OS buffer and deadlocks the child's
     // boot logging before the launch URL is ever printed. Drain it.
@@ -1595,7 +1621,7 @@ export async function runBaselineSurfaceTrial({ runtimeRoot, timeoutMs = 90_000 
     };
   } finally {
     if (child && child.exitCode === null) {
-      await killOwnedChildTree(child).catch(() => {});
+      await killOwnedChildTree(child, 8_000, { ownedGroup: ownsGroup }).catch(() => {});
     }
     await rm(home, { recursive: true, force: true }).catch(() => {});
   }
