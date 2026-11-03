@@ -1831,6 +1831,12 @@ def main():
         ui_click(".canvas-create-panel-grid button", "文本")
         until("return document.querySelectorAll('.react-flow__node').length===1;", seconds=20)
         report["canvasFlow"]["nodeAdded"] = True
+        # The placeholder text node renders its hint (输入文字...), not the stored
+        # label, so reopen is judged against the editor's own rendering here.
+        added_render = execute(
+            "const n=document.querySelector('.react-flow__node');"
+            "return n&&n.querySelector('.canvas-text-document')?n.textContent:null;")
+        require(isinstance(added_render, str), "canvas-reopen-lost-edit")
         action = "canvas-save-shortcut"
         # The editor's own save shortcut (resolveScopedShortcut "canvasSave") ->
         # persistCurrentCanvas -> bridge.saveCanvas. Real key actions only.
@@ -1867,11 +1873,15 @@ def main():
         until("return !!document.querySelector('.canvas-home-primary');", seconds=40)
         ui_click(".canvas-home-list-open", seconds=40)
         until("return document.querySelectorAll('.react-flow__node').length===1;", seconds=40)
-        reopened_label = execute(
-            "const n=document.querySelector('.react-flow__node');return n?n.textContent:'';")
         report["canvasFlow"]["reopened"] = True
+        reopened_label = execute(
+            "const n=document.querySelector('.react-flow__node');"
+            "return n&&n.querySelector('.canvas-text-document')?n.textContent:null;")
+        # Same single text node, rendered the same as before close, and the
+        # document on disk still holds exactly that node.
         report["canvasFlow"]["nodePresentAfterReopen"] = (
-            isinstance(reopened_label, str) and "双击开始编辑" in reopened_label)
+            isinstance(reopened_label, str) and reopened_label == added_render
+            and canvas_saved_on_disk())
         require(report["canvasFlow"]["nodePresentAfterReopen"], "canvas-reopen-lost-edit")
         leftovers = profile_temporary_scan(home)
         report["canvasFlow"]["temporaryLeftovers"] = min(
