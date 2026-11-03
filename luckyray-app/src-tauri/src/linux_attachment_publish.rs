@@ -19,6 +19,22 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 
 pub(crate) const ATTACHMENTS: &str = "attachments";
 
+/// Marker of a kernel or filesystem without `RENAME_NOREPLACE`. The publish
+/// module turns it into `knowledge-linux-fs-unsupported` instead of the generic
+/// mapping, because in this case the stage was discarded and **nothing was
+/// published or overwritten**.
+pub(crate) const UNSUPPORTED_RENAME: &str = "linux-renameat2-unsupported";
+
+/// Classify a failed publish rename. `EINVAL`/`ENOSYS` mean the capability is
+/// missing; every other failure keeps its own meaning.
+pub(crate) fn rename_capability_error(error: io::Error) -> io::Error {
+    if matches!(error.raw_os_error(), Some(libc::ENOSYS) | Some(libc::EINVAL)) {
+        io::Error::new(io::ErrorKind::Unsupported, UNSUPPORTED_RENAME)
+    } else {
+        error
+    }
+}
+
 /// The held Vault root, its write lease and its `attachments/` directory.
 pub(crate) struct PublishTarget {
     root: Directory,
@@ -153,7 +169,18 @@ impl PublishTarget {
         self.attachments.verify_named(stage, staged)?;
         self.verify()?;
         // The kernel refuses an occupied name even if it appeared after `vacant`.
-        self.attachments.rename_new(stage, &self.attachments, name)?;
+        // A missing no-replace capability is reported distinctly, but only while
+        // the target name is still vacant: a rename that landed is never
+        // reported as "nothing was modified", and the stage is discarded by the
+        // caller in either case.
+        self.attachments.rename_new(stage, &self.attachments, name).map_err(|error| {
+            if matches!(error.raw_os_error(), Some(libc::ENOSYS) | Some(libc::EINVAL))
+                && self.vacant(name).unwrap_or(false)
+            {
+                return rename_capability_error(error);
+            }
+            error
+        })?;
         let mut published = self.attachments.open_file(name, true)?;
         if !Version::of(&published)?.same_object(&held)
             || !digest_of(&mut published, size)?.eq_ignore_ascii_case(digest)

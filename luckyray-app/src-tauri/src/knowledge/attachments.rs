@@ -658,6 +658,18 @@ impl KnowledgeService {
 // while it is still this call's own object (see linux_attachment_publish).
 #[cfg(target_os = "linux")]
 fn linux_publish_failure(failure: std::io::Error) -> KnowledgeError {
+    // A kernel or filesystem without RENAME_NOREPLACE is a capability refusal,
+    // not a changed note: the stage was discarded and nothing was published or
+    // overwritten. The shared mapping keeps its existing meaning for every
+    // other failure (ACL and xattr refusals stay permissions-unsupported).
+    if failure.kind() == std::io::ErrorKind::Unsupported
+        && failure.to_string() == crate::linux_attachment_publish::UNSUPPORTED_RENAME
+    {
+        return error(
+            "knowledge-linux-fs-unsupported",
+            "当前文件系统不支持安全的附件发布，未做任何修改",
+        );
+    }
     super::linux_transactions::failure(failure)
 }
 

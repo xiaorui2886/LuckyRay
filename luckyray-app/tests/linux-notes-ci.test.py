@@ -1851,15 +1851,17 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('return Err(MaterialError::new("physical-path-owned","目标文件已存在，不能覆盖"))',
                       catalog)
 
-    def test_material_move_proves_one_link_and_refuses_unsupported_renameat2(self):
-        # T02 §5.2.c: the held object's identity includes nlink==1 (the same
-        # rule as linux_fs::Version and the delete quarantine). Both the held
-        # handle and the no-follow name proof must carry it.
+    def test_material_move_follows_v1_9_9_links_and_refuses_unsupported_renameat2(self):
+        # Owner decision on T12 §5: Windows v1.9.9 moves a material that still
+        # has a second hard link, so the move path carries the link count in its
+        # identity (compared around the rename) but must not require nlink==1.
+        # The delete quarantine keeps that requirement.
         primitive = self.read("linux_material_move.rs")
         self.assertIn("links: u64", primitive)
-        self.assertIn("if !m.is_file() || m.nlink() != 1 {", primitive)
+        self.assertIn("if !m.is_file() {", primitive)
+        self.assertNotIn("m.nlink() != 1", primitive)
+        self.assertNotIn("stat.st_nlink as u64 != 1", primitive)
         self.assertIn("links: m.nlink(),", primitive)
-        self.assertIn("stat.st_nlink as u64 != 1", primitive)
         self.assertIn("links: stat.st_nlink as u64,", primitive)
         # T02 §5.6.2/§5.6.4: a kernel/filesystem without RENAME_NOREPLACE is
         # an explicit capability refusal, not a generic rename error.
@@ -1870,11 +1872,42 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('MaterialError::new("knowledge-linux-fs-unsupported",'
                       '"当前文件系统不支持安全的文件移动，未做任何修改")', handle)
         self.assertIn("error.kind()==std::io::ErrorKind::Unsupported", handle)
+        delete = self.read("linux_material_delete.rs")
+        self.assertIn("if !m.is_file() || m.nlink() != 1 {", delete)
         # The offline crate proves both rules are executable, not only textual.
         tests = (Path(__file__).resolve().parents[1] /
                  "tests/linux-import-transaction/src/lib.rs").read_text()
-        self.assertIn("fn material_move_refuses_a_source_with_a_second_link()", tests)
+        self.assertIn("fn material_move_follows_v1_9_9_and_moves_a_hard_linked_source()", tests)
         self.assertIn("fn renameat2_capability_failure_is_explicit_and_never_confused_with_a_conflict()", tests)
+        self.assertIn("fn publish_rename_capability_failure_is_marked_and_stage_scoped()", tests)
+
+    def test_publish_rename_capability_failure_has_its_own_code(self):
+        # T02 §5.6.2/§5.6.4 for step 4: a filesystem without RENAME_NOREPLACE is
+        # refused with knowledge-linux-fs-unsupported and "nothing was modified",
+        # without touching the shared linux_transactions::failure mapping or any
+        # step-1 code. ACL/xattr refusals keep permissions-unsupported.
+        publish = self.read("linux_attachment_publish.rs")
+        self.assertIn('pub(crate) const UNSUPPORTED_RENAME: &str = "linux-renameat2-unsupported";', publish)
+        self.assertIn("fn rename_capability_error(error: io::Error) -> io::Error {", publish)
+        self.assertIn("Some(libc::ENOSYS) | Some(libc::EINVAL)", publish)
+        self.assertIn("io::Error::new(io::ErrorKind::Unsupported, UNSUPPORTED_RENAME)", publish)
+        stage = publish.split("fn publish_stage(", 1)[1].split("\n    fn ", 1)[0]
+        self.assertIn("self.attachments.rename_new(stage, &self.attachments, name).map_err(|error| {", stage)
+        self.assertIn("self.vacant(name).unwrap_or(false)", stage)
+        self.assertIn("return rename_capability_error(error);", stage)
+        attachments = self.read("knowledge/attachments.rs")
+        adapter = attachments.split("fn linux_publish_failure(", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("crate::linux_attachment_publish::UNSUPPORTED_RENAME", adapter)
+        self.assertIn('"knowledge-linux-fs-unsupported"', adapter)
+        self.assertIn("当前文件系统不支持安全的附件发布，未做任何修改", adapter)
+        # The shared mapping and the step-1 codes are untouched.
+        shared = self.read("knowledge/linux_transactions.rs")
+        self.assertNotIn("knowledge-linux-fs-unsupported", shared)
+        self.assertIn('"knowledge-permissions-unsupported"', shared)
+        # The offline crate proves the classification is executable.
+        tests = (Path(__file__).resolve().parents[1] /
+                 "tests/linux-import-transaction/src/lib.rs").read_text()
+        self.assertIn("fn publish_rename_capability_failure_is_marked_and_stage_scoped()", tests)
 
     def test_note_move_uses_the_sealed_runner_not_the_windows_journal(self):
         operations = self.read("knowledge/attachment_operations.rs")

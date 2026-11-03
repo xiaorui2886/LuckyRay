@@ -30,9 +30,12 @@ pub(crate) fn is_cross_device(error: &io::Error) -> bool {
 }
 
 /// The object a name must keep denoting. ctime is deliberately absent: the
-/// rename itself changes it. `links` is part of the identity: a rename must
-/// never move an object that is still reachable under a second name (the same
-/// `nlink == 1` rule as `linux_fs::Version` and the delete quarantine).
+/// rename itself changes it. `links` is compared but not required to be 1:
+/// Windows v1.9.9 moves a material that still has a second hard link, and a
+/// rename only moves one name. A link count that changes *during* the move is
+/// still outside interference the proof can accept, so it is part of the
+/// identity compared around the rename. (`nlink == 1` stays mandatory for the
+/// delete quarantine, which removes the last name.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Object {
     device: u64,
@@ -45,7 +48,7 @@ struct Object {
 
 fn object_of(file: &File) -> io::Result<Object> {
     let m = file.metadata()?;
-    if !m.is_file() || m.nlink() != 1 {
+    if !m.is_file() {
         return Err(conflict());
     }
     Ok(Object {
@@ -77,7 +80,7 @@ fn named(directory: &Directory, name: &CString) -> io::Result<Object> {
     {
         return Err(io::Error::last_os_error());
     }
-    if stat.st_mode & libc::S_IFMT != libc::S_IFREG || stat.st_nlink as u64 != 1 {
+    if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
         return Err(conflict());
     }
     Ok(Object {

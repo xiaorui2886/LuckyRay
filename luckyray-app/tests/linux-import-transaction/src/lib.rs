@@ -1195,25 +1195,52 @@ mod tests {
     }
 
     #[test]
-    fn material_move_refuses_a_source_with_a_second_link() {
-        // T02 §5.2.c requires nlink==1 as part of the held object's identity.
-        // A rename must not move an object still reachable under another name;
-        // both the held handle and the name proof must reject it.
+    fn material_move_follows_v1_9_9_and_moves_a_hard_linked_source() {
+        // Windows v1.9.9 moves a material that still has a second hard link: a
+        // rename moves one name and the other link keeps its bytes. The move
+        // must therefore succeed, leave the other link untouched and keep the
+        // inode, mode and bytes; nlink==1 stays a rule of the delete quarantine
+        // only.
         let root = temporary();
         let (source, destination) = material(root.path());
         let second = source.with_file_name("second-link.png");
         fs::hard_link(&source, &second).unwrap();
+        let before = fs::metadata(&source).unwrap();
         let held = fs::File::open(&source).unwrap();
+        move_held_no_replace(&held, &source, &destination).unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(&second).unwrap(), b"synthetic material bytes");
+        let after = fs::metadata(&destination).unwrap();
+        assert_eq!((before.dev(), before.ino()), (after.dev(), after.ino()));
+        assert_eq!(after.mode(), before.mode());
+        assert_eq!(after.nlink(), 2);
+        assert_eq!(fs::metadata(&second).unwrap().ino(), before.ino());
+        assert_eq!(fs::read(&destination).unwrap(), b"synthetic material bytes");
+        // The same object can be moved back and forth while the second link
+        // exists, and the other link never changes.
+        move_path_no_replace(&destination, &source).unwrap();
+        assert_eq!(fs::metadata(&source).unwrap().ino(), before.ino());
+        assert_eq!(fs::read(&second).unwrap(), b"synthetic material bytes");
+        // A link count that changes *during* the move is still refused: the
+        // comparison is kept, only the ==1 requirement was dropped.
+        let held = fs::File::open(&source).unwrap();
+        let prepared = PreparedMove::prepare(&held, &source, &destination).unwrap();
+        fs::hard_link(&source, source.with_file_name("third-link.png")).unwrap();
         assert_eq!(
-            move_held_no_replace(&held, &source, &destination)
-                .unwrap_err()
+            prepared.commit().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert!(!destination.exists());
+        assert_eq!(fs::read(&source).unwrap(), b"synthetic material bytes");
+        assert_eq!(fs::read(&second).unwrap(), b"synthetic material bytes");
+        // The delete quarantine keeps its own nlink==1 rule.
+        assert_eq!(
+            crate::linux_material_delete::identity_at(&source)
+                .err()
+                .expect("a hard linked source must not pass the delete proof")
                 .kind(),
             io::ErrorKind::InvalidData
         );
-        assert_eq!(fs::read(&source).unwrap(), b"synthetic material bytes");
-        assert_eq!(fs::read(&second).unwrap(), b"synthetic material bytes");
-        assert!(!destination.exists());
-        assert!(PreparedMove::prepare(&held, &source, &destination).is_err());
     }
 
     #[test]
@@ -1232,8 +1259,31 @@ mod tests {
     }
 
     // ---- step 4: copy-publish -------------------------------------------
-    use super::linux_attachment_publish::PublishTarget;
+    use super::linux_attachment_publish::{rename_capability_error as publish_rename_capability_error,
+                                         PublishTarget, UNSUPPORTED_RENAME};
     use std::ffi::OsStr;
+
+    #[test]
+    fn publish_rename_capability_failure_is_marked_and_stage_scoped() {
+        // T02 §5.6.2/§5.6.4: a filesystem without RENAME_NOREPLACE is a
+        // capability refusal with its own code and a "nothing was modified"
+        // message, never a generic "note changed". EXDEV, EEXIST and ordinary
+        // failures keep their own meaning, and an ACL/xattr refusal (which is
+        // also Unsupported) is never re-labelled.
+        for raw in [libc::ENOSYS, libc::EINVAL] {
+            let mapped = publish_rename_capability_error(io::Error::from_raw_os_error(raw));
+            assert_eq!(mapped.kind(), io::ErrorKind::Unsupported);
+            assert_eq!(mapped.to_string(), UNSUPPORTED_RENAME);
+        }
+        let already = publish_rename_capability_error(io::Error::from_raw_os_error(libc::EEXIST));
+        assert_eq!(already.kind(), io::ErrorKind::AlreadyExists);
+        assert_ne!(already.to_string(), UNSUPPORTED_RENAME);
+        let acl = publish_rename_capability_error(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "synthetic-acl-refusal",
+        ));
+        assert_eq!(acl.to_string(), "synthetic-acl-refusal");
+    }
 
     fn vault() -> tempfile::TempDir {
         let dir = temporary();
