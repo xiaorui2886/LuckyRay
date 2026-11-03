@@ -1945,6 +1945,69 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                      "replace_needs_an_existing_parent_directory"):
             self.assertIn(f"fn {name}()", canvas)
 
+    def test_companion_keyring_uses_the_secret_service_without_touching_windows(self):
+        # T19: the Linux identity store is backed by the freedesktop Secret
+        # Service through keyring v3 with the pure-Rust backend, never by a
+        # plaintext file, and Windows/macOS keep their existing branches.
+        cargo = (Path(__file__).resolve().parents[1] / "src-tauri/Cargo.toml").read_text()
+        def section(header):
+            lines = cargo.splitlines()
+            body = []
+            for line in lines[lines.index(header) + 1:]:
+                if line.startswith("["):
+                    break
+                body.append(line)
+            return "\n".join(body)
+
+        linux_block = section("[target.'cfg(target_os = \"linux\")'.dependencies]")
+        self.assertIn('keyring = { version = "=3.6.3"', linux_block)
+        self.assertIn('default-features = false', linux_block)
+        for feature in ('"async-secret-service"', '"tokio"', '"crypto-rust"'):
+            self.assertIn(feature, linux_block)
+        self.assertNotIn('"sync-secret-service"', linux_block)
+        # The Windows/macOS dependency sections must not mention the keyring.
+        for header in ("[dependencies]", "[target.'cfg(windows)'.dependencies]"):
+            self.assertNotIn("keyring", section(header), header)
+        module = self.read("companion_keyring.rs")
+        self.assertIn('pub(crate) const SERVICE: &str = "app.luckyray.companion-gateway";', module)
+        self.assertIn('pub(crate) const ACCOUNT: &str = "desktop-identity-v1";', module)
+        self.assertIn("pub(crate) trait SecretBackend: Send + Sync {", module)
+        self.assertIn("pub(crate) struct SecretServiceBackend;", module)
+        self.assertIn("fn encode_identity(plaintext: &[u8]) -> Zeroizing<String>", module)
+        self.assertIn("fn decode_identity(encoded: &[u8]) -> Result<Zeroizing<Vec<u8>>, KeyringFailure>", module)
+        # The failure kinds are decided in one place, and a locked store is not
+        # collapsed into "unavailable".
+        self.assertIn("keyring::Error::NoStorageAccess(_) => KeyringFailure::Locked", module)
+        self.assertIn("keyring::Error::BadEncoding(_) | keyring::Error::Ambiguous(_) => KeyringFailure::Corrupt",
+                      module)
+        self.assertIn("_ => KeyringFailure::Unavailable", module)
+        lib = self.read("lib.rs")
+        self.assertIn('#[cfg(target_os = "linux")]\nmod companion_keyring;', lib)
+        # The store maps every keyring outcome and never touches the filesystem.
+        gateway = self.read("companion_gateway.rs")
+        store_body = gateway.split("impl ProtectedIdentityStore for LinuxIdentityStore {", 1)[1].split("\n}\n", 1)[0]
+        for name in ("fn load(&self)", "fn store(&self", "fn remove(&self)"):
+            self.assertIn(name, store_body)
+        self.assertIn("self.backend.read()", store_body)
+        self.assertIn(".write(encoded.as_bytes())", store_body)
+        self.assertIn("self.backend.remove()", store_body)
+        for forbidden in ("fs::write", "fs::rename", "OpenOptions", "remove_file", "create_dir"):
+            self.assertNotIn(forbidden, store_body, forbidden)
+        # Distinct codes: unavailable, locked, and the existing corrupt path.
+        self.assertIn('"companion-keyring-unavailable"', gateway)
+        self.assertIn('"companion-keyring-locked"', gateway)
+        self.assertIn('"系统钥匙环已锁定，未做任何修改"', gateway)
+        self.assertIn('"companion-secret-recovery-required"', gateway)
+        # Windows and macOS branches are untouched.
+        self.assertIn("CryptProtectData", gateway)
+        self.assertIn("CryptUnprotectData", gateway)
+        self.assertIn('"companion-secret-platform-unsupported"', gateway)
+        # The fake-backend suite covers success/missing/unavailable/locked/corrupt.
+        for name in ("linux_identity_store_round_trips_through_the_keyring_without_writing_files",
+                     "linux_identity_store_reports_unavailable_and_locked_distinctly",
+                     "linux_identity_store_treats_a_corrupt_entry_as_recovery_required"):
+            self.assertIn(name, gateway)
+
     def test_companion_gateway_linux_slice_is_wired(self):
         # T17: the Linux secret store refuses without a keyring (never plaintext,
         # never a weak fallback), the LAN enumeration is a real getifaddrs read,
@@ -1959,7 +2022,12 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         for name in ("fn load(&self)", "fn store(&self", "fn remove(&self)"):
             with self.subTest(fn=name):
                 self.assertIn(name, store_body)
-        self.assertIn("Err(Self::keyring_unavailable())", store_body)
+        # T19 replaced the stub with the real Secret Service backend: the store
+        # delegates every operation and still touches no file.
+        self.assertIn("self.backend.read()", store_body)
+        self.assertIn(".write(encoded.as_bytes())", store_body)
+        self.assertIn("self.backend.remove()", store_body)
+        self.assertIn("linux_keyring_error", store_body)
         self.assertNotIn("open(", store_body)
         self.assertNotIn("fs::write", store_body)
         self.assertNotIn("fs::rename", store_body)
@@ -1973,7 +2041,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                       gateway)
         self.assertIn('#[cfg(not(target_os = "linux"))]\n        let store = DpapiIdentityStore::new(backend.app_data_dir());',
                       gateway)
-        self.assertIn("fn linux_identity_store_refuses_without_a_keyring_and_never_writes(", gateway)
+        self.assertIn("fn linux_identity_store_reports_unavailable_and_locked_distinctly(", gateway)
         self.assertIn("fn linux_interface_enumeration_only_reports_private_lan(", gateway)
         # The DPAPI Windows bodies stay byte-identical; macOS keeps the original
         # platform refusal, Linux gets its own keyring refusal.

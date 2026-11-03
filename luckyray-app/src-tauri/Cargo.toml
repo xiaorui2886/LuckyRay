@@ -136,6 +136,11 @@ image = { version = "=0.25.10", default-features = false, features = ["bmp", "gi
 gtk = "=0.18.2"
 image = { version = "=0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 libc = "=0.2.186"
+# T19: desktop identity in the freedesktop Secret Service. Pure-Rust backend
+# (secret-service over zbus, rust crypto): no libdbus C library, no system
+# package, nothing to install. Pinned to the version the local probe crate
+# builds and tests.
+keyring = { version = "=3.6.3", default-features = false, features = ["async-secret-service", "tokio", "crypto-rust"] }
 
 [dev-dependencies]
 rmcp = { version = "=2.0.0", default-features = false, features = ["client", "transport-child-process"] }

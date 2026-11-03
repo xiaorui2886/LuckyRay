@@ -156,12 +156,17 @@ verified by CI compilation and the shared helper.
 ## Companion Gateway on Linux (first slice)
 
 The Companion Gateway's Windows foundation uses DPAPI for the desktop identity
-and `GetAdaptersAddresses` for the private LAN list. On Linux the identity store
-is now the interface layer for the freedesktop Secret Service (owner decision):
-without a keyring every identity operation refuses with
-`companion-keyring-unavailable` / 「未找到系统钥匙环，未做任何修改」, and no
-plaintext or weakly protected identity file is ever written. The LAN list is
-read through `getifaddrs` (the existing `libc` dependency) with the same
-private-LAN filtering as Windows. The D-Bus crate for the Secret Service itself
-is deliberately not added yet; the community MCP plugin runner stays
-Windows-only (`plugin-platform-unsupported`) until its packaged plugin exists.
+and `GetAdaptersAddresses` for the private LAN list. On Linux the identity is one
+fixed entry in the freedesktop Secret Service, reached through `keyring` 3.6.3
+with its pure-Rust backend (`async-secret-service`, `tokio`, `crypto-rust`: no
+libdbus C library, no system package). The stored value is the same identity
+document Windows protects, base64 encoded, and no plaintext or weakly protected
+identity file is ever written. A missing or unreachable store refuses with
+`companion-keyring-unavailable` / 「未找到系统钥匙环，未做任何修改」; a locked
+store (or a dismissed unlock prompt) refuses with `companion-keyring-locked` /
+「系统钥匙环已锁定，未做任何修改」; a missing credential takes the ordinary
+"identity missing" path and an undecodable one the existing
+`companion-secret-recovery-required` path. The LAN list is read through
+`getifaddrs` (the existing `libc` dependency) with the same private-LAN
+filtering as Windows. The community MCP plugin runner stays Windows-only
+(`plugin-platform-unsupported`) until its packaged plugin exists.

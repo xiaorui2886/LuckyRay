@@ -419,16 +419,6 @@ fn dpapi_unprotect(protected: &[u8]) -> Result<Vec<u8>, GatewayError> {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn dpapi_protect(_plaintext: &[u8]) -> Result<Vec<u8>, GatewayError> {
-    Err(linux_keyring_unavailable())
-}
-
-#[cfg(target_os = "linux")]
-fn dpapi_unprotect(_protected: &[u8]) -> Result<Vec<u8>, GatewayError> {
-    Err(linux_keyring_unavailable())
-}
-
 #[cfg(not(any(windows, target_os = "linux")))]
 fn dpapi_protect(_plaintext: &[u8]) -> Result<Vec<u8>, GatewayError> {
     Err(GatewayError::new(
@@ -445,11 +435,10 @@ fn dpapi_unprotect(_protected: &[u8]) -> Result<Vec<u8>, GatewayError> {
     ))
 }
 
-/// Linux secret storage (T17, owner decision): identities belong in the
-/// freedesktop Secret Service. The D-Bus crate for it is still under review, so
-/// this slice ships the interface only - it never writes a plaintext or weakly
-/// protected identity file, and it refuses with an explicit code so the UI can
-/// ask for manual entry instead.
+/// Linux secret storage (owner decision, T17/T19): the desktop identity lives in
+/// the freedesktop Secret Service, through `keyring`'s pure-Rust backend. The
+/// bytes are the same identity document Windows protects with DPAPI, base64
+/// encoded so a keyring entry stays a text secret.
 #[cfg(target_os = "linux")]
 fn linux_keyring_unavailable() -> GatewayError {
     GatewayError::new(
@@ -458,10 +447,42 @@ fn linux_keyring_unavailable() -> GatewayError {
     )
 }
 
+/// The keyring is present but locked, or its unlock prompt was dismissed. This
+/// is a refusal, not a retry: nothing is written and nothing is downgraded.
+#[cfg(target_os = "linux")]
+fn linux_keyring_locked() -> GatewayError {
+    GatewayError::new(
+        "companion-keyring-locked",
+        "系统钥匙环已锁定，未做任何修改",
+    )
+}
+
+/// Same code and message the DPAPI path uses when the protected bytes cannot be
+/// recovered, so a corrupt Linux entry takes the existing recovery path.
+#[cfg(target_os = "linux")]
+fn linux_secret_corrupt() -> GatewayError {
+    GatewayError::new(
+        "companion-secret-recovery-required",
+        "Companion protected identity is missing or corrupt",
+    )
+}
+
+/// Maps a [`crate::companion_keyring::KeyringFailure`] onto the gateway error.
+#[cfg(target_os = "linux")]
+fn linux_keyring_error(failure: crate::companion_keyring::KeyringFailure) -> GatewayError {
+    use crate::companion_keyring::KeyringFailure;
+    match failure {
+        KeyringFailure::Unavailable => linux_keyring_unavailable(),
+        KeyringFailure::Locked => linux_keyring_locked(),
+        KeyringFailure::Corrupt => linux_secret_corrupt(),
+    }
+}
+
 #[cfg(target_os = "linux")]
 struct LinuxIdentityStore {
-    /// Where the DPAPI file would live on Windows. Kept for the future Secret
-    /// Service wiring; nothing is ever written to it on Linux.
+    backend: Arc<dyn crate::companion_keyring::SecretBackend>,
+    /// Where the DPAPI file would live on Windows. The Linux store never
+    /// touches it; it is kept so a caller can reason about the same directory.
     path: PathBuf,
 }
 
@@ -469,30 +490,49 @@ struct LinuxIdentityStore {
 impl LinuxIdentityStore {
     fn new(app_data_dir: &Path) -> Self {
         Self {
+            backend: Arc::new(crate::companion_keyring::SecretServiceBackend::new()),
             path: app_data_dir.join(PROTECTED_IDENTITY_FILE),
         }
     }
 
-    fn keyring_unavailable() -> GatewayError {
-        linux_keyring_unavailable()
+    #[cfg(test)]
+    fn with_backend(
+        app_data_dir: &Path,
+        backend: Arc<dyn crate::companion_keyring::SecretBackend>,
+    ) -> Self {
+        Self {
+            backend,
+            path: app_data_dir.join(PROTECTED_IDENTITY_FILE),
+        }
     }
 }
 
 #[cfg(target_os = "linux")]
 impl ProtectedIdentityStore for LinuxIdentityStore {
     fn load(&self) -> Result<Option<Zeroizing<Vec<u8>>>, GatewayError> {
-        // A file at the DPAPI name would be foreign data that no Linux keyring
-        // wrote; refuse it instead of guessing, exactly like a missing keyring.
+        // A file at the DPAPI name on Linux would be foreign data that no
+        // keyring wrote. It is never read, never trusted and never overwritten.
         let _ = &self.path;
-        Err(Self::keyring_unavailable())
+        let Some(encoded) = self.backend.read().map_err(linux_keyring_error)? else {
+            // No credential yet: the existing "identity missing" path, exactly
+            // like an absent DPAPI file on Windows.
+            return Ok(None);
+        };
+        crate::companion_keyring::decode_identity(encoded.as_slice())
+            .map(Some)
+            .map_err(linux_keyring_error)
     }
 
-    fn store(&self, _plaintext: &[u8]) -> Result<(), GatewayError> {
-        Err(Self::keyring_unavailable())
+    fn store(&self, plaintext: &[u8]) -> Result<(), GatewayError> {
+        let encoded = crate::companion_keyring::encode_identity(plaintext);
+        self.backend
+            .write(encoded.as_bytes())
+            .map_err(linux_keyring_error)
     }
 
     fn remove(&self) -> Result<(), GatewayError> {
-        Err(Self::keyring_unavailable())
+        let _ = &self.path;
+        self.backend.remove().map_err(linux_keyring_error)
     }
 }
 
@@ -6818,28 +6858,108 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    struct FakeKeyring {
+        value: Mutex<Option<Vec<u8>>>,
+        failure: Option<crate::companion_keyring::KeyringFailure>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl FakeKeyring {
+        fn empty() -> Arc<Self> {
+            Arc::new(Self { value: Mutex::new(None), failure: None })
+        }
+        fn holding(bytes: &[u8]) -> Arc<Self> {
+            Arc::new(Self { value: Mutex::new(Some(bytes.to_vec())), failure: None })
+        }
+        fn failing(failure: crate::companion_keyring::KeyringFailure) -> Arc<Self> {
+            Arc::new(Self { value: Mutex::new(None), failure: Some(failure) })
+        }
+        fn read_value(&self) -> Option<Vec<u8>> {
+            self.value.lock().expect("fake").clone()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl crate::companion_keyring::SecretBackend for FakeKeyring {
+        fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, crate::companion_keyring::KeyringFailure> {
+            if let Some(failure) = self.failure {
+                return Err(failure);
+            }
+            Ok(self.value.lock().expect("fake").clone().map(Zeroizing::new))
+        }
+        fn write(&self, bytes: &[u8]) -> Result<(), crate::companion_keyring::KeyringFailure> {
+            if let Some(failure) = self.failure {
+                return Err(failure);
+            }
+            *self.value.lock().expect("fake") = Some(bytes.to_vec());
+            Ok(())
+        }
+        fn remove(&self) -> Result<(), crate::companion_keyring::KeyringFailure> {
+            if let Some(failure) = self.failure {
+                return Err(failure);
+            }
+            *self.value.lock().expect("fake") = None;
+            Ok(())
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
-    fn linux_identity_store_refuses_without_a_keyring_and_never_writes() {
+    fn linux_identity_store_round_trips_through_the_keyring_without_writing_files() {
         let temp = tempfile::tempdir().expect("synthetic profile");
         let directory = temp.path().join("中文 连接");
         std::fs::create_dir_all(&directory).expect("owned directory");
-        let store = LinuxIdentityStore::new(&directory);
-        // Every interface refuses with the explicit keyring code and the
-        // "nothing was modified" message.
-        let error = store.load().err().expect("no keyring on this synthetic box");
-        assert_eq!(error.code, "companion-keyring-unavailable");
-        assert_eq!(error.message, "未找到系统钥匙环，未做任何修改");
-        let error = store
-            .store(b"synthetic-identity-bytes")
-            .err()
-            .expect("store must refuse without a keyring");
-        assert_eq!(error.code, "companion-keyring-unavailable");
-        assert_eq!(error.message, "未找到系统钥匙环，未做任何修改");
-        let error = store.remove().err().expect("remove");
-        assert_eq!(error.code, "companion-keyring-unavailable");
-        // Nothing was ever written: the directory stays exactly as it was.
+        let backend = FakeKeyring::empty();
+        let store = LinuxIdentityStore::with_backend(&directory, backend.clone());
+
+        // No credential yet: the existing "identity missing" path.
+        assert!(store.load().expect("missing identity is not an error").is_none());
+
+        let document = br#"{"instanceId":"synthetic","privateKey":"synthetic-bytes"}"#;
+        store.store(document).expect("store");
+        // The keyring holds the identity document base64 encoded, never plaintext.
+        let stored = backend.read_value().expect("credential");
+        assert_ne!(stored.as_slice(), document);
+        assert_eq!(store.load().expect("load").unwrap().as_slice(), document);
+
+        store.remove().expect("remove");
+        assert!(store.load().expect("removed").is_none());
+        // Nothing was ever written to the profile: the keyring is the only store.
         assert_eq!(std::fs::read_dir(&directory).expect("directory").count(), 0);
         assert!(!directory.join(PROTECTED_IDENTITY_FILE).exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_identity_store_reports_unavailable_and_locked_distinctly() {
+        use crate::companion_keyring::KeyringFailure;
+        let temp = tempfile::tempdir().expect("synthetic profile");
+        for (failure, code, message) in [
+            (KeyringFailure::Unavailable, "companion-keyring-unavailable", "未找到系统钥匙环，未做任何修改"),
+            (KeyringFailure::Locked, "companion-keyring-locked", "系统钥匙环已锁定，未做任何修改"),
+        ] {
+            let store = LinuxIdentityStore::with_backend(temp.path(), FakeKeyring::failing(failure));
+            let loaded = store.load().err().expect("load refuses");
+            assert_eq!(loaded.code, code);
+            assert_eq!(loaded.message, message);
+            let written = store.store(b"synthetic-identity-bytes").err().expect("store refuses");
+            assert_eq!(written.code, code);
+            let removed = store.remove().err().expect("remove refuses");
+            assert_eq!(removed.code, code);
+        }
+        assert_eq!(std::fs::read_dir(temp.path()).expect("directory").count(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_identity_store_treats_a_corrupt_entry_as_recovery_required() {
+        let temp = tempfile::tempdir().expect("synthetic profile");
+        for corrupt in [&b"not base64 %%"[..], &b""[..]] {
+            let store = LinuxIdentityStore::with_backend(temp.path(), FakeKeyring::holding(corrupt));
+            let error = store.load().err().expect("corrupt entry must be refused");
+            assert_eq!(error.code, "companion-secret-recovery-required");
+            assert_eq!(error.message, "Companion protected identity is missing or corrupt");
+        }
     }
 
     #[cfg(target_os = "linux")]
