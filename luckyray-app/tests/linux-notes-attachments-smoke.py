@@ -111,9 +111,41 @@ Object.getOwnPropertyDescriptor(proto,'value').set.call(e,arguments[1]);
 e.dispatchEvent(new Event(e instanceof HTMLSelectElement?'change':'input',{bubbles:true}));
 return e.value===arguments[1];
 """
-FIND_BUTTON = """
-return [...document.querySelectorAll(arguments[0])].find(e=>e.textContent.trim()===arguments[1]&&!e.disabled&&e.getBoundingClientRect().width>0)||null;
+# Read-only probe (optionally scrolls the control to the centre of its scrollers).
+# Returns the element plus a redacted interactability summary; never text or paths.
+CONTROL_PROBE = """
+const [sel,text,scroll]=arguments;
+const e=[...document.querySelectorAll(sel)].find(x=>(text===null||x.textContent.trim()===text)&&x.getClientRects().length>0);
+if(!e)return null;
+if(scroll)e.scrollIntoView({block:'center',inline:'nearest'});
+const r=e.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
+const inViewport=r.width>0&&r.height>0&&cx>=0&&cy>=0&&cx<innerWidth&&cy<innerHeight;
+const hit=inViewport?document.elementFromPoint(cx,cy):null;
+const hitKind=!hit?'NONE':hit===e?'SELF':e.contains(hit)?'DESCENDANT':hit.contains(e)?'ANCESTOR'
+ :(hit.closest('.experience-dialog-backdrop,.modal-overlay-react')&&!hit.closest('[role=dialog],[role=menu]'))?'BACKDROP'
+ :hit.closest('button,input,select,summary,a,[role=menuitem]')?'OTHER_CONTROL':'OTHER';
+const enabled=!e.disabled&&!e.closest('fieldset:disabled')&&e.getAttribute('aria-disabled')!=='true';
+const styleVisible=getComputedStyle(e).visibility==='visible';
+return {element:e,enabled,inViewport,hitKind,styleVisible};
 """
+HIT_KINDS = ("SELF", "DESCENDANT", "ANCESTOR", "BACKDROP", "OTHER_CONTROL", "OTHER", "NONE")
+
+
+def interactability(probe, displayed):
+    """Bounded diagnostic: displayed, enabled, centre in viewport, and what the centre hits."""
+    probe = probe if isinstance(probe, dict) else {}
+    return {"found": bool(probe), "displayed": displayed if type(displayed) is bool else None,
+            "enabled": probe.get("enabled") if type(probe.get("enabled")) is bool else None,
+            "inViewport": probe.get("inViewport") if type(probe.get("inViewport")) is bool else None,
+            "styleVisible": probe.get("styleVisible") if type(probe.get("styleVisible")) is bool else None,
+            "hit": probe.get("hitKind") if probe.get("hitKind") in HIT_KINDS else "NONE"}
+
+
+def control_ready(state):
+    return (state["found"] and state["displayed"] is True and state["enabled"] is True and state["inViewport"] is True
+            and state["styleVisible"] is True and state["hit"] in ("SELF", "DESCENDANT"))
+
+
 DROP_STAGES = frozenset(("listener-ready", "listener-failed", "listener-disabled", "enter", "drop", "classified", "import", "failed",
     "classify-start", "classified-files", "classified-dirs", "owner-stale", "import-route-start", "import-route-complete", "drop-rejected",
     "source-stale", "activation-start", "activation-error", "activation-ready", "native-import-start", "native-source-active",
@@ -950,17 +982,52 @@ def main():
     def set_value(selector, value):
         require(execute(SET_CONTROL_VALUE, [selector, value]), "maintenance-control-rejected")
 
+    def probe_control(selector, text, scroll):
+        # Reads only (scrolling is not a click); safe to repeat while waiting.
+        value = execute(CONTROL_PROBE, [selector, text, scroll])
+        reference = value.get("element") if isinstance(value, dict) else None
+        if not (isinstance(reference, dict) and "element-6066-11e4-a52e-4f735466cecf" in reference):
+            return None, interactability(None, None)
+        target = reference["element-6066-11e4-a52e-4f735466cecf"]
+        displayed = wd("GET", f"/session/{session}/element/{target}/displayed")
+        return target, interactability(value, displayed)
+
+    def ready_control(selector, text=None, seconds=20):
+        """Scroll into view and wait until the exact control is displayed, enabled, in view and topmost."""
+        observed = {}
+        def ready():
+            observed["target"], observed["state"] = probe_control(selector, text, True)
+            if not control_ready(observed["state"]):
+                execute("return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))));")
+                return False
+            return True
+        if not helpers.wait_until(ready, seconds):
+            report["interactability"] = observed.get("state") or interactability(None, None)
+            raise SmokeFailure("control-not-interactable")
+        return observed["target"]
+
+    def guarded(selector, text, command):
+        # One real WebDriver gesture; never repeated. On rejection, record a redacted re-read.
+        try:
+            command()
+        except DriverFailure as error:
+            if error.observation.get("error") in ("element not interactable", "element click intercepted"):
+                _, report["interactability"] = probe_control(selector, text, False)
+            raise
+
+    def ui_click(selector, text=None, seconds=20):
+        target = ready_control(selector, text, seconds)
+        guarded(selector, text, lambda: wd("POST", f"/session/{session}/element/{target}/click", {}))
+
     def click_button(selector, text):
-        until("return !!(" + FIND_BUTTON.strip()[len("return "):].rstrip(";") + ");", [selector, text], seconds=20)
-        value = execute(FIND_BUTTON, [selector, text])
-        require(isinstance(value, dict) and "element-6066-11e4-a52e-4f735466cecf" in value, "visible-control-missing")
-        wd("POST", f"/session/{session}/element/{value['element-6066-11e4-a52e-4f735466cecf']}/click", {})
+        ui_click(selector, text)
 
     def context_click(selector):
-        target = element(selector)
-        wd("POST", f"/session/{session}/actions", {"actions": [{"type": "pointer", "id": "context", "parameters": {"pointerType": "mouse"},
-           "actions": [{"type": "pointerMove", "origin": {"element-6066-11e4-a52e-4f735466cecf": target}, "x": 0, "y": 0},
-                       {"type": "pointerDown", "button": 2}, {"type": "pointerUp", "button": 2}]}]})
+        target = ready_control(selector, None, 30)
+        guarded(selector, None, lambda: wd("POST", f"/session/{session}/actions", {"actions": [{"type": "pointer", "id": "context",
+            "parameters": {"pointerType": "mouse"},
+            "actions": [{"type": "pointerMove", "origin": {"element-6066-11e4-a52e-4f735466cecf": target}, "x": 0, "y": 0},
+                        {"type": "pointerDown", "button": 2}, {"type": "pointerUp", "button": 2}]}]}))
 
     def maintenance_status(expected):
         until("return document.querySelector(arguments[0])?.textContent.trim()===arguments[1];",
@@ -1207,10 +1274,10 @@ def main():
         records_before = invoke("knowledge_list_attachment_operations", {"vaultId": created_vault["id"]})
         require(isinstance(records_before, list), "recovery-records-invalid")
         action = "maintenance-open"
-        click("#page-notes .notes-vault-settings")
+        ui_click("#page-notes .notes-vault-settings")
         until("return !!document.querySelector(arguments[0]);", [MAINTENANCE_PANEL + " > summary"])
         if not execute("return document.querySelector(arguments[0])?.open===true;", [MAINTENANCE_PANEL]):
-            click(MAINTENANCE_PANEL + " > summary")
+            ui_click(MAINTENANCE_PANEL + " > summary")
         until("return document.querySelector(arguments[0])?.open===true;", [MAINTENANCE_PANEL])
         action = "maintenance-select"
         action_select = MAINTENANCE_PANEL + " .vault-attachment-form select"
@@ -1283,12 +1350,15 @@ def main():
         material_source.write_bytes(png_bytes(MATERIAL_COLOR))
         material_inode = material_source.stat().st_ino
         action = "materials-open"
+        # Close the settings dialog with its real close button before leaving Notes.
+        ui_click(".notes-vault-dialog .editorial-dialog-close")
+        until("return !document.querySelector('.notes-vault-dialog');")
         execute("location.hash='#materials';return true;")
         until("const e=document.getElementById('page-materials');return !!e&&e.getBoundingClientRect().width>0;", seconds=40)
         action = "materials-mode"
         # First visit asks for the management mode; choose 源文件 in the real prompt.
         until("return !!document.querySelector('.material-import-mode-modal .import-mode-options');", seconds=20)
-        click(".material-import-mode-modal .import-mode-options > button:nth-child(3)")
+        ui_click(".material-import-mode-modal .import-mode-options > button:nth-child(3)")
         until("return !document.querySelector('.material-import-mode-modal');")
         maintenance["materialRename"]["importModeChosenInUi"] = True
         action = "materials-drop"
@@ -1314,7 +1384,9 @@ def main():
         until("const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [card], seconds=30)
         action = "materials-context"
         context_click(card)
-        click(".asset-ctx-react [data-material-context-action=renameFile]")
+        # 重命名真实文件 lives in the 整理 (organize) submenu, not the main menu.
+        ui_click(".asset-ctx-react [data-material-submenu=organize]")
+        ui_click(".asset-ctx-react-submenu[data-material-context-submenu=organize] [data-material-context-action=renameFile]")
         action = "materials-rename-input"
         rename_dialog = '[role=dialog][aria-label="重命名真实文件"]'
         until("return !!document.querySelector(arguments[0]);", [rename_dialog + " .modal-input-react"])
@@ -1336,7 +1408,7 @@ def main():
         until("return !document.querySelector('[role=dialog] .modal-footer-react');")
         until("const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [card], seconds=30)
         context_click(card)
-        click(".asset-ctx-react [data-material-context-action=delete]")
+        ui_click(".asset-ctx-react[data-material-context-root] [data-material-context-action=delete]")
         action = "materials-delete-confirm"
         deletion = maintenance["materialDelete"]
         click_button('[role=dialog] .modal-footer-react button', "删除源文件并移除")
@@ -1359,6 +1431,8 @@ def main():
         report["failure"] = {"phase": phase, "action": action, "code": str(error) if isinstance(error, SmokeFailure) else "unexpected-error"}
         if isinstance(error, DriverFailure):
             report["failure"]["webdriver"] = error.observation
+        if isinstance(report.get("interactability"), dict):
+            report["failure"]["interactability"] = report.pop("interactability")
         raise
     finally:
         cleanup = {"quitAttemptedInFinally": False, "quitSkippedAlreadyAttempted": bool(session and quit_state["attempted"])}

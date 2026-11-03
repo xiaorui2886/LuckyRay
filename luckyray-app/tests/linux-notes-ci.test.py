@@ -145,6 +145,41 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
         self.assertNotIn(":has(", source)
         self.assertNotIn("/value", body)
 
+    def test_t11_clicks_are_real_guarded_and_open_the_right_sections(self):
+        source = Path(__file__).with_name("linux-notes-attachments-smoke.py").read_text()
+        body = source[source.index('phase = "attachment-rename"'):source.index('phase = "quit"')]
+        self.assertIsNone(re.search(r"(?<![_a-z])click\(", body), "T11 must use the guarded real click")
+        self.assertNotIn(".click()", source[source.index("CONTROL_PROBE"):source.index("HIT_KINDS")])
+        self.assertIn("scrollIntoView({block:'center'", ci.smoke.CONTROL_PROBE)
+        self.assertIn('/element/{target}/displayed"', source)
+        self.assertLess(body.index("[data-material-submenu=organize]"), body.index("data-material-context-action=renameFile"))
+        self.assertLess(body.index(".notes-vault-dialog .editorial-dialog-close"), body.index("location.hash='#materials'"))
+        guarded = source[source.index("def guarded("):source.index("def ui_click(")]
+        self.assertEqual(guarded.count("command()"), 1)
+        self.assertIn("control-not-interactable", ci.FAILURES)
+
+    def test_control_readiness_requires_every_condition(self):
+        ready = {"found": True, "displayed": True, "enabled": True, "inViewport": True, "styleVisible": True, "hit": "SELF"}
+        self.assertTrue(ci.smoke.control_ready(ready))
+        self.assertTrue(ci.smoke.control_ready({**ready, "hit": "DESCENDANT"}))
+        for key, value in (("found", False), ("displayed", False), ("displayed", None), ("enabled", False), ("inViewport", False),
+                           ("styleVisible", False), ("hit", "BACKDROP"), ("hit", "OTHER_CONTROL"), ("hit", "ANCESTOR"), ("hit", "NONE")):
+            self.assertFalse(ci.smoke.control_ready({**ready, key: value}))
+
+    def test_interactability_diagnostic_is_redacted_and_bounded(self):
+        state = ci.smoke.interactability({"element": {"x": 1}, "enabled": True, "inViewport": False, "hitKind": "<b>secret</b>",
+                                          "styleVisible": True, "text": "/home/runner/x"}, True)
+        self.assertEqual(state, {"found": True, "displayed": True, "enabled": True, "inViewport": False, "styleVisible": True, "hit": "NONE"})
+        raw = copy.deepcopy(self.fixture.raw)
+        raw["status"] = "FAIL"
+        raw["failure"] = {"phase": "attachment-rename", "action": "maintenance-plan", "code": "control-not-interactable",
+                          "interactability": {**state, "inViewport": "yes", "path": "/home/runner/secret", "hit": "BACKDROP"}}
+        projected = ci.bounded_report(raw)["failure"]
+        self.assertEqual(projected["interactability"], {"found": True, "displayed": True, "enabled": True, "inViewport": None,
+                                                         "styleVisible": True, "hit": "BACKDROP"})
+        self.assertEqual(projected["code"], "control-not-interactable")
+        self.assertNotIn("secret", json.dumps(projected))
+
     def test_image_link_parser_is_exact(self):
         self.assertEqual(ci.smoke.image_link("x ![synthetic PNG](<attachments/改名 图.png>) y"), "attachments/改名 图.png")
         self.assertEqual(ci.smoke.image_link("![synthetic PNG](a.png)"), "a.png")

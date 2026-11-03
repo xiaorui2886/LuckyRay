@@ -51,7 +51,16 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "maintenance-control-rejected", "recovery-records-invalid", "recovery-summary-invalid", "attachment-rename-not-confirmed",
     "attachment-rollback-not-confirmed", "material-catalog-read-invalid", "material-import-not-observed", "material-source-mode-not-applied",
     "material-rename-not-observed", "material-rename-not-confirmed", "material-delete-not-observed", "material-delete-not-confirmed",
-    "unexpected-error"))
+    "control-not-interactable", "unexpected-error"))
+
+
+def bounded_interactability(raw):
+    """Redacted not-interactable diagnostic: five booleans and one fixed hit kind."""
+    raw = raw if isinstance(raw, dict) else {}
+    result = {name: raw.get(name) if type(raw.get(name)) is bool else None
+              for name in ("found", "displayed", "enabled", "inViewport", "styleVisible")}
+    result["hit"] = raw.get("hit") if raw.get("hit") in smoke.HIT_KINDS else "NONE"
+    return result
 
 
 def bounded_maintenance(raw):
@@ -334,6 +343,8 @@ def bounded_report(raw):
                              "code": failure.get("code") if isinstance(failure.get("code"), str) and failure["code"] in FAILURES else "unexpected-error"}
         if "webdriver" in failure:
             result["failure"]["webdriver"] = bounded_driver(failure["webdriver"])
+        if "interactability" in failure:
+            result["failure"]["interactability"] = bounded_interactability(failure["interactability"])
     if "unconfirmedCopy" in raw:
         result["unconfirmedCopy"] = bounded_unconfirmed_copy(raw["unconfirmedCopy"])
     if "cleanupEvidence" in raw:
