@@ -171,16 +171,53 @@ class AttachmentMaintenanceEvidenceTests(unittest.TestCase):
         state = ci.smoke.interactability({"element": {"x": 1}, "enabled": True, "inViewport": False, "hitKind": "<b>secret</b>",
                                           "styleVisible": True, "text": "/home/runner/x"}, True)
         self.assertEqual(state, {"found": True, "displayed": True, "enabled": True, "inViewport": False, "styleVisible": True, "hit": "NONE",
-                                 "geometry": None})
+                                 "hitLabel": "NONE", "hitDialog": "NONE", "geometry": None})
         raw = copy.deepcopy(self.fixture.raw)
         raw["status"] = "FAIL"
         raw["failure"] = {"phase": "attachment-rename", "action": "maintenance-plan", "code": "control-not-interactable",
                           "interactability": {**state, "inViewport": "yes", "path": "/home/runner/secret", "hit": "BACKDROP"}}
         projected = ci.bounded_report(raw)["failure"]
         self.assertEqual(projected["interactability"], {"found": True, "displayed": True, "enabled": True, "inViewport": None,
-                                                         "styleVisible": True, "hit": "BACKDROP", "geometry": None})
+                                                         "styleVisible": True, "hit": "BACKDROP", "hitLabel": "NONE",
+                                                         "hitDialog": "NONE", "geometry": None})
         self.assertEqual(projected["code"], "control-not-interactable")
         self.assertNotIn("secret", json.dumps(projected))
+
+    def test_hit_label_and_dialog_are_fixed_labels(self):
+        canary = "/home/runner/secret-canary"
+        state = ci.smoke.interactability({"element": {}, "enabled": True, "inViewport": True, "hitKind": "OTHER", "styleVisible": True,
+                                          "hitLabel": "MATERIAL_VIEWER", "hitDialog": "素材详情查看器"}, True)
+        self.assertEqual((state["hitLabel"], state["hitDialog"]), ("MATERIAL_VIEWER", "VIEWER_DETAIL"))
+        state = ci.smoke.interactability({"element": {}, "hitKind": "OTHER", "hitLabel": canary, "hitDialog": canary}, True)
+        self.assertEqual((state["hitLabel"], state["hitDialog"]), ("NONE", "OTHER"))
+        raw = copy.deepcopy(self.fixture.raw)
+        raw["status"] = "FAIL"
+        raw["failure"] = {"phase": "material-maintenance", "action": "materials-context", "code": "control-not-interactable",
+                          "interactability": {"found": True, "hit": "OTHER", "hitLabel": canary, "hitDialog": canary}}
+        projected = ci.bounded_report(raw)["failure"]["interactability"]
+        self.assertEqual((projected["hitLabel"], projected["hitDialog"]), ("NONE", "NONE"))
+        self.assertNotIn(canary, json.dumps(projected, ensure_ascii=False))
+        self.assertIn("hitLabel", ci.smoke.CONTROL_PROBE)
+        self.assertNotIn("%s", ci.smoke.CONTROL_PROBE)
+        self.assertIn("PAGE_OTHER", ci.smoke.HIT_LABELS)
+        # Only visible dialogs count as open.
+        self.assertIn("getClientRects().length>0", ci.smoke.DIAGNOSTIC_PROBE)
+        # The control is still only ready on SELF/DESCENDANT; labels never relax readiness.
+        ready = {"found": True, "displayed": True, "enabled": True, "inViewport": True, "styleVisible": True}
+        self.assertFalse(ci.smoke.control_ready({**ready, "hit": "OTHER", "hitLabel": "CONTEXT_MENU"}))
+
+    def test_material_viewer_is_closed_via_its_real_close_button(self):
+        source = Path(__file__).with_name("linux-notes-attachments-smoke.py").read_text()
+        helper = source[source.index("def dismiss_material_viewer("):source.index("def maintenance_status(")]
+        self.assertIn('ui_click(".material-viewer-react .qp-close-react")', helper)
+        self.assertIn("return !document.querySelector('.material-viewer-react');", helper)
+        self.assertNotIn(".click()", helper)
+        body = source[source.index('action = "materials-context"'):]
+        self.assertEqual(body.count("dismiss_material_viewer()\n        context_click(card)"), 2)
+        app = Path(__file__).resolve().parents[1] / "src" / "features" / "materials" / "MaterialsPage.tsx"
+        text = app.read_text(encoding="utf-8")
+        self.assertIn('className="qp-close-react" onClick={onClose}', text)
+        self.assertIn('className={`material-viewer-react ${mode}`}', text)
 
     def test_asset_id_shape_is_closed_and_redacted(self):
         shape = ci.smoke.asset_id_shape

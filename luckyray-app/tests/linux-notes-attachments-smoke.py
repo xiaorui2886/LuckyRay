@@ -126,7 +126,9 @@ MAINTENANCE_STATUS_LABELS = {
     "移动或重命名附件 · 未完成": "RENAME_FAILED", "回滚引用变更 · 引用变更已回滚": "ROLLED_BACK",
     "回滚引用变更 · 部分完成，可继续或恢复": "ROLLBACK_PARTIAL", "回滚引用变更 · 未完成": "ROLLBACK_FAILED",
     "回滚引用变更 · 正在处理": "ROLLBACK_RUNNING", "回滚引用变更 · 正在检查": "ROLLBACK_PLANNING"}
-DIALOG_LABELS = {"选择素材管理方式": "IMPORT_MODE", "重命名真实文件": "RENAME_FILE", "确定": "CONFIRM"}
+DIALOG_LABELS = {"选择素材管理方式": "IMPORT_MODE", "重命名真实文件": "RENAME_FILE", "确定": "CONFIRM",
+                 # v1.9.9 materialsMessages.ts materials.viewer.detailAria / previewAria (MaterialViewer aside).
+                 "素材详情查看器": "VIEWER_DETAIL", "素材快速预览": "VIEWER_PREVIEW"}
 OBSERVED_ENUMS = {
     "maintenanceStatus": ("ABSENT", "OTHER", *MAINTENANCE_STATUS_LABELS.values()),
     "openDialog": ("NONE", "OTHER", *DIALOG_LABELS.values()),
@@ -136,7 +138,7 @@ OBSERVED_ENUMS = {
     "catalogLibraryPath": ("ABSENT", "OTHER", "SOURCE", "RENAMED"),
     **{name: FILE_STATES for name in ("oldFile", "newFile", "note", "materialSource", "materialRenamed")}}
 OBSERVED_FLAGS = ("maintenanceAlert", "recordOptionPresent")
-OBSERVED_COUNTS = ("recordCount", "tombstones", "materialMatches", "quarantineLeftovers")
+OBSERVED_COUNTS = ("recordCount", "tombstones", "materialMatches", "quarantineLeftovers", "materialViewerDismissed")
 
 
 def bounded_observed(raw):
@@ -168,7 +170,7 @@ DIAGNOSED_PHASES = frozenset({"material-maintenance", "attachment-rollback", "at
 # alert presence, and record option values (compared in-process, never exported).
 DIAGNOSTIC_PROBE = """
 const panel=document.querySelector(arguments[0]);
-const dialogs=[...document.querySelectorAll('[role=dialog][aria-label]')];
+const dialogs=[...document.querySelectorAll('[role=dialog][aria-label]')].filter(d=>d.getClientRects().length>0&&getComputedStyle(d).visibility==='visible');
 return {status:panel?.querySelector('.vault-attachment-state > strong')?.textContent.trim()??null,
         alert:!!panel?.querySelector('[role=alert]'),
         dialog:dialogs.length?dialogs[dialogs.length-1].getAttribute('aria-label'):null,
@@ -188,6 +190,15 @@ GEOMETRY_ROLES = ("vault-attachment-maintenance", "vault-attachment-actions", "n
     "notes-vault-dialog", "editorial-dialog-body", "editorial-dialog", "editorial-dialog-backdrop", "asset-ctx-react-submenu",
     "asset-ctx-react", "modal-body-react", "modal-box-react", "modal-overlay-react", "experience-dialog-backdrop")
 OVERFLOW_KINDS = ("visible", "hidden", "clip", "auto", "scroll", "overlay")
+# Fixed, redacted label for whatever element the control's centre actually hits (first match wins).
+HIT_LABEL_SELECTORS = (("CONTEXT_SUBMENU", ".asset-ctx-react-submenu"), ("CONTEXT_MENU", ".asset-ctx-react"),
+    ("MATERIAL_VIEWER", ".material-viewer-react"), ("MATERIALS_TOAST", ".materials-toast-react"),
+    ("EXPORT_NOTICE", ".material-export-notices"), ("MODAL_BOX", ".modal-box-react"),
+    ("MODAL_OVERLAY", ".modal-overlay-react"), ("EXPERIENCE_BACKDROP", ".experience-dialog-backdrop"),
+    ("EDITORIAL_DIALOG", ".editorial-dialog,.editorial-dialog-backdrop"), ("OTHER_DIALOG", "[role=dialog]"),
+    ("MATERIAL_CARD", ".masonry-item"), ("MASONRY", ".masonry-container"), ("MATERIALS_PAGE", "#page-materials"),
+    ("NOTES_PAGE", "#page-notes"))
+HIT_LABELS = tuple(label for label, _ in HIT_LABEL_SELECTORS) + ("PAGE_OTHER", "NONE")
 CONTROL_PROBE = """
 const [sel,text,scroll]=arguments;
 const e=[...document.querySelectorAll(sel)].find(x=>(text===null||x.textContent.trim()===text)&&x.getClientRects().length>0);
@@ -216,6 +227,9 @@ const hit=inViewport?document.elementFromPoint(cx,cy):null;
 const hitKind=!hit?'NONE':hit===e?'SELF':e.contains(hit)?'DESCENDANT':hit.contains(e)?'ANCESTOR'
  :(hit.closest('.experience-dialog-backdrop,.modal-overlay-react')&&!hit.closest('[role=dialog],[role=menu]'))?'BACKDROP'
  :hit.closest('button,input,select,summary,a,[role=menuitem]')?'OTHER_CONTROL':'OTHER';
+const hitLabels=%s;
+const hitLabel=!hit?'NONE':(hitLabels.find(([,s])=>hit.closest(s))||['PAGE_OTHER'])[0];
+const hitDialog=hit&&hit.closest('[role=dialog][aria-label]')?hit.closest('[role=dialog][aria-label]').getAttribute('aria-label'):null;
 const enabled=!e.disabled&&!e.closest('fieldset:disabled')&&e.getAttribute('aria-disabled')!=='true';
 const styleVisible=getComputedStyle(e).visibility==='visible';
 const n=v=>Math.round(v);
@@ -224,8 +238,8 @@ const geometry={viewportWidth:innerWidth,viewportHeight:innerHeight,screenWidth:
  containers:chain.map(a=>{const ar=a.getBoundingClientRect();return {role:role(a),overflowY:getComputedStyle(a).overflowY,
   clientHeight:a.clientHeight,scrollHeight:a.scrollHeight,scrollTop:n(a.scrollTop),top:n(ar.top),bottom:n(ar.bottom),
   clipsControl:r.top<ar.top||r.bottom>ar.bottom};})};
-return {element:e,enabled,inViewport,hitKind,styleVisible,geometry};
-""" % json.dumps(GEOMETRY_ROLES)
+return {element:e,enabled,inViewport,hitKind,hitLabel,hitDialog,styleVisible,geometry};
+""" % (json.dumps(GEOMETRY_ROLES), json.dumps(HIT_LABEL_SELECTORS))
 HIT_KINDS = ("SELF", "DESCENDANT", "ANCESTOR", "BACKDROP", "OTHER_CONTROL", "OTHER", "NONE")
 
 
@@ -237,6 +251,8 @@ def interactability(probe, displayed):
             "inViewport": probe.get("inViewport") if type(probe.get("inViewport")) is bool else None,
             "styleVisible": probe.get("styleVisible") if type(probe.get("styleVisible")) is bool else None,
             "hit": probe.get("hitKind") if probe.get("hitKind") in HIT_KINDS else "NONE",
+            "hitLabel": probe.get("hitLabel") if probe.get("hitLabel") in HIT_LABELS else "NONE",
+            "hitDialog": "NONE" if probe.get("hitDialog") is None else DIALOG_LABELS.get(probe.get("hitDialog"), "OTHER"),
             "geometry": bounded_geometry(probe.get("geometry"))}
 
 
@@ -1165,6 +1181,16 @@ def main():
             "actions": [{"type": "pointerMove", "origin": {"element-6066-11e4-a52e-4f735466cecf": target}, "x": 0, "y": 0},
                         {"type": "pointerDown", "button": 2}, {"type": "pointerUp", "button": 2}]}]}))
 
+    def dismiss_material_viewer():
+        """A material viewer (role=dialog aria-modal, portaled) left open by an earlier gesture sits over the
+        page; close it through its own close button and wait until it is gone. Never a JS click."""
+        visible = ("const v=document.querySelector('.material-viewer-react');"
+                   "return !!v&&v.getClientRects().length>0&&getComputedStyle(v).visibility==='visible';")
+        if execute(visible) is True:
+            observed["materialViewerDismissed"] = min(observed.get("materialViewerDismissed", 0) + 1, 8)
+            ui_click(".material-viewer-react .qp-close-react")
+            until("return !document.querySelector('.material-viewer-react');")
+
     def maintenance_status(expected):
         until("return document.querySelector(arguments[0])?.textContent.trim()===arguments[1];",
               [MAINTENANCE_PANEL + " .vault-attachment-state > strong", expected], seconds=60)
@@ -1594,6 +1620,7 @@ def main():
         card = "#page-materials [data-asset-id=" + json.dumps(asset_id) + "]"
         until("const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [card], seconds=30)
         action = "materials-context"
+        dismiss_material_viewer()
         context_click(card)
         # 重命名真实文件 lives in the 整理 (organize) submenu, not the main menu.
         ui_click(".asset-ctx-react [data-material-submenu=organize]")
@@ -1621,6 +1648,7 @@ def main():
         action = "materials-context"
         until("return !document.querySelector('[role=dialog] .modal-footer-react');")
         until("const e=document.querySelector(arguments[0]);return !!e&&e.getBoundingClientRect().width>0;", [card], seconds=30)
+        dismiss_material_viewer()
         context_click(card)
         ui_click(".asset-ctx-react[data-material-context-root] [data-material-context-action=delete]")
         action = "materials-delete-confirm"

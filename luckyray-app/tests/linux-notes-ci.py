@@ -60,6 +60,8 @@ def bounded_interactability(raw):
     result = {name: raw.get(name) if type(raw.get(name)) is bool else None
               for name in ("found", "displayed", "enabled", "inViewport", "styleVisible")}
     result["hit"] = raw.get("hit") if raw.get("hit") in smoke.HIT_KINDS else "NONE"
+    result["hitLabel"] = raw.get("hitLabel") if raw.get("hitLabel") in smoke.HIT_LABELS else "NONE"
+    result["hitDialog"] = raw.get("hitDialog") if raw.get("hitDialog") in ("NONE", "OTHER", *smoke.DIALOG_LABELS.values()) else "NONE"
     result["geometry"] = smoke.bounded_geometry(raw.get("geometry"))
     return result
 
