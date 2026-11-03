@@ -381,7 +381,10 @@ class EvidenceTests(unittest.TestCase):
             **{name: "NOT_RUN" for name in ("externalApplicationDisplay", "trimmedFilenameEndToEnd", "waylandHardware", "installer")},
             "attachmentMaintenance": passing_maintenance(),
             "canvasStorage": {"canvasLeftovers": 0, "attachmentLeftovers": 0,
-                              "workspaceLeftovers": 0, "directoriesScanned": 5}}
+                              "workspaceLeftovers": 0, "directoriesScanned": 5},
+            "canvasFlow": {"homeRendered": True, "editorOpened": True, "nodeAdded": True,
+                           "savedOnDisk": True, "reopened": True, "nodePresentAfterReopen": True,
+                           "documentNodes": 1, "temporaryLeftovers": 0}}
 
     def validate(self, raw):
         ci.validate_notes(ci.bounded_report(raw), self.build, self.source, self.scripts)
@@ -2022,6 +2025,58 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('Err("native-video-preview-unavailable".into())', commands)
         self.assertIn('Err("native-video-platform-unavailable".into())', commands)
 
+    def test_canvas_flow_evidence_is_closed_and_required(self):
+        # T18: every step of the real-UI canvas save/reopen flow is a closed
+        # boolean, the document node count and the temporary leftovers are
+        # bounded counters, and a missing edit or a leftover temporary fails
+        # with its own code instead of the generic one.
+        self.assertEqual(ci.bounded_canvas_flow({}), {"homeRendered": None, "editorOpened": None,
+            "nodeAdded": None, "savedOnDisk": None, "reopened": None,
+            "nodePresentAfterReopen": None, "documentNodes": None, "temporaryLeftovers": None})
+        passing = {"homeRendered": True, "editorOpened": True, "nodeAdded": True,
+                   "savedOnDisk": True, "reopened": True, "nodePresentAfterReopen": True,
+                   "documentNodes": 1, "temporaryLeftovers": 0}
+        self.assertEqual(ci.bounded_canvas_flow(passing), passing)
+        self.assertEqual(ci.bounded_canvas_flow(ci.bounded_canvas_flow(passing)), passing)
+        for name in ("homeRendered", "editorOpened", "nodeAdded", "savedOnDisk",
+                     "reopened", "nodePresentAfterReopen"):
+            dirty = dict(passing); dirty[name] = False
+            self.assertNotEqual(ci.bounded_canvas_flow(dirty), passing, name)
+            dirty = dict(passing); dirty.pop(name)
+            self.assertNotEqual(ci.bounded_canvas_flow(dirty), passing, name)
+        # Any deviation from the full literal is refused by the CI gate.
+        for name in ("savedOnDisk", "nodePresentAfterReopen", "temporaryLeftovers"):
+            dirty = dict(passing); dirty[name] = 8 if name == "temporaryLeftovers" else 2
+            failing = EvidenceTests(methodName="runTest"); failing.setUp()
+            failing.raw["canvasFlow"] = dirty
+            with self.subTest(counter=name), self.assertRaisesRegex(
+                    RuntimeError, "canvas-save-reopen-evidence-missing"):
+                ci.validate_notes(ci.bounded_report(failing.raw), failing.build, failing.source, failing.scripts)
+        # The smoke raises its own codes for the two failures that matter, and
+        # they survive the closed projection instead of collapsing.
+        for code in ("canvas-save-not-on-disk", "canvas-reopen-lost-edit",
+                     "canvas-storage-temporary-leftover"):
+            self.assertIn(code, ci.FAILURES)
+            exported = ci.bounded_report({"failure": {"phase": "canvas-flow", "action": "canvas-save-shortcut",
+                                                      "code": code}})
+            self.assertEqual(exported["failure"]["code"], code)
+        garbage = {"canvasLeftovers": "hunter2", "path": "hunter2"}
+        projected = ci.bounded_report({"canvasFlow": garbage})
+        self.assertNotIn("hunter2", json.dumps(projected["canvasFlow"]))
+        self.assertNotIn("path", projected["canvasFlow"])
+        # The smoke registers the phase, the actions, the check and the codes.
+        smoke_src = Path(ci.smoke.__file__).read_text()
+        for action in ("canvas-open-home", "canvas-create", "canvas-editor-ready", "canvas-add-node",
+                       "canvas-save-shortcut", "canvas-leave-editor", "canvas-reopen-editor"):
+            self.assertIn('"{}"'.format(action), smoke_src)
+        self.assertIn('"canvas-save-not-on-disk"', smoke_src)
+        self.assertIn('"canvas-reopen-lost-edit"', smoke_src)
+        self.assertIn('"canvasSaveReopen"', smoke_src)
+        # No JS click and no bridge-driven save: the save is the editor's own
+        # Ctrl+S and every click is a real WebDriver click.
+        self.assertNotIn('invoke("canvas_agent', smoke_src)
+        self.assertIn('fixed_editor_command("save")', smoke_src)
+
     def test_canvas_temporary_name_is_tied_to_the_rust_writer(self):
         # The canvas writer (canvas_agent.rs::atomic_write) stages
         # `.{file_name}.agent-{pid}-{nanos}.tmp`. The scan predicate must match
@@ -2112,7 +2167,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('require(leftovers[0] == 0 and leftovers[1] == 0 and leftovers[2] == 0', smoke)
         self.assertIn('"attachmentLeftovers": min(leftovers[1], 8)', smoke)
         gate = (Path(__file__).resolve().parents[1] / "tests/linux-notes-ci.py").read_text()
-        self.assertIn('"canvas-storage", "quit"', gate)
+        self.assertIn('"canvas-storage", "canvas-flow", "quit"', gate)
         self.assertIn('"canvas-storage-temporary-leftover"', gate)
         self.assertIn('"attachmentLeftovers", "workspaceLeftovers",', gate)
 

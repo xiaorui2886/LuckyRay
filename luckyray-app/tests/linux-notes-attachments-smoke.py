@@ -52,7 +52,9 @@ ACTIONS = frozenset(("setup", "session-start", "backend-ready", "vault-setup", "
     "maintenance-result", "rename-files", "rename-resolve", "recovery-records", "recovery-select", "recovery-rollback",
     "rollback-files", "rollback-resolve", "materials-open", "materials-mode", "materials-drop", "materials-catalog",
     "materials-context", "materials-rename-input", "materials-rename-confirm", "materials-rename-files",
-    "materials-delete-confirm", "materials-delete-files", "canvas-temporary-scan", "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
+    "materials-delete-confirm", "materials-delete-files", "canvas-temporary-scan", "canvas-open-home",
+    "canvas-create", "canvas-editor-ready", "canvas-add-node", "canvas-save-shortcut", "canvas-leave-editor",
+    "canvas-reopen-editor", "quit-request", "quit-processes", "session-delete", "driver-cleanup", "unknown"))
 DRIVER_ERRORS = frozenset(("element click intercepted", "element not interactable", "invalid argument", "invalid element state", "invalid selector",
     "invalid session id", "javascript error", "no such element", "no such window", "stale element reference", "script timeout",
     "timeout", "unknown command", "unknown error", "unsupported operation", "unexpected alert open", "move target out of bounds"))
@@ -89,8 +91,8 @@ return {hoverApplied:media.matches(':hover'),toolbarVisible:Number(style.opacity
 CHECKS = ("nativeStartup", "caseDistinctInputContentsRetained", "specialNameImagePreserved",
           "uiSavePersisted", "reopenPersisted", "absolutePathClipboard", "imagePreviewPixels",
           "attachmentSystemHandoff", "attachmentRenameRewritesNote", "attachmentRenameRollbackUi",
-          "materialFileRenamed", "materialDeleteSourceRemoved", "canvasStorageHygiene",
-          "quitProcessDisappearance")
+          "materialFileRenamed", "materialDeleteSourceRemoved", "canvasSaveReopen",
+          "canvasStorageHygiene", "quitProcessDisappearance")
 # T11: UI-driven attachment maintenance after reopen. Every typed path is a
 # fixed synthetic vault-relative value; nothing user-derived is reported.
 RENAMED_IMAGE_RELATIVE = "attachments/改名 图.png"
@@ -193,7 +195,7 @@ return null;
 """
 
 MAINTENANCE_PANEL = "#page-notes .vault-attachment-maintenance:not(.attachment-portability)"
-DIAGNOSED_PHASES = frozenset({"material-maintenance", "attachment-rollback", "attachment-rename", })
+DIAGNOSED_PHASES = frozenset({"material-maintenance", "attachment-rollback", "attachment-rename", "canvas-flow", })
 # Read-only: status heading text (mapped to a closed label before export), open dialog label,
 # alert presence, and record option values (compared in-process, never exported).
 DIAGNOSTIC_PROBE = """
@@ -1017,6 +1019,37 @@ def is_workspace_temporary(name):
     return name.startswith(".lrw-") and name.endswith(".tmp")
 
 
+def canvas_document_scan(home):
+    """Bounded name-only walk of the owned profile for canvas documents.
+
+    The canvas writer stores `<app-data>/canvases/<id>.json`; the smoke does not
+    need to know the exact app-data path, only that exactly one document exists
+    and what its nodes are. Returns (json paths (<=4), directories scanned).
+    No file content is read here.
+    """
+    documents, scanned, pending = [], 0, [Path(home)]
+    while pending and scanned <= 4096:
+        current = pending.pop()
+        try:
+            children = sorted(current.iterdir(), key=lambda item: item.name)[:512]
+        except OSError:
+            continue
+        for child in children:
+            scanned += 1
+            if scanned > 4096:
+                break
+            try:
+                if child.is_dir() and not child.is_symlink():
+                    pending.append(child)
+                    continue
+            except OSError:
+                continue
+            if (child.parent.name == "canvases" and child.name.endswith(".json")
+                    and not child.name.startswith(".")):
+                documents.append(child)
+    return documents[:4], max(1, scanned)
+
+
 def profile_temporary_scan(home):
     """Bounded name-only walk of the owned profile after both sessions ended.
 
@@ -1080,7 +1113,11 @@ def main():
               "helperSha256": digest(Path(__file__).with_name("linux-desktop-smoke.py")),
               "flowCount": 1, "appSessions": 0, "checks": {name: "NOT_RUN" for name in CHECKS},
               "drop": {"transport": "TAURI_EVENT_IPC", "nativePointerDrag": "NOT_RUN", "gestures": 0},
-              "previews": [], "previewGeometry": [], "previewToggle": [], "imageCopies": [], "quitRequests": [], "externalApplicationDisplay": "NOT_RUN",
+              "previews": [], "previewGeometry": [], "previewToggle": [], "imageCopies": [], "quitRequests": [],
+              "canvasFlow": {"homeRendered": None, "editorOpened": None, "nodeAdded": None, "savedOnDisk": None,
+                             "reopened": None, "nodePresentAfterReopen": None, "documentNodes": None,
+                             "temporaryLeftovers": None},
+              "externalApplicationDisplay": "NOT_RUN",
               "trimmedFilenameEndToEnd": "NOT_RUN", "waylandHardware": "NOT_RUN", "installer": "NOT_RUN",
               "attachmentMaintenance": maintenance_template()}
     maintenance = report["attachmentMaintenance"]
@@ -1772,6 +1809,74 @@ def main():
         deletion["quarantineLeftovers"] = min(sum(1 for path in material_dir.iterdir() if path.name.startswith(DELETE_QUARANTINE_PREFIX)), 8)
         require(maintenance_passed(maintenance, "materialDelete") and deletion["quarantineLeftovers"] == 0, "material-delete-not-confirmed")
         report["checks"]["materialDeleteSourceRemoved"] = "PASS"
+        phase = "canvas-flow"
+        action = "canvas-open-home"
+        # T18: the canvas editor is a boot-level route. Entering it is a real
+        # navigation (hash + real page refresh), the same jump the page-canvas
+        # entry performs in production; every click below is a real WebDriver
+        # click and the save is the editor's own Ctrl+S shortcut.
+        execute("location.hash='#canvas-main';return true;")
+        wd("POST", f"/session/{session}/refresh", {})
+        until("return !!document.querySelector('.canvas-home-primary');", seconds=40)
+        report["canvasFlow"]["homeRendered"] = True
+        action = "canvas-create"
+        ui_click(".canvas-home-primary", seconds=40)
+        action = "canvas-editor-ready"
+        until("return !!document.querySelector('.react-flow__pane');", seconds=40)
+        report["canvasFlow"]["editorOpened"] = True
+        action = "canvas-add-node"
+        # v1.9.9 editor toolbar: 新增卡片 opens the create panel; 文本 adds one
+        # text node with the placeholder label 双击开始编辑...
+        ui_click('button[aria-label="新增卡片"]')
+        ui_click(".canvas-create-panel-grid button", "文本")
+        until("return document.querySelectorAll('.react-flow__node').length===1;", seconds=20)
+        report["canvasFlow"]["nodeAdded"] = True
+        action = "canvas-save-shortcut"
+        # The editor's own save shortcut (resolveScopedShortcut "canvasSave") ->
+        # persistCurrentCanvas -> bridge.saveCanvas. Real key actions only.
+        wd("POST", f"/session/{session}/actions", fixed_editor_command("save"))
+        # The document must reach disk with exactly the node the UI shows.
+        def canvas_saved_on_disk():
+            documents, _ = canvas_document_scan(home)
+            if not documents:
+                return False
+            try:
+                parsed = json.loads(documents[0].read_text())
+            except (OSError, ValueError):
+                return False
+            nodes = parsed.get("nodes") if isinstance(parsed, dict) else None
+            report["canvasFlow"]["documentNodes"] = (
+                len(nodes) if isinstance(nodes, list) and len(nodes) <= 8 else None)
+            return (isinstance(nodes, list) and len(nodes) == 1
+                    and nodes[0].get("kind") == "text"
+                    and nodes[0].get("data", {}).get("label") == "双击开始编辑...")
+        require(helpers.wait_until(canvas_saved_on_disk, 20), "canvas-save-not-on-disk")
+        report["canvasFlow"]["savedOnDisk"] = True
+        action = "canvas-leave-editor"
+        # 切走再切回 is the production close/reopen: leaving through the hash
+        # drops the editor from the window, returning reopens it from the list.
+        execute("location.hash='#notes';return true;")
+        wd("POST", f"/session/{session}/refresh", {})
+        until("return !document.querySelector('.react-flow__pane');", seconds=40)
+        action = "canvas-reopen-editor"
+        execute("location.hash='#canvas-main';return true;")
+        wd("POST", f"/session/{session}/refresh", {})
+        until("return !!document.querySelector('.canvas-home-primary');", seconds=40)
+        ui_click(".canvas-home-list-open", seconds=40)
+        until("return document.querySelectorAll('.react-flow__node').length===1;", seconds=40)
+        reopened_label = execute(
+            "const n=document.querySelector('.react-flow__node');return n?n.textContent:'';")
+        report["canvasFlow"]["reopened"] = True
+        report["canvasFlow"]["nodePresentAfterReopen"] = (
+            isinstance(reopened_label, str) and "双击开始编辑" in reopened_label)
+        require(report["canvasFlow"]["nodePresentAfterReopen"], "canvas-reopen-lost-edit")
+        leftovers = profile_temporary_scan(home)
+        report["canvasFlow"]["temporaryLeftovers"] = min(
+            leftovers[0] + leftovers[1] + leftovers[2], 8)
+        require(report["canvasFlow"]["temporaryLeftovers"] == 0,
+                "canvas-storage-temporary-leftover")
+        report["checks"]["canvasSaveReopen"] = "PASS"
+
         phase = "quit"
         stop()
         report["checks"]["quitProcessDisappearance"] = "PASS"

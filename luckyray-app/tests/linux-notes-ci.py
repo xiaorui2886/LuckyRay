@@ -39,7 +39,7 @@ EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "result.
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",
                     "image-preview", "attachment-open", "reopen", "attachment-rename", "attachment-rollback",
-                    "material-maintenance", "canvas-storage", "quit", "unknown"))
+                    "material-maintenance", "canvas-storage", "canvas-flow", "quit", "unknown"))
 FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready", "backend-not-ready", "production-ipc-rejected", "visible-control-missing",
     "ui-observation-timeout", "drop-target-unavailable", "both-input-notes-not-retained", "case-distinct-content-mismatch",
     "special-name-png-not-retained", "imported-image-resolution-mismatch", "attachment-copy-policy-not-confirmed", "ui-edit-not-saved", "copy-path-menu-missing", "absolute-path-clipboard-mismatch",
@@ -51,7 +51,7 @@ FAILURES = frozenset(("owned-desktop-association-unavailable", "driver-not-ready
     "maintenance-control-rejected", "recovery-records-invalid", "recovery-summary-invalid", "attachment-rename-not-confirmed",
     "attachment-rollback-not-confirmed", "material-catalog-read-invalid", "material-import-not-observed", "material-source-mode-not-applied",
     "material-rename-not-observed", "material-rename-not-confirmed", "material-delete-not-observed", "material-delete-not-confirmed", "material-viewer-opened-by-context-gesture", "context-release-point-unavailable",
-    "canvas-storage-temporary-leftover", "control-not-interactable", "unexpected-error"))
+    "canvas-storage-temporary-leftover", "canvas-save-not-on-disk", "canvas-reopen-lost-edit", "control-not-interactable", "unexpected-error"))
 
 
 def bounded_interactability(raw):
@@ -63,6 +63,23 @@ def bounded_interactability(raw):
     result["hitLabel"] = raw.get("hitLabel") if raw.get("hitLabel") in smoke.HIT_LABELS else "NONE"
     result["hitDialog"] = raw.get("hitDialog") if raw.get("hitDialog") in ("NONE", "OTHER", *smoke.DIALOG_LABELS.values()) else "NONE"
     result["geometry"] = smoke.bounded_geometry(raw.get("geometry"))
+    return result
+
+
+def bounded_canvas_flow(raw):
+    """Closed projection of the real-UI canvas save/reopen flow.
+
+    Six booleans (create -> edit -> save -> leave -> reopen -> node present)
+    plus two bounded counters: the document node count and the canvas/attachment/
+    workspace temporary leftovers found while the editor was still open.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    result = {name: raw.get(name) if type(raw.get(name)) is bool else None
+              for name in ("homeRendered", "editorOpened", "nodeAdded", "savedOnDisk",
+                           "reopened", "nodePresentAfterReopen")}
+    for name in ("documentNodes", "temporaryLeftovers"):
+        value = raw.get(name)
+        result[name] = value if type(value) is int and 0 <= value <= 8 else None
     return result
 
 
@@ -356,6 +373,7 @@ def bounded_report(raw):
         result[name] = "NOT_RUN" if raw.get(name) == "NOT_RUN" else "INVALID"
     result["attachmentMaintenance"] = bounded_maintenance(raw.get("attachmentMaintenance"))
     result["canvasStorage"] = bounded_canvas_storage(raw.get("canvasStorage"))
+    result["canvasFlow"] = bounded_canvas_flow(raw.get("canvasFlow"))
     if "failure" in raw:
         failure = raw["failure"] if isinstance(raw["failure"], dict) else {}
         result["failure"] = {"phase": failure.get("phase") if isinstance(failure.get("phase"), str) and failure["phase"] in PHASES else "unknown",
@@ -423,6 +441,9 @@ def validate_notes(raw, build, source, scripts):
     require([(item["session"], item["found"], item["hit"], item["centerInViewport"]) for item in raw.get("previewGeometry", [])]
             == [(1, True, "SELF", True), (2, True, "SELF", True)], "real-preview-pixel-evidence-missing")
     require(raw.get("attachmentMaintenance") == expected_maintenance(), "attachment-maintenance-ui-evidence-missing")
+    require(raw.get("canvasFlow") == {"homeRendered": True, "editorOpened": True, "nodeAdded": True,
+        "savedOnDisk": True, "reopened": True, "nodePresentAfterReopen": True,
+        "documentNodes": 1, "temporaryLeftovers": 0}, "canvas-save-reopen-evidence-missing")
     canvas_storage = raw.get("canvasStorage", {})
     require(all(canvas_storage.get(name) == 0
                 for name in ("canvasLeftovers", "attachmentLeftovers", "workspaceLeftovers"))
