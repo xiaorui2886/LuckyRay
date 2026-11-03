@@ -8,11 +8,11 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { APP, BUILD, directory, sha256 } from "../scripts/macos-build-common.mjs";
 import { importPinnedSource, stagePinnedSource } from "../scripts/import-macos-app-source.mjs";
-import { OFFICIAL_SOURCE_URL, fetchAndStagePinnedSource } from "../scripts/fetch-macos-app-source.mjs";
+import { OFFICIAL_SOURCE_URL, fetchAndStagePinnedSource, safeSourceFetchFailure } from "../scripts/fetch-macos-app-source.mjs";
 
 const payload = Buffer.from("synthetic source bytes retained for pinned staging\n");
 const input = { bytes: payload.length, sha256: sha256(payload) };
-const trailer = status => Buffer.from(`\nLR_HTTP_STATUS:${status}\n`);
+const trailer = status => Buffer.from(`\nLR_HTTP_STATUS:${String(status).padStart(3, "0")}\n`);
 
 async function fixture(t) {
   await directory(BUILD);
@@ -96,7 +96,13 @@ test("denial, redirect, failed transfer, wrong bytes and wrong lengths never sta
     { chunks: [trailer(401)], code: 22, error: /http-denied/ },
     { chunks: [trailer(403)], code: 22, error: /http-denied/ },
     { chunks: [trailer(451)], code: 22, error: /http-denied/ },
-    { chunks: [trailer(302)], code: 0, error: /transfer-failed/ },
+    { chunks: [trailer(302)], code: 0, error: /http-redirect/ },
+    { chunks: [trailer(404)], code: 22, error: /http-client-error/ },
+    { chunks: [trailer(429)], code: 22, error: /http-rate-limited/ },
+    { chunks: [trailer(503)], code: 22, error: /http-server-error/ },
+    { chunks: [trailer(0)], code: 28, error: /curl-timeout/ },
+    { chunks: [trailer(0)], code: 6, error: /curl-resolution-connect/ },
+    { chunks: [trailer(0)], code: 60, error: /curl-tls/ },
     { chunks: [payload, trailer(200)], code: 56, error: /transfer-failed/ },
     { chunks: [Buffer.alloc(payload.length, 0x78), trailer(200)], error: /digest-invalid/ },
     { chunks: [payload.subarray(0, -1), trailer(200)], error: /size-invalid/ },
@@ -111,6 +117,21 @@ test("denial, redirect, failed transfer, wrong bytes and wrong lengths never sta
     await assert.rejects(lstat(f.source), { code: "ENOENT" });
     await assert.rejects(lstat(f.cache), { code: "ENOENT" });
   }
+});
+
+test("safe fetch errors expose only fixed classifications, never raw detail", () => {
+  for (const code of ["http-denied", "curl-timeout", "curl-resolution-connect", "curl-tls", "http-redirect", "http-rate-limited",
+    "http-client-error", "http-server-error", "transfer-failed", "size-invalid", "digest-invalid", "stream-failed", "launch-failed", "timeout"])
+    assert.equal(safeSourceFetchFailure(new Error(`macos-source-fetch-${code}`)), `macos-source-fetch-${code}`);
+  for (const code of ["directory-unsafe", "directory-changed", "object-changed", "output-unsafe", "file-unsafe", "bytes-invalid"])
+    assert.equal(safeSourceFetchFailure(new Error(`macos-source-import-${code}`)), `macos-source-import-${code}`);
+  const privateCanary = "private-path-proxy-or-curl-error-must-not-escape";
+  for (const error of [new Error(privateCanary), new Error(`macos-source-fetch-curl-timeout:${privateCanary}`), {}, null])
+    assert.equal(safeSourceFetchFailure(error), "macos-source-fetch-failed");
+  let reads = 0;
+  const changing = { get message() {return ++reads === 1 ? "macos-source-fetch-curl-timeout" : privateCanary;} };
+  assert.equal(safeSourceFetchFailure(changing), "macos-source-fetch-curl-timeout");assert.equal(reads, 1);
+  assert.equal(safeSourceFetchFailure({ get message() {throw new Error(privateCanary);} }), "macos-source-fetch-failed");
 });
 
 test("a failed process launch stops without retrying or staging input", async t => {

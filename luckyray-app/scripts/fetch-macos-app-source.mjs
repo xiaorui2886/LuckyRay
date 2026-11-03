@@ -13,6 +13,23 @@ export const OFFICIAL_SOURCE_URL = "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar
 const TRAILER_PREFIX = "\nLR_HTTP_STATUS:";
 const TRAILER_BYTES = Buffer.byteLength(`${TRAILER_PREFIX}200\n`);
 const fail = kind => new Error(`macos-source-fetch-${kind}`);
+// Only bounded, non-sensitive categories may leave the disposable runner.
+// Unknown errors, raw curl stderr and URLs remain private and discarded.
+const SAFE_FAILURES = new Set([
+  "macos-source-fetch-http-denied", "macos-source-fetch-curl-config-present", "macos-source-fetch-tls-keylog-configured",
+  "macos-source-fetch-http-redirect", "macos-source-fetch-http-rate-limited", "macos-source-fetch-http-client-error", "macos-source-fetch-http-server-error",
+  "macos-source-fetch-curl-timeout", "macos-source-fetch-curl-resolution-connect", "macos-source-fetch-curl-tls",
+  "macos-source-fetch-transfer-failed", "macos-source-fetch-size-invalid", "macos-source-fetch-digest-invalid",
+  "macos-source-fetch-stream-failed", "macos-source-fetch-launch-failed", "macos-source-fetch-timeout",
+  "macos-source-import-directory-unsafe", "macos-source-import-directory-changed", "macos-source-import-object-changed",
+  "macos-source-import-output-unsafe", "macos-source-import-file-unsafe", "macos-source-import-bytes-invalid",
+]);
+export function safeSourceFetchFailure(error) {
+  try {
+    const message = error?.message;
+    return typeof message === "string" && SAFE_FAILURES.has(message) ? message : "macos-source-fetch-failed";
+  } catch { return "macos-source-fetch-failed"; }
+}
 
 // Disable curl's optional per-user config only after establishing that no such
 // config exists. A configured proxy in the inherited environment is retained;
@@ -84,6 +101,13 @@ export async function fetchPinnedSource(input, {
       const match = /^\nLR_HTTP_STATUS:(\d{3})\n$/.exec(tail.toString("ascii"));
       const status = match ? Number(match[1]) : 0;
       if ([401, 403, 451].includes(status)) return finish(fail("http-denied"));
+      if (status >= 300 && status < 400) return finish(fail("http-redirect"));
+      if (status === 429) return finish(fail("http-rate-limited"));
+      if (status >= 400 && status < 500) return finish(fail("http-client-error"));
+      if (status >= 500 && status < 600) return finish(fail("http-server-error"));
+      if (signal === null && code === 28) return finish(fail("curl-timeout"));
+      if (signal === null && [5, 6, 7].includes(code)) return finish(fail("curl-resolution-connect"));
+      if (signal === null && [35, 51, 60, 77, 90].includes(code)) return finish(fail("curl-tls"));
       if (code !== 0 || signal !== null || status !== 200) return finish(fail("transfer-failed"));
       if (total !== input.bytes + TRAILER_BYTES || filled !== input.bytes) return finish(fail("size-invalid"));
       if (sha256(body) !== input.sha256) return finish(fail("digest-invalid"));
@@ -109,8 +133,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const result = await fetchAndStagePinnedSource(FFMPEG_SOURCE_INPUT, STAGED_FFMPEG_SOURCE);
     console.log(JSON.stringify(result));
   } catch (error) {
-    const allowed = ["macos-source-fetch-http-denied", "macos-source-fetch-curl-config-present", "macos-source-fetch-tls-keylog-configured"];
-    console.error(allowed.includes(error?.message) ? error.message : "macos-source-fetch-failed");
+    console.error(safeSourceFetchFailure(error));
     process.exitCode = 1;
   }
 }
