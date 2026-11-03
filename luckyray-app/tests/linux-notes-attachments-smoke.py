@@ -1834,7 +1834,7 @@ def main():
         action = "canvas-save-shortcut"
         # The editor's own save shortcut (resolveScopedShortcut "canvasSave") ->
         # persistCurrentCanvas -> bridge.saveCanvas. Real key actions only.
-        wd("POST", f"/session/{session}/actions", fixed_editor_command("save"))
+        wd("POST", f"/session/{session}/actions", editor_key_actions("save"))
         # The document must reach disk with exactly the node the UI shows.
         def canvas_saved_on_disk():
             documents, _ = canvas_document_scan(home)

@@ -2143,7 +2143,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         # No JS click and no bridge-driven save: the save is the editor's own
         # Ctrl+S and every click is a real WebDriver click.
         self.assertNotIn('invoke("canvas_agent', smoke_src)
-        self.assertIn('fixed_editor_command("save")', smoke_src)
+        self.assertIn('editor_key_actions("save")', smoke_src)
 
     def test_canvas_temporary_name_is_tied_to_the_rust_writer(self):
         # The canvas writer (canvas_agent.rs::atomic_write) stages
