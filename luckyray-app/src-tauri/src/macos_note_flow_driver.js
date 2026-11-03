@@ -28,9 +28,86 @@
     if (!chevron.classList.contains("open")) chevron.click();
     (await wait(() => note("Synthetic"))).click();
   };
+  let previewAction = "not-entered";
   const preview = async () => {
-    if (!image()) await click('#page-notes [data-note-action="preview"]');
+    // This control toggles the mode. An existing preview may still be loading.
+    if (find('#page-notes .note-preview')) previewAction = "already-visible";
+    else { previewAction = "toggle-requested"; await click('#page-notes [data-note-action="preview"]'); }
     await wait(image);
+  };
+  const boundedProbe = async work => {
+    let timer;
+    try {
+      return await Promise.race([Promise.resolve().then(work), new Promise(resolve => { timer = setTimeout(() => resolve("timeout"), 3000); })]);
+    } catch { return "error"; }
+    finally { clearTimeout(timer); }
+  };
+  const uriKind = source => !source ? "missing" : /^asset:/.test(source) ? "asset"
+    : /^https?:\/\/asset\.localhost(?::[0-9]{1,5})?(?:[/?#]|$)/.test(source) ? "asset-localhost"
+    : /^workspace-attachment:/.test(source) ? "workspace-attachment"
+    : /^blob:/.test(source) ? "blob" : /^data:/.test(source) ? "data" : "other";
+  // These probes use only the fixed synthetic fixture. Never report paths,
+  // URLs, text, error messages, or arbitrary values returned by the app.
+  const previewDiagnostic = async () => {
+    const roots = [...document.querySelectorAll('#page-notes .note-preview')];
+    const root = roots.find(visible) || roots[0];
+    const controls = [...document.querySelectorAll('#page-notes [data-note-action="preview"]')];
+    const images = [...document.querySelectorAll('#page-notes .note-preview img')];
+    const img = images.find(visible) || images[0];
+    const source = img?.src || "";
+    const imageUriKind = !img ? "missing" : uriKind(source) === "missing" ? "other" : uriKind(source);
+    const media = root?.querySelector('.note-media[data-kind="image"]');
+    const message = media?.querySelector('.note-media-status')?.textContent?.trim();
+    const mediaState = !media ? "missing" : message === "图片加载中" ? "loading"
+      : message === "图片读取失败，可打开引用检查文件" ? "error"
+      : message === "媒体源不可用，可打开素材检查文件" ? "unavailable"
+      : message ? "other" : "no-status";
+    const dimension = value => Number.isInteger(value) && value >= 0 && value <= 32768 ? value : 0;
+    const dom = { action: previewAction, syntheticRowActive: !!note("Synthetic")?.classList.contains("active"),
+      controlPresent: controls.length > 0, controlVisible: controls.some(visible),
+      previewPresent: roots.length > 0, previewVisible: roots.some(visible), missingAsset: !!root?.querySelector('.note-preview-asset-link.missing'),
+      mediaState, imagePresent: !!img, imageVisible: !!visible(img), imageComplete: !!img?.complete,
+      width: dimension(img?.naturalWidth), height: dimension(img?.naturalHeight), uriKind: imageUriKind };
+    let resolved = null, reconstructedUriKind = "missing";
+    const resolve = boundedProbe(async () => {
+      const result = await invoke("knowledge_resolve_attachment", { documentRef: { vaultId: "synthetic-macos-notes-flow", relativePath: "Synthetic.md" },
+        destination: "attachments/note-flow.png", wiki: false });
+      if (result?.status === "resolved") {
+        if (result.relativePath !== "attachments/note-flow.png") return "resolved-other";
+        resolved = result;return "resolved-fixture";
+      }
+      return ["missing", "ambiguous"].includes(result?.status) ? result.status : "other";
+    });
+    // Separately reconstruct the same synthetic asset URL the notes page uses.
+    // This is a probe after the failure, not the URL observed by the UI.
+    const reconstructed = (async () => {
+      if (await resolve !== "resolved-fixture" || typeof resolved?.absolutePath !== "string" || !resolved.absolutePath) return "not-run";
+      return boundedProbe(async () => {
+        if (typeof window.__TAURI_INTERNALS__.convertFileSrc !== "function") return "unsupported";
+        const converted = window.__TAURI_INTERNALS__.convertFileSrc(resolved.absolutePath, "asset");
+        if (typeof converted !== "string" || !converted) return "error";
+        reconstructedUriKind = uriKind(converted);
+        if (!["asset", "asset-localhost"].includes(reconstructedUriKind)) return "unexpected-uri";
+        const source = `${converted}?vault=${encodeURIComponent("synthetic-macos-notes-flow")}&v=${encodeURIComponent(resolved.version || "")}`;
+        const probe = new Image();
+        if (typeof probe.decode !== "function") return "unsupported";
+        probe.src = source;await probe.decode();
+        return probe.naturalWidth === 32 && probe.naturalHeight === 24 ? "passed" : "wrong-size";
+      });
+    })();
+    const decode = (async () => {
+      let url;
+      try { return await boundedProbe(async () => {
+        const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAACAAAAAYCAYAAACbU/80AAAAPklEQVR42mP4EOX2nxKsO+0DRZhh1AGjDhh1wKgDRh0w4A6w2dL0nxL8dZ8NRXjUAaMOGHXAqANGHTDgDgAAuIv4agXNJmAAAAAASUVORK5CYII="), c => c.charCodeAt(0));
+        url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+        const probe = new Image();
+        if (typeof probe.decode !== "function") return "unsupported";
+        probe.src = url; await probe.decode();
+        return probe.naturalWidth === 32 && probe.naturalHeight === 24 ? "passed" : "wrong-size";
+      }); } finally { if (url) URL.revokeObjectURL(url); }
+    })();
+    const [resolution, fixtureDecode, reconstructedAssetDecode] = await Promise.all([resolve, decode, reconstructed]);
+    return { ...dom, resolution, fixtureDecode, reconstructedUriKind, reconstructedAssetDecode };
   };
   const refreshTree = async () => {
     await click('#page-notes .notes-vault-entry');
@@ -39,7 +116,7 @@
   };
   let step = "setup";
   const uiFlags = Array(config.phase === "exercise" ? 7 : 3).fill(false);
-  const report = passed => invoke("macos_note_flow_report", { report: { phase: config.phase, step, passed, uiFlags } });
+  const report = (passed, previewObservation = null) => invoke("macos_note_flow_report", { report: { phase: config.phase, step, passed, uiFlags, previewObservation } });
   try {
     if (config.phase === "exercise") {
       const chooser = await wait(() => find('.material-import-mode-modal'));
@@ -126,7 +203,11 @@
       await checkpoint("reopened");
     }
     await report(true);
-  } catch { try { await report(false); } catch { /* Observer rejects missing/invalid records. */ } }
+  } catch {
+    let observation = null;
+    if (step === "preview") { try { observation = await previewDiagnostic(); } catch { /* The failure record remains authoritative. */ } }
+    try { await report(false, observation); } catch { /* Observer rejects missing/invalid records. */ }
+  }
   await delay(12000); // Capture only this synthetic application window.
   await invoke("close_window"); // Actual draft/IME/save and normal service drain.
 })

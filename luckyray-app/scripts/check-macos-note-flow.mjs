@@ -17,12 +17,30 @@ export const NOTE_TIMEOUT_MS = 8 * 60 * 1000;
 export const NOTE_CLEANUP_MS = 90000;
 const FAILURE = ["none", "spawn-failed", "timeout", "cancelled", "forced-termination", "output-invalid", "scenario-failed", "files-changed", "quit-failed", "window-failed", "context-invalid", "driver-unavailable"];
 const BOOLS = ["backendVerified", "filesVerified", "normalSavedQuit", "screenshotCaptured", "timedOut", "cancelRequested", "forcedTermination", "spawnFailed", "outputInvalid"];
+const PREVIEW_BOOLS = ["syntheticRowActive", "controlPresent", "controlVisible", "previewPresent", "previewVisible", "missingAsset", "imagePresent", "imageVisible", "imageComplete"];
+const PREVIEW_ENUMS = { action: ["not-entered", "already-visible", "toggle-requested"], mediaState: ["missing", "loading", "error", "unavailable", "other", "no-status"],
+  uriKind: ["missing", "asset", "asset-localhost", "workspace-attachment", "blob", "data", "other"],
+  resolution: ["resolved-fixture", "resolved-other", "missing", "ambiguous", "other", "error", "timeout"],
+  fixtureDecode: ["passed", "wrong-size", "unsupported", "error", "timeout"],
+  reconstructedUriKind: ["missing", "asset", "asset-localhost", "workspace-attachment", "blob", "data", "other"],
+  reconstructedAssetDecode: ["not-run", "passed", "wrong-size", "unsupported", "unexpected-uri", "error", "timeout"] };
 const invalid = () => { throw new Error("macos-note-flow-result-invalid"); };
 const blank = phase => ({ phase, status: "not-run", step: "not-started", flags: NOTE_UI_FLAGS[phase].map(() => false),
-  ...Object.fromEntries(BOOLS.map(key => [key, false])), exitCode: null, signal: null, failure: "none" });
+  ...Object.fromEntries(BOOLS.map(key => [key, false])), exitCode: null, signal: null, failure: "none", previewObservation: null });
 export const emptyNoteFlow = () => ({ schemaVersion: 1, status: "not-run", interaction: "application-dom-automation",
   sourceUnchanged: false, exercise: blank("exercise"), reopen: blank("reopen"), systemPointerInput: "not-run", nativeFilePicker: "not-run" });
 
+export function safePreviewObservation(value) {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value) || PREVIEW_BOOLS.some(key => typeof value[key] !== "boolean")
+      || Object.entries(PREVIEW_ENUMS).some(([key, values]) => !values.includes(value[key]))
+      || ["width", "height"].some(key => !Number.isInteger(value[key]) || value[key] < 0 || value[key] > 32768)
+      || value.controlVisible && !value.controlPresent || value.previewVisible && !value.previewPresent
+      || !value.imagePresent && (value.imageVisible || value.imageComplete || value.width !== 0 || value.height !== 0 || value.uriKind !== "missing")
+      || value.imagePresent && value.uriKind === "missing") invalid();
+  return { ...Object.fromEntries(PREVIEW_BOOLS.map(key => [key, value[key]])), ...Object.fromEntries(Object.keys(PREVIEW_ENUMS).map(key => [key, value[key]])),
+    width: value.width, height: value.height };
+}
 export function safeNotePhase(value, phase) {
   if (!NOTE_PHASES.includes(phase) || value?.phase !== phase || !["not-run", "failed", "passed"].includes(value.status)
       || !NOTE_STEPS.includes(value.step) || !FAILURE.includes(value.failure) || BOOLS.some(key => typeof value[key] !== "boolean")
@@ -30,6 +48,8 @@ export function safeNotePhase(value, phase) {
       || value.exitCode !== null && (!Number.isInteger(value.exitCode) || value.exitCode < 0 || value.exitCode > 255)
       || value.signal !== null && !knownProofSignal(value.signal)
       || (value.timedOut || value.forcedTermination) && !value.cancelRequested) invalid();
+  const previewObservation = safePreviewObservation(value.previewObservation);
+  if (previewObservation && (value.status !== "failed" || value.step !== "preview")) invalid();
   if (value.status === "not-run") {
     if (value.step !== "not-started" || value.failure !== "none" || value.flags.some(Boolean) || BOOLS.some(k => value[k]) || value.exitCode !== null || value.signal !== null) invalid();
   } else {
@@ -40,7 +60,7 @@ export function safeNotePhase(value, phase) {
     if ((value.status === "passed") !== passed || value.status === "failed" && value.failure === "none") invalid();
   }
   return { phase, status: value.status, step: value.step, flags: [...value.flags],
-    ...Object.fromEntries(BOOLS.map(k => [k, value[k]])), exitCode: value.exitCode, signal: value.signal, failure: value.failure };
+    ...Object.fromEntries(BOOLS.map(k => [k, value[k]])), exitCode: value.exitCode, signal: value.signal, failure: value.failure, previewObservation };
 }
 export function safeNoteFlow(value) {
   if (value?.schemaVersion !== 1 || value.interaction !== "application-dom-automation" || typeof value.sourceUnchanged !== "boolean") invalid();
@@ -57,7 +77,9 @@ export function noteScenarioRecord(value, phase) {
       || !["passed", "failed"].includes(value.status) || !NOTE_STEPS.includes(value.step) || typeof value.backendVerified !== "boolean"
       || !Array.isArray(value.uiFlags) || value.uiFlags.length !== NOTE_UI_FLAGS[phase]?.length || value.uiFlags.some(v => typeof v !== "boolean")
       || value.status === "passed" && (!value.uiFlags.every(Boolean) || !value.backendVerified || value.step !== (phase === "exercise" ? "recover" : "reopen"))) invalid();
-  return { phase, status: value.status, step: value.step, flags: [...value.uiFlags], backendVerified: value.backendVerified };
+  const previewObservation = safePreviewObservation(value.previewObservation);
+  if (previewObservation && (value.status !== "failed" || value.step !== "preview")) invalid();
+  return { phase, status: value.status, step: value.step, flags: [...value.uiFlags], backendVerified: value.backendVerified, previewObservation };
 }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function bounded(exited, ms) {
@@ -87,7 +109,7 @@ export async function observeNotePhase(child, phase, { readRecord, readQuit, ver
       const value = await readRecord();
       if (value != null) {
         record = value;const projected = noteScenarioRecord(value, phase);
-        Object.assign(row, { step: projected.step, flags: projected.flags, backendVerified: projected.backendVerified });
+        Object.assign(row, { step: projected.step, flags: projected.flags, backendVerified: projected.backendVerified, previewObservation: projected.previewObservation });
         if (projected.status !== "passed") break;
         row.filesVerified = await verifyFiles(record);
         if (!row.filesVerified) {row.failure = "files-changed";break;}

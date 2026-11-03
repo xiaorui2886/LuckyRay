@@ -38,6 +38,46 @@ struct Bound {
     hash: String,
     bytes: usize,
 }
+// Only fixed classifications from the synthetic preview, never paths, URLs,
+// document contents or unbounded error messages.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PreviewObservation {
+    action: String,
+    synthetic_row_active: bool,
+    control_present: bool,
+    control_visible: bool,
+    preview_present: bool,
+    preview_visible: bool,
+    missing_asset: bool,
+    media_state: String,
+    image_present: bool,
+    image_visible: bool,
+    image_complete: bool,
+    width: u32,
+    height: u32,
+    uri_kind: String,
+    resolution: String,
+    fixture_decode: String,
+    reconstructed_uri_kind: String,
+    reconstructed_asset_decode: String,
+}
+impl PreviewObservation {
+    fn valid(&self) -> bool {
+        ["not-entered", "already-visible", "toggle-requested"].contains(&self.action.as_str())
+            && ["missing", "loading", "error", "unavailable", "other", "no-status"].contains(&self.media_state.as_str())
+            && ["missing", "asset", "asset-localhost", "workspace-attachment", "blob", "data", "other"].contains(&self.uri_kind.as_str())
+            && ["resolved-fixture", "resolved-other", "missing", "ambiguous", "other", "error", "timeout"].contains(&self.resolution.as_str())
+            && ["passed", "wrong-size", "unsupported", "error", "timeout"].contains(&self.fixture_decode.as_str())
+            && ["missing", "asset", "asset-localhost", "workspace-attachment", "blob", "data", "other"].contains(&self.reconstructed_uri_kind.as_str())
+            && ["not-run", "passed", "wrong-size", "unsupported", "unexpected-uri", "error", "timeout"].contains(&self.reconstructed_asset_decode.as_str())
+            && self.width <= 32768 && self.height <= 32768
+            && (!self.control_visible || self.control_present)
+            && (!self.preview_visible || self.preview_present)
+            && (self.image_present || (!self.image_visible && !self.image_complete && self.width == 0 && self.height == 0 && self.uri_kind == "missing"))
+            && (!self.image_present || self.uri_kind != "missing")
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Record {
@@ -49,6 +89,8 @@ struct Record {
     ui_flags: Vec<bool>,
     backend_verified: bool,
     files: Vec<Bound>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preview_observation: Option<PreviewObservation>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -82,6 +124,8 @@ pub(crate) struct Observation {
     step: String,
     passed: bool,
     ui_flags: Vec<bool>,
+    #[serde(default)]
+    preview_observation: Option<PreviewObservation>,
 }
 
 fn read(directory: &Directory, path: &str) -> Result<(Vec<u8>, Bound), String> {
@@ -503,6 +547,8 @@ pub(crate) fn macos_note_flow_report(
     if report.phase != state.phase
         || !STEPS.contains(&report.step.as_str())
         || report.ui_flags.len() != if state.phase == "exercise" { 7 } else { 3 }
+        || report.preview_observation.as_ref().is_some_and(|value| !value.valid())
+        || report.preview_observation.is_some() && (report.passed || report.step != "preview")
         || state.recorded.swap(true, Ordering::AcqRel)
     {
         return Err(reject());
@@ -536,6 +582,7 @@ pub(crate) fn macos_note_flow_report(
         ui_flags: report.ui_flags,
         backend_verified,
         files: files.unwrap_or_default(),
+        preview_observation: report.preview_observation,
     };
     let bytes = serde_json::to_vec(&record).map_err(|_| reject())?;
     state
