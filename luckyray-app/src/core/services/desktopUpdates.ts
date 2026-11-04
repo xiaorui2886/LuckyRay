@@ -53,6 +53,33 @@ export function desktopAssetName(format: DesktopAssetFormat, version: string): s
 export function resolveDesktopAssetFormat(userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent): DesktopAssetFormat {
   return /Windows/i.test(userAgent) ? "nsis" : "deb";
 }
+export type DesktopFormatRequest = (action: "format") => Promise<unknown>;
+const nativeFormatRequest: DesktopFormatRequest = async (action) => {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("desktop_application_update", { action });
+};
+/** Running install format. Windows never asks native code and stays nsis.
+ *  Elsewhere the Linux native layer reports "appimage" only for a validated
+ *  APPIMAGE target; any other answer or failure (deb, macOS, older build)
+ *  fails closed to the deb notice-only path. */
+export async function detectDesktopAssetFormat(
+  userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent,
+  request: DesktopFormatRequest = nativeFormatRequest,
+): Promise<DesktopAssetFormat> {
+  if (resolveDesktopAssetFormat(userAgent) === "nsis") return "nsis";
+  try {
+    const answer = await request("format");
+    return answer && typeof answer === "object" && (answer as Record<string, unknown>).format === "appimage" ? "appimage" : "deb";
+  } catch {
+    return "deb";
+  }
+}
+export type DesktopFormatSource = DesktopAssetFormat | (() => Promise<DesktopAssetFormat>);
+function memoFormat(source: DesktopFormatSource): () => Promise<DesktopAssetFormat> {
+  if (typeof source === "string") return () => Promise.resolve(source);
+  let value: Promise<DesktopAssetFormat> | null = null;
+  return () => value ??= source().catch(() => "deb" as const);
+}
 export function selectDesktopRelease(input: unknown, format: DesktopAssetFormat = "nsis"): DesktopRelease | null {
   const assetName = (version: string) => DESKTOP_ASSET_NAME[format](version);
   if (!Array.isArray(input)) throw new Error("invalid-response");
@@ -116,14 +143,17 @@ async function readReleasePage(response: Response, signal: AbortSignal): Promise
 }
 
 /** One in-flight request; cache both errors and success to bound rapid retries. */
-export function createDesktopUpdateChecker(fetcher: typeof fetch = fetch, now = Date.now, timeoutMs = 12000, format: DesktopAssetFormat = "nsis") {
+export function createDesktopUpdateChecker(fetcher: typeof fetch = fetch, now = Date.now, timeoutMs = 12000, formatSource: DesktopFormatSource = "nsis") {
+  const resolveFormat = memoFormat(formatSource);
   let pending: Promise<DesktopUpdateResult> | null = null;
   let cached: { version: string; until: number; result: DesktopUpdateResult } | null = null;
-  return (currentVersion: string): Promise<DesktopUpdateResult> => {
+  const check = (currentVersion: string): Promise<DesktopUpdateResult> => {
     if (pending) return pending;
     if (cached?.version === currentVersion && cached.until > now()) return Promise.resolve(cached.result);
     pending = (async (): Promise<DesktopUpdateResult> => {
       try { parseVersion(currentVersion); } catch { return { status: "error", reason: "invalid" }; }
+      // A fixed format stays synchronous (no extra tick before the first request).
+      const format = typeof formatSource === "string" ? formatSource : await resolveFormat();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -165,12 +195,14 @@ export function createDesktopUpdateChecker(fetcher: typeof fetch = fetch, now = 
     }).finally(() => { pending = null; });
     return pending;
   };
+  return Object.assign(check, { format: resolveFormat });
 }
 export const checkDesktopUpdates = createDesktopUpdateChecker();
 
 /** Small session snapshot: settings may unmount, but discovery and preferences survive. */
 export function createDesktopUpdateSession(
-  checker = createDesktopUpdateChecker(fetch, Date.now, 12000, resolveDesktopAssetFormat()),
+  checker: ((version: string) => Promise<DesktopUpdateResult>) & { format?: () => Promise<DesktopAssetFormat> }
+    = createDesktopUpdateChecker(fetch, Date.now, 12000, () => detectDesktopAssetFormat()),
   storage: () => Pick<Storage, "getItem" | "setItem"> = () => localStorage,
   now = Date.now,
 ) {
@@ -197,6 +229,8 @@ export function createDesktopUpdateSession(
     return promise;
   }
   return {
+    /** Asset format the checker matches; drives the deb notice in Settings. */
+    format: (): Promise<DesktopAssetFormat> => checker.format?.() ?? Promise.resolve("nsis"),
     result: (version: string) => latest?.version === version ? latest.result : null,
     pending: (version: string) => pending?.version === version ? pending.promise : null,
     automatic: () => read(automaticKey) !== "false",
