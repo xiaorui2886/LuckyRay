@@ -259,7 +259,7 @@ impl KnowledgeService {
             }
             let outcome = if rollback {
                 self.rollback_linux_attachment_step(
-                    vault, file, index, store, guard, identity, cancelled,
+                    vault, file, index, operation, store, guard, identity, cancelled,
                 )
             } else {
                 self.apply_linux_attachment_step(
@@ -379,7 +379,10 @@ impl KnowledgeService {
         // A note move publishes the rewritten document under its new name and
         // keeps the ordinary mode of the document it replaces; the source is the
         // plan's only removal. Every other creation is a private attachment.
-        let move_source = if operation.kind == "note-move" {
+        // An attachment rename publishes the same user file under its new
+        // name, so it keeps that file's own mode (0600 imports stay 0600, a
+        // user's 0644 file stays 0644); no ACL or special bit is accepted.
+        let move_source = if operation.kind == "note-move" || operation.kind == "attachment-rename" {
             operation
                 .files
                 .iter()
@@ -457,7 +460,7 @@ impl KnowledgeService {
                 } else {
                     Vec::new()
                 };
-                store.install_remove(index, &file.relative_path, previous, private, &key, || {
+                store.install_remove(index, &file.relative_path, previous, removal_is_private(operation, private), &key, || {
                     self.admit_linux_attachment_step(
                         vault,
                         identity,
@@ -508,6 +511,7 @@ impl KnowledgeService {
         vault: &TrustedVault,
         file: &AttachmentFileChange,
         index: usize,
+        operation: &AttachmentOperationPlan,
         store: &ImportStore,
         guard: &FilesystemDirectoryIdentityGuard,
         identity: &KnowledgeTargetIdentity,
@@ -542,7 +546,7 @@ impl KnowledgeService {
                 index,
                 &file.relative_path,
                 previous,
-                private,
+                removal_is_private(operation, private),
                 &key,
                 || {
                     self.admit_linux_attachment_step(
@@ -683,4 +687,12 @@ fn require_linux_before_state(
         ));
     }
     Ok(())
+}
+
+/// A removal is proved by recorded identity and bytes in every case. An
+/// attachment that an import created is additionally required to still be a
+/// private 0600 file; a rename moves the user's own file, whatever its
+/// ordinary mode, exactly like a Markdown note move.
+fn removal_is_private(operation: &AttachmentOperationPlan, private: bool) -> bool {
+    private && operation.kind != "attachment-rename"
 }
