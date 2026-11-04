@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {pathToFileURL} from 'node:url';
+const require=createRequire(process.cwd() + '/package.json');
+const {build,stop}=createRequire(require.resolve('vite/package.json'))('esbuild');
+const dir=await mkdtemp('/tmp/lr-canvas-client-');
+try {
+ await build({entryPoints:['src/core/services/canvasRemoteReadClient.ts'],outfile:dir+'/client.mjs',bundle:true,platform:'node',format:'esm'});
+ const {createCanvasRemoteReadClient}=await import(pathToFileURL(dir+'/client.mjs').href);
+ const calls=[];let payload={canvases:[]},status=200,type='application/json';
+ const client=createCanvasRemoteReadClient(async(path,options)=>{calls.push({path,options});return new Response(JSON.stringify(payload),{status,headers:{'Content-Type':type}})});
+ assert.deepEqual(await client.listCanvases(),[]);assert.equal(calls[0].path,'/canvas/api/v1/canvases');assert.equal(calls[0].options.credentials,'same-origin');assert.equal(calls[0].options.mode,'same-origin');assert.equal(calls[0].options.redirect,'error');
+ payload={remoteProjectionVersion:1,remoteUnavailableMediaCount:0,schemaVersion:2,revision:3,contentDigest:'a'.repeat(64),canvasId:'canvas_1',name:'画布',createdAt:'a',updatedAt:'b',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1},generationHistory:[]};
+ assert.equal((await client.loadCanvas('canvas_1')).canvasId,'canvas_1');assert.equal(calls[1].path,'/canvas/api/v1/canvases/canvas_1');
+ payload.generationHistory=null;assert.deepEqual((await client.loadCanvas('canvas_1')).generationHistory,[]);payload.viewport.zoom=0;await assert.rejects(client.loadCanvas('canvas_1'),/invalid-response/);payload.viewport.zoom=1;payload.canvasId='another';await assert.rejects(client.loadCanvas('canvas_1'),/invalid-response/);await assert.rejects(client.loadCanvas('x\n'),/invalid-id/);await assert.rejects(client.loadCanvas('..'),/invalid-id/);
+ type='text/html';await assert.rejects(client.listCanvases(),/invalid-response/);type='application/json';status=403;await assert.rejects(client.listCanvases(),/http-403/);
+ assert.equal(calls.length,7,'errors are not silently retried or converted to empty canvases');
+ status=200; payload={remoteProjectionVersion:1,remoteUnavailableMediaCount:0,schemaVersion:2,revision:3,contentDigest:'a'.repeat(64),canvasId:'canvas_1',name:'Canvas',createdAt:'a',updatedAt:'b',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1}};
+ delete payload.remoteProjectionVersion; await assert.rejects(client.loadCanvas('canvas_1'),/invalid-response/);
+ payload.remoteProjectionVersion=1; payload.contentDigest='abc'; await assert.rejects(client.loadCanvas('canvas_1'),/invalid-response/);
+ type='application/json; charset=latin1'; await assert.rejects(client.loadCanvas('canvas_1'),/invalid-response/);
+ const row={id:'a',name:'a',createdAt:'a',updatedAt:'b',nodeCount:0,edgeCount:0,coverVersion:0,revision:0,contentDigest:'',coverKind:null,coverUrl:null,coverPoster:null};
+ type='application/json; charset=utf-8';payload={canvases:[row,row]}; await assert.rejects(client.listCanvases(),/invalid-response/);
+ let cancelled=false;
+ const oversized=createCanvasRemoteReadClient(async()=>new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array(9*1024*1024));c.enqueue(new Uint8Array(1));},cancel(){cancelled=true;}}),{headers:{'Content-Type':'application/json'}}));
+ await assert.rejects(oversized.listCanvases(),/response-too-large/);assert.equal(cancelled,true);
+ const declared=createCanvasRemoteReadClient(async()=>new Response('{}',{headers:{'Content-Type':'application/json','Content-Length':String(9*1024*1024+1)}}));await assert.rejects(declared.listCanvases(),/response-too-large/);
+ console.log('PASS canvas remote read transport: projection, identity, duplicates, MIME, streamed bounds, no fallback/retry');
+}finally{stop();await rm(dir,{recursive:true,force:true});}
