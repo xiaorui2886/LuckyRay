@@ -256,6 +256,36 @@ async fn fetch_update(
     feed::parse(&bytes, &app.package_info().version.to_string(), &LINUX_PROFILE)
 }
 
+/// Same wording as the Windows production NSIS ownership notice.
+const OWNER_LOCK_NOTICE: &str = "LuckyRay 或其更新仍在运行，或无法确认安装环境安全。请正常关闭另一个实例，再启动此版本。\nAnother LuckyRay instance may be running. Close it normally and try again.";
+
+/// Linux counterpart of Windows `installer::startup_notice` (MessageBoxW,
+/// MB_OK | MB_ICONWARNING): a synchronous modal warning shown before setup
+/// fails. Runs on the setup (GTK main) thread, which Tauri has already
+/// initialised; `run()` spins a nested loop, so no event-loop dispatch is
+/// needed (the dialog plugin's run_on_main_thread would never run here).
+fn startup_notice(message: &str) {
+    use gtk::prelude::*;
+    if !gtk::is_initialized_main_thread() {
+        return;
+    }
+    let dialog = gtk::MessageDialog::new(
+        None::<&gtk::Window>,
+        gtk::DialogFlags::MODAL,
+        gtk::MessageType::Warning,
+        gtk::ButtonsType::Ok,
+        message,
+    );
+    dialog.set_title("LuckyRay");
+    dialog.set_keep_above(true);
+    let _ = dialog.run();
+    dialog.close();
+    // Let GTK process the close before setup returns its error.
+    while gtk::events_pending() {
+        gtk::main_iteration_do(false);
+    }
+}
+
 /// Called in setup BEFORE backend, transport, DSH or gateway construction,
 /// at the same point as the Windows initializer.
 pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), String> {
@@ -275,7 +305,8 @@ pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), String> {
         // Same lifetime ownership as Windows production NSIS: a second
         // instance refuses to start services while another owns the install.
         let lock = appimage::acquire_owner_lock(service.store.root(), Duration::from_secs(30)).map_err(|code| {
-            eprintln!("LuckyRay 或其更新仍在运行，或无法确认安装环境安全。请正常关闭另一个实例，再启动此版本。\nAnother LuckyRay instance may be running. Close it normally and try again. ({code})");
+            eprintln!("{OWNER_LOCK_NOTICE} ({code})");
+            startup_notice(OWNER_LOCK_NOTICE);
             code.to_string()
         })?;
         OWNER_LOCK.set(lock).map_err(|_| "update-ownership-unknown")?;
