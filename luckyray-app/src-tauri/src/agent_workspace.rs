@@ -3797,11 +3797,35 @@ fn workspace_file_identity(file: &File, path: &Path) -> Result<String, Workspace
     ))
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn workspace_file_identity(file: &File, _path: &Path) -> Result<String, WorkspaceError> {
     use std::os::unix::fs::MetadataExt;
     let metadata = file.metadata().map_err(|_| workspace_read_error())?;
     Ok(format!("unix-v1-{}-{}", metadata.dev(), metadata.ino()))
+}
+
+/// Linux filesystems reuse a freed inode number immediately, so a directory
+/// removed and recreated at the same path can report the same (dev, ino).
+/// Windows file IDs do not recur that way. Bind the object's birth time
+/// (statx btime, nanoseconds) as well so a replacement is detected; on a
+/// filesystem that does not report btime this stays (dev, ino) only.
+#[cfg(target_os = "linux")]
+fn workspace_file_identity(file: &File, _path: &Path) -> Result<String, WorkspaceError> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata().map_err(|_| workspace_read_error())?;
+    match metadata
+        .created()
+        .ok()
+        .and_then(|born| born.duration_since(std::time::UNIX_EPOCH).ok())
+    {
+        Some(born) => Ok(format!(
+            "linux-v2-{}-{}-{}",
+            metadata.dev(),
+            metadata.ino(),
+            born.as_nanos()
+        )),
+        None => Ok(format!("unix-v1-{}-{}", metadata.dev(), metadata.ino())),
+    }
 }
 
 #[cfg(not(any(windows, unix)))]
