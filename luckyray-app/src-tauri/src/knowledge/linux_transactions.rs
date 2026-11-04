@@ -117,34 +117,30 @@ pub(super) fn delete_open(file: &File) -> Result<(), KnowledgeError> {
     let nonce = format!("{:032x}", rand::random::<u128>());
     let mut readable = file.try_clone().map_err(failure)?;
     let original = read(&mut readable)?;
-    dir.create(OsStr::new(&format!(".lrk-{nonce}.backup")), &original)
+    // Windows deletes the exclusively opened file outright (no recycle bin,
+    // no retained copy). Linux cannot hold a no-share handle, so first move
+    // the name to a private transaction name, prove it is still this file
+    // with the bytes the caller checked, and only then unlink it. Nothing
+    // reads these names afterwards, so no copy or receipt is left behind.
+    let moved_name = format!(".lrk-{nonce}.deleted");
+    dir.rename_new(&name, &dir, OsStr::new(&moved_name))
         .map_err(failure)?;
-    let receipt = serde_json::to_vec(&serde_json::json!({"kind":"linux-delete-attempt",
-        "target":name.to_str().ok_or_else(|| failure(crate::linux_fs::conflict()))?,
-        "sha256":crate::linux_file_store::digest(&original)}))
-    .map_err(|_| failure(crate::linux_fs::conflict()))?;
-    dir.create(
-        OsStr::new(&format!(".lrk-{nonce}.delete-receipt")),
-        &receipt,
-    )
-    .map_err(failure)?;
-    let backup = format!(".lrk-{nonce}.deleted");
-    dir.rename_new(&name, &dir, OsStr::new(&backup))
-        .map_err(failure)?;
-    dir.verify_named(OsStr::new(&backup), file)
+    dir.verify_named(OsStr::new(&moved_name), file)
         .map_err(failure)?;
     let moved = dir
         .read(
-            OsStr::new(&backup),
+            OsStr::new(&moved_name),
             false,
             crate::linux_file_store::MAX_RECORD_BYTES,
         )
         .map_err(failure)?
         .ok_or_else(|| failure(crate::linux_fs::conflict()))?;
     if moved.bytes != original {
-        let _ = dir.rename_new(OsStr::new(&backup), &dir, &name);
+        let _ = dir.rename_new(OsStr::new(&moved_name), &dir, &name);
         return Err(failure(crate::linux_fs::conflict()));
     }
+    dir.remove_owned(OsStr::new(&moved_name), file)
+        .map_err(failure)?;
     Ok(())
 }
 
