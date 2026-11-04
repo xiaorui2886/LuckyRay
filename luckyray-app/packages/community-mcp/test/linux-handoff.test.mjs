@@ -13,7 +13,7 @@ import {
   takeLinuxPair,
   parseLinuxPair,
   readBoundedStdin,
-} from "../src/server.mjs";
+} from "../src/server-linux.mjs";
 import { credentialForConfig, validateConfig } from "../src/transport.mjs";
 
 const SYNTHETIC = "5".repeat(64);
@@ -91,7 +91,7 @@ test("stdin read is bounded and wipes its chunks", async () => {
 test("on Linux the server module strips the handoff before any child can inherit it, and writes nothing", { skip: process.platform !== "linux" }, () => {
   const dir = mkdtempSync(join(tmpdir(), "lr-handoff-"));
   try {
-    const server = fileURLToPath(new URL("../src/server.mjs", import.meta.url));
+    const server = fileURLToPath(new URL("../src/server-linux.mjs", import.meta.url));
     const probe = `
       await import(${JSON.stringify(server)});
       const { execFileSync } = await import("node:child_process");
@@ -116,7 +116,7 @@ test("on Linux the server module strips the handoff before any child can inherit
 test("on Linux --check takes the pairing from stdin only", { skip: process.platform !== "linux" }, () => {
   const dir = mkdtempSync(join(tmpdir(), "lr-check-"));
   try {
-    const server = fileURLToPath(new URL("../src/server.mjs", import.meta.url));
+    const server = fileURLToPath(new URL("../src/server-linux.mjs", import.meta.url));
     const cfg = join(dir, "connection.json");
     writeFileSync(cfg, JSON.stringify({ ...config, scope: [...config.scope] }));
     const run = (input, env = {}) => {
@@ -132,11 +132,9 @@ test("on Linux --check takes the pairing from stdin only", { skip: process.platf
     // No stdin: refused before any discovery. The env var is not a --check channel.
     assert.equal(run(""), "authorization-unavailable");
     assert.equal(run("", { [LINUX_PAIR_ENV]: JSON.stringify(sealed()) }), "authorization-unavailable");
-    // With the sealed pairing on stdin it gets past the handoff (and then fails
-    // on the absent synthetic desktop, which is a different, later error).
-    const later = run(JSON.stringify(sealed()));
-    assert.notEqual(later, "authorization-unavailable");
-    assert.notEqual(later, "ok");
+    // With the sealed pairing on stdin it gets past the handoff and reaches
+    // Linux desktop discovery, which finds no process with this identity.
+    assert.equal(run(JSON.stringify(sealed())), "target-not-running");
     assert.deepEqual(readdirSync(dir).sort(), ["connection.json"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
