@@ -381,7 +381,10 @@ fn bootstrap(app: &tauri::AppHandle, service: &Service) -> Result<(), &'static s
         return Ok(());
     }
     let intent = service.store.take_intent()?.ok_or("update-cache-invalid")?;
-    intent.validate(&app.package_info().version.to_string())?;
+    intent.validate(
+        &app.package_info().version.to_string(),
+        &super::verification::WINDOWS_PROFILE,
+    )?;
     let ownership = service
         .ownership
         .as_ref()

@@ -1,5 +1,5 @@
 //! Fixed-name, bounded, application-owned staging. No caller-controlled path is accepted.
-use super::verification::{admit_version, official_artifact, MAX_PACKAGE_BYTES};
+use super::verification::{admit_version, official_artifact, MAX_PACKAGE_BYTES, PlatformProfile};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, OpenOptions},
@@ -15,9 +15,13 @@ pub(crate) struct Intent {
     pub signature: String,
 }
 impl Intent {
-    pub(crate) fn validate(&self, installed: &str) -> Result<(), &'static str> {
+    pub(crate) fn validate(
+        &self,
+        installed: &str,
+        profile: &PlatformProfile,
+    ) -> Result<(), &'static str> {
         admit_version(installed, &self.version)?;
-        official_artifact(&self.version, &self.url)?;
+        official_artifact(&self.version, &self.url, profile)?;
         if self.signature.len() > 16384 || self.signature.is_empty() {
             return Err("update-signature-invalid");
         }
@@ -218,7 +222,7 @@ mod tests {
     fn intent_never_accepts_path_or_extra_fields() {
         let mut i = intent();
         i.url = "file:///tmp/a.exe".into();
-        assert!(i.validate("1.0.0").is_err());
+        assert!(i.validate("1.0.0", &super::super::verification::WINDOWS_PROFILE).is_err());
         assert!(serde_json::from_str::<Intent>(
             r#"{"version":"1.0.1","url":"x","signature":"x","path":"C:\\other.exe"}"#
         )

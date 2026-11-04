@@ -31,6 +31,8 @@ pub(crate) struct PlatformProfile {
 
 pub(crate) const WINDOWS_PROFILE: PlatformProfile =
     PlatformProfile { manifest_key: "windows-x86_64-nsis", asset: "LuckyRay_{version}_x64-setup.exe" };
+/// Rests until S3 wires the AppImage replace; its tests exercise it today.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const LINUX_PROFILE: PlatformProfile =
     PlatformProfile { manifest_key: "linux-x86_64-appimage", asset: "LuckyRay_{version}_amd64.AppImage" };
 

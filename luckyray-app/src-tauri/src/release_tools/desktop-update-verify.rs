@@ -45,7 +45,8 @@ fn run() -> Result<(), String> {
     if !bytes.starts_with(b"MZ") {
         return Err("update-installer-not-windows-executable".into());
     }
-    verification::verify_package(&bytes, &signature, public_key, &args[3])
+    verification::verify_package(&bytes, &signature, public_key, &args[3],
+        &verification::WINDOWS_PROFILE)
         .map_err(str::to_owned)?;
     println!(
         "{}",

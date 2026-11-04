@@ -1,5 +1,7 @@
 //! Public stable-channel manifest. The document itself never authorizes execution.
-use super::verification::{admit_version, asset_name, official_artifact, PlatformProfile, WINDOWS_PROFILE};
+use super::verification::{admit_version, official_artifact, PlatformProfile};
+#[cfg(test)]
+use super::verification::WINDOWS_PROFILE;
 use serde::Deserialize;
 pub(crate) const MANIFEST: &str =
     "https://github.com/xiaorui2886/LuckyRay/releases/latest/download/latest.json";
@@ -183,8 +185,8 @@ mod tests {
         assert!(parse(&fixture("2.0.0", url), "1.0.0", &WINDOWS_PROFILE).unwrap().is_some());
         assert!(parse(&fixture("2.0.0", url), "2.0.0", &WINDOWS_PROFILE).unwrap().is_none());
         assert!(parse(&fixture("2.0.0", url), "3.0.0", &WINDOWS_PROFILE).unwrap().is_none());
-        assert!(parse(&fixture("2.0.0-rc.1", url), "1.0.0").is_err());
-        assert!(parse(&fixture("2.0.0", "https://example.com/app.exe"), "1.0.0").is_err());
+        assert!(parse(&fixture("2.0.0-rc.1", url), "1.0.0", &WINDOWS_PROFILE).is_err());
+        assert!(parse(&fixture("2.0.0", "https://example.com/app.exe"), "1.0.0", &WINDOWS_PROFILE).is_err());
     }
     #[test]
     fn malformed_or_wrong_platform_never_available() {
@@ -193,7 +195,7 @@ mod tests {
             br#"{"version":"2.0.0","platforms":{}}"#.to_vec(),
             vec![b' '; MAX_MANIFEST_BYTES + 1],
         ] {
-            assert!(parse(&bytes, "1.0.0").is_err());
+            assert!(parse(&bytes, "1.0.0", &WINDOWS_PROFILE).is_err());
         }
     }
 }
