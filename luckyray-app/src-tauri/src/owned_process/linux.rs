@@ -73,11 +73,13 @@ impl State {
             }
             let stat = match std::fs::read(entry.path().join("stat")) {
                 Ok(stat) => stat,
+                // A task that exits between readdir and read answers ENOENT,
+                // EINVAL or ESRCH; it is gone, so it is not a live member.
                 Err(e)
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
-                    ) =>
+                    ) || e.raw_os_error() == Some(libc::ESRCH) =>
                 {
                     continue
                 }
