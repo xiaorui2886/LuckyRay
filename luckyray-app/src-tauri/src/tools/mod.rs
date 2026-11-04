@@ -5677,13 +5677,19 @@ mod tests {
 
     #[test]
     fn agent_catalog_is_exact14_and_write_tools_remain_unexecutable_without_a_permit() {
-        let app_data = temp_dir("agent-web-catalog");
-        crate::test_support::make_private(&app_data);
-        let backend = BackendServices::initialize(&app_data).unwrap();
+        // Knowledge tools are listed to an agent only inside a run scoped to
+        // the current Vault target, as production agent runs are.
+        let (backend, _) = backend_with_vault("agent-web-catalog");
+        let knowledge_scope = Arc::new(crate::knowledge::KnowledgeRunScope::for_target(
+            backend.knowledge().current_target_identity().unwrap(),
+        ));
         let definitions = backend
-            .list_tools(&ToolCallContext::agent_canvas_scoped(
-                [7u8; 32], [8u8; 32], [9u8; 32], [10u8; 32],
-            ))
+            .list_tools(
+                &ToolCallContext::agent_canvas_scoped(
+                    [7u8; 32], [8u8; 32], [9u8; 32], [10u8; 32],
+                )
+                .with_knowledge_scope(knowledge_scope.clone()),
+            )
             .unwrap();
         assert_eq!(
             definitions
@@ -5738,7 +5744,7 @@ mod tests {
         }
         let denied = backend
             .run_tool(
-                &ToolCallContext::agent_read([7u8; 32]),
+                &ToolCallContext::agent_read([7u8; 32]).with_knowledge_scope(knowledge_scope),
                 ToolRunRequest::agent_write(
                     "knowledge.create".to_owned(),
                     json!({
@@ -5763,7 +5769,10 @@ mod tests {
     #[test]
     fn authenticated_capability_snapshot_is_the_single_dynamic_agent_gate() {
         let (backend, _) = backend_with_vault("dynamic-agent-capabilities");
-        let context = ToolCallContext::agent_read_scoped([31u8; 32], [32u8; 32], [33u8; 32]);
+        let context = ToolCallContext::agent_read_scoped([31u8; 32], [32u8; 32], [33u8; 32])
+            .with_knowledge_scope(Arc::new(crate::knowledge::KnowledgeRunScope::for_target(
+                backend.knowledge().current_target_identity().unwrap(),
+            )));
         let definitions = backend.list_tools(&context).unwrap();
         let registry = backend.agent_capabilities();
         let bootstrap = registry
@@ -6180,7 +6189,11 @@ mod tests {
 
         let (backend, vault) = backend_with_vault("agent-source-lease");
         let activation = backend.knowledge().activate_ui_source(&vault.id).unwrap();
-        let context = ToolCallContext::agent_read([21; 32]);
+        let context = ToolCallContext::agent_read([21; 32]).with_knowledge_scope(Arc::new(
+            crate::knowledge::KnowledgeRunScope::for_target(
+                backend.knowledge().current_target_identity().unwrap(),
+            ),
+        ));
         let prepared = backend
             .prepare_agent_write(
                 &context,
