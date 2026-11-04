@@ -1,7 +1,7 @@
 //! Linux admission and execution for the attachment kinds that are open:
 //! new-file imports, in-Vault attachment renames, conversions, note moves,
 //! external reference updates and the material file move (素材详情 → 移动或重命名
-//! 文件). The other relink shape (恢复附件位置) stays refused.
+//! 文件) and the material relocation relink (恢复附件位置).
 use super::attachment_operations::{bytes, validate_plan, AttachmentOperationIssue};
 use super::*;
 use crate::linux_attachment_store::{Dependency, ImportStore, MAX_FILE, MAX_INTENT};
@@ -32,6 +32,9 @@ pub(super) fn admit_linux_attachment_operation(
         "conversion" => admit_conversion(operation),
         "note-move" => admit_note_move(operation),
         "external-reference-update" => admit_external_reference_update(operation),
+        "attachment-relink" if operation.material_relocation.is_some() => {
+            admit_material_relocation(operation)
+        }
         "attachment-relink" => admit_material_file_move(operation),
         _ => Err(linux_knowledge_write_unavailable()),
     }
@@ -309,7 +312,7 @@ fn admit_external_reference_update(
 /// note that points at the file. The file itself is moved afterwards by the
 /// catalog's no-replace rename, so the plan must name exactly one source (the
 /// sealed original and its digest) and every rewritten note must point at the
-/// one destination. The relocation shape (恢复附件位置) is not admitted.
+/// one destination. The relocation shape has its own rule below.
 fn admit_material_file_move(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
     let Some(movement) = operation.material_file_move.as_ref() else {
         return Err(linux_knowledge_write_unavailable());
@@ -677,4 +680,61 @@ pub(super) fn import_dependencies(
             Dependency::open(Path::new(path), digest).map_err(linux_transactions::failure)
         })
         .collect()
+}
+
+/// Restoring a material's location (恢复附件位置): the user points the asset at
+/// an existing file outside the Vault. Nothing is moved or written outside the
+/// Vault: only the Markdown rewrites run here, one per note, and every note
+/// must point at the one replacement file, whose bytes are sealed as the only
+/// external dependency. The catalog rebinds the asset afterwards from the
+/// sealed (asset, path, reference snapshot) binding and the material revision;
+/// the recorded original location, when present, must be an absolute path and
+/// is only compared by the catalog, never touched.
+fn admit_material_relocation(operation: &AttachmentOperationPlan) -> Result<(), KnowledgeError> {
+    let Some((asset_id, replacement, snapshot)) = operation.material_relocation.as_ref() else {
+        return Err(linux_knowledge_write_unavailable());
+    };
+    if asset_id.is_empty()
+        || snapshot.len() > 1024 * 1024
+        || operation.files.is_empty()
+        || operation.files.len() > 1024
+        || operation.material_file_move.is_some()
+        || operation.material_revision.is_none()
+        || operation
+            .material_original_path
+            .as_ref()
+            .is_some_and(|original| original.is_empty() || !Path::new(original).is_absolute())
+        || !operation.attachment_dependencies.is_empty()
+        || operation.external_dependencies.len() != 1
+        || &operation.external_dependencies[0].0 != replacement
+        || operation.external_paths.len() != operation.files.len()
+    {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    for (note, path) in &operation.external_paths {
+        if path != replacement
+            || operation.external_paths.iter().filter(|(other, _)| other == note).count() != 1
+            || !operation.files.iter().any(|file| &file.relative_path == note)
+        {
+            return Err(linux_knowledge_write_unavailable());
+        }
+    }
+    let mut total = 0usize;
+    for file in &operation.files {
+        if !file.relative_path.to_ascii_lowercase().ends_with(".md") {
+            return Err(linux_knowledge_write_unavailable());
+        }
+        let before = bytes(&file.before)?.ok_or_else(linux_knowledge_write_unavailable)?;
+        let after = bytes(&file.after)?.ok_or_else(linux_knowledge_write_unavailable)?;
+        if before.len() > MAX_FILE || after.len() > MAX_FILE {
+            return Err(linux_knowledge_write_unavailable());
+        }
+        total = total
+            .checked_add(before.len() + after.len())
+            .ok_or_else(linux_knowledge_write_unavailable)?;
+    }
+    if total > MAX_INTENT {
+        return Err(linux_knowledge_write_unavailable());
+    }
+    Ok(())
 }
