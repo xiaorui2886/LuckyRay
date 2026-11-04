@@ -626,10 +626,110 @@ impl OwnedProcess {
 }
 #[cfg(target_os = "linux")]
 pub(crate) fn external_tunnel_running() -> Result<bool, String> {
-    // Windows scans the process table for another tunnel. Linux has no plugin
-    // binary to look for until packaging ships one, and guessing by name would
-    // be worse than answering "none seen"; T20-result.md lists this.
-    Ok(false)
+    linux_proc::tunnel_running(std::path::Path::new("/proc"))
+}
+/// Mirrors the Windows Toolhelp scan: any process, of any user, whose image
+/// name is one of the tunnel executables (the Linux package uses the same
+/// names without `.exe`). Compared case-insensitively like Windows.
+#[cfg(target_os = "linux")]
+mod linux_proc {
+    use std::{fs, path::Path};
+    pub(super) const NAMES: [&str; 3] = [
+        "tunnel-client",
+        "tunnel-client-runtime",
+        "tunnel-client-runtime-cloudflared",
+    ];
+    /// Image name of one /proc entry: the `exe` link when readable (own
+    /// processes), else argv[0] from `cmdline` (readable for every user, as
+    /// the Windows snapshot lists every user's processes). `None` if the
+    /// process vanished or is a kernel thread.
+    pub(super) fn image_name(entry: &Path) -> Option<String> {
+        if let Ok(target) = fs::read_link(entry.join("exe")) {
+            let raw = target.to_string_lossy().into_owned();
+            let raw = raw.strip_suffix(" (deleted)").unwrap_or(&raw);
+            if let Some(name) = Path::new(raw).file_name() {
+                return Some(name.to_string_lossy().to_ascii_lowercase());
+            }
+        }
+        let cmdline = fs::read(entry.join("cmdline")).ok()?;
+        let argv0 = cmdline.split(|b| *b == 0).next()?;
+        if argv0.is_empty() {
+            return None;
+        }
+        let argv0 = String::from_utf8_lossy(argv0);
+        Path::new(argv0.as_ref())
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+    }
+    pub(super) fn tunnel_running(proc_root: &Path) -> Result<bool, String> {
+        let entries =
+            fs::read_dir(proc_root).map_err(|_| "process-inventory-unavailable".to_string())?;
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            let file_name = entry.file_name();
+            let Some(pid) = file_name.to_str() else { continue };
+            if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+                continue;
+            }
+            if image_name(&entry.path()).is_some_and(|n| NAMES.contains(&n.as_str())) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        fn process(root: &Path, pid: &str, exe: Option<&str>, cmdline: &[u8]) {
+            let dir = root.join(pid);
+            fs::create_dir_all(&dir).unwrap();
+            if let Some(exe) = exe {
+                std::os::unix::fs::symlink(exe, dir.join("exe")).unwrap();
+            }
+            fs::write(dir.join("cmdline"), cmdline).unwrap();
+        }
+        #[test]
+        fn finds_each_tunnel_name_like_the_windows_snapshot() {
+            for name in NAMES {
+                let temp = tempfile::tempdir().unwrap();
+                process(temp.path(), "1", Some("/usr/bin/bash"), b"bash\0");
+                process(temp.path(), "42", Some(&format!("/opt/x/{name}")), b"whatever\0");
+                assert_eq!(tunnel_running(temp.path()), Ok(true), "{name}");
+            }
+        }
+        #[test]
+        fn other_users_processes_are_seen_through_argv0_and_case_is_ignored() {
+            let temp = tempfile::tempdir().unwrap();
+            // No exe link (EACCES for another user's process): argv[0] decides.
+            process(temp.path(), "7", None, b"/home/other/Tunnel-Client-Runtime\0run\0");
+            assert_eq!(tunnel_running(temp.path()), Ok(true));
+        }
+        #[test]
+        fn deleted_binaries_kernel_threads_and_lookalikes() {
+            let temp = tempfile::tempdir().unwrap();
+            process(temp.path(), "2", None, b"");
+            process(temp.path(), "3", Some("/usr/bin/tunnel-client.exe"), b"x\0");
+            process(temp.path(), "4", Some("/usr/bin/my-tunnel-client"), b"x\0");
+            process(temp.path(), "5", None, b"/bin/sh\0-c\0tunnel-client\0");
+            fs::create_dir_all(temp.path().join("self")).unwrap();
+            fs::write(temp.path().join("version"), b"x").unwrap();
+            assert_eq!(tunnel_running(temp.path()), Ok(false));
+            process(temp.path(), "6", Some("/tmp/tunnel-client (deleted)"), b"x\0");
+            assert_eq!(tunnel_running(temp.path()), Ok(true));
+        }
+        #[test]
+        fn an_unreadable_process_table_is_an_error_not_none_seen() {
+            let temp = tempfile::tempdir().unwrap();
+            assert_eq!(
+                tunnel_running(&temp.path().join("missing")),
+                Err("process-inventory-unavailable".to_string())
+            );
+        }
+        #[test]
+        fn the_real_proc_table_is_readable_and_has_no_tunnel_here() {
+            assert_eq!(tunnel_running(Path::new("/proc")), Ok(false));
+        }
+    }
 }
 #[cfg(target_os = "linux")]
 pub(crate) fn spawn(
