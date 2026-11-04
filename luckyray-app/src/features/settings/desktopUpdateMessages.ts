@@ -204,6 +204,46 @@ export const desktopUpdateMessages=defineMessages({
     "zh-CN": "后台服务尚未确认退出，未启动安装。请检查任务状态后重试。",
     "en-US": "Background services have not confirmed shutdown. Installation was not started; check task status before retrying."
   },
+  "update-appimage-target-unavailable": {
+    "zh-CN": "未找到可替换的 AppImage 文件，未进行更新。请使用官方下载页手动更新。",
+    "en-US": "No replaceable AppImage was found; nothing was changed. Use the official download page to update manually."
+  },
+  "update-appimage-target-invalid": {
+    "zh-CN": "当前 AppImage 位置不可安全替换（需为本人可写的普通文件），未进行更新。",
+    "en-US": "The current AppImage cannot be replaced safely (it must be a regular file you own and can write). Nothing was changed."
+  },
+  "update-appimage-stage-failed": {
+    "zh-CN": "写入新版本 AppImage 失败，原文件未改变。",
+    "en-US": "Writing the new AppImage failed. The original file is unchanged."
+  },
+  "update-appimage-stage-collision": {
+    "zh-CN": "临时文件冲突，未进行更新，原文件未改变。请重试。",
+    "en-US": "A temporary file collided; nothing was changed. Please retry."
+  },
+  "update-appimage-publish-failed": {
+    "zh-CN": "替换 AppImage 失败，原文件未改变。",
+    "en-US": "Replacing the AppImage failed. The original file is unchanged."
+  },
+  "update-appimage-restart-failed": {
+    "zh-CN": "AppImage 已更新，但未能自动重新打开。请手动启动 LuckyRay。",
+    "en-US": "The AppImage was updated but could not reopen automatically. Start LuckyRay manually."
+  },
+  "update-target-changed": {
+    "zh-CN": "AppImage 文件在更新期间被改动，已停止替换，原文件未改变。",
+    "en-US": "The AppImage changed during the update. Replacement stopped; the file was not overwritten."
+  },
+  "update-deb-notice-only": {
+    "zh-CN": "deb 安装不支持应用内更新，请通过官方下载页获取新的安装包。",
+    "en-US": "In-app updates are not available for deb installs. Get the new package from the official download page."
+  },
+  "update-verification-failed": {
+    "zh-CN": "更新包验证失败，未安装。请重新检查更新或使用官方下载页。",
+    "en-US": "Package verification failed and nothing was installed. Check again or use the official download page."
+  },
+  "update-app-data-unavailable": {
+    "zh-CN": "无法访问应用数据目录，未进行更新。",
+    "en-US": "The application data folder is unavailable. Nothing was updated."
+  },
   "reconnect": {
     "zh-CN": "重新连接",
     "en-US": "Reconnect"
