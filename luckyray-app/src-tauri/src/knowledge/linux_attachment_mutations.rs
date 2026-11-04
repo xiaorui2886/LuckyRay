@@ -241,6 +241,17 @@ impl KnowledgeService {
                 });
                 break;
             }
+            #[cfg(test)]
+            if result.completed_files == self.attachment_fault_after_steps.load(Ordering::Acquire) {
+                self.attachment_fault_after_steps.store(usize::MAX, Ordering::Release);
+                result.status = "partial".into();
+                result.issues.push(AttachmentOperationIssue {
+                    document: file.relative_path.clone(),
+                    target: String::new(),
+                    status: "injected-interruption".into(),
+                });
+                break;
+            }
             let outcome = if rollback {
                 self.rollback_linux_attachment_step(
                     vault, file, index, store, guard, identity, cancelled,
@@ -302,6 +313,29 @@ impl KnowledgeService {
         {
             *admission_error = Some(failure);
             return Err(crate::linux_fs::conflict());
+        }
+        // Test-only seams shared with the Windows engine: a hook that runs
+        // after final validation (the target is then re-proved) and an
+        // injected write failure before publication.
+        #[cfg(test)]
+        {
+            let hook = self.after_final_validation.lock().expect("knowledge test hook lock").take();
+            if let Some(hook) = hook {
+                hook();
+                if let Err(failure) =
+                    self.assert_expected_target_unlocked(vault, Some(identity), Some(guard))
+                {
+                    *admission_error = Some(failure);
+                    return Err(crate::linux_fs::conflict());
+                }
+            }
+            if self.write_fault_before_commit.swap(false, Ordering::AcqRel) {
+                *admission_error = Some(error(
+                    "knowledge-write-failed",
+                    "Knowledge document write failed before commit",
+                ));
+                return Err(io::Error::other("injected write failure"));
+            }
         }
         if cancelled.load(Ordering::Acquire) {
             return Err(io::Error::from(io::ErrorKind::Interrupted));
