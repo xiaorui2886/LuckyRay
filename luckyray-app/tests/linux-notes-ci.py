@@ -36,7 +36,7 @@ EXCLUDED = {name: "NOT_RUN" for name in ("chromiumConsent", "nativeMessaging", "
     "installer", "release", "waylandHardware", "oldMatrices", "lshFunctionalFlow")}
 STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENCIES", "RUST", "BUILD",
          "NATIVE_MESSAGING", "DRIVER", "RUNTIME", "RESOURCES", "NOTES", "SECRET_SERVICE", "COMPANION_KEYRING",
-         "COMPANION_PAIRING", "MEDIA_PREVIEW")
+         "COMPANION_PAIRING", "MEDIA_PREVIEW", "MEDIA_RESOLVER")
 EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "nativeMessaging.json", "result.json")
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",

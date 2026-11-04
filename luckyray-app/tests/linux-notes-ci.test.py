@@ -2147,6 +2147,47 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('#[path = "../../../src-tauri/src/companion_keyring.rs"]', lib)
         self.assertIn('#[path = "../../../src-tauri/src/community_mcp_secret.rs"]', lib)
 
+    def test_media_resolver_step_runs_the_exact_linux_media_transfer_suite(self):
+        # T47 V2: the app-owned resolver path runs on Linux against synthetic
+        # runner scripts, reusing the Main build target, with an exact count.
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        start = text.index("        id: media-resolver")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(text.index("        id: media-preview"), start)
+        self.assertLess(start, finish)
+        step = text[start:finish]
+        for required in (
+            "timeout-minutes: 30",
+            "timeout 900",
+            "set -euo pipefail",
+            "--target x86_64-unknown-linux-gnu",
+            "--manifest-path luckyray-app/src-tauri/Cargo.toml",
+            "-- media_transfer::",
+            'grep -qx "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured;',
+            "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
+            "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
+        ):
+            self.assertIn(required, step, required)
+        for forbidden in ("steps.media-preview.outcome", "steps.companion-pairing.outcome",
+                          "--ignored", "set -x", "pkill", "echo", "apt", "src-tauri/media-engine"):
+            self.assertNotIn(forbidden, step, forbidden)
+        self.assertIn("CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}", text)
+        self.assertEqual(ci.STEPS[-2:], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
+        source = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
+        both = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
+        for item in ("impl MediaResolver for ExternalMediaResolver", "fn write_site_cookie_file(",
+                     "fn resolver_target_url(", "fn validate_resolver_probe_format(",
+                     "fn resolver_status_error("):
+            self.assertIn(both + "\n" + item, source, item)
+        self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\nfn resolver_environment(', source)
+        self.assertIn('#[cfg(target_os = "linux")]\nfn resolver_environment(', source)
+        self.assertIn("OpenOptionsExt::mode(&mut options, 0o600)", source)
+        linux_env = source[source.index('#[cfg(target_os = "linux")]\nfn resolver_environment('):]
+        linux_env = linux_env[:linux_env.index("\n}\n")]
+        self.assertNotIn('("PATH"', linux_env)
+        self.assertIn("fn linux_resolver_runs_in_a_private_scrubbed_environment_and_refuses_symlinked_runtimes", source)
+
     def test_media_preview_step_pins_ffmpeg_and_requires_an_exact_live_pass(self):
         # T45 V1: a pinned FFmpeg (never shipped), a synthetic lavfi fixture,
         # the production manifest verifier, the Main build target reused, and
@@ -2563,15 +2604,19 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         # code and "未做任何修改", and the runner/player stay Windows-gated.
         gate = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
         transfer = self.read("media_transfer.rs")
-        self.assertEqual(transfer.count(gate), 9, "only the verification gates widen")
+        # T47 V2 widens the app-owned runner (probe/transfer, cookie file,
+        # target URL, probe/status projection, test fixtures) as well: exact.
+        self.assertEqual(transfer.count(gate), 24, "only the verification and runner gates widen")
         for name in ("struct ExternalMediaResolver {", "impl ExternalMediaResolver {",
                      "pub(crate) fn verified_local_video_tools(resource_dir: &Path)",
                      "fn safe_runtime_path(root: &Path, relative: &str)",
                      "fn enumerate_runtime_files(root: &Path)"):
             self.assertIn(name, transfer)
-        # The runner (probe/transfer) and the player stay Windows-only.
+        # Since T47 the runner (probe/transfer) is compiled on Linux too; the
+        # player stays Windows-only and the Windows environment is untouched.
+        self.assertIn(gate + "\nimpl MediaResolver for ExternalMediaResolver {", transfer)
         self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\n'
-                      "impl MediaResolver for ExternalMediaResolver {", transfer)
+                      "fn resolver_environment(", transfer)
         runtime = self.read("linux_media_runtime.rs")
         self.assertIn('pub(crate) const COMPONENT_MISSING: &str = "native-media-component-missing";',
                       runtime)

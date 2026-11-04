@@ -303,6 +303,29 @@ jobs:
           # An empty filter must never count as a pass: require exactly one test.
           grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t45-media-preview.log"
+      - name: Exercise the Linux app-owned media resolver with synthetic runners
+        id: media-resolver
+        # Independent of the preview and Companion steps (separate outcome).
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 30
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+        run: |
+          set -euo pipefail
+          # Synthetic Python runner scripts only (no yt-dlp, no network beyond
+          # loopback fixtures); the tests copy the system interpreter into a
+          # private scratch root because owned_process refuses links/xattrs.
+          test -x /usr/bin/python3
+          timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- media_transfer:: \
+            | tee "$WORK_ROOT/private/t47-media-resolver.log"
+          # Exactly the media_transfer suite: an empty or shrunken filter fails.
+          grep -qx "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t47-media-resolver.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -325,6 +348,7 @@ jobs:
           CI_COMPANION_KEYRING: ${{ steps.companion-keyring.outcome }}
           CI_COMPANION_PAIRING: ${{ steps.companion-pairing.outcome }}
           CI_MEDIA_PREVIEW: ${{ steps.media-preview.outcome }}
+          CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}

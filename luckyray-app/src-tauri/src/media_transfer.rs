@@ -38,7 +38,7 @@ const READ_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_SITE_AUTH_COOKIES: usize = 128;
 const MAX_SITE_AUTH_BYTES: usize = 64 * 1024;
 const MAX_RESOLVER_PROBE_BYTES: u64 = 64 * 1024;
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 const MAX_RESOLVER_STATUS_BYTES: u64 = 128;
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -443,14 +443,14 @@ struct MediaEngineRuntimeFile {
     sha256: String,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ResolverProbeOutput {
     formats: Vec<ResolverProbeFormat>,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ResolverProbeFormat {
@@ -466,7 +466,7 @@ struct ResolverProbeFormat {
     bitrate: u64,
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 impl MediaResolver for ExternalMediaResolver {
     fn probe(
         &self,
@@ -752,7 +752,7 @@ impl MediaResolver for ExternalMediaResolver {
     }
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 fn write_site_cookie_file(
     temp: &Path,
     auth: Option<&MediaSiteAuth>,
@@ -764,11 +764,12 @@ fn write_site_cookie_file(
         return Ok(None);
     }
     let path = temp.join("site-cookies.txt");
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|_| staging_write_failed())?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    // Site cookies are credentials: owner-only on Linux, never umask-default.
+    #[cfg(target_os = "linux")]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let file = options.open(&path).map_err(|_| staging_write_failed())?;
     let mut writer = BufWriter::new(file);
     writer
         .write_all(b"# Netscape HTTP Cookie File\n")
@@ -832,6 +833,44 @@ fn resolver_environment(
         environment.push((OsString::from(key), value.to_os_string()));
     }
     Ok(environment)
+}
+
+/// Linux counterpart of the Windows resolver environment: the child starts
+/// from an empty environment (owned_process clears it), and every home, temp
+/// and cache location points into the per-run private temp directory.
+#[cfg(target_os = "linux")]
+fn resolver_environment(
+    temp: &Path,
+    output: &Path,
+    wheel: &Path,
+    ejs_wheel: &Path,
+    ffmpeg_dir: &Path,
+    deno: &Path,
+) -> MediaTransferResult<Vec<(OsString, OsString)>> {
+    let deno_cache = temp.join("deno-cache");
+    std::fs::create_dir(&deno_cache).map_err(|_| staging_write_failed())?;
+    // No PATH, like Windows: the runner only reaches tools the manifest pins.
+    let pairs: [(&str, &std::ffi::OsStr); 15] = [
+        ("LC_ALL", std::ffi::OsStr::new("C.UTF-8")),
+        ("TMPDIR", temp.as_os_str()),
+        ("HOME", temp.as_os_str()),
+        ("XDG_CACHE_HOME", temp.as_os_str()),
+        ("XDG_CONFIG_HOME", temp.as_os_str()),
+        ("XDG_DATA_HOME", temp.as_os_str()),
+        ("DENO_DIR", deno_cache.as_os_str()),
+        ("LUCKYRAY_MEDIA_OUTPUT", output.as_os_str()),
+        ("LUCKYRAY_MEDIA_WHEEL", wheel.as_os_str()),
+        ("LUCKYRAY_MEDIA_EJS_WHEEL", ejs_wheel.as_os_str()),
+        ("LUCKYRAY_MEDIA_FFMPEG_DIR", ffmpeg_dir.as_os_str()),
+        ("LUCKYRAY_MEDIA_DENO", deno.as_os_str()),
+        ("PYTHONNOUSERSITE", std::ffi::OsStr::new("1")),
+        ("PYTHONDONTWRITEBYTECODE", std::ffi::OsStr::new("1")),
+        ("PYTHONIOENCODING", std::ffi::OsStr::new("utf-8")),
+    ];
+    Ok(pairs
+        .into_iter()
+        .map(|(key, value)| (OsString::from(key), value.to_os_string()))
+        .collect())
 }
 
 #[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
@@ -900,7 +939,7 @@ fn sha256_file(path: &Path) -> MediaTransferResult<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 fn resolver_target_url(
     request: &MediaTransferRequest,
     allow_loopback: bool,
@@ -1099,7 +1138,7 @@ fn probe_binding(request: &MediaProbeRequest) -> MediaTransferResult<String> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 fn validate_resolver_probe_format(
     value: ResolverProbeFormat,
 ) -> MediaTransferResult<ResolvedMediaFormat> {
@@ -1139,7 +1178,7 @@ fn validate_resolver_probe_format(
     })
 }
 
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 fn resolver_status_error(bytes: &[u8]) -> Option<MediaTransferError> {
     if bytes.len() > MAX_RESOLVER_STATUS_BYTES as usize {
         return None;
@@ -1197,7 +1236,7 @@ impl MediaTransferService {
     }
 
     pub(crate) fn with_app_owned_resolver(&self, _resource_dir: &Path) -> Self {
-        #[cfg(all(windows, feature = "browser-host-runtime"))]
+        #[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
         if let Ok(Some(resolver)) = ExternalMediaResolver::app_owned(_resource_dir) {
             if let Ok(service) = Self::with_parts(
                 self.inner.staging_dir.clone(),
@@ -3640,7 +3679,44 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    /// Interpreter for the synthetic runner scripts: the app-owned test Python
+    /// on Windows. On Linux, a private copy of the system python3 inside the
+    /// test root: owned_process refuses symlinks and any file carrying
+    /// extended attributes (e.g. distro SELinux labels), exactly as it will
+    /// for the packaged runtime. A copy is fresh and attribute-free.
+    #[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
+    fn fixture_python(_root: &Path) -> PathBuf {
+        #[cfg(windows)]
+        return PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("media-engine")
+            .join("python.exe");
+        #[cfg(target_os = "linux")]
+        {
+            let source = std::fs::canonicalize("/usr/bin/python3").expect("system python3");
+            let dest = _root.join("fixture-python3");
+            if !dest.exists() {
+                std::fs::copy(&source, &dest).expect("python copy");
+            }
+            // A sibling test forking while copy held the write fd makes exec
+            // fail with ETXTBSY until that child execs; wait it out.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match std::process::Command::new(&dest)
+                    .args(["-I", "-c", "pass"])
+                    .stdin(std::process::Stdio::null())
+                    .status()
+                {
+                    Ok(status) if status.success() => return dest,
+                    Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) && Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    other => panic!("fixture python unusable: {other:?}"),
+                }
+            }
+        }
+    }
+
+    #[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
     #[test]
     fn resolver_keeps_exact_supported_video_pages_and_uses_source_for_cdn_media() {
         let pinterest = MediaTransferRequest {
@@ -3799,7 +3875,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
     #[test]
     fn external_resolver_receives_site_cookies_only_through_an_ephemeral_file() {
         let root = temp_root();
@@ -3822,9 +3898,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let python = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("media-engine")
-            .join("python.exe");
+        let python = fixture_python(&root);
         let resolver = ExternalMediaResolver::for_test(python, engine_root, "cookie_fixture.py");
         let output = root.join("authorized.part");
         let request = MediaTransferRequest {
@@ -3864,7 +3938,87 @@ mod tests {
         assert!(!root.join("media-cookies.txt").exists());
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_resolver_runs_in_a_private_scrubbed_environment_and_refuses_symlinked_runtimes() {
+        std::env::set_var("LUCKYRAY_T47_PARENT_SENTINEL", "PRIVATE-parent");
+        let root = temp_root();
+        let engine_root = root.join("engine");
+        std::fs::create_dir_all(&engine_root).unwrap();
+        std::fs::write(
+            engine_root.join("env_fixture.py"),
+            concat!(
+                "import json, os, stat, sys\n",
+                "request = json.loads(sys.stdin.read())\n",
+                "assert request['operation'] == 'download'\n",
+                "assert 'LUCKYRAY_T47_PARENT_SENTINEL' not in os.environ\n",
+                "assert 'PATH' not in os.environ and 'SystemRoot' not in os.environ\n",
+                "temp = os.environ['TMPDIR']\n",
+                "assert os.path.basename(temp).startswith('.runtime-')\n",
+                "for key in ('HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME'):\n",
+                "    assert os.environ[key] == temp, key\n",
+                "assert os.environ['DENO_DIR'] == os.path.join(temp, 'deno-cache')\n",
+                "cookie = os.environ['LUCKYRAY_MEDIA_COOKIE_FILE']\n",
+                "assert os.path.dirname(cookie) == temp\n",
+                "assert stat.S_IMODE(os.stat(cookie).st_mode) == 0o600\n",
+                "with open(os.environ['LUCKYRAY_MEDIA_OUTPUT'], 'wb') as stream:\n",
+                "    stream.write(b'\\x00\\x00\\x00\\x18ftypisom\\x00\\x00\\x00\\x00isommp42\\x00\\x00\\x00\\x10mdatscrubbed')\n",
+            ),
+        )
+        .unwrap();
+        let request = MediaTransferRequest {
+            url: "https://www.bilibili.com/video/BV1xx411c7mD".into(),
+            audio_url: None,
+            file_name: "scrubbed.mp4".into(),
+            mime_type: None,
+            source_page_url: None,
+            target_folder_id: None,
+            new_folder_name: None,
+            parent_folder_id: None,
+            site_auth: Some(MediaSiteAuth {
+                cookies: vec![MediaSiteCookie {
+                    name: "SESSDATA".into(),
+                    value: "fixture-session".into(),
+                    domain: ".bilibili.com".into(),
+                    path: "/".into(),
+                    expires: 2_000_000_000,
+                    secure: true,
+                    http_only: true,
+                }],
+                user_agent: "Mozilla/5.0".into(),
+                referer: "https://www.bilibili.com/".into(),
+            }),
+        };
+        let resolver =
+            ExternalMediaResolver::for_test(fixture_python(&root), engine_root.clone(), "env_fixture.py");
+        let output = root.join("scrubbed.part");
+        let mut progress = |_: u64, _: Option<u64>| {};
+        let result = resolver.transfer(
+            &request, None, &output, &AtomicBool::new(false), &test_limits(), &mut progress,
+        );
+        assert!(result.is_ok(), "scrubbed resolver failed");
+        assert_eq!(std::fs::read(&output).unwrap(), fixture_mp4(b"scrubbed"));
+        // The per-run temp (and the cookie file in it) is gone afterwards.
+        assert!(!root.join(".runtime-scrubbed_part").exists());
+
+        // A symlinked interpreter is refused before any child code runs.
+        let link = root.join("python-link");
+        std::os::unix::fs::symlink(fixture_python(&root), &link).unwrap();
+        let refused = ExternalMediaResolver::for_test(link, engine_root, "env_fixture.py");
+        let error = match refused.transfer(
+            &request, None, &root.join("refused.part"), &AtomicBool::new(false),
+            &test_limits(), &mut progress,
+        ) {
+            Ok(_) => panic!("a symlinked runtime must be refused"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "media-resolver-unavailable");
+        assert!(!root.join("refused.part").exists());
+        std::env::remove_var("LUCKYRAY_T47_PARENT_SENTINEL");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
     #[test]
     fn external_resolver_hands_a_validated_track_pair_to_the_app_owned_runner() {
         let root = temp_root();
@@ -3884,9 +4038,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let python = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("media-engine")
-            .join("python.exe");
+        let python = fixture_python(&root);
         let resolver = ExternalMediaResolver::for_test(python, engine_root, "pair_fixture.py");
         let output = root.join("pair.part");
         let request = MediaTransferRequest {
@@ -3917,7 +4069,7 @@ mod tests {
         assert!(output.is_file());
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
     #[test]
     fn external_resolver_projects_only_a_fixed_child_failure_code() {
         let root = temp_root();
@@ -3933,9 +4085,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let python = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("media-engine")
-            .join("python.exe");
+        let python = fixture_python(&root);
         let resolver = ExternalMediaResolver::for_test(python, engine_root, "failure_fixture.py");
         let request = MediaTransferRequest {
             url: "https://www.bilibili.com/video/BV1xx411c7mD".into(),
@@ -3964,7 +4114,7 @@ mod tests {
         assert!(!format!("{error:?}").contains("PRIVATE"));
     }
 
-    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
     #[test]
     fn public_external_resolver_receives_target_on_stdin_and_imports_verified_output() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3991,9 +4141,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let python = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("media-engine")
-            .join("python.exe");
+        let python = fixture_python(&root);
         assert!(python.is_file(), "app-owned test Python is missing");
         let resolver = ExternalMediaResolver::for_test(python, engine_root, "fixture.py");
         let catalog = MaterialCatalog::new_for_test_at(&root);
