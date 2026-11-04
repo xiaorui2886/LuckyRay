@@ -43,6 +43,7 @@ jobs:
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/lgpl-bundle-check" && mkdir "$RUNNER_TEMP/lgpl-bundle-check"
           tar -C "$RUNNER_TEMP/lgpl-bundle-check" -xf "$RUNNER_TEMP/lgpl-media-bundle.tar"
+          python3 luckyray-app/tools/linux-media-bundle/test_bundle_pins.py
           python3 luckyray-app/tools/linux-media-bundle/bundle.py verify "$RUNNER_TEMP/lgpl-bundle-check"
           python3 luckyray-app/tools/linux-media-bundle/bundle.py pins "$RUNNER_TEMP/lgpl-bundle-check"
       - name: Keep the bundle as a short-lived CI-only artifact

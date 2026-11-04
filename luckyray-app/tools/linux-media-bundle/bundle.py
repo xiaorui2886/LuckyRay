@@ -7,7 +7,7 @@
   bundle.py pins     <bundle-dir>      # KEY=VALUE lines for the app build
 Standard library only.
 """
-import hashlib, json, os, shutil, stat, sys, urllib.request
+import hashlib, json, os, re, shlex, shutil, stat, sys, urllib.request
 
 MANIFEST = "bundle-manifest.json"
 LIBMPV = "native-video/libmpv.so.2"   # = linux_mpv::LIBRARY_RELATIVE
@@ -149,16 +149,33 @@ def verify(root):
     for bad in ("--enable-gpl", "--enable-nonfree", "--enable-version3"):
         if bad in conf:
             fail(f"ffmpeg built with {bad}")
-    print(f"bundle ok: {len(declared)} files")
+    # Status goes to stderr: `pins` stdout is eval'd by CI and must hold
+    # only shell assignments.
+    print(f"bundle ok: {len(declared)} files", file=sys.stderr)
     return m
+
+
+PIN_LINE = re.compile(r"^[A-Z][A-Z0-9_]*=[A-Za-z0-9_./:@%+=,-]+$")
+
+
+def pin_lines(m, manifest_sha):
+    f = {e["path"]: e for e in m["files"]}
+    pairs = [
+        ("LUCKYRAY_LINUX_LIBMPV_SHA256", f[LIBMPV]["sha256"]),
+        ("LUCKYRAY_LINUX_LIBMPV_SIZE", f[LIBMPV]["size"]),
+        ("LUCKYRAY_LINUX_MEDIA_BUNDLE_MANIFEST_SHA256", manifest_sha),
+    ]
+    lines = [f"{k}={shlex.quote(str(v))}" for k, v in pairs]
+    for line in lines:
+        if not PIN_LINE.match(line):
+            fail("pin value is not a plain shell assignment")
+    return lines
 
 
 def pins(root):
     m = verify(root)
-    f = {e["path"]: e for e in m["files"]}
-    print(f"LUCKYRAY_LINUX_LIBMPV_SHA256={f[LIBMPV]['sha256']}")
-    print(f"LUCKYRAY_LINUX_LIBMPV_SIZE={f[LIBMPV]['size']}")
-    print(f"LUCKYRAY_LINUX_MEDIA_BUNDLE_MANIFEST_SHA256={sha256(os.path.join(root, MANIFEST))}")
+    for line in pin_lines(m, sha256(os.path.join(root, MANIFEST))):
+        print(line)
 
 
 if __name__ == "__main__":
