@@ -776,17 +776,17 @@ mod tests {
     fn fresh_schema_reaches_v19_and_restart_is_idempotent() {
         let root = temp_app_data("fresh");
         let first = BackendServices::initialize(&root).unwrap();
-        assert_eq!(first.status().schema_version, 19);
+        assert_eq!(first.status().schema_version, crate::backend::SCHEMA_VERSION);
         drop(first);
         let second = BackendServices::initialize(&root).unwrap();
-        assert_eq!(second.status().schema_version, 19);
+        assert_eq!(second.status().schema_version, crate::backend::SCHEMA_VERSION);
         let db = Connection::open(second.db_path()).unwrap();
         assert_eq!(
             db.query_row("SELECT COUNT(*) FROM backend_schema_migration", [], |row| {
                 row.get::<_, i64>(0)
             })
             .unwrap(),
-            19
+            i64::from(crate::backend::SCHEMA_VERSION)
         );
         drop(db);
         drop(second);
@@ -807,7 +807,7 @@ mod tests {
         drop(first);
 
         let upgraded = BackendServices::initialize(&root).unwrap();
-        assert_eq!(upgraded.status().schema_version, 19);
+        assert_eq!(upgraded.status().schema_version, crate::backend::SCHEMA_VERSION);
         let db = Connection::open(upgraded.db_path()).unwrap();
         assert_eq!(
             db.query_row(
@@ -886,7 +886,7 @@ mod tests {
             .unwrap(),
             "agent-composer-turn-ux-v2"
         );
-        assert_eq!(upgraded.status().schema_version, 19);
+        assert_eq!(upgraded.status().schema_version, crate::backend::SCHEMA_VERSION);
         drop(db);
         drop(upgraded);
         std::fs::remove_dir_all(root).unwrap();
@@ -979,10 +979,10 @@ mod tests {
         std::fs::copy(source, root.join("luckyray.db")).unwrap();
         let before = std::fs::metadata(root.join("luckyray.db")).unwrap().len();
         let first = BackendServices::initialize(&root).unwrap();
-        assert_eq!(first.status().schema_version, 19);
+        assert_eq!(first.status().schema_version, crate::backend::SCHEMA_VERSION);
         drop(first);
         let second = BackendServices::initialize(&root).unwrap();
-        assert_eq!(second.status().schema_version, 19);
+        assert_eq!(second.status().schema_version, crate::backend::SCHEMA_VERSION);
         let db = Connection::open(second.db_path()).unwrap();
         assert_eq!(
             db.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
