@@ -21,7 +21,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hash = format!("{:x}", Sha256::digest(&bytes));
         if identity["installerSha256"] != hash || identity["version"] != version || !bytes.starts_with(b"MZ") { return Err("fixture-package-identity-invalid".into()); }
         let signature = signatures["signature"].as_str().ok_or("fixture-signature-missing")?;
-        verification::verify_package(&bytes, signature, key, version)?;
+        verification::verify_package(&bytes, signature, key, version,
+            &verification::WINDOWS_PROFILE)?;
         let mut wrong_key_rejected = None;
         if label == "B" {
             let wrong = signatures["wrongSignature"].as_str().ok_or("fixture-wrong-signature-missing")?;
@@ -33,12 +34,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let key_packet = STANDARD.decode(key_text.lines().nth(1).ok_or("public-key-line-missing")?)?;
             let wrong_packet = STANDARD.decode(wrong_text.lines().nth(1).ok_or("signature-line-missing")?)?;
             if key_packet.get(2..10) == wrong_packet.get(2..10) { return Err("fixture-wrong-key-not-distinct".into()); }
-            if verification::verify_package(&bytes, wrong, key, version) != Err("update-signature-invalid") { return Err("wrong-key-not-rejected".into()); }
+            if verification::verify_package(&bytes, wrong, key, version, &verification::WINDOWS_PROFILE) != Err("update-signature-invalid") { return Err("wrong-key-not-rejected".into()); }
             wrong_key_rejected = Some(true);
-            if verification::verify_package(&bytes, signature, key, "0.0.101") != Err("update-signed-version-mismatch") { return Err("signed-version-not-bound".into()); }
+            if verification::verify_package(&bytes, signature, key, "0.0.101", &verification::WINDOWS_PROFILE) != Err("update-signed-version-mismatch") { return Err("signed-version-not-bound".into()); }
         }
         bytes[100] ^= 1; // Memory-only tamper; canonical package is never rewritten.
-        if verification::verify_package(&bytes, signature, key, version) != Err("update-signature-invalid") { return Err("tamper-not-rejected".into()); }
+        if verification::verify_package(&bytes, signature, key, version, &verification::WINDOWS_PROFILE) != Err("update-signature-invalid") { return Err("tamper-not-rejected".into()); }
         rows.push(serde_json::json!({"version":version,"bytes":bytes.len(),"sha256":hash,"correctSignature":true,"tamperRejected":true,"wrongKeyRejected":wrong_key_rejected}));
     }
     println!("{}", serde_json::json!({"passed":true,"testOnly":true,"productionTrustChanged":false,"installedAcceptance":false,"packages":rows}));

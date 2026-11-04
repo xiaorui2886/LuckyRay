@@ -24,7 +24,7 @@ mod store;
         assert_eq!(verify_package(b"MZ tampered",&sig,&key,"2.0.0",&super::super::verification::WINDOWS_PROFILE),Err("update-signature-invalid"));
         assert_eq!(verify_package(bytes,&sig,&key,"2.0.1",&super::super::verification::WINDOWS_PROFILE),Err("update-signed-version-mismatch"));
         let altered=STANDARD.encode(signature.to_string().replace("LuckyRay_2.0.0_x64-setup.exe","LuckyRay_2.0.1_x64-setup.exe"));
-        assert_eq!(verify_package(bytes,&altered,&key,"2.0.1"),Err("update-signature-invalid"));
+        assert_eq!(verify_package(bytes,&altered,&key,"2.0.1",&super::super::verification::WINDOWS_PROFILE),Err("update-signature-invalid"));
     }
     #[test]fn the_linux_profile_signs_and_verifies_its_own_appimage_asset(){
         // In-memory test keys only; the Linux profile binds the AppImage asset
