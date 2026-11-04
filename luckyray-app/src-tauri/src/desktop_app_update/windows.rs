@@ -163,6 +163,7 @@ impl Service {
                 &update.signature,
                 &self.trust.public_key,
                 &update.version,
+                &super::verification::WINDOWS_PROFILE,
             )?;
             let mut d = self.data.lock().map_err(|_| "update-state-unavailable")?;
             if d.machine.verified(ticket) {
@@ -225,7 +226,8 @@ impl Service {
         let mut attempted = false;
         let result = (|| {
             let bytes = match memory_bytes { Some(bytes) => bytes, None => self.store.package()? };
-            verify_package(&bytes, &update.signature, &self.trust.public_key, &update.version)?;
+            verify_package(&bytes, &update.signature, &self.trust.public_key, &update.version,
+                &super::verification::WINDOWS_PROFILE)?;
             feed::confirm_release(&update, tauri::async_runtime::block_on(fetch_update(app, || false)))?;
             crate::quit_for_desktop_update(app, |reserved_probe| {
                 self.ownership.as_ref().ok_or("update-ownership-unknown")?.admit_for_restart(reserved_probe)?;
@@ -267,7 +269,7 @@ async fn fetch_update(
         |_, _| Ok(()),
     )
     .await?;
-    feed::parse(&bytes, &app.package_info().version.to_string())
+    feed::parse(&bytes, &app.package_info().version.to_string(), &super::verification::WINDOWS_PROFILE)
 }
 
 /// Called in setup BEFORE backend, transport, DSH or gateway construction.
@@ -392,6 +394,7 @@ fn bootstrap(app: &tauri::AppHandle, service: &Service) -> Result<(), &'static s
         &intent.signature,
         &service.trust.public_key,
         &intent.version,
+        &super::verification::WINDOWS_PROFILE,
     )?;
     feed::confirm_release(&Candidate {
         version: intent.version, url: intent.url, signature: intent.signature,

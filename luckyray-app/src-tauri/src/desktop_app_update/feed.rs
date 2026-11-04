@@ -1,5 +1,5 @@
 //! Public stable-channel manifest. The document itself never authorizes execution.
-use super::verification::{admit_version, official_artifact};
+use super::verification::{admit_version, asset_name, official_artifact, PlatformProfile, WINDOWS_PROFILE};
 use serde::Deserialize;
 pub(crate) const MANIFEST: &str =
     "https://github.com/xiaorui2886/LuckyRay/releases/latest/download/latest.json";
@@ -33,7 +33,11 @@ struct Manifest {
     version: String,
     platforms: std::collections::BTreeMap<String, Platform>,
 }
-pub(crate) fn parse(bytes: &[u8], installed: &str) -> Result<Option<Candidate>, &'static str> {
+pub(crate) fn parse(
+    bytes: &[u8],
+    installed: &str,
+    profile: &PlatformProfile,
+) -> Result<Option<Candidate>, &'static str> {
     if bytes.len() > MAX_MANIFEST_BYTES {
         return Err("update-manifest-too-large");
     }
@@ -47,9 +51,9 @@ pub(crate) fn parse(bytes: &[u8], installed: &str) -> Result<Option<Candidate>, 
     admit_version(installed, &manifest.version)?;
     let platform = manifest
         .platforms
-        .get("windows-x86_64-nsis")
+        .get(profile.manifest_key)
         .ok_or("update-platform-unavailable")?;
-    official_artifact(&manifest.version, &platform.url)?;
+    official_artifact(&manifest.version, &platform.url, profile)?;
     if platform.signature.is_empty() || platform.signature.len() > 16384 {
         return Err("update-signature-invalid");
     }
@@ -176,9 +180,9 @@ mod tests {
     #[test]
     fn exact_stable_channel() {
         let url="https://github.com/xiaorui2886/LuckyRay/releases/download/v2.0.0/LuckyRay_2.0.0_x64-setup.exe";
-        assert!(parse(&fixture("2.0.0", url), "1.0.0").unwrap().is_some());
-        assert!(parse(&fixture("2.0.0", url), "2.0.0").unwrap().is_none());
-        assert!(parse(&fixture("2.0.0", url), "3.0.0").unwrap().is_none());
+        assert!(parse(&fixture("2.0.0", url), "1.0.0", &WINDOWS_PROFILE).unwrap().is_some());
+        assert!(parse(&fixture("2.0.0", url), "2.0.0", &WINDOWS_PROFILE).unwrap().is_none());
+        assert!(parse(&fixture("2.0.0", url), "3.0.0", &WINDOWS_PROFILE).unwrap().is_none());
         assert!(parse(&fixture("2.0.0-rc.1", url), "1.0.0").is_err());
         assert!(parse(&fixture("2.0.0", "https://example.com/app.exe"), "1.0.0").is_err());
     }

@@ -18,9 +18,36 @@ pub(crate) fn admit_version(installed: &str, candidate: &str) -> Result<(), &'st
     }
     Ok(())
 }
-pub(crate) fn official_artifact(version: &str, url: &str) -> Result<(), &'static str> {
+/// Per-platform release identity. The Windows entry is the shipped v1.9.9
+/// behaviour byte for byte; the Linux entry mirrors it for the AppImage slice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlatformProfile {
+    /// Key inside the updater manifest's `platforms` map.
+    pub(crate) manifest_key: &'static str,
+    /// Canonical artifact filename; `{version}` is substituted. It is also the
+    /// trusted-comment binding inside the minisign signature.
+    pub(crate) asset: &'static str,
+}
+
+pub(crate) const WINDOWS_PROFILE: PlatformProfile =
+    PlatformProfile { manifest_key: "windows-x86_64-nsis", asset: "LuckyRay_{version}_x64-setup.exe" };
+pub(crate) const LINUX_PROFILE: PlatformProfile =
+    PlatformProfile { manifest_key: "linux-x86_64-appimage", asset: "LuckyRay_{version}_amd64.AppImage" };
+
+pub(crate) fn asset_name(profile: &PlatformProfile, version: &str) -> String {
+    profile.asset.replace("{version}", version)
+}
+
+pub(crate) fn official_artifact(
+    version: &str,
+    url: &str,
+    profile: &PlatformProfile,
+) -> Result<(), &'static str> {
     stable_version(version)?;
-    let expected=format!("https://github.com/xiaorui2886/LuckyRay/releases/download/v{version}/LuckyRay_{version}_x64-setup.exe");
+    let expected=format!(
+        "https://github.com/xiaorui2886/LuckyRay/releases/download/v{version}/{}",
+        asset_name(profile, version)
+    );
     if url != expected {
         return Err("update-artifact-url-invalid");
     }
@@ -40,6 +67,7 @@ pub(crate) fn verify_package(
     signature: &str,
     public_key: &str,
     version: &str,
+    profile: &PlatformProfile,
 ) -> Result<(), &'static str> {
     stable_version(version)?;
     if bytes.is_empty() || bytes.len() > MAX_PACKAGE_BYTES {
@@ -62,7 +90,7 @@ pub(crate) fn verify_package(
     }
     // Official Tauri CLI 2.11.2 signs timestamp + file in the trusted comment.
     // Binding the complete canonical filename binds version and platform without a custom signer.
-    if fields[0] != format!("LuckyRay_{version}_x64-setup.exe") {
+    if fields[0] != asset_name(profile, version) {
         return Err("update-signed-version-mismatch");
     }
     Ok(())
@@ -81,7 +109,7 @@ mod tests {
     #[test]
     fn canonical_official_asset_only() {
         let good="https://github.com/xiaorui2886/LuckyRay/releases/download/v1.0.1/LuckyRay_1.0.1_x64-setup.exe";
-        assert!(official_artifact("1.0.1", good).is_ok());
+        assert!(official_artifact("1.0.1", good, &WINDOWS_PROFILE).is_ok());
         for bad in [
             format!("{good}?token=x"),
             good.replace("https:", "http:"),
@@ -89,13 +117,49 @@ mod tests {
             good.replace("x64", "arm64"),
             good.replace("github.com", "github.com.evil.example"),
         ] {
-            assert!(official_artifact("1.0.1", &bad).is_err());
+            assert!(official_artifact("1.0.1", &bad, &WINDOWS_PROFILE).is_err());
+        }
+    }
+
+    #[test]
+    fn the_windows_profile_is_the_shipped_v1_9_9_identity() {
+        // Byte-for-byte: manifest key, artifact name and the signed comment.
+        assert_eq!(WINDOWS_PROFILE.manifest_key, "windows-x86_64-nsis");
+        assert_eq!(asset_name(&WINDOWS_PROFILE, "1.9.9"), "LuckyRay_1.9.9_x64-setup.exe");
+        let good="https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.9/LuckyRay_1.9.9_x64-setup.exe";
+        assert!(official_artifact("1.9.9", good, &WINDOWS_PROFILE).is_ok());
+        // The Linux profile mirrors the same mechanism for its own asset and
+        // never accepts the Windows installer.
+        assert_eq!(LINUX_PROFILE.manifest_key, "linux-x86_64-appimage");
+        assert_eq!(asset_name(&LINUX_PROFILE, "1.9.9"), "LuckyRay_1.9.9_amd64.AppImage");
+        let linux="https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.9/LuckyRay_1.9.9_amd64.AppImage";
+        assert!(official_artifact("1.9.9", linux, &LINUX_PROFILE).is_ok());
+        assert!(official_artifact("1.9.9", good, &LINUX_PROFILE).is_err());
+        assert!(official_artifact("1.9.9", linux, &WINDOWS_PROFILE).is_err());
+    }
+
+    #[test]
+    fn linux_profile_rejects_the_tamper_matrix_too() {
+        let good="https://github.com/xiaorui2886/LuckyRay/releases/download/v1.0.1/LuckyRay_1.0.1_amd64.AppImage";
+        assert!(official_artifact("1.0.1", good, &LINUX_PROFILE).is_ok());
+        for bad in [
+            format!("{good}?token=x"),
+            good.replace("https:", "http:"),
+            good.replace("amd64", "arm64"),
+            good.replace(".AppImage", ".deb"),
+            good.replace("github.com", "github.com.evil.example"),
+        ] {
+            assert!(official_artifact("1.0.1", &bad, &LINUX_PROFILE).is_err());
         }
     }
     #[test]
     fn absent_or_malformed_trust_never_verifies() {
-        assert!(verify_package(b"exe", "", "", "1.0.1").is_err());
-        assert!(verify_package(b"", "AAAA", "AAAA", "1.0.1").is_err());
-        assert!(verify_package(b"exe", &"A".repeat(16385), "AAAA", "1.0.1").is_err());
+        // The profile cannot rescue absent or malformed trust material.
+        assert!(verify_package(b"exe", "", "", "1.0.1", &WINDOWS_PROFILE).is_err());
+        assert!(verify_package(b"", "AAAA", "AAAA", "1.0.1", &WINDOWS_PROFILE).is_err());
+        assert!(verify_package(b"exe", &"A".repeat(16385), "AAAA", "1.0.1", &WINDOWS_PROFILE).is_err());
+        assert!(verify_package(b"exe", "", "", "1.0.1", &LINUX_PROFILE).is_err());
+        assert!(verify_package(b"", "AAAA", "AAAA", "1.0.1", &LINUX_PROFILE).is_err());
+        assert!(verify_package(b"exe", &"A".repeat(16385), "AAAA", "1.0.1", &LINUX_PROFILE).is_err());
     }
 }
