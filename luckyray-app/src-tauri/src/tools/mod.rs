@@ -6116,8 +6116,9 @@ mod tests {
         assert!(switched_text.contains("other vault fact"));
         assert!(!switched_text.contains("current vault cross-conversation fact"));
 
-        let no_vault_backend =
-            BackendServices::initialize(temp_dir("memory-list-no-vault")).unwrap();
+        let no_vault_app_data = temp_dir("memory-list-no-vault");
+        crate::test_support::make_private(&no_vault_app_data);
+        let no_vault_backend = BackendServices::initialize(&no_vault_app_data).unwrap();
         no_vault_backend
             .memory()
             .create(crate::agent_memory::MemoryCreateInput {
