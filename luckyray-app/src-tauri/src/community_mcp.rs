@@ -305,7 +305,18 @@ fn start_runtime(
     let dir = payload(p, s)?;
     package::verify(&dir, s.version.as_deref().unwrap())?;
     let names = package::profile();
-    let (ok, _, _) = process::run(
+    // Linux: the sealed pairing lives only in the Secret Service. It reaches
+    // the plugin on stdin for `--check` and in the tunnel's environment for
+    // the server (tunnel-client v0.0.16 starts the stdio MCP command with the
+    // inherited environment); server.mjs removes it at startup. Windows keeps
+    // the DPAPI file path in connection.json instead.
+    #[cfg(target_os = "linux")]
+    let mut pair = linux_pair_handoff(p)?;
+    #[cfg(target_os = "linux")]
+    let check_input = Some(pair.as_bytes());
+    #[cfg(not(target_os = "linux"))]
+    let check_input = None;
+    let checked = process::run(
         &dir.join(names.node),
         &[
             dir.join("packages/community-mcp/src/server.mjs")
@@ -315,15 +326,34 @@ fn start_runtime(
             p.connection.to_string_lossy().into_owned(),
             "--check".into(),
         ],
-        None,
+        check_input,
         35,
-    )?;
+    );
+    let ok = match checked {
+        Ok((ok, _, _)) => ok,
+        Err(e) => {
+            #[cfg(target_os = "linux")]
+            pair.zeroize();
+            return Err(e);
+        }
+    };
     if !ok {
+        #[cfg(target_os = "linux")]
+        pair.zeroize();
         return Err("desktop-binding-check-failed".into());
     }
-    let mut key = secret(p, "read", "tunnel-key", None)?;
+    let mut key = match secret(p, "read", "tunnel-key", None) {
+        Ok(key) => key,
+        Err(e) => {
+            #[cfg(target_os = "linux")]
+            pair.zeroize();
+            return Err(e);
+        }
+    };
     if key.is_empty() || key.len() > 4096 || key.chars().any(char::is_control) {
         key.zeroize();
+        #[cfg(target_os = "linux")]
+        pair.zeroize();
         return Err("tunnel-key-invalid".into());
     }
     for f in [&p.health, &p.activity] {
@@ -370,11 +400,18 @@ fn start_runtime(
         Ok(env) => env,
         Err(e) => {
             key.zeroize();
+            #[cfg(target_os = "linux")]
+            pair.zeroize();
             return Err(e);
         }
     };
     env.insert("CONTROL_PLANE_API_KEY".into(), key.clone());
     key.zeroize();
+    #[cfg(target_os = "linux")]
+    {
+        env.insert(LINUX_PAIR_ENV.into(), pair.clone());
+        pair.zeroize();
+    }
     r.child = Some(process::spawn(
         &dir.join(names.tunnel),
         &args,
@@ -386,6 +423,23 @@ fn start_runtime(
     r.started = Some(Instant::now());
     r.desktop_ready = true;
     Ok(())
+}
+/// Name shared with `packages/community-mcp/src/server.mjs`. Deliberately
+/// outside every prefix tunnel-client copies into its support log export
+/// (`ADMIN_UI_`, `CLOUDFLARED_`, `CONTROL_PLANE_`, `HARPOON_`, `LOG_`, `MCP_`,
+/// `OPENAI_TUNNEL_`, `TUNNEL_`).
+#[cfg(target_os = "linux")]
+const LINUX_PAIR_ENV: &str = "LUCKYRAY_LIBRARY_PAIR";
+/// Read the sealed pairing from the keyring with the plugin's own bounds
+/// (non-empty, at most 16 KiB, no NUL so it can travel in the environment).
+#[cfg(target_os = "linux")]
+fn linux_pair_handoff(p: &Paths) -> Result<String, String> {
+    let mut pair = secret(p, "read", "credential", None)?;
+    if pair.is_empty() || pair.len() > 16384 || pair.contains('\0') {
+        pair.zeroize();
+        return Err("authorization-unavailable".into());
+    }
+    Ok(pair)
 }
 /// Narrow environment for the tunnel and its Node MCP child.
 #[cfg(not(target_os = "linux"))]
@@ -617,10 +671,11 @@ fn act(app: &tauri::AppHandle, input: ActionInput) -> Result<(), String> {
     let transport = app.state::<crate::local_transport::LocalTransportHandle>();
     match input.action.as_str() {
         "authorize" => {
-            // Linux has no plugin package that could consume the credential, so
-            // pairing refuses before it creates a grant or stores a secret.
-            // Options for the handoff are listed in tasks/T20-result.md; this
-            // task must not pick a weaker one on its own.
+            // The credential handoff exists (keyring -> stdin/env, T42b), but the
+            // plugin still cannot find the desktop on Linux: materials-mcp
+            // `inventory()` is Windows-only and an AppImage's executable path
+            // changes every launch. Refuse before creating a grant or a secret
+            // so no pairing exists that can never connect.
             #[cfg(target_os = "linux")]
             return Err("plugin-platform-unsupported".into());
             #[allow(unreachable_code)]
@@ -664,7 +719,13 @@ fn act(app: &tauri::AppHandle, input: ActionInput) -> Result<(), String> {
                 pair.as_object_mut()
                     .ok_or("pairing-invalid")?
                     .remove("credential");
-                pair["credentialFile"] = json!(p.secret.join("credential.dpapi").to_string_lossy());
+                // Linux: a binding label only (validated as an absolute path by
+                // the plugin); no file is ever created there.
+                #[cfg(target_os = "linux")]
+                let label = "credential.keyring";
+                #[cfg(not(target_os = "linux"))]
+                let label = "credential.dpapi";
+                pair["credentialFile"] = json!(p.secret.join(label).to_string_lossy());
                 package::write_json(&p.connection, &pair)?;
                 s.binding = Some(Binding {
                     client_id: id.clone(),

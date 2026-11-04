@@ -2171,6 +2171,24 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('"process-inventory-unavailable"', process)
         self.assertIn('"tunnel-client-runtime-cloudflared",', process)
 
+    def test_community_mcp_linux_pair_handoff_never_touches_disk(self):
+        # T42b: the sealed pairing goes keyring -> stdin (--check) / tunnel env
+        # (server); pairing itself stays refused until Linux discovery exists.
+        gateway = self.read("community_mcp.rs")
+        self.assertIn('const LINUX_PAIR_ENV: &str = "LUCKYRAY_LIBRARY_PAIR";', gateway)
+        self.assertIn('let mut pair = secret(p, "read", "credential", None)?;', gateway)
+        self.assertIn("let check_input = Some(pair.as_bytes());", gateway)
+        self.assertIn("env.insert(LINUX_PAIR_ENV.into(), pair.clone());\n        pair.zeroize();", gateway)
+        self.assertIn('let label = "credential.keyring";', gateway)
+        self.assertIn('let label = "credential.dpapi";', gateway)
+        self.assertIn('return Err("plugin-platform-unsupported".into());', gateway)
+        server = (Path(__file__).resolve().parents[1] / "packages/community-mcp/src/server.mjs").read_text()
+        self.assertIn('export const LINUX_PAIR_ENV = "LUCKYRAY_LIBRARY_PAIR";', server)
+        self.assertIn('process.platform === "linux" ? takeLinuxPair(process.env) : undefined;', server)
+        self.assertLess(server.index("takeLinuxPair(process.env)"), server.index("async function main()"))
+        for bad in ("writeFile(pair", "credential.keyring"):
+            self.assertNotIn(bad, server)
+
     def test_companion_keyring_uses_the_secret_service_without_touching_windows(self):
         # T19: the Linux identity store is backed by the freedesktop Secret
         # Service through keyring v3 with the pure-Rust backend, never by a
