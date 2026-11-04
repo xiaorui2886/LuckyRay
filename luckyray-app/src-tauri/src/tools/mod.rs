@@ -6577,9 +6577,19 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.len(), 7);
         assert!(first.windows(2).all(|pair| pair[0].id < pair[1].id));
-        assert!(first
-            .iter()
-            .all(|tool| tool.input_schema["additionalProperties"] == Value::Bool(false)));
+        // Every input schema is closed: either the object itself forbids
+        // extra properties, or it is an exact-one `oneOf` whose every branch
+        // is a closed object (the document identity/mutation schemas).
+        let closed = |schema: &Value| schema["additionalProperties"] == Value::Bool(false);
+        assert!(first.iter().all(|tool| {
+            closed(&tool.input_schema)
+                || tool.input_schema["oneOf"].as_array().is_some_and(|branches| {
+                    !branches.is_empty()
+                        && branches
+                            .iter()
+                            .all(|branch| branch["type"] == "object" && closed(branch))
+                })
+        }));
     }
 
     #[test]
