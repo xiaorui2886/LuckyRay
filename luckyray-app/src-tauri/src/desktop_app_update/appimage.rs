@@ -9,20 +9,16 @@
 //! formats, APPIMAGE absent) keeps the notice-only behaviour.
 
 use super::verification::{verify_package, LINUX_PROFILE};
-use libc;
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
 /// Re-usable primitives, identical to the probe crate
 /// `/workspace/linux-port/probes/appimage-self-replace` (T35).
+/// Target validation failure. Staging/publish failures are reported directly
+/// as stable error codes by `replace_target`.
 pub(crate) enum ReplaceFailure {
     TargetInvalid,
-    TargetChanged,
-    TemporaryExists,
-    CopyFailed,
-    StagedVerificationFailed,
-    PublishFailed,
 }
 
 fn user_uid() -> u32 {
@@ -30,7 +26,7 @@ fn user_uid() -> u32 {
 }
 
 fn validate_target(path: &std::path::Path, current_uid: u32) -> Result<(), ReplaceFailure> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::fs::PermissionsExt;
     if !path.is_absolute() {
         return Err(ReplaceFailure::TargetInvalid);
     }
