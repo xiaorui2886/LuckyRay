@@ -2164,7 +2164,8 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
             "-- material_native_video::linux_ --include-ignored",
-            'grep -qx "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured;',
+            'grep -qx "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured;',
+            'timeout 900 xvfb-run -a -s "-screen 0 640x480x24 -nolisten tcp" \\',
             "LUCKYRAY_LIVE_CLIP: ${{ runner.temp }}/luckyray-linux-runtime-work/private/t49-testsrc.mp4",
             "-f lavfi -i testsrc=size=64x48:rate=10",
             "LUCKYRAY_LIVE_LIBMPV: /usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0",
@@ -2191,7 +2192,17 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('#[cfg(target_os = "linux")]\nmod linux_surface;', module)
         # Production can only mint the render token through the license gate.
         self.assertIn("self.hardened(true).map(|()| Licensed(()))", source)
-        self.assertEqual(source.count("Licensed(())"), 3)
+        self.assertEqual(source.count("Licensed(())"), 4)
+        self.assertIn("self.hardened_mode(true, true).map(|()| Licensed(()))", source)
+        self.assertIn('#[cfg(target_os = "linux")]\nmod linux_overlay;', module)
+        self.assertIn('#[cfg(target_os = "linux")]\nmod linux_player;', module)
+        self.assertIn("linux_player::shutdown();", module)
+        self.assertIn("sudo apt-get install -y --no-install-recommends xvfb=2:21.1.4-2ubuntu1.7~22.04.16", deps)
+        player = (root / "luckyray-app/src-tauri/src/material_native_video/linux_player.rs").read_text()
+        # Runtime is verified and loaded before the WebView is touched.
+        self.assertLess(player.index("Player::load(&library_path(app)?, linux_mpv::production_pin()?)?"),
+                        player.index("Surface::create(caller, preview)?"))
+        self.assertIn("rx.recv_timeout(Duration::from_secs(2))", player)
         self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\nmod windows_player;', module)
 
     def test_media_resolver_step_runs_the_exact_linux_media_transfer_suite(self):

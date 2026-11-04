@@ -127,6 +127,11 @@ mod linux_mpv;
 // V3 (T49): Linux surface geometry, same rules as the Windows surface.
 #[cfg(target_os = "linux")]
 mod linux_surface;
+// V3 (T50): GTK overlay layer and the Linux worker (same requests/errors/shapes).
+#[cfg(target_os = "linux")]
+mod linux_overlay;
+#[cfg(target_os = "linux")]
+mod linux_player;
 // V1 (T45): metadata/thumbnail preview now runs on Linux with the verified
 // media-engine FFmpeg tools. mpv/surface_region/windows_player stay Windows-only
 // until V3. No Linux cfg change affects the Windows build or behaviour.
@@ -243,7 +248,15 @@ pub(crate) async fn material_native_video_command(
             if let Some(payload) = crate::linux_media_runtime::component_missing_error(&verified) {
                 return Err(payload);
             }
+            // Verified media engine: run the Linux worker. Its player load is
+            // pinned (refuses `native-video-runtime-unpinned` until V4).
+            return tauri::async_runtime::spawn_blocking(move || {
+                linux_player::request(caller, app, request)
+            })
+            .await
+            .map_err(|_| "native-video-worker-failed".to_string())?;
         }
+        #[allow(unreachable_code)]
         if matches!(request, Request::Capability) {
             Ok(serde_json::json!({"available":false}))
         } else {
@@ -255,6 +268,8 @@ pub(crate) async fn material_native_video_command(
 pub(crate) fn shutdown() {
     #[cfg(all(windows, feature = "browser-host-runtime"))]
     windows_player::shutdown();
+    #[cfg(target_os = "linux")]
+    linux_player::shutdown();
 }
 
 #[cfg(test)]

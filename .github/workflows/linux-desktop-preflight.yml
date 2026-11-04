@@ -71,6 +71,9 @@ jobs:
           # (runner only, never shipped; it is a GPL build and must be refused).
           sudo apt-get install -y --no-install-recommends libmpv1=0.34.1-1ubuntu3
           echo "20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d  /usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0" | sha256sum -c -
+          # T50: the pinned X server for the real-GTK video layer smoke (runner only).
+          sudo apt-get install -y --no-install-recommends xvfb=2:21.1.4-2ubuntu1.7~22.04.16
+          test "$(dpkg-query -W -f='${Version}' xvfb)" = "2:21.1.4-2ubuntu1.7~22.04.16"
           ffmpeg -version | sed -n '1p'
           ffprobe -version | sed -n '1p'
           sha256sum "$(command -v ffmpeg)" "$(command -v ffprobe)"
@@ -350,13 +353,16 @@ jobs:
           # T49: a 1 s synthetic testsrc clip from the pinned FFmpeg (no real media).
           ffmpeg -nostdin -loglevel error -f lavfi -i testsrc=size=64x48:rate=10 \
             -t 1 -pix_fmt yuv420p "$LUCKYRAY_LIVE_CLIP"
-          timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+          # T50: the GTK layer test runs on a private Xvfb display (xvfb-run -a).
+          timeout 900 xvfb-run -a -s "-screen 0 640x480x24 -nolisten tcp" \
+            rustup run 1.95.0 cargo test --locked --lib \
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml \
             -- material_native_video::linux_ --include-ignored \
             | tee "$WORK_ROOT/private/t48-media-player.log"
-          # Exactly the linux_mpv + linux_surface suites including both live tests.
-          grep -qx "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+          # Exactly linux_mpv + linux_surface + linux_player + linux_overlay,
+          # including both live libmpv tests and the real-GTK layer test.
+          grep -qx "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t48-media-player.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}

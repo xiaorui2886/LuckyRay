@@ -35,6 +35,86 @@ type RenderCreate = unsafe extern "C" fn(*mut *mut c_void, Handle, *mut RenderPa
 type RenderUpdate = unsafe extern "C" fn(*mut c_void) -> u64;
 type RenderRender = unsafe extern "C" fn(*mut c_void, *mut RenderParam) -> i32;
 type RenderFree = unsafe extern "C" fn(*mut c_void);
+type CommandRet = unsafe extern "C" fn(Handle, *const *const i8, *mut Node) -> i32;
+type FreeNode = unsafe extern "C" fn(*mut Node);
+#[repr(C)]
+union NodeValue {
+    string: *mut i8,
+    integer: i64,
+    number: f64,
+    list: *mut NodeList,
+    bytes: *mut ByteArray,
+}
+#[repr(C)]
+struct Node {
+    value: NodeValue,
+    format: i32,
+}
+#[repr(C)]
+struct NodeList {
+    count: i32,
+    values: *mut Node,
+    keys: *mut *mut i8,
+}
+#[repr(C)]
+struct ByteArray {
+    data: *mut u8,
+    size: usize,
+}
+struct OwnedNode {
+    node: Node,
+    free: FreeNode,
+}
+impl Drop for OwnedNode {
+    fn drop(&mut self) {
+        unsafe { (self.free)(&mut self.node) }
+    }
+}
+impl OwnedNode {
+    unsafe fn field(&self, key: &str) -> Result<&Node> {
+        if self.node.format != 8 || self.node.value.list.is_null() {
+            return Err("native-video-capture-map-invalid".into());
+        }
+        let list = &*self.node.value.list;
+        if !(1..=32).contains(&list.count) || list.values.is_null() || list.keys.is_null() {
+            return Err("native-video-capture-map-invalid".into());
+        }
+        for i in 0..list.count as usize {
+            let k = *list.keys.add(i);
+            if !k.is_null() && CStr::from_ptr(k).to_bytes() == key.as_bytes() {
+                return Ok(&*list.values.add(i));
+            }
+        }
+        Err("native-video-capture-field-missing".into())
+    }
+    unsafe fn integer(&self, key: &str) -> Result<i64> {
+        let n = self.field(key)?;
+        if n.format != 4 {
+            return Err("native-video-capture-integer-invalid".into());
+        }
+        Ok(n.value.integer)
+    }
+}
+/// Same shapes as Windows `mpv::Frame` / `mpv::Snapshot`.
+pub struct Frame {
+    pub time: f64,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+#[derive(Debug)]
+pub struct Snapshot {
+    pub time: f64,
+    pub duration: f64,
+    pub width: u32,
+    pub height: u32,
+    pub paused: bool,
+    pub seeking: bool,
+    pub ended: bool,
+    pub configured: bool,
+    pub avsync: Option<f64>,
+    pub hwdec: String,
+}
 #[repr(C)]
 pub struct RenderParam {
     kind: i32,
@@ -94,6 +174,10 @@ pub struct Player {
     render_update: RenderUpdate,
     render_render: RenderRender,
     render_free: RenderFree,
+    command_ret: CommandRet,
+    free_node: FreeNode,
+    /// Player-owned software render context (freed before the core).
+    render_ctx: std::cell::Cell<*mut c_void>,
     _library: Library,
 }
 /// Proof that `mpv_initialize` ran in render mode AND the LGPL gate passed.
@@ -102,6 +186,10 @@ pub struct Licensed(());
 impl Drop for Player {
     fn drop(&mut self) {
         unsafe {
+            let ctx = self.render_ctx.replace(std::ptr::null_mut());
+            if !ctx.is_null() {
+                (self.render_free)(ctx);
+            }
             (self.destroy)(self.handle);
         }
     }
@@ -198,13 +286,13 @@ impl Player {
             let render_update = symbol!("mpv_render_context_update", RenderUpdate);
             let render_render = symbol!("mpv_render_context_render", RenderRender);
             let render_free = symbol!("mpv_render_context_free", RenderFree);
-            let _ = symbol!("mpv_command_ret", *mut c_void);
-            let _ = symbol!("mpv_free_node_contents", *mut c_void);
+            let command_ret = symbol!("mpv_command_ret", CommandRet);
+            let free_node = symbol!("mpv_free_node_contents", FreeNode);
             let handle = create();
             if handle.is_null() {
                 return Err("native-video-create-failed".into());
             }
-            Ok(Self { handle, option, initialize, get, free, destroy, command, render_create, render_update, render_render, render_free, _library: library })
+            Ok(Self { handle, option, initialize, get, free, destroy, command, render_create, render_update, render_render, render_free, command_ret, free_node, render_ctx: std::cell::Cell::new(std::ptr::null_mut()), _library: library })
         }
     }
     fn option(&self, key: &str, value: &str) -> Result<()> {
@@ -225,6 +313,9 @@ impl Player {
         }
     }
     fn hardened(&self, render: bool) -> Result<()> {
+        self.hardened_mode(render, false)
+    }
+    fn hardened_mode(&self, render: bool, preview: bool) -> Result<()> {
         for (k, v) in [
             ("config", "no"),
             ("load-scripts", "no"),
@@ -251,6 +342,10 @@ impl Player {
         ] {
             self.option(k, v)?;
         }
+        if preview {
+            // Same bounded card preview filter as Windows.
+            self.option("vf", "lavfi=[scale=512:512:force_original_aspect_ratio=decrease,fps=15]")?;
+        }
         check(unsafe { (self.initialize)(self.handle) })?;
         if !self.property("mpv-configuration").contains("-Dgpl=false") {
             return Err("native-video-runtime-license-mode-invalid".into());
@@ -267,6 +362,10 @@ impl Player {
     pub fn initialize_render(&self) -> Result<Licensed> {
         self.hardened(true).map(|()| Licensed(()))
     }
+    /// Preview twin of Windows `initialize_preview` (silent, bounded).
+    pub fn initialize_render_preview(&self) -> Result<Licensed> {
+        self.hardened_mode(true, true).map(|()| Licensed(()))
+    }
     fn command(&self, args: &[&str]) -> Result<()> {
         let values: Vec<_> = args.iter().map(|v| c(v)).collect::<Result<_>>()?;
         let mut ptrs: Vec<_> = values.iter().map(|v| v.as_ptr()).collect();
@@ -281,48 +380,138 @@ impl Player {
         self.command(&["loadfile", &path.to_string_lossy(), "replace"])
     }
     /// Software render context: the pixel source for the GTK surface. Works on
-    /// X11, Wayland and headless alike (no GL context needed).
+    /// X11, Wayland and headless alike (no GL context needed). Owned by the
+    /// player so it is always freed before the core.
     pub fn software_surface(&self, _licensed: &Licensed) -> Result<SoftwareSurface<'_>> {
-        let api = c("sw")?;
-        let mut params = [
-            RenderParam { kind: PARAM_API_TYPE, data: api.as_ptr() as *mut c_void },
-            RenderParam { kind: PARAM_INVALID, data: std::ptr::null_mut() },
-        ];
-        let mut ctx = std::ptr::null_mut();
-        check(unsafe { (self.render_create)(&mut ctx, self.handle, params.as_mut_ptr()) })
-            .map_err(|_| "native-video-surface-create-failed".to_string())?;
-        if ctx.is_null() {
-            return Err("native-video-surface-create-failed".into());
+        if self.render_ctx.get().is_null() {
+            let api = c("sw")?;
+            let mut params = [
+                RenderParam { kind: PARAM_API_TYPE, data: api.as_ptr() as *mut c_void },
+                RenderParam { kind: PARAM_INVALID, data: std::ptr::null_mut() },
+            ];
+            let mut ctx = std::ptr::null_mut();
+            check(unsafe { (self.render_create)(&mut ctx, self.handle, params.as_mut_ptr()) })
+                .map_err(|_| "native-video-surface-create-failed".to_string())?;
+            if ctx.is_null() {
+                return Err("native-video-surface-create-failed".into());
+            }
+            self.render_ctx.set(ctx);
         }
-        Ok(SoftwareSurface { player: self, ctx })
+        Ok(SoftwareSurface { player: self })
+    }
+    pub fn pause(&self, pause: bool) -> Result<()> {
+        self.command(&["set", "pause", if pause { "yes" } else { "no" }])
+    }
+    pub fn seek(&self, time: f64) -> Result<()> {
+        if !time.is_finite() || time < 0. || time > 31_536_000. {
+            return Err("native-video-time-invalid".into());
+        }
+        self.command(&["seek", &format!("{time:.9}"), "absolute+exact"])
+    }
+    pub fn volume(&self, volume: f64, muted: bool) -> Result<()> {
+        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+            return Err("native-video-volume-invalid".into());
+        }
+        self.command(&["set", "volume", &(volume * 100.).to_string()])?;
+        self.command(&["set", "mute", if muted { "yes" } else { "no" }])
+    }
+    pub fn set_loop(&self, bounds: Option<(f64, f64)>) -> Result<()> {
+        if let Some((a, b)) = bounds {
+            if !a.is_finite() || !b.is_finite() || a < 0. || b <= a || b > 31_536_000. {
+                return Err("native-video-range-invalid".into());
+            }
+        }
+        self.command(&["set", "ab-loop-b", "no"])?;
+        self.command(&["set", "ab-loop-a", "no"])?;
+        if let Some((a, b)) = bounds {
+            self.command(&["set", "ab-loop-a", &a.to_string()])?;
+            self.command(&["set", "ab-loop-b", &b.to_string()])?;
+        }
+        Ok(())
+    }
+    pub fn snapshot(&self) -> Snapshot {
+        let number = |k| self.property(k).parse::<f64>().ok().filter(|v| v.is_finite());
+        Snapshot {
+            time: number("time-pos").unwrap_or(0.),
+            duration: number("duration").unwrap_or(0.),
+            width: number("video-out-params/dw").unwrap_or(0.) as u32,
+            height: number("video-out-params/dh").unwrap_or(0.) as u32,
+            paused: self.property("pause") == "yes",
+            seeking: self.property("seeking") == "yes",
+            ended: self.property("eof-reached") == "yes",
+            configured: self.property("vo-configured") == "yes",
+            avsync: number("avsync"),
+            hwdec: self.property("hwdec-current"),
+        }
+    }
+    /// Windows `capture`: the displayed decoder frame, only when settled.
+    pub fn capture(&self) -> Result<Frame> {
+        let state = self.snapshot();
+        if !state.paused || state.seeking || !state.configured {
+            return Err("native-video-frame-not-settled".into());
+        }
+        self.preview_frame()
+    }
+    /// Windows `preview_frame`: same `screenshot-raw video rgba` checks.
+    pub fn preview_frame(&self) -> Result<Frame> {
+        let state = self.snapshot();
+        if !state.configured {
+            return Err("native-video-frame-not-settled".into());
+        }
+        let args = [c("screenshot-raw")?, c("video")?, c("rgba")?];
+        let ptrs = [args[0].as_ptr(), args[1].as_ptr(), args[2].as_ptr(), std::ptr::null()];
+        let mut result = OwnedNode { node: Node { value: NodeValue { integer: 0 }, format: 0 }, free: self.free_node };
+        check(unsafe { (self.command_ret)(self.handle, ptrs.as_ptr(), &mut result.node) })?;
+        unsafe {
+            let w = result.integer("w")?;
+            let h = result.integer("h")?;
+            let stride = result.integer("stride")?;
+            if w <= 0 || h <= 0 || w.checked_mul(h).is_none_or(|n| n > 33_177_600) || stride.unsigned_abs() < w as u64 * 4 {
+                return Err("native-video-frame-size-invalid".into());
+            }
+            let format = result.field("format")?;
+            if format.format != 1 || format.value.string.is_null() || CStr::from_ptr(format.value.string).to_bytes() != b"rgba" {
+                return Err("native-video-frame-format-invalid".into());
+            }
+            let node = result.field("data")?;
+            if node.format != 9 || node.value.bytes.is_null() {
+                return Err("native-video-frame-data-invalid".into());
+            }
+            let data = &*node.value.bytes;
+            let extent = (h as u64 - 1)
+                .checked_mul(stride.unsigned_abs())
+                .and_then(|v| v.checked_add(w as u64 * 4))
+                .ok_or("native-video-frame-size-invalid")?;
+            if stride < 0 || extent > data.size as u64 || extent > 256 * 1024 * 1024 || data.data.is_null() {
+                return Err("native-video-frame-stride-invalid".into());
+            }
+            let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                rgba.extend_from_slice(std::slice::from_raw_parts(data.data.add((y * stride) as usize), (w * 4) as usize));
+            }
+            Ok(Frame { time: state.time, width: w as u32, height: h as u32, rgba })
+        }
     }
 }
 
-/// Owned render context; freed before its player (borrow enforces order, like
-/// Windows dropping the Player before its Surface's parent).
+/// Borrowed view of the player's render context.
 pub struct SoftwareSurface<'a> {
     player: &'a Player,
-    ctx: *mut c_void,
-}
-impl Drop for SoftwareSurface<'_> {
-    fn drop(&mut self) {
-        unsafe { (self.player.render_free)(self.ctx) }
-    }
 }
 /// Max surface the GTK side will ever ask for (same ceiling as capture).
 const MAX_PIXELS: i64 = 33_177_600;
 impl SoftwareSurface<'_> {
     /// True when mpv has a new frame to draw.
     pub fn frame_pending(&self) -> bool {
-        unsafe { (self.player.render_update)(self.ctx) & UPDATE_FRAME != 0 }
+        unsafe { (self.player.render_update)(self.player.render_ctx.get()) & UPDATE_FRAME != 0 }
     }
-    /// Draw the current frame into a tightly packed `rgb0` buffer.
+    /// Draw the current frame into a tightly packed `bgr0` buffer (cairo RGB24 byte order on little endian).
     pub fn render(&self, width: i32, height: i32) -> Result<Vec<u8>> {
         if width < 1 || height < 1 || i64::from(width) * i64::from(height) > MAX_PIXELS {
             return Err("native-video-frame-size-invalid".into());
         }
         let mut size = [width, height];
-        let format = c("rgb0")?;
+        let format = c("bgr0")?;
         let mut stride: usize = width as usize * 4;
         let mut pixels = vec![0u8; stride * height as usize];
         let mut params = [
@@ -332,7 +521,7 @@ impl SoftwareSurface<'_> {
             RenderParam { kind: PARAM_SW_POINTER, data: pixels.as_mut_ptr().cast() },
             RenderParam { kind: PARAM_INVALID, data: std::ptr::null_mut() },
         ];
-        check(unsafe { (self.player.render_render)(self.ctx, params.as_mut_ptr()) })?;
+        check(unsafe { (self.player.render_render)(self.player.render_ctx.get(), params.as_mut_ptr()) })?;
         Ok(pixels)
     }
 }
