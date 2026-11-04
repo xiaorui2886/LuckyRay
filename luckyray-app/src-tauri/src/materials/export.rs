@@ -983,6 +983,14 @@ mod tests {
 
     #[test]
     fn sanitizes_reserved_and_colliding_names_and_rejects_output_escape() {
+        #[cfg(not(windows))]
+        {
+            let long = safe_component(&"中文".repeat(90));
+            assert!(long.len() <= 200 && long.starts_with("中文"), "byte cap: {}", long.len());
+            assert!(format!("{long} (10000)").len() <= 255);
+            let ascii = "a".repeat(300);
+            assert_eq!(safe_component(&ascii).len(), 140);
+        }
         assert_eq!(safe_component("CON.txt"), "_CON.txt");
         assert_eq!(safe_component("a/b\\c?.png"), "a_b_c_.png");
         let mut used = HashSet::new();
