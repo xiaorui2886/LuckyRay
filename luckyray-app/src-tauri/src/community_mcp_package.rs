@@ -55,6 +55,9 @@ pub(crate) struct Profile {
     pub node: &'static str,
     pub tunnel: &'static str,
     pub cloudflared: &'static str,
+    /// MCP server entry point. Linux uses its own file so the Windows package
+    /// keeps the published 0.1.3 `server.mjs` byte for byte.
+    pub server: &'static str,
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub debug_archive: &'static str,
 }
@@ -64,6 +67,7 @@ pub(crate) const WINDOWS_PROFILE: Profile = Profile {
     node: "node.exe",
     tunnel: "tunnel-client-runtime-cloudflared.exe",
     cloudflared: "cloudflared.exe",
+    server: "packages/community-mcp/src/server.mjs",
     debug_archive: "community-mcp/candidate.zip",
 };
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -72,6 +76,7 @@ pub(crate) const LINUX_PROFILE: Profile = Profile {
     node: "node",
     tunnel: "tunnel-client-runtime-cloudflared",
     cloudflared: "cloudflared",
+    server: "packages/community-mcp/src/server-linux.mjs",
     debug_archive: "community-mcp/candidate-linux-x86_64.zip",
 };
 pub(crate) fn profile() -> &'static Profile {
@@ -261,6 +266,7 @@ fn verify_with(root: &Path, version: &str, c: &Catalog, profile: &Profile) -> Re
         profile.tunnel,
         profile.cloudflared,
         "packages/community-mcp/src/server.mjs",
+        profile.server,
         "packages/materials-mcp/src/transport.mjs",
         "LICENSES.txt",
     ] {
@@ -498,7 +504,7 @@ mod tests {
     fn synthetic(profile: &Profile, extra: Option<&str>, skip: Option<&str>) -> (Vec<u8>, Catalog) {
         use std::io::Write as _;
         let version = "9.9.9-synthetic";
-        let names = [
+        let mut names = vec![
             profile.node,
             profile.tunnel,
             profile.cloudflared,
@@ -506,6 +512,9 @@ mod tests {
             "packages/materials-mcp/src/transport.mjs",
             "LICENSES.txt",
         ];
+        if !names.contains(&profile.server) {
+            names.push(profile.server);
+        }
         let files: Vec<(String, Vec<u8>)> = names
             .iter()
             .filter(|n| Some(**n) != skip)
@@ -560,6 +569,8 @@ mod tests {
         assert_eq!(LINUX_PROFILE.node, "node");
         assert_eq!(LINUX_PROFILE.tunnel, "tunnel-client-runtime-cloudflared");
         assert_eq!(LINUX_PROFILE.cloudflared, "cloudflared");
+        assert_eq!(WINDOWS_PROFILE.server, "packages/community-mcp/src/server.mjs");
+        assert_eq!(LINUX_PROFILE.server, "packages/community-mcp/src/server-linux.mjs");
         #[cfg(target_os = "linux")]
         assert_eq!(profile().platform, "linux-x86_64");
         #[cfg(windows)]
@@ -639,6 +650,11 @@ mod tests {
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         let (bytes, c) = synthetic(&LINUX_PROFILE, None, Some("cloudflared"));
         let root = temp.path().join("incomplete");
+        assert_eq!(install_synthetic(&root, &c, bytes, &LINUX_PROFILE).unwrap_err(), "plugin-payload-incomplete");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        // A Linux payload without its own entry point never installs.
+        let (bytes, c) = synthetic(&LINUX_PROFILE, None, Some("packages/community-mcp/src/server-linux.mjs"));
+        let root = temp.path().join("no-linux-server");
         assert_eq!(install_synthetic(&root, &c, bytes, &LINUX_PROFILE).unwrap_err(), "plugin-payload-incomplete");
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         let (bytes, c) = synthetic(&LINUX_PROFILE, Some("../escape"), None);

@@ -2125,8 +2125,8 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('std::env::var_os("SystemRoot")', gateway)
         self.assertIn("powershell.exe", gateway)
         self.assertIn('"private-secret-storage-failed"', gateway)
-        # Pairing refuses on Linux before writing anything.
-        self.assertIn('return Err("plugin-platform-unsupported".into());', gateway)
+        # T42c: pairing is allowed on Linux now that discovery exists.
+        self.assertNotIn('return Err("plugin-platform-unsupported".into());', gateway)
         lib = self.read("lib.rs")
         self.assertIn('#[cfg(target_os = "linux")]\nmod community_mcp_secret;', lib)
         keyring = self.read("companion_keyring.rs")
@@ -2164,8 +2164,11 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertNotIn('"node.exe"', gateway)
         self.assertIn("&dir.join(names.tunnel),", gateway)
         self.assertIn('env.insert("PATH".into(), format!("{dir}:/usr/bin:/bin"));', gateway)
-        # Pairing stays refused on Linux until the credential handoff exists.
-        self.assertIn('return Err("plugin-platform-unsupported".into());', gateway)
+        # T42c: the runtime launches the profile's own server entry point and
+        # configure asks the keyring (not a DPAPI file) for the tunnel key.
+        self.assertIn("dir.join(names.server)", gateway)
+        self.assertNotIn('dir.join("packages/community-mcp/src/server.mjs")', gateway)
+        self.assertIn("} else if !tunnel_key_present(&p) {", gateway)
         process = self.read("community_mcp_process.rs")
         self.assertIn('linux_proc::tunnel_running(std::path::Path::new("/proc"))', process)
         self.assertIn('"process-inventory-unavailable"', process)
@@ -2181,13 +2184,50 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("env.insert(LINUX_PAIR_ENV.into(), pair.clone());\n        pair.zeroize();", gateway)
         self.assertIn('let label = "credential.keyring";', gateway)
         self.assertIn('let label = "credential.dpapi";', gateway)
-        self.assertIn('return Err("plugin-platform-unsupported".into());', gateway)
-        server = (Path(__file__).resolve().parents[1] / "packages/community-mcp/src/server.mjs").read_text()
+        # T42c: authorize binds the stable identity the plugin discovers.
+        self.assertNotIn("#[allow(unreachable_code)]", gateway)
+        self.assertIn("let exe = crate::desktop_identity::executable()?;", gateway)
+        self.assertIn('pair["desktopExe"] = json!(exe);', gateway)
+        grants = self.read("local_transport/materials_grants.rs")
+        self.assertIn("let executable = crate::desktop_identity::executable().map_err(|_| denied())?;", grants)
+        identity = self.read("desktop_identity.rs")
+        self.assertIn('pub(crate) const UNAVAILABLE: &str = "desktop-identity-unavailable";', identity)
+        self.assertIn('std::env::var_os("APPIMAGE")', identity)
+        self.assertIn('c.starts_with(".mount_")', identity)
+        self.assertIn("symlink_metadata(image)", identity)
+        # Windows/macOS keep current_exe() exactly.
+        self.assertIn('#[cfg(not(target_os = "linux"))]\npub(crate) fn executable() -> Result<String, &\'static str> {\n    Ok(std::env::current_exe()', identity)
+        # T42c: the Linux helpers live in a Linux-only entry point so the
+        # Windows package keeps shipping the exact published 0.1.3 server.mjs.
+        src = Path(__file__).resolve().parents[1] / "packages/community-mcp/src"
+        windows = (src / "server.mjs").read_bytes().replace(b"\r\n", b"\n")
+        self.assertEqual(hashlib.sha256(windows).hexdigest(), "a8eedef6bf0536ff12358ecce7699a5ee72273ae916318c909d177bdd95e1ecf")
+        self.assertNotIn(b"LUCKYRAY_LIBRARY_PAIR", windows)
+        server = (src / "server-linux.mjs").read_text()
         self.assertIn('export const LINUX_PAIR_ENV = "LUCKYRAY_LIBRARY_PAIR";', server)
         self.assertIn('process.platform === "linux" ? takeLinuxPair(process.env) : undefined;', server)
         self.assertLess(server.index("takeLinuxPair(process.env)"), server.index("async function main()"))
         for bad in ("writeFile(pair", "credential.keyring"):
             self.assertNotIn(bad, server)
+
+    def test_community_mcp_linux_entry_point_is_only_in_the_linux_package(self):
+        # T42c: build-package.py keeps the Windows list byte-identical and
+        # lists server-linux.mjs (and no PowerShell helper) only for Linux.
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location("build_package", root / "packages/community-mcp/tools/build-package.py")
+        build = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build)
+        source = (root / "packages/community-mcp/tools/build-package.py").read_text()
+        self.assertIn("for name in ['server.mjs','library.mjs','transport.mjs','protocol.mjs','secret-store.ps1']:", source)
+        self.assertIn("for name in ['server.mjs','transport.mjs','materials.mjs','read-credential.ps1','verify-profile.ps1']:", source)
+        self.assertGreater(source.index("server-linux.mjs"), source.index("# ---- Linux x86_64 candidate"))
+        self.assertIn("server-linux.mjs", build.LINUX_COMMUNITY)
+        self.assertFalse([n for n in build.LINUX_COMMUNITY + build.LINUX_MATERIALS if n.endswith(".ps1")])
+        self.assertEqual(build.PINS["node-v24.14.1-win-x64.zip"], "6e50ce5498c0cebc20fd39ab3ff5df836ed2f8a31aa093cecad8497cff126d70")
+        self.assertEqual(build.BASE_SHA256, "ec8ecfb6c73af6d2d807d1ff00fdfcdafaed79e6ae86c332dfbd04279049cfa2")
+        package = self.read("community_mcp_package.rs")
+        self.assertIn('server: "packages/community-mcp/src/server.mjs",', package)
+        self.assertIn('server: "packages/community-mcp/src/server-linux.mjs",', package)
 
     def test_companion_keyring_uses_the_secret_service_without_touching_windows(self):
         # T19: the Linux identity store is backed by the freedesktop Secret

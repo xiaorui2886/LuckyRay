@@ -232,7 +232,7 @@ impl AuthState {
                 if normalize(&anchor) != normalize(&physical) { return Err(denied()); }
             }
             let profile = root.to_string_lossy().into_owned();
-            let executable = std::env::current_exe().map_err(|_| denied())?.to_string_lossy().into_owned();
+            let executable = crate::desktop_identity::executable().map_err(|_| denied())?;
             if let Some(knowledge) = &grant.knowledge {
                 let proof = derive_credential(&credential, &format!(
                     "library-mcp-proof\0v3\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",

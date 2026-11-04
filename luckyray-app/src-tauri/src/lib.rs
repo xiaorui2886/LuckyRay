@@ -8,6 +8,7 @@
 //! ```
 
 mod desktop_app_update;
+mod desktop_identity;
 mod community_mcp_knowledge;
 mod community_mcp;
 mod community_mcp_package;

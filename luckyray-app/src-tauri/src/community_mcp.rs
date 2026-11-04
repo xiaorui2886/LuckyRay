@@ -308,7 +308,7 @@ fn start_runtime(
     // Linux: the sealed pairing lives only in the Secret Service. It reaches
     // the plugin on stdin for `--check` and in the tunnel's environment for
     // the server (tunnel-client v0.0.16 starts the stdio MCP command with the
-    // inherited environment); server.mjs removes it at startup. Windows keeps
+    // inherited environment); server-linux.mjs removes it at startup. Windows keeps
     // the DPAPI file path in connection.json instead.
     #[cfg(target_os = "linux")]
     let mut pair = linux_pair_handoff(p)?;
@@ -319,7 +319,7 @@ fn start_runtime(
     let checked = process::run(
         &dir.join(names.node),
         &[
-            dir.join("packages/community-mcp/src/server.mjs")
+            dir.join(names.server)
                 .to_string_lossy()
                 .into_owned(),
             "--config".into(),
@@ -372,7 +372,7 @@ fn start_runtime(
     let mcp = format!(
         "{} {} --config {} --activity-file {}",
         command(&dir.join(names.node))?,
-        command(&dir.join("packages/community-mcp/src/server.mjs"))?,
+        command(&dir.join(names.server))?,
         command(&p.connection)?,
         command(&p.activity)?
     );
@@ -424,7 +424,7 @@ fn start_runtime(
     r.desktop_ready = true;
     Ok(())
 }
-/// Name shared with `packages/community-mcp/src/server.mjs`. Deliberately
+/// Name shared with `packages/community-mcp/src/server-linux.mjs`. Deliberately
 /// outside every prefix tunnel-client copies into its support log export
 /// (`ADMIN_UI_`, `CLOUDFLARED_`, `CONTROL_PLANE_`, `HARPOON_`, `LOG_`, `MCP_`,
 /// `OPENAI_TUNNEL_`, `TUNNEL_`).
@@ -671,14 +671,10 @@ fn act(app: &tauri::AppHandle, input: ActionInput) -> Result<(), String> {
     let transport = app.state::<crate::local_transport::LocalTransportHandle>();
     match input.action.as_str() {
         "authorize" => {
-            // The credential handoff exists (keyring -> stdin/env, T42b), but the
-            // plugin still cannot find the desktop on Linux: materials-mcp
-            // `inventory()` is Windows-only and an AppImage's executable path
-            // changes every launch. Refuse before creating a grant or a secret
-            // so no pairing exists that can never connect.
-            #[cfg(target_os = "linux")]
-            return Err("plugin-platform-unsupported".into());
-            #[allow(unreachable_code)]
+            // Linux: the pairing reaches the plugin through the keyring
+            // (stdin/env, T42b) and server-linux.mjs finds this desktop in
+            // /proc by the same stable identity written below (T42c:
+            // $APPIMAGE, never the per-launch /tmp/.mount_* path).
             if !input.confirmed {
                 return Err("library-consent-required".into());
             }
@@ -702,14 +698,14 @@ fn act(app: &tauri::AppHandle, input: ActionInput) -> Result<(), String> {
             let scope = captured
                 .workspace_recovery_record()
                 .map_err(|_| "knowledge-vault-unavailable")?;
-            let exe = std::env::current_exe().map_err(|_| "desktop-identity-unavailable")?;
+            let exe = crate::desktop_identity::executable()?;
             let profile = transport.materials_profile_root()?;
             let mut pair = transport.pair_libraries(library, vault, scope)?;
             let id = pair["clientId"]
                 .as_str()
                 .ok_or("pairing-invalid")?
                 .to_owned();
-            pair["desktopExe"] = json!(exe.to_string_lossy());
+            pair["desktopExe"] = json!(exe);
             pair["profileRoot"] = json!(profile);
             let result = (|| -> Result<(), String> {
                 let mut raw = serde_json::to_vec(&pair).map_err(|_| "pairing-invalid")?;
@@ -795,7 +791,8 @@ fn act(app: &tauri::AppHandle, input: ActionInput) -> Result<(), String> {
                     return Err("tunnel-key-invalid".into());
                 }
                 secret(&p, "write", "tunnel-key", Some(key.as_bytes()))?;
-            } else if !p.secret.join("tunnel-key.dpapi").is_file() {
+            } else if !tunnel_key_present(&p) {
+                // Linux keeps the key in the keyring, not a DPAPI file.
                 return Err("tunnel-key-required".into());
             }
             s.tunnel_id = Some(id.into());
