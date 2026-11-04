@@ -277,9 +277,6 @@ impl KnowledgeService {
         &self, source_epoch: u64, destination: &Path,
         approved: &[(String, Vec<String>)], documents: &[KnowledgeDocumentRef], archive: bool,
     ) -> Result<AttachmentExportResult, KnowledgeError> {
-        #[cfg(target_os = "linux")]
-        return Err(linux_knowledge_write_unavailable());
-
         let vault_id = self.current_vault_id()?;
         let _source = self.lock_active_ui_source(source_epoch, Some(&vault_id))?;
         let (vault, source_guard, identity) = self.capture_current_target()?;
