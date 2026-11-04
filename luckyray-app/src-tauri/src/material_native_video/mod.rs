@@ -120,7 +120,10 @@ pub(crate) enum Request {
 
 #[cfg(all(windows, feature = "browser-host-runtime"))]
 mod mpv;
-#[cfg(all(windows, feature = "browser-host-runtime"))]
+// V1 (T45): metadata/thumbnail preview now runs on Linux with the verified
+// media-engine FFmpeg tools. mpv/surface_region/windows_player stay Windows-only
+// until V3. No Linux cfg change affects the Windows build or behaviour.
+#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]
 mod preview;
 #[cfg(all(windows, feature = "browser-host-runtime"))]
 mod surface_region;
@@ -164,26 +167,33 @@ pub(crate) async fn material_video_preview_command(
     return tauri::async_runtime::spawn_blocking(move || preview::request(caller, app, request))
         .await
         .map_err(|_| "native-video-preview-worker-failed".to_string())?;
-    #[cfg(not(all(windows, feature = "browser-host-runtime")))]
+    // Linux (T45 V1): keep the same capability refusal as Windows for a
+    // missing/unverified runtime, then run the same preview::request pipeline.
+    #[cfg(target_os = "linux")]
+    {
+        use tauri::Manager;
+        let resources = app
+            .path()
+            .resource_dir()
+            .map_err(|_| "native-video-resources-unavailable".to_string())?;
+        // Hashing the runtime is blocking work, so it runs on the worker. The
+        // pinned, stamp-checked verification is cached by preview::tool_dir;
+        // a cancel never needs the tools.
+        return tauri::async_runtime::spawn_blocking(move || {
+            if !matches!(request, PreviewRequest::Cancel { .. }) {
+                let verified = preview::tool_dir(&resources);
+                if let Some(payload) = crate::linux_media_runtime::component_missing_error(&verified) {
+                    return Err(payload);
+                }
+            }
+            preview::request(caller, app, request)
+        })
+        .await
+        .map_err(|_| "native-video-preview-worker-failed".to_string())?;
+    }
+    #[cfg(not(any(all(windows, feature = "browser-host-runtime"), target_os = "linux")))]
     {
         let _ = (&caller, &request, &app);
-        // Linux: the packaged media engine is verified exactly like Windows, so
-        // a missing or unverified runtime is reported as its own capability
-        // refusal. A verified runtime still reports the preview as unavailable
-        // until the Linux FFmpeg slice lands (T16 lists it).
-        #[cfg(target_os = "linux")]
-        {
-            use tauri::Manager;
-            let resources = app
-                .path()
-                .resource_dir()
-                .map_err(|_| "native-video-resources-unavailable".to_string())?;
-            let verified =
-                crate::media_transfer::verified_local_video_tools(&resources);
-            if let Some(payload) = crate::linux_media_runtime::component_missing_error(&verified) {
-                return Err(payload);
-            }
-        }
         Err("native-video-preview-unavailable".into())
     }
 }

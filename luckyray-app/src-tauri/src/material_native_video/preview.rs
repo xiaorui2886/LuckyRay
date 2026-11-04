@@ -2,7 +2,10 @@
 use super::PreviewRequest;
 use base64::Engine;
 use serde_json::{json, Value};
+#[cfg(windows)]
 use std::os::windows::{fs::OpenOptionsExt, process::CommandExt};
+#[cfg(target_os = "linux")]
+use std::os::unix::{fs::OpenOptionsExt, process::CommandExt};
 use std::{
     collections::{HashMap, VecDeque},
     io::Read,
@@ -21,6 +24,38 @@ struct VerifiedTools {
     root: PathBuf,
     dir: PathBuf,
     _pins: Vec<std::fs::File>,
+    // Linux read-only descriptors cannot refuse writers the way the Windows
+    // share mode does, so every pinned file's identity is captured from its
+    // descriptor and compared before each reuse of the verified directory.
+    #[cfg(target_os = "linux")]
+    stamps: Vec<(PathBuf, Stamp)>,
+}
+#[cfg(windows)]
+const FFMPEG: &str = "ffmpeg.exe";
+#[cfg(windows)]
+const FFPROBE: &str = "ffprobe.exe";
+// Linux runtime layout (T16 manifest: `"ffmpeg":"ffmpeg/ffmpeg"`): no suffix.
+// Both must be regular files of the exact, digest-checked inventory.
+#[cfg(target_os = "linux")]
+const FFMPEG: &str = "ffmpeg";
+#[cfg(target_os = "linux")]
+const FFPROBE: &str = "ffprobe";
+/// Device, inode, size, mtime and ctime. Any in-place write changes ctime and
+/// any replacement changes the inode, so a mismatch means "changed since verified".
+#[cfg(target_os = "linux")]
+#[derive(PartialEq, Eq)]
+struct Stamp(u64, u64, u64, i64, i64, i64, i64);
+#[cfg(target_os = "linux")]
+fn stamp(meta: &std::fs::Metadata) -> Stamp {
+    use std::os::unix::fs::MetadataExt;
+    Stamp(meta.dev(), meta.ino(), meta.len(), meta.mtime(), meta.mtime_nsec(), meta.ctime(), meta.ctime_nsec())
+}
+#[cfg(target_os = "linux")]
+fn unchanged(stamps: &[(PathBuf, Stamp)]) -> bool {
+    stamps.iter().all(|(path, pinned)| {
+        std::fs::symlink_metadata(path)
+            .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink() && stamp(&meta) == *pinned)
+    })
 }
 static TOOLS: OnceLock<Mutex<Option<VerifiedTools>>> = OnceLock::new();
 // No playlists, concat scripts, manifests or image sequences that can resolve
@@ -67,18 +102,25 @@ impl Drop for Job {
         }
     }
 }
-fn tool_dir(resources: &Path) -> Result<PathBuf, String> {
+pub(super) fn tool_dir(resources: &Path) -> Result<PathBuf, String> {
     let mut cache = TOOLS
         .get_or_init(|| Mutex::new(None))
         .lock()
         .map_err(|_| "native-video-tools-busy")?;
     if let Some(tools) = &*cache {
         if tools.root == resources {
+            #[cfg(target_os = "linux")]
+            if !unchanged(&tools.stamps) {
+                // Drop the pins; the next request verifies from scratch.
+                *cache = None;
+                return Err("native-video-tools-changed".into());
+            }
             return Ok(tools.dir.clone());
         }
     }
     let tools = crate::media_transfer::verified_local_video_tools(resources)?;
     let mut pins = Vec::new();
+    #[cfg(windows)]
     for entry in std::fs::read_dir(&tools).map_err(|_| "native-video-tools-unavailable")? {
         let path = entry.map_err(|_| "native-video-tools-unavailable")?.path();
         if path
@@ -94,18 +136,68 @@ fn tool_dir(resources: &Path) -> Result<PathBuf, String> {
             );
         }
     }
+    // Linux (T45 V1): the verified inventory is the authority. Pin every
+    // regular file of the verified tool directory (tools and any shared
+    // libraries beside them) through an O_NOFOLLOW read-only descriptor and
+    // record its identity from that descriptor. No PATH lookup.
+    #[cfg(target_os = "linux")]
+    let mut stamps = Vec::new();
+    #[cfg(target_os = "linux")]
+    for entry in std::fs::read_dir(&tools).map_err(|_| "native-video-tools-unavailable")? {
+        let path = entry.map_err(|_| "native-video-tools-unavailable")?.path();
+        let meta = std::fs::symlink_metadata(&path)
+            .map_err(|_| "native-video-tools-unavailable")?;
+        if !meta.is_file() || meta.file_type().is_symlink() {
+            continue;
+        }
+        let pin = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)
+            .map_err(|_| "native-video-tools-unavailable")?;
+        let pinned = pin.metadata().map_err(|_| "native-video-tools-unavailable")?;
+        stamps.push((path, stamp(&pinned)));
+        pins.push(pin);
+    }
+    #[cfg(target_os = "linux")]
+    for name in [FFMPEG, FFPROBE] {
+        if !stamps.iter().any(|(path, _)| path.file_name().is_some_and(|n| n == name)) {
+            return Err("native-video-tools-unavailable".into());
+        }
+    }
     // Revalidate after locking executable dependencies, closing validation/use
     // races. Pins remain alive for this process; repeated thumbnail jobs reuse it.
     if crate::media_transfer::verified_local_video_tools(resources)? != tools {
+        return Err("native-video-tools-changed".into());
+    }
+    // A write between the first digest and the pin is caught by the second
+    // verification; any write after the pin changes the recorded ctime.
+    #[cfg(target_os = "linux")]
+    if !unchanged(&stamps) {
         return Err("native-video-tools-changed".into());
     }
     *cache = Some(VerifiedTools {
         root: resources.to_owned(),
         dir: tools.clone(),
         _pins: pins,
+        #[cfg(target_os = "linux")]
+        stamps,
     });
     Ok(tools)
 }
+/// End only the process group this call created. Windows keeps child.kill();
+/// Linux kills its own pgid (never group 0, never a foreign process).
+#[cfg(target_os = "linux")]
+fn stop_child(child: &mut std::process::Child) {
+    let pgid = child.id() as i32;
+    if pgid > 1 {
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.wait();
+}
+
 fn run(exe: &Path, args: &[String], cancel: &AtomicBool) -> Result<Vec<u8>, String> {
     run_before(exe, args, cancel, Instant::now() + Duration::from_secs(8))
 }
@@ -114,9 +206,25 @@ fn run_before(exe: &Path, args: &[String], cancel: &AtomicBool, deadline: Instan
     if cancel.load(Ordering::Acquire) {
         return Err("native-video-preview-cancelled".into());
     }
+    #[cfg(windows)]
     let mut child = Command::new(exe)
         .args(args)
         .creation_flags(0x08000000)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|_| "native-video-tool-start-failed")?;
+    // Linux: a private process group, a cleared environment with only the
+    // fixed minimum, and stdio that cannot leak unrelated descriptors. Rust
+    // opens its own files CLOEXEC, so no unrelated fd is inherited.
+    #[cfg(target_os = "linux")]
+    let mut child = Command::new(exe)
+        .args(args)
+        .process_group(0)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .stdout(Stdio::piped())
@@ -141,8 +249,13 @@ fn run_before(exe: &Path, args: &[String], cancel: &AtomicBool, deadline: Instan
             } else {
                 "native-video-preview-timeout"
             });
-            let _ = child.kill();
-            let _ = child.wait();
+            #[cfg(windows)]
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            #[cfg(target_os = "linux")]
+            stop_child(&mut child);
             break;
         }
         match child.try_wait() {
@@ -155,8 +268,13 @@ fn run_before(exe: &Path, args: &[String], cancel: &AtomicBool, deadline: Instan
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(_) => {
                 failure = Some("native-video-tool-wait-failed");
-                let _ = child.kill();
-                let _ = child.wait();
+                #[cfg(windows)]
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                #[cfg(target_os = "linux")]
+                stop_child(&mut child);
                 break;
             }
         }
@@ -289,11 +407,16 @@ pub(super) fn request(
     if expected.as_ref().is_some_and(|v| v != &revision) {
         return Err("native-video-source-changed".into());
     }
+    #[cfg(windows)]
     let _source = std::fs::OpenOptions::new()
         .read(true)
         .share_mode(1)
         .open(&path)
         .map_err(|_| "native-video-source-unavailable")?;
+    // Linux has no share mode; the read-only handle keeps the same inode
+    // reachable and, like Windows, follows the catalog's resolved path.
+    #[cfg(target_os = "linux")]
+    let _source = std::fs::File::open(&path).map_err(|_| "native-video-source-unavailable")?;
     // File identity may have changed between revision lookup and acquiring the
     // read-only pin. Validate once more before trusting even a cache hit.
     catalog
@@ -392,14 +515,14 @@ fn decode_sized(
             let input = args.iter().position(|arg| arg == "-i").unwrap();
             args.splice(input..input, ["-hwaccel".to_owned(), "auto".to_owned()]);
         }
-        let bytes = run_before(&tools.join("ffmpeg.exe"), &args, flag, deadline)?;
+        let bytes = run_before(&tools.join(FFMPEG), &args, flag, deadline)?;
         if !bytes.starts_with(&[0xff, 0xd8]) {
             return Err("native-video-thumbnail-invalid".into());
         }
         json!({"src":format!("data:image/jpeg;base64,{}",base64::engine::general_purpose::STANDARD.encode(bytes)),"time":seconds})
     } else {
         let args=["-v","error","-protocol_whitelist","file,pipe","-format_whitelist",VIDEO_FORMATS,"-show_entries","stream=codec_type,codec_name,width,height,duration:stream_side_data=rotation:format=duration","-of","json","-i",&path.to_string_lossy()].map(str::to_owned);
-        parse_metadata(&run(&tools.join("ffprobe.exe"), &args, flag)?, revision)?
+        parse_metadata(&run(&tools.join(FFPROBE), &args, flag)?, revision)?
     })
 }
 #[cfg(test)]
@@ -461,6 +584,141 @@ mod tests {
             decode(&tools, &source, "fixture-revision", Some(3.), &flag).unwrap_err(),
             "native-video-preview-cancelled"
         );
+        assert_eq!(ACTIVE.load(Ordering::Acquire), 0);
+    }
+
+    // T45 V1: Linux-only live smoke. CI prepares a synthetic pinned media
+    // runtime and synthetic lavfi videos; the box never installs ffmpeg.
+    #[cfg(target_os = "linux")]
+    fn live_env(name: &str) -> PathBuf {
+        PathBuf::from(
+            std::env::var(name)
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Any still-running process whose command line mentions our unique
+    /// synthetic input would be a leaked child of the timed-out tool.
+    #[cfg(target_os = "linux")]
+    fn process_mentions(marker: &str) -> bool {
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(raw) = name.to_str() else { continue };
+            if !raw.bytes().all(|b| b.is_ascii_digit()) {
+                continue;
+            }
+            if let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) {
+                if cmdline
+                    .split(|byte| *byte == 0)
+                    .any(|arg| arg == marker.as_bytes())
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[ignore = "needs LUCKYRAY_LIVE_FFMPEG=present, a prepared pinned media runtime and synthetic lavfi videos"]
+    fn live_present_ffmpeg_preview() {
+        let mode = std::env::var("LUCKYRAY_LIVE_FFMPEG").unwrap_or_default();
+        assert!(
+            mode == "present",
+            "run through the media-preview CI step; LUCKYRAY_LIVE_FFMPEG does not match"
+        );
+        let resources = live_env("LUCKYRAY_LIVE_MEDIA_RESOURCES");
+        let video = live_env("LUCKYRAY_LIVE_MEDIA_VIDEO");
+        let audio = live_env("LUCKYRAY_LIVE_MEDIA_AUDIO");
+        let long = live_env("LUCKYRAY_LIVE_MEDIA_LONG");
+        assert!(
+            [&resources, &video, &audio, &long].iter().all(|path| !path.as_os_str().is_empty()),
+            "prepared synthetic fixtures are missing"
+        );
+        let tools = tool_dir(&resources).expect("verified pinned tool directory");
+        let (ffmpeg, ffprobe) = (tools.join(FFMPEG), tools.join(FFPROBE));
+        assert!(ffmpeg.is_file() && ffprobe.is_file(), "verified tools missing");
+        assert_eq!(tool_dir(&resources).as_ref(), Ok(&tools), "unchanged runtime must reuse the pins");
+
+        // a) metadata: dimensions after rotation, duration, source revision.
+        let flag = AtomicBool::new(false);
+        let metadata = decode(&tools, &video, "t45-revision", None, &flag).expect("ffprobe metadata");
+        assert_eq!((metadata["width"].as_u64(), metadata["height"].as_u64()), (Some(180), Some(320)),
+            "rotation metadata was not applied to dimensions: {metadata}");
+        let duration = metadata["duration"].as_f64().unwrap_or(0.);
+        assert!((5.5..=6.5).contains(&duration), "duration {duration} is not the 6 s fixture");
+        assert_eq!(metadata["sourceRevision"], "t45-revision");
+
+        // b) decode a real JPEG frame at a requested second.
+        let frame = decode(&tools, &video, "t45-revision", Some(1.), &flag).expect("ffmpeg frame decode");
+        assert!(frame["src"].as_str().unwrap_or("").starts_with("data:image/jpeg;base64,"),
+            "thumbnail is not a JPEG data URL");
+        assert_eq!(frame["time"].as_f64(), Some(1.));
+
+        // c) audio-only input is refused as video.
+        assert_eq!(decode(&tools, &audio, "t45-revision", None, &flag).err().as_deref(),
+            Some("native-video-stream-missing"));
+
+        // d) cancel before start, cancel while running, and timeout; none may
+        //    leave a process behind. Realtime input keeps ffmpeg busy.
+        let preset = AtomicBool::new(true);
+        assert_eq!(decode(&tools, &video, "t45-revision", Some(2.), &preset).err().as_deref(),
+            Some("native-video-preview-cancelled"));
+        let marker = long.to_string_lossy().to_string();
+        let slow = ["-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-i", &marker,
+                    "-t", "20", "-f", "null", "-"].map(str::to_owned);
+        let no_leak = |what: &str| {
+            let mut leaked = process_mentions(&marker);
+            for _ in 0..20 {
+                if !leaked { break; }
+                std::thread::sleep(Duration::from_millis(100));
+                leaked = process_mentions(&marker);
+            }
+            assert!(!leaked, "a {what} tool process survived the process-group kill");
+        };
+        let running = std::sync::Arc::new(AtomicBool::new(false));
+        let trigger = running.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            trigger.store(true, Ordering::Release);
+        });
+        let started = Instant::now();
+        assert_eq!(run_before(&ffmpeg, &slow, &running, started + Duration::from_secs(15)).err().as_deref(),
+            Some("native-video-preview-cancelled"));
+        canceller.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5), "mid-run cancel was not prompt");
+        no_leak("cancelled");
+        let started = Instant::now();
+        assert_eq!(run_before(&ffmpeg, &slow, &flag, started + Duration::from_millis(400)).err().as_deref(),
+            Some("native-video-preview-timeout"));
+        assert!(started.elapsed() < Duration::from_secs(5), "deadline was not prompt");
+        no_leak("timed-out");
+
+        // e) a write to a pinned, verified tool is refused before reuse, and
+        //    the restored runtime is only trusted again after full verification.
+        // Restores the tool even when an assertion below panics.
+        struct Restore<'a>(&'a Path, Vec<u8>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                let _ = std::fs::write(self.0, &self.1);
+            }
+        }
+        let restore = Restore(&ffprobe, std::fs::read(&ffprobe).expect("read verified tool"));
+        {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new().append(true).open(&ffprobe)
+                .expect("verified tool could not be opened for the tamper check");
+            file.write_all(b"# tampered\n").expect("tamper write");
+        }
+        assert_eq!(tool_dir(&resources).err().as_deref(), Some("native-video-tools-changed"));
+        assert_eq!(tool_dir(&resources).err().as_deref(), Some("The media resolver is unavailable"),
+            "a tampered runtime was re-verified as trusted");
+        drop(restore);
+        assert_eq!(tool_dir(&resources).as_ref(), Ok(&tools), "restored runtime did not re-verify");
         assert_eq!(ACTIVE.load(Ordering::Acquire), 0);
     }
 }

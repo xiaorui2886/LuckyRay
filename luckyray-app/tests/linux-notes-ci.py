@@ -36,7 +36,7 @@ EXCLUDED = {name: "NOT_RUN" for name in ("chromiumConsent", "nativeMessaging", "
     "installer", "release", "waylandHardware", "oldMatrices", "lshFunctionalFlow")}
 STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENCIES", "RUST", "BUILD",
          "NATIVE_MESSAGING", "DRIVER", "RUNTIME", "RESOURCES", "NOTES", "SECRET_SERVICE", "COMPANION_KEYRING",
-         "COMPANION_PAIRING")
+         "COMPANION_PAIRING", "MEDIA_PREVIEW")
 EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "nativeMessaging.json", "result.json")
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",
@@ -570,7 +570,8 @@ class Run(runtime.Run):
                  "nativeMessaging": "luckyray-app/tests/linux-native-registration-smoke.py",
                  "secretServiceSession": "luckyray-app/tests/linux-secret-service-session.sh",
                  "secretServiceChecks": "luckyray-app/tests/linux-companion-keyring/src/live_secret_service.rs",
-                 "pairingWsClient": "luckyray-app/tests/lsh_remote_standard_ws_client.py"}
+                 "pairingWsClient": "luckyray-app/tests/lsh_remote_standard_ws_client.py",
+                 "mediaPreviewRuntime": "luckyray-app/tests/linux-media-preview-runtime.py"}
         return {name: digest(self.repo / path) for name, path in paths.items()}
 
     def publish_notes(self, report):

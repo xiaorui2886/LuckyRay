@@ -63,6 +63,13 @@ jobs:
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
             webkit2gtk-driver xvfb xauth dbus-x11 desktop-file-utils \
             python3-gi gir1.2-gtk-3.0 fonts-noto-cjk xclip xdg-utils
+          # T45: a pinned FFmpeg for the preview smoke only (never shipped).
+          # Ubuntu's package is a GPL build; see T45-result.md for V4 licensing.
+          sudo apt-cache policy ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg=7:4.4.2-0ubuntu0.22.04.1
+          ffmpeg -version | sed -n '1p'
+          ffprobe -version | sed -n '1p'
+          sha256sum "$(command -v ffmpeg)" "$(command -v ffprobe)"
       - name: Install the pinned Rust toolchain
         id: rust
         env:
@@ -240,6 +247,58 @@ jobs:
           # An empty filter must never count as a pass: require exactly one test.
           grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t44-pairing.log"
+      - name: Exercise Linux FFmpeg/ffprobe preview against synthetic video
+        id: media-preview
+        # Independent of the Companion steps: a pairing failure must not hide
+        # the media result (each outcome is reported separately by finish).
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 55
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          MEDIA_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/private/media-preview
+          # Absolute: the test binary runs with the package root as its cwd.
+          MEDIA_RESOURCES: ${{ runner.temp }}/luckyray-linux-runtime-work/private/media-resources
+          # Same identifier as the Main build, so only the lib test binary is
+          # added to the existing target tree.
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+        run: |
+          set -euo pipefail
+          mkdir -p "$MEDIA_DIR"
+          ffmpeg_bin="$(command -v ffmpeg)"; ffprobe_bin="$(command -v ffprobe)"
+          test "$ffmpeg_bin" = /usr/bin/ffmpeg && test "$ffprobe_bin" = /usr/bin/ffprobe
+          # Synthetic videos only: rotated metadata, audio-only refusal, and a
+          # long realtime stream for the timeout/process-group check.
+          ffmpeg -hide_banner -loglevel error -y -f lavfi \
+            -i testsrc=duration=6:size=320x180:rate=25 -c:v libx264 -pix_fmt yuv420p \
+            -metadata:s:v:0 rotate=90 -t 6 "$MEDIA_DIR/rotated.mp4"
+          ffmpeg -hide_banner -loglevel error -y -f lavfi \
+            -i sine=frequency=440:duration=2 -c:a aac "$MEDIA_DIR/audio.m4a"
+          ffmpeg -hide_banner -loglevel error -y -f lavfi \
+            -i testsrc=duration=30:size=320x180:rate=25 -c:v libx264 -pix_fmt yuv420p \
+            -t 30 "$MEDIA_DIR/long.mp4"
+          sha256sum "$MEDIA_DIR/rotated.mp4" "$MEDIA_DIR/audio.m4a" "$MEDIA_DIR/long.mp4"
+          # The generator mirrors the existing prepared-runtime fixture shape
+          # outside the checkout (never in src-tauri/); the production
+          # app_owned verifier remains the only authority.
+          manifest_sha="$(python3 luckyray-app/tests/linux-media-preview-runtime.py \
+            "$MEDIA_RESOURCES/media-engine" "$ffmpeg_bin" "$ffprobe_bin")"
+          [[ "$manifest_sha" =~ ^[0-9a-f]{64}$ ]]
+          test_name=material_native_video::preview::tests::live_present_ffmpeg_preview
+          LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256="$manifest_sha" \
+          LUCKYRAY_LIVE_FFMPEG=present \
+          LUCKYRAY_LIVE_MEDIA_RESOURCES="$MEDIA_RESOURCES" \
+          LUCKYRAY_LIVE_MEDIA_VIDEO="$MEDIA_DIR/rotated.mp4" \
+          LUCKYRAY_LIVE_MEDIA_AUDIO="$MEDIA_DIR/audio.m4a" \
+          LUCKYRAY_LIVE_MEDIA_LONG="$MEDIA_DIR/long.mp4" \
+          timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- --ignored --exact "$test_name" --test-threads=1 \
+            | tee "$WORK_ROOT/private/t45-media-preview.log"
+          # An empty filter must never count as a pass: require exactly one test.
+          grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t45-media-preview.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -261,6 +320,7 @@ jobs:
           CI_SECRET_SERVICE: ${{ steps.secret-service.outcome }}
           CI_COMPANION_KEYRING: ${{ steps.companion-keyring.outcome }}
           CI_COMPANION_PAIRING: ${{ steps.companion-pairing.outcome }}
+          CI_MEDIA_PREVIEW: ${{ steps.media-preview.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}

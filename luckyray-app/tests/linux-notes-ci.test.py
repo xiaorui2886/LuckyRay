@@ -2147,6 +2147,96 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('#[path = "../../../src-tauri/src/companion_keyring.rs"]', lib)
         self.assertIn('#[path = "../../../src-tauri/src/community_mcp_secret.rs"]', lib)
 
+    def test_media_preview_step_pins_ffmpeg_and_requires_an_exact_live_pass(self):
+        # T45 V1: a pinned FFmpeg (never shipped), a synthetic lavfi fixture,
+        # the production manifest verifier, the Main build target reused, and
+        # exactly one live libtest pass required by finish().
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        deps = text[text.index("        id: dependencies"):text.index("        id: rust")]
+        self.assertIn("sudo apt-cache policy ffmpeg", deps)
+        self.assertIn("ffmpeg=7:4.4.2-0ubuntu0.22.04.1", deps)
+        self.assertIn("ffmpeg -version | sed -n '1p'", deps)
+        self.assertIn('sha256sum "$(command -v ffmpeg)" "$(command -v ffprobe)"', deps)
+        self.assertNotIn("apt-get install -y --no-install-recommends ffmpeg\n", deps)
+        pairing = text.index("        id: companion-pairing")
+        preview = text.index("        id: media-preview")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(pairing, preview)
+        self.assertLess(preview, finish)
+        step = text[preview:finish]
+        for required in (
+            "timeout-minutes: 55",
+            "timeout 900",
+            "--target x86_64-unknown-linux-gnu",
+            "--manifest-path luckyray-app/src-tauri/Cargo.toml",
+            "-- --ignored --exact",
+            "material_native_video::preview::tests::live_present_ffmpeg_preview",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;",
+            "LUCKYRAY_LIVE_FFMPEG=present",
+            "LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256=",
+            "linux-media-preview-runtime.py",
+            'testsrc=duration=6:size=320x180:rate=25',
+            'sine=frequency=440:duration=2',
+            'rotate=90',
+            "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
+            "set -euo pipefail",
+            "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
+            'LUCKYRAY_LIVE_MEDIA_RESOURCES="$MEDIA_RESOURCES"',
+            '"$MEDIA_RESOURCES/media-engine" "$ffmpeg_bin" "$ffprobe_bin"',
+            "test \"$ffmpeg_bin\" = /usr/bin/ffmpeg && test \"$ffprobe_bin\" = /usr/bin/ffprobe",
+        ):
+            self.assertIn(required, step, required)
+        # The synthetic runtime is never written into the checkout, and media
+        # evidence is not hidden behind the Companion steps.
+        self.assertNotIn("src-tauri/media-engine", step)
+        self.assertNotIn("LUCKYRAY_LIVE_MEDIA_RESOURCES=luckyray-app", step)
+        self.assertNotIn("steps.companion-pairing.outcome", step)
+        self.assertNotIn("set -x", step)
+        self.assertNotIn("pkill", step)
+        self.assertNotIn("echo", step)
+        self.assertIn("CI_MEDIA_PREVIEW: ${{ steps.media-preview.outcome }}", text)
+        self.assertIn("MEDIA_PREVIEW", ci.STEPS)
+        self.assertLess(ci.STEPS.index("COMPANION_PAIRING"), ci.STEPS.index("MEDIA_PREVIEW"))
+        self.assertIn('"mediaPreviewRuntime": "luckyray-app/tests/linux-media-preview-runtime.py"',
+                      (root / "luckyray-app/tests/linux-notes-ci.py").read_text())
+        for other in ("source-checks.yml", "updater-installed-acceptance.yml"):
+            self.assertNotIn("ffmpeg=7:", (root / ".github/workflows" / other).read_text())
+
+        # Production code: preview is compiled on Linux, Windows-only players
+        # stay Windows-only, and the Windows branches are untouched.
+        media = (root / "luckyray-app/src-tauri/src/material_native_video/mod.rs").read_text()
+        self.assertIn('#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]\nmod preview;', media)
+        for windows_only in ("mod mpv;", "mod surface_region;", "mod windows_player;"):
+            self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\n' + windows_only, media)
+        preview_src = (root / "luckyray-app/src-tauri/src/material_native_video/preview.rs").read_text()
+        for windows_code in ("share_mode(1)", "creation_flags(0x08000000)",
+                             '#[cfg(windows)]\nconst FFMPEG: &str = "ffmpeg.exe";',
+                             '#[cfg(windows)]\nconst FFPROBE: &str = "ffprobe.exe";'):
+            self.assertIn(windows_code, preview_src)
+        # Linux: fixed names inside the verified directory, pins re-checked by
+        # identity on every reuse, no per-decode or PATH lookup.
+        self.assertIn('#[cfg(target_os = "linux")]\nconst FFMPEG: &str = "ffmpeg";', preview_src)
+        self.assertIn("if !unchanged(&tools.stamps) {", preview_src)
+        self.assertIn("meta.ctime_nsec()", preview_src)
+        self.assertIn('.custom_flags(libc::O_NOFOLLOW)', preview_src)
+        self.assertNotIn("fn tool_names", preview_src)
+        self.assertIn('Some("native-video-preview-cancelled")', preview_src)
+        self.assertIn('"mid-run cancel was not prompt"', preview_src)
+        self.assertIn("preview::tool_dir(&resources)", media)
+        self.assertIn(".process_group(0)", preview_src)
+        self.assertIn("libc::kill(-pgid, libc::SIGKILL)", preview_src)
+        self.assertIn("fn live_present_ffmpeg_preview()", preview_src)
+        self.assertIn('#[cfg(target_os = "linux")]\n    #[ignore', preview_src)
+        self.assertIn('native-video-tools-changed', preview_src)
+        generator = (root / "luckyray-app/tests/linux-media-preview-runtime.py").read_text()
+        self.assertIn('"schemaVersion": 1', generator)
+        self.assertIn('"ffmpeg": "ffmpeg/ffmpeg"', generator)
+        self.assertIn("sha256", generator)
+        self.assertIn('"ffmpeg/ffmpeg": ffmpeg_bin.read_bytes()', generator)
+        self.assertNotIn("exec ", generator)
+        self.assertIn("media-engine directory must start empty", generator)
+
     def test_companion_pairing_smoke_is_wired_into_the_linux_preflight(self):
         # T44: a synthetic "phone" pairs against the real keyring-backed
         # gateway inside the private Secret Service session; exactly one live
