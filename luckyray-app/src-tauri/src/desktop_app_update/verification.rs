@@ -29,6 +29,8 @@ pub(crate) struct PlatformProfile {
     pub(crate) asset: &'static str,
 }
 
+// Unused by the Linux service outside tests; Windows uses it for real.
+#[cfg_attr(all(target_os = "linux", not(test)), allow(dead_code))]
 pub(crate) const WINDOWS_PROFILE: PlatformProfile =
     PlatformProfile { manifest_key: "windows-x86_64-nsis", asset: "LuckyRay_{version}_x64-setup.exe" };
 pub(crate) const LINUX_PROFILE: PlatformProfile =
