@@ -4,10 +4,12 @@ No runtime or user configuration is read. Run before build-package.py.
 """
 import concurrent.futures,hashlib,io,json,pathlib,urllib.request,zipfile,time
 import argparse
-p=argparse.ArgumentParser();p.add_argument('--vendor',type=pathlib.Path,required=True);root=p.parse_args().vendor
-archive=root/'tunnel-client-runtime-cloudflared-v0.0.16-windows-amd64.zip'
-if hashlib.sha256(archive.read_bytes()).hexdigest()!='02346814ccd0a9a7a4e6d3d494e225c2befb095ede0c46cbe8d71a8d952acfcc':raise ValueError('upstream archive checksum mismatch')
-with zipfile.ZipFile(archive) as z:report=z.read('tunnel-client-runtime-cloudflared-v0.0.16-windows-amd64-licenses.txt').decode()
+p=argparse.ArgumentParser();p.add_argument('--vendor',type=pathlib.Path,required=True);p.add_argument('--platform',choices=['windows-x86_64','linux-x86_64'],default='windows-x86_64');args=p.parse_args();root=args.vendor
+# Official upstream SHA256SUMS for openai/tunnel-client v0.0.16.
+goarch,pin={'windows-x86_64':('windows-amd64','02346814ccd0a9a7a4e6d3d494e225c2befb095ede0c46cbe8d71a8d952acfcc'),'linux-x86_64':('linux-amd64','25838f715aa529a0e5fe09de858660262d39ebe1157ccaea6f425911c8dd8b2d')}[args.platform]
+archive=root/('tunnel-client-runtime-cloudflared-v0.0.16-'+goarch+'.zip')
+if hashlib.sha256(archive.read_bytes()).hexdigest()!=pin:raise ValueError('upstream archive checksum mismatch')
+with zipfile.ZipFile(archive) as z:report=z.read('tunnel-client-runtime-cloudflared-v0.0.16-'+goarch+'-licenses.txt').decode()
 paths=sorted(set(r.split('|')[4] for r in report.splitlines() if r.count('|')==5 and not r.startswith('DEPENDENCY')))
 cache=root/'license-cache';cache.mkdir(exist_ok=True)
 def get(path):
