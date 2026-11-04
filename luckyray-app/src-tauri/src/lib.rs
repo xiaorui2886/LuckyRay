@@ -20,6 +20,41 @@ pub(crate) mod test_support {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
     }
+
+    /// Asserts the exact entries of a Vault directory after knowledge writes.
+    /// On Linux every committed write keeps its `.lrk-<nonce>.receipt` for
+    /// recovery and review, and the directory keeps its cooperating-writer
+    /// lock file; other platforms leave only the user's entries.
+    #[cfg(test)]
+    pub(crate) fn assert_vault_entries(
+        root: &std::path::Path,
+        user_entries: usize,
+        committed_writes: usize,
+    ) {
+        let names: Vec<String> = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        #[cfg(target_os = "linux")]
+        {
+            let receipts = names
+                .iter()
+                .filter(|name| name.starts_with(".lrk-") && name.ends_with(".receipt"))
+                .count();
+            let locks = names
+                .iter()
+                .filter(|name| name.as_str() == ".luckyray-write.lock")
+                .count();
+            assert_eq!(receipts, committed_writes, "{names:?}");
+            assert_eq!(locks, usize::from(committed_writes > 0), "{names:?}");
+            assert_eq!(names.len(), user_entries + receipts + locks, "{names:?}");
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = committed_writes;
+            assert_eq!(names.len(), user_entries, "{names:?}");
+        }
+    }
 }
 mod desktop_app_update;
 mod desktop_identity;

@@ -6797,7 +6797,7 @@ mod tests {
             .run_tool(&ToolCallContext::future_cli(), request)
             .unwrap();
         assert_eq!(first, replay);
-        assert_eq!(fs::read_dir(&root_a).unwrap().count(), 2);
+        crate::test_support::assert_vault_entries(&root_a, 2, 1);
     }
 
     #[test]

@@ -3266,7 +3266,7 @@ mod tests {
         let replay = post(origin_a, &credential_a);
         assert_eq!(status(&replay), 200);
         assert_eq!(body(&first)["data"], body(&replay)["data"]);
-        assert_eq!(fs::read_dir(vault_root).unwrap().count(), 2);
+        crate::test_support::assert_vault_entries(&vault_root, 2, 1);
     }
 
     #[test]
