@@ -5968,7 +5968,8 @@ pub(crate) mod tests {
             std::process::id(),
             rand::random::<u64>()
         ));
-        std::fs::create_dir_all(&root).unwrap();
+        // App data is owner-private in production; Linux verifies that.
+        crate::test_support::make_private(&root);
         let (legacy, surface) = prepare_dsh_state_roots(&root).unwrap();
         assert_eq!(legacy.file_name().unwrap(), "rc8-v1");
         assert_eq!(surface.file_name().unwrap(), "rc8-native-surface-v1");
