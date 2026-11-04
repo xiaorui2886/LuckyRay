@@ -271,7 +271,11 @@ jobs:
           # long realtime stream for the timeout/process-group check.
           ffmpeg -hide_banner -loglevel error -y -f lavfi \
             -i testsrc=duration=6:size=320x180:rate=25 -c:v libx264 -pix_fmt yuv420p \
-            -metadata:s:v:0 rotate=90 -t 6 "$MEDIA_DIR/rotated.mp4"
+            -t 6 "$MEDIA_DIR/upright.mp4"
+          # FFmpeg 4.4 drops a rotate tag while encoding; set the display
+          # matrix with a stream copy so ffprobe reports side-data rotation.
+          ffmpeg -hide_banner -loglevel error -y -i "$MEDIA_DIR/upright.mp4" \
+            -c copy -metadata:s:v:0 rotate=90 "$MEDIA_DIR/rotated.mp4"
           ffmpeg -hide_banner -loglevel error -y -f lavfi \
             -i sine=frequency=440:duration=2 -c:a aac "$MEDIA_DIR/audio.m4a"
           ffmpeg -hide_banner -loglevel error -y -f lavfi \

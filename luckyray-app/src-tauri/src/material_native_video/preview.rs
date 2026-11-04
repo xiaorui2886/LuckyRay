@@ -311,6 +311,19 @@ fn retain(key: String, value: &Value) {
         }
     }
 }
+/// ffprobe `-show_entries` selection. Windows keeps its v1.9.9 string
+/// verbatim. Linux selects the whole `stream_side_data_list` section: the
+/// `stream_side_data` section name does not exist in FFmpeg 4.4 (ffprobe then
+/// exits 1 with "No match for section"), while the list section is accepted
+/// by 4.4 and 7.x alike and still carries the DisplayMatrix `rotation` key
+/// that parse_metadata reads.
+#[cfg(windows)]
+const PROBE_ENTRIES: &str = "stream=codec_type,codec_name,width,height,duration:stream_side_data=rotation:format=duration";
+#[cfg(target_os = "linux")]
+const PROBE_ENTRIES: &str = "stream=codec_type,codec_name,width,height,duration:stream_side_data_list:format=duration";
+fn probe_args(path: &Path) -> Vec<String> {
+    ["-v","error","-protocol_whitelist","file,pipe","-format_whitelist",VIDEO_FORMATS,"-show_entries",PROBE_ENTRIES,"-of","json","-i",&path.to_string_lossy()].map(str::to_owned).to_vec()
+}
 fn parse_metadata(bytes: &[u8], revision: &str) -> Result<Value, String> {
     let raw: Value = serde_json::from_slice(bytes).map_err(|_| "native-video-metadata-invalid")?;
     let video = raw["streams"]
@@ -521,7 +534,7 @@ fn decode_sized(
         }
         json!({"src":format!("data:image/jpeg;base64,{}",base64::engine::general_purpose::STANDARD.encode(bytes)),"time":seconds})
     } else {
-        let args=["-v","error","-protocol_whitelist","file,pipe","-format_whitelist",VIDEO_FORMATS,"-show_entries","stream=codec_type,codec_name,width,height,duration:stream_side_data=rotation:format=duration","-of","json","-i",&path.to_string_lossy()].map(str::to_owned);
+        let args = probe_args(&path);
         parse_metadata(&run(&tools.join(FFPROBE), &args, flag)?, revision)?
     })
 }
@@ -622,6 +635,29 @@ mod tests {
         false
     }
 
+    /// Test-only diagnosis after a failed live step: rerun the tool the same
+    /// way production does (cleared env, null stdin, own process group) but
+    /// keep a bounded, redacted stderr so a CI failure is readable. Fixture and
+    /// runtime paths are replaced by placeholders; only printable ASCII is kept.
+    #[cfg(target_os = "linux")]
+    fn diagnose(exe: &Path, args: &[String], redact: &[&Path]) -> String {
+        let output = Command::new(exe)
+            .args(args)
+            .process_group(0)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .output();
+        let Ok(output) = output else { return "diagnostic rerun could not start".into() };
+        let mut text = String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(2048)]).into_owned();
+        for (index, path) in redact.iter().enumerate() {
+            text = text.replace(&*path.to_string_lossy(), &format!("<fixture-{index}>"));
+        }
+        let text: String = text.chars().map(|c| if c == '\n' || (' '..='~').contains(&c) { c } else { '?' }).collect();
+        format!("diagnostic rerun status {:?}, stdout {} bytes, stderr: {}", output.status.code(), output.stdout.len(), text.trim())
+    }
+
     #[test]
     #[cfg(target_os = "linux")]
     #[ignore = "needs LUCKYRAY_LIVE_FFMPEG=present, a prepared pinned media runtime and synthetic lavfi videos"]
@@ -646,7 +682,8 @@ mod tests {
 
         // a) metadata: dimensions after rotation, duration, source revision.
         let flag = AtomicBool::new(false);
-        let metadata = decode(&tools, &video, "t45-revision", None, &flag).expect("ffprobe metadata");
+        let metadata = decode(&tools, &video, "t45-revision", None, &flag)
+            .unwrap_or_else(|code| panic!("ffprobe metadata: {code:?}; {}", diagnose(&ffprobe, &probe_args(&video), &[&resources, &video])));
         assert_eq!((metadata["width"].as_u64(), metadata["height"].as_u64()), (Some(180), Some(320)),
             "rotation metadata was not applied to dimensions: {metadata}");
         let duration = metadata["duration"].as_f64().unwrap_or(0.);
@@ -654,7 +691,8 @@ mod tests {
         assert_eq!(metadata["sourceRevision"], "t45-revision");
 
         // b) decode a real JPEG frame at a requested second.
-        let frame = decode(&tools, &video, "t45-revision", Some(1.), &flag).expect("ffmpeg frame decode");
+        let frame = decode(&tools, &video, "t45-revision", Some(1.), &flag)
+            .unwrap_or_else(|code| panic!("ffmpeg frame decode: {code:?}; {}", diagnose(&ffmpeg, &["-hide_banner".into(), "-v".into(), "error".into(), "-i".into(), video.to_string_lossy().into_owned(), "-frames:v".into(), "1".into(), "-f".into(), "null".into(), "-".into()], &[&resources, &video])));
         assert!(frame["src"].as_str().unwrap_or("").starts_with("data:image/jpeg;base64,"),
             "thumbnail is not a JPEG data URL");
         assert_eq!(frame["time"].as_f64(), Some(1.));

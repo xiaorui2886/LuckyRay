@@ -2178,7 +2178,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "linux-media-preview-runtime.py",
             'testsrc=duration=6:size=320x180:rate=25',
             'sine=frequency=440:duration=2',
-            'rotate=90',
+            '-c copy -metadata:s:v:0 rotate=90 "$MEDIA_DIR/rotated.mp4"',
             "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
             "set -euo pipefail",
             "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
@@ -2193,6 +2193,13 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertNotIn("LUCKYRAY_LIVE_MEDIA_RESOURCES=luckyray-app", step)
         self.assertNotIn("steps.companion-pairing.outcome", step)
         self.assertNotIn("set -x", step)
+        # FFmpeg 4.4 drops rotate while encoding: the tag may only be set on a copy.
+        self.assertNotIn("-pix_fmt yuv420p \\\n            -metadata:s:v:0 rotate=90", step)
+        preview_src = (Path(__file__).parent.parent / "src-tauri/src/material_native_video/preview.rs").read_text(encoding="utf-8")
+        # Linux ffprobe selection must be accepted by FFmpeg 4.4 (no stream_side_data section).
+        self.assertIn('#[cfg(target_os = "linux")]\nconst PROBE_ENTRIES: &str = "stream=codec_type,codec_name,width,height,duration:stream_side_data_list:format=duration";', preview_src)
+        self.assertIn('#[cfg(windows)]\nconst PROBE_ENTRIES: &str = "stream=codec_type,codec_name,width,height,duration:stream_side_data=rotation:format=duration";', preview_src)
+        self.assertIn("fn diagnose(", preview_src)
         self.assertNotIn("pkill", step)
         self.assertNotIn("echo", step)
         self.assertIn("CI_MEDIA_PREVIEW: ${{ steps.media-preview.outcome }}", text)
