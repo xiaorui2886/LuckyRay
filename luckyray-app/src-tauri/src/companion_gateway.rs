@@ -8561,4 +8561,220 @@ mod tests {
         assert_eq!(changed["kind"], "servicesChanged");
         gateway.stop().unwrap();
     }
+    // ------------------------------------------------------------------
+    // T44: Linux-only live pairing smoke (G2). The desktop side is the real
+    // gateway with the real Secret Service identity store; the "phone" is the
+    // existing pinned TLS client plus the standard Python websockets fixture.
+    // ------------------------------------------------------------------
+    #[cfg(target_os = "linux")]
+    const T44_LIVE_MODE: &str = "LUCKYRAY_LIVE_SECRET_SERVICE";
+
+    #[cfg(target_os = "linux")]
+    fn t44_require_present_secret_service() {
+        let mode = std::env::var(T44_LIVE_MODE).unwrap_or_default();
+        assert!(
+            mode == "present",
+            "run through tests/linux-secret-service-session.sh present; {T44_LIVE_MODE} does not match"
+        );
+    }
+
+    /// A synthetic, non-secret device label. The suffix keeps parallel runs
+    /// apart without ever touching a real device name.
+    #[cfg(target_os = "linux")]
+    fn t44_synthetic_device_label() -> String {
+        use std::io::Read;
+        let mut random = [0u8; 8];
+        let opened = std::fs::File::open("/dev/urandom")
+            .and_then(|mut source| source.read_exact(&mut random));
+        assert!(opened.is_ok(), "synthetic randomness unavailable");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        format!("T44 synthetic phone {suffix}")
+    }
+
+    /// The standard WebSocket client fixture, driven only through stdin.
+    /// Dropping it ends only the process this test started.
+    #[cfg(target_os = "linux")]
+    struct T44WsChild(std::process::Child);
+
+    #[cfg(target_os = "linux")]
+    impl Drop for T44WsChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[ignore = "needs tests/linux-secret-service-session.sh present"]
+    fn live_present_companion_pairing_smoke() {
+        t44_require_present_secret_service();
+        stage_log("pairing-smoke", "starting gateway with the real Secret Service identity store");
+        let root = tempfile::TempDir::new().expect("synthetic scratch directory");
+        let backend = Arc::new(BackendServices::initialize(root.path()).expect("synthetic backend"));
+        let keyring: Arc<dyn crate::companion_keyring::SecretBackend> =
+            Arc::new(crate::companion_keyring::SecretServiceBackend::new());
+        // A throwaway keyring from the private session: start and end clean.
+        assert!(keyring.remove().is_ok(), "initial keyring removal must be idempotent");
+        let store = Arc::new(LinuxIdentityStore::with_backend(root.path(), Arc::clone(&keyring)));
+        let gateway = CompanionGateway::initialize_with_store(
+            Arc::clone(&backend),
+            store,
+            GatewayPolicy::default(),
+        );
+        let port = match gateway.start("127.0.0.1", Some(0)).expect("gateway start") {
+            GatewayStatus::Running { port, .. } => port,
+            status => panic!("unexpected gateway status: {status:?}"),
+        };
+        assert!(
+            matches!(keyring.read(), Ok(Some(_))),
+            "identity was not written to the Secret Service"
+        );
+        let identity = gateway.identity().expect("gateway identity");
+        let instance_id = identity.instance_id.clone();
+        let fingerprint = identity.fingerprint.clone();
+
+        // a) Pairing panel -> one-time bootstrap -> POST /v1/pair over real TLS.
+        let envelope = gateway.issue_pairing().expect("pairing bootstrap");
+        let pair_body = json!({
+            "secret": envelope.secret,
+            "fingerprint": envelope.certificate_fingerprint,
+            "deviceLabel": t44_synthetic_device_label(),
+        })
+        .to_string();
+        let pair_response = tls_roundtrip(
+            &gateway,
+            port,
+            &format!(
+                "POST /v1/pair HTTP/1.1\r\nHost: luckyray-companion.local:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{pair_body}",
+                pair_body.len(),
+            ),
+            10_000,
+        );
+        assert!(
+            pair_response.starts_with("HTTP/1.1 200"),
+            "pairing over TLS did not succeed"
+        );
+        let paired: Value = serde_json::from_str(
+            pair_response
+                .split_once("\r\n\r\n")
+                .expect("pair response must have a body")
+                .1,
+        )
+        .expect("pair response must be JSON");
+        let device_id = paired["deviceId"].as_str().expect("deviceId").to_owned();
+        let credential = paired["credential"].as_str().expect("credential").to_owned();
+        assert!(!device_id.is_empty() && !credential.is_empty(), "device credential is empty");
+        stage_log("pairing-smoke", "device paired over real TLS");
+
+        // b) GET /v1/session with the device credential, then the standard
+        //    WebSocket fixture upgrades /v1/events and exchanges PING/PONG.
+        let session_request = |token: &str| {
+            format!(
+                "GET /v1/session HTTP/1.1\r\nHost: luckyray-companion.local\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+            )
+        };
+        let session = pinned_http_response(&gateway, port, &session_request(&credential));
+        assert!(
+            session.starts_with("HTTP/1.1 200") && session.contains(&device_id),
+            "session did not return 200 with the paired deviceId"
+        );
+        let python = std::env::var("LUCKYRAY_COMPANION_WS_PYTHON")
+            .unwrap_or_else(|_| "python3".to_owned());
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/lsh_remote_standard_ws_client.py");
+        let mut ws_child = T44WsChild(
+            std::process::Command::new(python)
+                .arg("-u")
+                .arg(script)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("launch standard WS fixture client"),
+        );
+        let fixture_input = json!({
+            "port": port,
+            "certificateDer": BASE64.encode(&identity.certificate_der),
+            "path": "/v1/events",
+            "authorization": credential,
+            "closeAfterPong": true,
+        })
+        .to_string();
+        ws_child
+            .0
+            .stdin
+            .take()
+            .expect("WS fixture stdin")
+            .write_all(format!("{fixture_input}\n").as_bytes())
+            .expect("WS fixture input");
+        let mut lines = std::io::BufReader::new(ws_child.0.stdout.take().expect("WS fixture stdout")).lines();
+        let first = lines.next().and_then(Result::ok).unwrap_or_default();
+        let second = lines.next().and_then(Result::ok).unwrap_or_default();
+        assert!(first == "OPEN", "WebSocket upgrade to /v1/events did not open");
+        assert!(second == "PONG", "WebSocket PING/PONG did not complete");
+        drop(ws_child);
+        stage_log("pairing-smoke", "session and WebSocket PING/PONG verified");
+
+        // c) The bootstrap is single-use, and a wrong credential is refused.
+        let replay = tls_roundtrip(
+            &gateway,
+            port,
+            &format!(
+                "POST /v1/pair HTTP/1.1\r\nHost: luckyray-companion.local:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{pair_body}",
+                pair_body.len(),
+            ),
+            10_000,
+        );
+        assert!(
+            !replay.starts_with("HTTP/1.1 200"),
+            "a used pairing bootstrap was accepted a second time"
+        );
+        let wrong = pinned_http_response(&gateway, port, &session_request("t44-synthetic-wrong-token"));
+        assert!(
+            !wrong.starts_with("HTTP/1.1 200"),
+            "a wrong device credential was accepted"
+        );
+        stage_log("pairing-smoke", "replay and wrong credential both refused");
+
+        // d) Drop the gateway instance and rebuild it from the same keyring:
+        //    identity and the already-paired credential survive.
+        gateway.shutdown();
+        drop(gateway);
+        let reopened = CompanionGateway::initialize_with_store(
+            backend,
+            Arc::new(LinuxIdentityStore::with_backend(root.path(), Arc::clone(&keyring))),
+            GatewayPolicy::default(),
+        );
+        let reopened_identity = reopened.identity().expect("reopened identity");
+        assert!(
+            reopened_identity.instance_id == instance_id && reopened_identity.fingerprint == fingerprint,
+            "identity changed after reloading from the Secret Service"
+        );
+        let resumed = pinned_http_response(&reopened, port, &session_request(&credential));
+        assert!(
+            resumed.starts_with("HTTP/1.1 200") && resumed.contains(&device_id),
+            "paired credential stopped working after a keyring-backed restart"
+        );
+        stage_log("pairing-smoke", "identity and paired device survived a keyring-backed restart");
+
+        // e) Revoke -> credential refused; keyring entry removed -> no residue.
+        assert!(
+            reopened.revoke_device(&device_id).expect("revoke").gateway.outcome == RevokeOutcome::Revoked,
+            "device revoke did not complete"
+        );
+        let revoked = pinned_http_response(&reopened, port, &session_request(&credential));
+        assert!(
+            !revoked.starts_with("HTTP/1.1 200"),
+            "a revoked device credential was accepted"
+        );
+        reopened.stop().expect("stop gateway");
+        assert!(keyring.remove().is_ok(), "keyring entry could not be removed");
+        assert!(
+            matches!(keyring.read(), Ok(None)),
+            "keyring identity residue remained"
+        );
+        stage_log("pairing-smoke", "revoke and keyring cleanup verified");
+    }
+
 }

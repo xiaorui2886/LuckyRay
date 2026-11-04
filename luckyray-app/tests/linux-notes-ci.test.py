@@ -2147,6 +2147,74 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('#[path = "../../../src-tauri/src/companion_keyring.rs"]', lib)
         self.assertIn('#[path = "../../../src-tauri/src/community_mcp_secret.rs"]', lib)
 
+    def test_companion_pairing_smoke_is_wired_into_the_linux_preflight(self):
+        # T44: a synthetic "phone" pairs against the real keyring-backed
+        # gateway inside the private Secret Service session; exactly one live
+        # libtest must pass, and its outcome must be required by finish().
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        keyring = text.index("        id: companion-keyring")
+        pairing = text.index("        id: companion-pairing")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(keyring, pairing)
+        self.assertLess(pairing, finish)
+        step = text[pairing:finish]
+        for required in (
+            "steps.companion-keyring.outcome == 'success'",
+            "timeout-minutes: 55",
+            "websockets==15.0.1",
+            "LUCKYRAY_COMPANION_WS_PYTHON: python3",
+            "PYTHONPATH:",
+            "linux-secret-service-session.sh",
+            'present "$KEYRING_SCRATCH/pairing" --',
+            "cargo test --locked --lib",
+            "--manifest-path luckyray-app/src-tauri/Cargo.toml",
+            "-- --ignored --exact",
+            "companion_gateway::tests::live_present_companion_pairing_smoke",
+            "timeout 900",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;",
+            "$WORK_ROOT/private/t44-pairing.log",
+            "set -euo pipefail",
+        ):
+            self.assertIn(required, step, required)
+        # Reuse the existing native target: no second expensive build root.
+        self.assertIn("CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target", step)
+        self.assertNotIn("set -x", step)
+        self.assertNotIn("echo", step)
+        self.assertNotIn("pkill", step)
+        self.assertNotIn("curl", step)
+        self.assertIn("CI_COMPANION_PAIRING: ${{ steps.companion-pairing.outcome }}", text)
+        self.assertIn("COMPANION_PAIRING", ci.STEPS)
+        self.assertLess(ci.STEPS.index("COMPANION_KEYRING"), ci.STEPS.index("COMPANION_PAIRING"))
+        self.assertIn('"pairingWsClient": "luckyray-app/tests/lsh_remote_standard_ws_client.py"',
+                      (root / "luckyray-app/tests/linux-notes-ci.py").read_text())
+        for other in ("source-checks.yml", "updater-installed-acceptance.yml"):
+            self.assertNotIn("companion-pairing", (root / ".github/workflows" / other).read_text())
+
+        # The live test itself is Linux-only, ignored and mode-guarded, and
+        # never formats a credential into an assertion or log.
+        gateway = (root / "luckyray-app/src-tauri/src/companion_gateway.rs").read_text()
+        live = gateway[gateway.index("// T44: Linux-only live pairing smoke"):]
+        self.assertIn('#[cfg(target_os = "linux")]', live)
+        self.assertIn('#[ignore = "needs tests/linux-secret-service-session.sh present"]', live)
+        self.assertIn("LUCKYRAY_LIVE_SECRET_SERVICE", live)
+        self.assertIn('t44_require_present_secret_service()', live)
+        self.assertIn("SecretServiceBackend::new()", live)
+        self.assertIn("LinuxIdentityStore::with_backend", live)
+        for code in ("POST /v1/pair", "GET /v1/session", "/v1/events", "revoke_device", "keyring.remove()"):
+            self.assertIn(code, live)
+        self.assertNotIn("assert_eq!", live)
+        self.assertNotIn("println!", live)
+        self.assertNotIn("dbg!", live)
+
+        # The existing Python WS fixture keeps its defaults byte-for-byte for
+        # the LSH caller and only adds optional Companion fields.
+        fixture = (root / "luckyray-app/tests/lsh_remote_standard_ws_client.py").read_text()
+        self.assertIn('fixture.get("path", "/api/remote.mux")', fixture)
+        self.assertIn('{"Cookie": fixture["cookie"]}', fixture)
+        self.assertIn('fixture.get("closeAfterPong")', fixture)
+        self.assertIn('"Authorization": "Bearer " + fixture["authorization"]', fixture)
+
     def test_community_mcp_secrets_and_process_use_the_linux_seams(self):
         # T20: the plugin's two secrets live in the Secret Service through the
         # T19 backend (no second keyring client), and the plugin process is

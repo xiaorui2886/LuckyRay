@@ -202,6 +202,41 @@ jobs:
             grep -qx "test result: ok. $count passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
               "$KEYRING_SCRATCH/$mode.log"
           done
+      - name: Pair a synthetic phone through the real keyring-backed Companion gateway
+        id: companion-pairing
+        if: ${{ !cancelled() && steps.companion-keyring.outcome == 'success' }}
+        timeout-minutes: 55
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          KEYRING_SCRATCH: ${{ runner.temp }}/luckyray-linux-keyring-scratch
+          # Same identifier as the Main build; the gateway test never borrows a
+          # production credential file.
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          # The standard WebSocket fixture needs the same pinned websockets 15.x
+          # as the existing LSH full-chain fixture. Installed into the job's
+          # private work root only; no system package is touched here.
+          PYTHONPATH: ${{ runner.temp }}/luckyray-linux-runtime-work/private/t44-ws-deps
+          LUCKYRAY_COMPANION_WS_PYTHON: python3
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-cache-dir \
+            --target "$WORK_ROOT/private/t44-ws-deps" "websockets==15.0.1"
+          test -f "$PYTHONPATH/websockets/sync/client.py"
+          # Reuse the native build target; only the lib test binary is added.
+          # Run inside a fresh private Secret Service session so the real
+          # LinuxIdentityStore reads and writes a throwaway keyring only.
+          test_name=companion_gateway::tests::live_present_companion_pairing_smoke
+          # The session script creates its own fresh 0700 scratch directory.
+          timeout 900 bash luckyray-app/tests/linux-secret-service-session.sh \
+            present "$KEYRING_SCRATCH/pairing" -- \
+            rustup run 1.95.0 cargo test --locked --lib \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- --ignored --exact "$test_name" --test-threads=1 \
+            | tee "$WORK_ROOT/private/t44-pairing.log"
+          # An empty filter must never count as a pass: require exactly one test.
+          grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t44-pairing.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -222,6 +257,7 @@ jobs:
           CI_NOTES: ${{ steps.notes.outcome }}
           CI_SECRET_SERVICE: ${{ steps.secret-service.outcome }}
           CI_COMPANION_KEYRING: ${{ steps.companion-keyring.outcome }}
+          CI_COMPANION_PAIRING: ${{ steps.companion-pairing.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
