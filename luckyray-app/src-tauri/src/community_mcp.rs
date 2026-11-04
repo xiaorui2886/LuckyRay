@@ -304,8 +304,9 @@ fn start_runtime(
     }
     let dir = payload(p, s)?;
     package::verify(&dir, s.version.as_deref().unwrap())?;
+    let names = package::profile();
     let (ok, _, _) = process::run(
-        &dir.join("node.exe"),
+        &dir.join(names.node),
         &[
             dir.join("packages/community-mcp/src/server.mjs")
                 .to_string_lossy()
@@ -340,7 +341,7 @@ fn start_runtime(
     };
     let mcp = format!(
         "{} {} --config {} --activity-file {}",
-        command(&dir.join("node.exe"))?,
+        command(&dir.join(names.node))?,
         command(&dir.join("packages/community-mcp/src/server.mjs"))?,
         command(&p.connection)?,
         command(&p.activity)?
@@ -363,8 +364,32 @@ fn start_runtime(
         // enabling it unconditionally prevents ordinary logical tunnels from
         // starting before any MCP traffic can be carried.
         "--cloudflared.path".into(),
-        dir.join("cloudflared.exe").to_string_lossy().into_owned(),
+        dir.join(names.cloudflared).to_string_lossy().into_owned(),
     ];
+    let mut env = match runtime_env(&dir) {
+        Ok(env) => env,
+        Err(e) => {
+            key.zeroize();
+            return Err(e);
+        }
+    };
+    env.insert("CONTROL_PLANE_API_KEY".into(), key.clone());
+    key.zeroize();
+    r.child = Some(process::spawn(
+        &dir.join(names.tunnel),
+        &args,
+        &dir,
+        env,
+    )?);
+    r.phase = "starting";
+    r.error = None;
+    r.started = Some(Instant::now());
+    r.desktop_ready = true;
+    Ok(())
+}
+/// Narrow environment for the tunnel and its Node MCP child.
+#[cfg(not(target_os = "linux"))]
+fn runtime_env(dir: &std::path::Path) -> Result<BTreeMap<String, String>, String> {
     let mut env = BTreeMap::new();
     for k in [
         "SystemRoot",
@@ -392,19 +417,24 @@ fn start_runtime(
             system.join("WindowsPowerShell").join("v1.0").display()
         ),
     );
-    env.insert("CONTROL_PLANE_API_KEY".into(), key.clone());
-    key.zeroize();
-    r.child = Some(process::spawn(
-        &dir.join("tunnel-client-runtime-cloudflared.exe"),
-        &args,
-        &dir,
-        env,
-    )?);
-    r.phase = "starting";
-    r.error = None;
-    r.started = Some(Instant::now());
-    r.desktop_ready = true;
-    Ok(())
+    Ok(env)
+}
+/// Linux keeps the same allowlist idea: user temp/home/locale only, and a
+/// fixed system PATH after the verified payload instead of the caller's PATH.
+#[cfg(target_os = "linux")]
+fn runtime_env(dir: &std::path::Path) -> Result<BTreeMap<String, String>, String> {
+    let mut env = BTreeMap::new();
+    for k in ["HOME", "TMPDIR", "LANG", "LC_ALL", "XDG_RUNTIME_DIR"] {
+        if let Ok(v) = std::env::var(k) {
+            env.insert(k.into(), v);
+        }
+    }
+    let dir = dir.to_str().ok_or("plugin-command-path-invalid")?;
+    if dir.contains(':') {
+        return Err("plugin-command-path-invalid".into());
+    }
+    env.insert("PATH".into(), format!("{dir}:/usr/bin:/bin"));
+    Ok(env)
 }
 fn valid_tunnel_id(s: &str) -> bool {
     s.strip_prefix("tunnel_").is_some_and(|v| {

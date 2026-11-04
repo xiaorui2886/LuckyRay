@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "luckyray.official.web-mcp",
+  "version": "0.1.3",
+  "platform": "linux-x86_64",
+  "artifactUrl": null,
+  "artifactSha256": null,
+  "inventorySha256": null,
+  "downloadBytes": null,
+  "maxUnpackedBytes": 268435456,
+  "releaseGate": "Linux package not published yet. Release-time step: build the linux-x64 ZIP, publish it under an immutable mcp-v<ver> release tag, then pin artifactUrl, artifactSha256, inventorySha256 and downloadBytes here. Until then install refuses with plugin-package-unpublished.",
+  "previousInventories": []
+}

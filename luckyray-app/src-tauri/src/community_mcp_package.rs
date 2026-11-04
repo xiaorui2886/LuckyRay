@@ -47,14 +47,54 @@ pub(crate) struct PayloadFile {
 pub(crate) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+/// Per-platform names of the package's executables and its catalog platform.
+/// Windows keeps the v1.9.9 names byte for byte; Linux uses the same layout
+/// without the `.exe` suffix.
+pub(crate) struct Profile {
+    pub platform: &'static str,
+    pub node: &'static str,
+    pub tunnel: &'static str,
+    pub cloudflared: &'static str,
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub debug_archive: &'static str,
+}
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub(crate) const WINDOWS_PROFILE: Profile = Profile {
+    platform: "windows-x86_64",
+    node: "node.exe",
+    tunnel: "tunnel-client-runtime-cloudflared.exe",
+    cloudflared: "cloudflared.exe",
+    debug_archive: "community-mcp/candidate.zip",
+};
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) const LINUX_PROFILE: Profile = Profile {
+    platform: "linux-x86_64",
+    node: "node",
+    tunnel: "tunnel-client-runtime-cloudflared",
+    cloudflared: "cloudflared",
+    debug_archive: "community-mcp/candidate-linux-x86_64.zip",
+};
+pub(crate) fn profile() -> &'static Profile {
+    #[cfg(target_os = "linux")]
+    {
+        &LINUX_PROFILE
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        &WINDOWS_PROFILE
+    }
+}
 pub(crate) fn catalog() -> Result<Catalog, String> {
-    serde_json::from_str(include_str!("../community-mcp/catalog.json"))
-        .map_err(|_| "plugin-catalog-invalid".into())
+    #[cfg(target_os = "linux")]
+    let raw = include_str!("../community-mcp/catalog-linux-x86_64.json");
+    #[cfg(not(target_os = "linux"))]
+    let raw = include_str!("../community-mcp/catalog.json");
+    serde_json::from_str(raw).map_err(|_| "plugin-catalog-invalid".into())
 }
 pub(crate) fn available(c: &Catalog) -> bool {
     c.schema_version == 1
         && c.id == "luckyray.official.web-mcp"
-        && c.platform == "windows-x86_64"
+        && c.platform == profile().platform
         && (debug_archive().is_some_and(|p| p.is_file())
             || c.artifact_url.as_deref().is_some_and(|s| {
                 s.starts_with("https://github.com/")
@@ -69,7 +109,7 @@ pub(crate) fn available(c: &Catalog) -> bool {
 fn debug_archive() -> Option<PathBuf> {
     #[cfg(debug_assertions)]
     {
-        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("community-mcp/candidate.zip"))
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(profile().debug_archive))
     }
     #[cfg(not(debug_assertions))]
     {
@@ -164,8 +204,10 @@ pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<(), Stri
     fs::rename(&temp, path).map_err(|_| "plugin-state-save-failed".into())
 }
 pub(crate) fn verify(root: &Path, version: &str) -> Result<(), String> {
+    verify_with(root, version, &catalog()?, profile())
+}
+fn verify_with(root: &Path, version: &str, c: &Catalog, profile: &Profile) -> Result<(), String> {
     safe_path(root)?;
-    let c = catalog()?;
     let inventory_path = root.join("inventory.json");
     safe_path(&inventory_path)?;
     if fs::metadata(&inventory_path)
@@ -215,9 +257,9 @@ pub(crate) fn verify(root: &Path, version: &str) -> Result<(), String> {
         }
     }
     for name in [
-        "node.exe",
-        "tunnel-client-runtime-cloudflared.exe",
-        "cloudflared.exe",
+        profile.node,
+        profile.tunnel,
+        profile.cloudflared,
         "packages/community-mcp/src/server.mjs",
         "packages/materials-mcp/src/transport.mjs",
         "LICENSES.txt",
@@ -232,7 +274,7 @@ pub(crate) fn install(root: &Path) -> Result<PathBuf, String> {
     install_from_catalog(root, &catalog()?, debug_archive())
 }
 fn install_from_catalog(root: &Path, c: &Catalog, local_archive: Option<PathBuf>) -> Result<PathBuf, String> {
-    if !cfg!(all(windows, target_arch = "x86_64")) {
+    if !cfg!(all(any(windows, target_os = "linux"), target_arch = "x86_64")) {
         return Err("plugin-platform-unsupported".into());
     }
     if !available(c) {
@@ -280,6 +322,16 @@ fn install_from_catalog(root: &Path, c: &Catalog, local_archive: Option<PathBuf>
 }
 
 fn install_bytes(root: &Path, c: &Catalog, bytes: Vec<u8>) -> Result<PathBuf, String> {
+    install_bytes_with(root, c, bytes, &|stage, version| verify(stage, version), profile())
+}
+type Verifier<'a> = &'a dyn Fn(&Path, &str) -> Result<(), String>;
+fn install_bytes_with(
+    root: &Path,
+    c: &Catalog,
+    bytes: Vec<u8>,
+    verify: Verifier<'_>,
+    profile: &Profile,
+) -> Result<PathBuf, String> {
     if Some(bytes.len() as u64) != c.download_bytes || Some(hash(&bytes)) != c.artifact_sha256 {
         return Err("plugin-download-integrity-failed".into());
     }
@@ -320,9 +372,20 @@ fn install_bytes(root: &Path, c: &Catalog, bytes: Vec<u8>) -> Result<PathBuf, St
             let path = stage.join(&name);
             fs::create_dir_all(path.parent().ok_or("plugin-path-invalid")?)
                 .map_err(|_| "plugin-directory-failed")?;
-            let mut out = OpenOptions::new()
-                .write(true)
-                .create_new(true)
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                // Zip modes are not trusted. Only the profile's executables
+                // are made executable; everything else is plain data.
+                use std::os::unix::fs::OpenOptionsExt;
+                let executable = [profile.node, profile.tunnel, profile.cloudflared]
+                    .contains(&name.as_str());
+                options.mode(if executable { 0o755 } else { 0o644 });
+            }
+            #[cfg(not(unix))]
+            let _ = profile;
+            let mut out = options
                 .open(&path)
                 .map_err(|_| "plugin-file-save-failed")?;
             let expected = member.size();
@@ -429,6 +492,159 @@ mod tests {
         fs::write(fake.join("inventory.json"), br#"{"schemaVersion":1,"version":"0.1.0-candidate.1","files":[]}"#).unwrap();
         assert!(verify(&fake, &c.version).is_err());
         fs::remove_dir_all(fake).unwrap();
+    }
+    /// Synthetic package (throwaway bytes, hashes computed here) in the
+    /// layout of `profile`; returns the ZIP and a catalog pinning it.
+    fn synthetic(profile: &Profile, extra: Option<&str>, skip: Option<&str>) -> (Vec<u8>, Catalog) {
+        use std::io::Write as _;
+        let version = "9.9.9-synthetic";
+        let names = [
+            profile.node,
+            profile.tunnel,
+            profile.cloudflared,
+            "packages/community-mcp/src/server.mjs",
+            "packages/materials-mcp/src/transport.mjs",
+            "LICENSES.txt",
+        ];
+        let files: Vec<(String, Vec<u8>)> = names
+            .iter()
+            .filter(|n| Some(**n) != skip)
+            .map(|n| (n.to_string(), format!("synthetic {n}").into_bytes()))
+            .collect();
+        let inventory = serde_json::to_vec(&Inventory {
+            schema_version: 1,
+            version: version.into(),
+            files: files
+                .iter()
+                .map(|(p, b)| PayloadFile { path: p.clone(), sha256: hash(b), bytes: b.len() as u64 })
+                .collect(),
+        })
+        .unwrap();
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (p, b) in files.iter().chain(std::iter::once(&("inventory.json".to_string(), inventory.clone()))) {
+            zip.start_file(p.as_str(), options).unwrap();
+            zip.write_all(b).unwrap();
+        }
+        if let Some(e) = extra {
+            zip.start_file(e, options).unwrap();
+            zip.write_all(b"extra").unwrap();
+        }
+        let bytes = zip.finish().unwrap().into_inner();
+        let c = Catalog {
+            schema_version: 1,
+            id: "luckyray.official.web-mcp".into(),
+            version: version.into(),
+            platform: profile.platform.into(),
+            artifact_url: None,
+            artifact_sha256: Some(hash(&bytes)),
+            inventory_sha256: Some(hash(&inventory)),
+            previous_inventories: Vec::new(),
+            download_bytes: Some(bytes.len() as u64),
+            max_unpacked_bytes: 1024 * 1024,
+        };
+        (bytes, c)
+    }
+    fn install_synthetic(root: &Path, c: &Catalog, bytes: Vec<u8>, profile: &Profile) -> Result<PathBuf, String> {
+        install_bytes_with(root, c, bytes, &|stage, v| verify_with(stage, v, c, profile), profile)
+    }
+    #[test]
+    fn profiles_pin_the_v199_windows_names_and_the_linux_names() {
+        assert_eq!(WINDOWS_PROFILE.platform, "windows-x86_64");
+        assert_eq!(WINDOWS_PROFILE.node, "node.exe");
+        assert_eq!(WINDOWS_PROFILE.tunnel, "tunnel-client-runtime-cloudflared.exe");
+        assert_eq!(WINDOWS_PROFILE.cloudflared, "cloudflared.exe");
+        assert_eq!(WINDOWS_PROFILE.debug_archive, "community-mcp/candidate.zip");
+        assert_eq!(LINUX_PROFILE.platform, "linux-x86_64");
+        assert_eq!(LINUX_PROFILE.node, "node");
+        assert_eq!(LINUX_PROFILE.tunnel, "tunnel-client-runtime-cloudflared");
+        assert_eq!(LINUX_PROFILE.cloudflared, "cloudflared");
+        #[cfg(target_os = "linux")]
+        assert_eq!(profile().platform, "linux-x86_64");
+        #[cfg(windows)]
+        assert_eq!(profile().platform, "windows-x86_64");
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_catalog_is_unpublished_so_install_refuses_without_writing() {
+        let c = catalog().unwrap();
+        assert_eq!(c.platform, "linux-x86_64");
+        assert_eq!(c.id, "luckyray.official.web-mcp");
+        assert!(c.artifact_url.is_none() && c.artifact_sha256.is_none() && c.inventory_sha256.is_none());
+        assert!(!available(&c));
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("versions");
+        assert_eq!(install_from_catalog(&root, &c, None).unwrap_err(), "plugin-package-unpublished");
+        assert!(!root.exists());
+        // A Windows catalog entry never becomes available on Linux.
+        let mut w = c;
+        w.platform = "windows-x86_64".into();
+        w.artifact_url = Some("https://github.com/x/y/releases/download/v1/a.zip".into());
+        w.artifact_sha256 = Some("0".repeat(64));
+        w.inventory_sha256 = Some("0".repeat(64));
+        w.download_bytes = Some(1);
+        assert!(!available(&w));
+        w.platform = "linux-x86_64".into();
+        assert!(available(&w));
+    }
+    #[test]
+    fn synthetic_linux_package_installs_verifies_and_marks_only_executables() {
+        let (bytes, c) = synthetic(&LINUX_PROFILE, None, None);
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("中文 插件");
+        let installed = install_synthetic(&root, &c, bytes, &LINUX_PROFILE).unwrap();
+        verify_with(&installed, &c.version, &c, &LINUX_PROFILE).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &str| fs::metadata(installed.join(p)).unwrap().permissions().mode() & 0o777;
+            for exe in ["node", "tunnel-client-runtime-cloudflared", "cloudflared"] {
+                assert_eq!(mode(exe) & 0o111, 0o111, "{exe}");
+                assert_eq!(mode(exe) & 0o022, 0, "{exe}");
+            }
+            for data in ["LICENSES.txt", "inventory.json", "packages/community-mcp/src/server.mjs"] {
+                assert_eq!(mode(data) & 0o111, 0, "{data}");
+            }
+        }
+        // Tampering after install is caught by the same verifier.
+        fs::write(installed.join("node"), b"tampered").unwrap();
+        assert_eq!(
+            verify_with(&installed, &c.version, &c, &LINUX_PROFILE).unwrap_err(),
+            "plugin-integrity-mismatch"
+        );
+        // The Windows profile can never accept a Linux payload, and vice versa.
+        let (wbytes, wc) = synthetic(&WINDOWS_PROFILE, None, None);
+        let wroot = temp.path().join("windows-shaped");
+        assert_eq!(
+            install_bytes_with(&wroot, &wc, wbytes, &|s, v| verify_with(s, v, &wc, &LINUX_PROFILE), &LINUX_PROFILE)
+                .unwrap_err(),
+            "plugin-payload-incomplete"
+        );
+        assert_eq!(fs::read_dir(&wroot).unwrap().count(), 0, "stage must be removed");
+    }
+    #[test]
+    fn synthetic_linux_package_refusals_leave_nothing_installed() {
+        let temp = tempfile::tempdir().unwrap();
+        let (bytes, c) = synthetic(&LINUX_PROFILE, None, None);
+        let mut damaged = bytes.clone();
+        let mid = damaged.len() / 2;
+        damaged[mid] ^= 1;
+        let root = temp.path().join("bad-hash");
+        assert_eq!(install_synthetic(&root, &c, damaged, &LINUX_PROFILE).unwrap_err(), "plugin-download-integrity-failed");
+        assert!(!root.exists());
+        let (bytes, c) = synthetic(&LINUX_PROFILE, Some("extra.bin"), None);
+        let root = temp.path().join("extra");
+        assert_eq!(install_synthetic(&root, &c, bytes, &LINUX_PROFILE).unwrap_err(), "plugin-archive-extra-files");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        let (bytes, c) = synthetic(&LINUX_PROFILE, None, Some("cloudflared"));
+        let root = temp.path().join("incomplete");
+        assert_eq!(install_synthetic(&root, &c, bytes, &LINUX_PROFILE).unwrap_err(), "plugin-payload-incomplete");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        let (bytes, c) = synthetic(&LINUX_PROFILE, Some("../escape"), None);
+        let root = temp.path().join("escape");
+        assert_eq!(install_synthetic(&root, &c, bytes, &LINUX_PROFILE).unwrap_err(), "plugin-archive-invalid");
+        assert!(!temp.path().join("escape-out").exists());
     }
     #[test]
     fn unpublished_catalog_cannot_execute() {
