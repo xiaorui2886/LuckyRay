@@ -473,6 +473,7 @@ fn consumer_concurrent_duplicate_adapter_preserves_the_winning_organization() {
 fn consumer_verified_adapter_receipts_replay_restart_conflict_revoke_and_interruption() {
     use crate::{backend::BackendServices, local_transport::VerifiedTransportPrincipal};
     let profile = tempfile::tempdir().unwrap();
+    crate::test_support::make_private(profile.path());
     let backend = BackendServices::initialize(profile.path()).unwrap();
     let base = backend.material_catalog();
     let root = profile.path().join("A");
@@ -506,6 +507,7 @@ fn consumer_verified_adapter_receipts_replay_restart_conflict_revoke_and_interru
     assert_eq!(result["libraryId"], id);
     drop(base);
     drop(backend);
+    crate::test_support::make_private(profile.path());
     let backend = BackendServices::initialize(profile.path()).unwrap();
     let replay = super::super::consumer_transport::route(
         &backend,
@@ -605,6 +607,7 @@ fn consumer_verified_adapter_receipts_replay_restart_conflict_revoke_and_interru
 fn consumer_verified_adapter_wrong_method_unknown_fields_and_ungranted_queries_fail_closed() {
     use crate::{backend::BackendServices, local_transport::VerifiedTransportPrincipal};
     let profile = tempfile::tempdir().unwrap();
+    crate::test_support::make_private(profile.path());
     let backend = BackendServices::initialize(profile.path()).unwrap();
     let principal = VerifiedTransportPrincipal::capture_test_principal();
     let id = backend.material_catalog().library_state().unwrap().0;

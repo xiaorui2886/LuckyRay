@@ -14,9 +14,10 @@ impl MarkdownRetryFixture {
     fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
         let app_data = root.path().join("app");
-        fs::create_dir_all(&app_data).unwrap();
+        crate::test_support::make_private(&app_data);
         let app_data = PathBuf::from(fs::canonicalize(&app_data).unwrap()
             .to_string_lossy().trim_start_matches(r"\\?\").to_owned());
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let service = backend.knowledge();
         let vault_root = root.path().join("vault");
@@ -202,6 +203,7 @@ fn community_mcp_unified_grant_uses_formal_vault_and_revokes_both_over_tcp() {
     fs::create_dir(&app_data).unwrap();
     let app_data = PathBuf::from(fs::canonicalize(&app_data).unwrap()
         .to_string_lossy().trim_start_matches(r"\\?\").to_owned());
+    crate::test_support::make_private(&app_data);
     let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
     let service = backend.knowledge();
     let make_vault = |id: &str| {
@@ -306,6 +308,7 @@ fn materials_request(
 fn materials_mcp_tcp_grant_reads_only_its_library_rejects_control_and_revokes() {
     let app_data = PathBuf::from(fs::canonicalize(temp_dir("materials-mcp-scoped")).unwrap()
         .to_string_lossy().trim_start_matches(r"\\?\").to_owned());
+    crate::test_support::make_private(&app_data);
     let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
     let catalog = backend.material_catalog();
     let target_root = app_data.join("target-materials");
@@ -446,6 +449,7 @@ fn materials_mcp_tcp_grant_reads_only_its_library_rejects_control_and_revokes() 
     let owned_token = token.to_owned();
     let owned_id = grant_id.to_owned();
     drop(handle);
+    crate::test_support::make_private(&app_data);
     let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
     let handle = start_server(
         ServerConfig::test(app_data.clone()),
@@ -495,6 +499,7 @@ fn materials_mcp_commit_preserves_target_names_kinds_dedupe_and_stale_grants_can
         MaterialFilter,
     };
     let app_data = temp_dir("materials-mcp-commit");
+    crate::test_support::make_private(&app_data);
     let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
     let root = backend.material_catalog();
     let legacy = root.library_state().unwrap().0;

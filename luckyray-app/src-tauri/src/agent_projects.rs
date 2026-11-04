@@ -1079,6 +1079,7 @@ mod tests {
     fn project_knowledge_access_is_explicit_isolated_revocable_and_frozen() {
         let app_data = temp_dir("app");
         let workspace_root = temp_dir("workspace");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let workspace = backend
             .workspace()
@@ -1299,6 +1300,7 @@ mod tests {
     fn same_path_vault_replacement_requires_explicit_reauthorization_before_next_run() {
         let app_data = temp_dir("same-path-app");
         let workspace_root = temp_dir("same-path-workspace");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let workspace = backend
             .workspace()
@@ -1450,6 +1452,7 @@ mod tests {
     fn deleting_a_project_cascades_knowledge_bindings_and_stale_refs_cannot_reauthorize() {
         let app_data = temp_dir("delete-cascade-app");
         let workspace_root = temp_dir("delete-cascade-workspace");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let workspace = backend
             .workspace()
@@ -1511,6 +1514,7 @@ mod tests {
     fn run_admission_and_revoke_linearize_while_the_admitted_scope_stays_frozen() {
         let app_data = temp_dir("admission-revoke-app");
         let workspace_root = temp_dir("admission-revoke-workspace");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let workspace = backend
             .workspace()
@@ -1600,6 +1604,7 @@ mod tests {
         let app_data = temp_dir("conversation-move-app");
         let workspace_a_root = temp_dir("conversation-move-workspace-a");
         let workspace_b_root = temp_dir("conversation-move-workspace-b");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let workspace_a = backend
             .workspace()

@@ -4333,6 +4333,7 @@ mod tests {
         Arc<CompanionGateway>,
     ) {
         let root = fixture_root(label);
+        crate::test_support::make_private(root.path());
         let backend = Arc::new(BackendServices::initialize(root.path()).unwrap());
         let store = Arc::new(MemoryIdentityStore::default());
         let gateway =

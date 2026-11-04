@@ -484,7 +484,7 @@ mod tests {
     fn fixture() -> Fixture {
         let root = tempfile::tempdir().unwrap();
         let app = root.path().join("app");
-        std::fs::create_dir_all(&app).unwrap();
+        crate::test_support::make_private(&app);
         let backend = Arc::new(BackendServices::initialize(&app).unwrap());
         let gateway = CompanionGateway::initialize_with_store(
             backend,

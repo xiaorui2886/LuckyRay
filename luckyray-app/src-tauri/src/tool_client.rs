@@ -732,6 +732,7 @@ mod tests {
     #[test]
     fn client_lists_the_production_registry_after_native_proof() {
         let app_data = temp_dir("list");
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let server = start_server(
             ServerConfig::test(app_data.clone()),
@@ -772,6 +773,7 @@ mod tests {
     #[test]
     fn fake_first_port_receives_only_anonymous_proof_before_real_tool_request() {
         let app_data = temp_dir("fake-first");
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let server = start_server(
             ServerConfig::test(app_data.clone()),
@@ -802,6 +804,7 @@ mod tests {
     #[test]
     fn proof_redirects_never_reach_the_redirect_target() {
         let app_data = temp_dir("proof-redirect");
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let _server = start_server(
             ServerConfig::test(app_data.clone()),
@@ -824,6 +827,7 @@ mod tests {
     #[test]
     fn authenticated_redirects_never_forward_authorization_or_tool_payload() {
         let app_data = temp_dir("authenticated-redirect");
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let _server = start_server(
             ServerConfig::test(app_data.clone()),
@@ -888,6 +892,7 @@ mod tests {
         let parent_proxy_before = proxy_names.map(std::env::var_os);
         let app_data_parent = temp_dir("spawned-cli-parent");
         let app_data = app_data_parent.join("com.luckyray.desktop");
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let mut server_config = ServerConfig::test(app_data.clone());
         server_config.ports = (super::LOCAL_PORT_START..=super::LOCAL_PORT_END).collect();
@@ -960,6 +965,7 @@ mod tests {
     #[test]
     fn incompatible_protocol_and_rotated_auth_fail_with_stable_safe_codes() {
         let app_data = temp_dir("protocol-auth");
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let server = start_server(
             ServerConfig::test(app_data.clone()),
@@ -994,6 +1000,7 @@ mod tests {
         let app_data = temp_dir("vault-switch-app");
         let vault_a_root = temp_dir("vault-switch-a");
         let vault_b_root = temp_dir("vault-switch-b");
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let vault_a = register_vault(&backend, "vault-client-a", &vault_a_root);
         let server = start_server(

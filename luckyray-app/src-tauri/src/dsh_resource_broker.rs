@@ -2148,6 +2148,7 @@ mod tests {
             serde_json::to_vec_pretty(&registration).unwrap(),
         )
         .unwrap();
+        crate::test_support::make_private(root.path());
         let mut backend = crate::backend::BackendServices::initialize(root.path()).unwrap();
         if let Some(agent_browser) = agent_browser {
             backend.install_agent_browser_for_test(agent_browser);

@@ -1192,6 +1192,7 @@ mod tests {
         let app_data = temp_dir("app");
         let root = temp_dir("workspace");
         fs::write(root.path().join("package.json"), br#"{"name":"safe"}"#).unwrap();
+        crate::test_support::make_private(app_data.path());
         let backend = crate::backend::BackendServices::initialize(app_data.path()).unwrap();
         let workspace = backend.workspace();
         let grant = workspace.add(root.path(), "Project").unwrap();
@@ -1229,6 +1230,7 @@ mod tests {
         let app_data = temp_dir("spawn-failed-app");
         let root = temp_dir("spawn-failed-workspace");
         fs::write(root.path().join("package.json"), br#"{"name":"safe"}"#).unwrap();
+        crate::test_support::make_private(app_data.path());
         let backend = crate::backend::BackendServices::initialize(app_data.path()).unwrap();
         let workspace = backend.workspace();
         let grant = workspace.add(root.path(), "Project").unwrap();
@@ -1261,6 +1263,7 @@ mod tests {
         let app_data = temp_dir("stale-app");
         let root = temp_dir("stale-workspace");
         fs::write(root.path().join("Cargo.toml"), "[package]\nname='safe'\n").unwrap();
+        crate::test_support::make_private(app_data.path());
         let backend = crate::backend::BackendServices::initialize(app_data.path()).unwrap();
         let workspace = backend.workspace();
         let grant = workspace.add(root.path(), "Project").unwrap();
@@ -1293,6 +1296,7 @@ mod tests {
         let app_data = temp_dir("cancelled-app");
         let root = temp_dir("cancelled-workspace");
         fs::write(root.path().join("package.json"), br#"{"name":"safe"}"#).unwrap();
+        crate::test_support::make_private(app_data.path());
         let backend = crate::backend::BackendServices::initialize(app_data.path()).unwrap();
         let workspace = backend.workspace();
         let grant = workspace.add(root.path(), "Project").unwrap();
@@ -1321,6 +1325,7 @@ mod tests {
         let root = temp_dir("post-check-workspace");
         let manifest = root.path().join("package.json");
         fs::write(&manifest, br#"{"name":"safe"}"#).unwrap();
+        crate::test_support::make_private(app_data.path());
         let backend = crate::backend::BackendServices::initialize(app_data.path()).unwrap();
         let workspace = backend.workspace();
         let grant = workspace.add(root.path(), "Project").unwrap();

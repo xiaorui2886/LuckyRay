@@ -58,6 +58,7 @@ fn snapshot(connection: &Connection) -> Value {
 #[test]
 fn material_library_r2_real_v24_bootstrap_rollback_upgrade_restart_and_drift() {
     let profile = tempfile::tempdir().unwrap();
+    crate::test_support::make_private(profile.path());
     let backend = BackendServices::initialize(profile.path()).unwrap();
     let catalog = backend.material_catalog();
     let root = profile.path().join("第二库");
@@ -94,6 +95,7 @@ fn material_library_r2_real_v24_bootstrap_rollback_upgrade_restart_and_drift() {
     drop(scoped);
     drop(catalog);
     drop(backend);
+    crate::test_support::make_private(profile.path());
     let failure = BackendServices::initialize(profile.path()).err().unwrap();
     assert_eq!(failure.code, "backend-migration-record-failed");
     connection = open_bootstrap_connection(&profile.path().join("luckyray.db")).unwrap();
@@ -123,6 +125,7 @@ fn material_library_r2_real_v24_bootstrap_rollback_upgrade_restart_and_drift() {
         .unwrap();
     drop(connection);
     for _ in 0..2 {
+        crate::test_support::make_private(profile.path());
         let upgraded = BackendServices::initialize(profile.path()).unwrap();
         assert_eq!(upgraded.status().schema_version, SCHEMA_VERSION);
         let connection = upgraded.open_read().unwrap();
@@ -158,6 +161,7 @@ fn material_library_r2_real_v24_bootstrap_rollback_upgrade_restart_and_drift() {
         .execute_batch("ALTER TABLE material_library_transfer ADD COLUMN unexpected TEXT")
         .unwrap();
     drop(connection);
+    crate::test_support::make_private(profile.path());
     let rejected = BackendServices::initialize(profile.path()).err().unwrap();
     assert_eq!(
         rejected.code,
@@ -192,6 +196,7 @@ fn downgrade_synthetic_transfer_to_v25(c: &Connection) {
 #[test]
 fn material_library_r3_real_v25_upgrade_rolls_back_preserves_ledger_and_restarts() {
     let profile = tempfile::tempdir().unwrap();
+    crate::test_support::make_private(profile.path());
     let backend = BackendServices::initialize(profile.path()).unwrap();
     let catalog = backend.material_catalog();
     let root = profile.path().join("真实启动合成第二库"); std::fs::create_dir(&root).unwrap();
@@ -207,6 +212,7 @@ fn material_library_r3_real_v25_upgrade_rolls_back_preserves_ledger_and_restarts
     let before = snapshot(&connection); let ledger = transfer_snapshot(&connection);
     connection.execute_batch("CREATE TRIGGER reject_r3_migration BEFORE INSERT ON backend_schema_migration WHEN NEW.version=26 BEGIN SELECT RAISE(ABORT,'injected-after-r3-rebuild'); END;").unwrap();
     drop(connection); drop(scoped); drop(catalog); drop(backend);
+    crate::test_support::make_private(profile.path());
     let failure = BackendServices::initialize(profile.path()).err().unwrap();
     assert_eq!(failure.code, "backend-migration-record-failed");
     let connection = open_bootstrap_connection(&profile.path().join("luckyray.db")).unwrap();
@@ -217,6 +223,7 @@ fn material_library_r3_real_v25_upgrade_rolls_back_preserves_ledger_and_restarts
     assert_eq!(snapshot(&connection), before); drop(connection);
     let mut migrated_schema = None;
     for _ in 0..2 {
+        crate::test_support::make_private(profile.path());
         let upgraded = BackendServices::initialize(profile.path()).unwrap();
         assert_eq!(upgraded.status().schema_version,SCHEMA_VERSION);
         let connection = upgraded.open_read().unwrap();
@@ -237,16 +244,19 @@ fn material_library_r3_real_v25_upgrade_rolls_back_preserves_ledger_and_restarts
     connection.execute_batch("ALTER TABLE material_library_transfer RENAME TO quoted_transfer; ALTER TABLE quoted_transfer RENAME TO material_library_transfer;").unwrap();
     crate::materials::verify_transfer_schema(&connection).unwrap();
     connection.execute_batch("ALTER TABLE material_library_transfer ADD COLUMN unexpected TEXT").unwrap(); drop(connection);
+    crate::test_support::make_private(profile.path());
     assert_eq!(BackendServices::initialize(profile.path()).err().unwrap().code,"backend-material-library-transfer-schema-invalid");
 }
 #[test]
 fn material_library_r3_v25_unknown_drift_is_rejected_without_rebuilding_or_recording() {
     for drift in ["ALTER TABLE material_library_transfer ADD COLUMN unexpected TEXT", "DROP INDEX material_library_transfer_anchor; CREATE INDEX material_library_transfer_anchor ON material_library_transfer(kind)"] {
         let profile = tempfile::tempdir().unwrap();
+        crate::test_support::make_private(profile.path());
         let backend = BackendServices::initialize(profile.path()).unwrap();
         let connection = backend.open_write().unwrap(); downgrade_synthetic_transfer_to_v25(&connection);
         connection.execute_batch(drift).unwrap(); let before = transfer_snapshot(&connection);
         drop(connection); drop(backend);
+        crate::test_support::make_private(profile.path());
         assert_eq!(BackendServices::initialize(profile.path()).err().unwrap().code,"backend-material-library-transfer-migration-failed");
         let connection = open_bootstrap_connection(&profile.path().join("luckyray.db")).unwrap();
         assert_eq!(transfer_snapshot(&connection),before);

@@ -5638,6 +5638,7 @@ mod tests {
             serde_json::to_vec_pretty(&vault).unwrap(),
         )
         .unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         backend.knowledge().register_current_vault(&vault).unwrap();
         (backend, vault)
@@ -5664,6 +5665,7 @@ mod tests {
             serde_json::to_vec_pretty(&vault).unwrap(),
         )
         .unwrap();
+        crate::test_support::make_private(&app_data);
         let controller = BackendServices::initialize(&app_data).unwrap();
         controller
             .knowledge()
@@ -5676,6 +5678,7 @@ mod tests {
     #[test]
     fn agent_catalog_is_exact14_and_write_tools_remain_unexecutable_without_a_permit() {
         let app_data = temp_dir("agent-web-catalog");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let definitions = backend
             .list_tools(&ToolCallContext::agent_canvas_scoped(
@@ -6271,6 +6274,7 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
         let app_data = temp_dir("agent-web-disabled");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         backend
             .open_write()
@@ -6378,6 +6382,7 @@ mod tests {
         });
 
         let app_data = temp_dir("agent-web-search");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         backend.web_tools().enable_result_loopback_for_test();
         let status = backend
@@ -6469,6 +6474,7 @@ mod tests {
             String::from_utf8_lossy(&request[..read]).into_owned()
         });
         let app_data = temp_dir("agent-web-fetch");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         backend
             .web_tools()
@@ -6518,6 +6524,7 @@ mod tests {
     #[test]
     fn agent_web_fetch_rejects_model_supplied_urls_before_network_dispatch() {
         let app_data = temp_dir("agent-web-fetch-url-denied");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         backend
             .web_tools()
@@ -6752,6 +6759,7 @@ mod tests {
             )
             .unwrap();
         }
+        crate::test_support::make_private(&app_data);
         let controller = BackendServices::initialize(&app_data).unwrap();
         controller
             .knowledge()
@@ -7882,6 +7890,7 @@ mod tests {
     #[test]
     fn memory_write_references_are_backend_bound_per_run_before_any_approval_or_write() {
         let app_data = temp_dir("memory-reference-binding");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let entry = backend
             .memory()
@@ -8234,6 +8243,7 @@ mod tests {
             b"\xef\xbb\xbf{\"name\":\"safe-project\"}",
         )
         .unwrap();
+        crate::test_support::make_private(&app_data);
         let mut backend = BackendServices::initialize(&app_data).unwrap();
         let (catalog, launches) = crate::agent_execution::ExecutionRecipeCatalog::with_fixture(
             crate::agent_execution::ExecutionRunObservation::try_new(
@@ -8708,6 +8718,7 @@ mod tests {
             "the production service must resolve Tauri's exact registered externalBin"
         );
 
+        crate::test_support::make_private(&app_data);
         let mut backend = BackendServices::initialize(&app_data).unwrap();
         backend.set_execution_catalog(catalog);
         backend
@@ -8786,6 +8797,7 @@ mod tests {
     #[test]
     fn no_vault_and_large_read_fail_with_stable_codes() {
         let app_data = temp_dir("no-vault-app");
+        crate::test_support::make_private(&app_data);
         let no_vault = BackendServices::initialize(&app_data).unwrap();
         let error = no_vault
             .run_tool(
@@ -9079,6 +9091,7 @@ mod tests {
     #[test]
     fn workspace_create_text_commits_exact_once_and_never_overwrites() {
         let app_data = temp_dir("workspace-create-text");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let root = app_data.join("grant-root");
         std::fs::create_dir_all(root.join("docs")).unwrap();
@@ -9211,6 +9224,7 @@ mod tests {
         );
 
         let no_vault_data = temp_dir("workspace-write-no-vault");
+        crate::test_support::make_private(&no_vault_data);
         let no_vault_backend = BackendServices::initialize(&no_vault_data).unwrap();
         let no_vault_root = no_vault_data.join("grant-root");
         fs::create_dir_all(&no_vault_root).unwrap();
@@ -9263,6 +9277,7 @@ mod tests {
     #[test]
     fn workspace_read_issues_file_ref_only_for_qualified_text() {
         let app_data = temp_dir("workspace-read-ref");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let root = app_data.join("grant-root");
         std::fs::create_dir_all(&root).unwrap();
@@ -9318,6 +9333,7 @@ mod tests {
     #[test]
     fn workspace_patch_commits_cas_consumes_ref_once_and_conflicts_typed() {
         let app_data = temp_dir("workspace-patch-ref");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let root = app_data.join("grant-root");
         std::fs::create_dir_all(&root).unwrap();
@@ -9395,6 +9411,7 @@ mod tests {
     #[test]
     fn workspace_patch_cas_conflict_and_race_have_one_winner() {
         let app_data = temp_dir("workspace-patch-race");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let root = app_data.join("grant-root");
         std::fs::create_dir_all(&root).unwrap();
@@ -9460,6 +9477,7 @@ mod tests {
     #[test]
     fn workspace_patch_invalid_edits_are_typed_never_protocol_invalid() {
         let app_data = temp_dir("workspace-patch-edits");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let root = app_data.join("grant-root");
         std::fs::create_dir_all(&root).unwrap();

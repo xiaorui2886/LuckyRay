@@ -708,6 +708,7 @@ mod tests {
             serde_json::to_vec_pretty(&vault).unwrap(),
         )
         .unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         backend.knowledge().register_current_vault(&vault).unwrap();
         let server = start_server(
@@ -826,6 +827,7 @@ mod tests {
     #[test]
     fn read_runs_and_typed_tool_failures_have_distinct_machine_exit_codes() {
         let app_data = temp_dir("read-error-app");
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let server = start_server(
             ServerConfig::test(app_data.clone()),

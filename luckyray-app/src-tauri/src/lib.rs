@@ -7,6 +7,20 @@
 //! let _ = std::mem::size_of::<ToolRuntime>();
 //! ```
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    /// Test fixtures stand in for the app-data directory, which the app
+    /// creates owner-only (0700). `tempfile`/`create_dir_all` honour the
+    /// umask (usually 0755), so restrict the fixture to match production.
+    pub(crate) fn make_private(path: &std::path::Path) {
+        std::fs::create_dir_all(path).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+}
 mod desktop_app_update;
 mod desktop_identity;
 mod community_mcp_knowledge;

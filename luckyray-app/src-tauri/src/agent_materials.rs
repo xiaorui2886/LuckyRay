@@ -1098,6 +1098,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("preview.md");
         std::fs::write(&source, "# Useful preview\n\nVISIBLE-MATERIAL-CONTENT").unwrap();
+        crate::test_support::make_private(root.path());
         let backend = crate::backend::BackendServices::initialize(root.path()).unwrap();
         let imported = backend
             .material_catalog()
@@ -1125,7 +1126,7 @@ mod tests {
 
     #[test]
     fn material_library_r1_old_agent_raw_transaction_checks_default_before_writing() {
-        let root=tempfile::tempdir().unwrap();let backend=crate::backend::BackendServices::initialize(root.path()).unwrap();
+        let root=tempfile::tempdir().unwrap();crate::test_support::make_private(root.path());let backend=crate::backend::BackendServices::initialize(root.path()).unwrap();
         let c=backend.material_catalog();let libroot=root.path().join("B");std::fs::create_dir(&libroot).unwrap();
         let lib=c.create_library("B",&libroot,"managed").unwrap();let b=c.for_library(&lib.id).unwrap();
         let input=||vec![crate::materials::MaterialBytesInput{name:"same.txt".into(),original_path:"https://example.test/source".into(),mime_type:"text/plain".into(),bytes:b"content".to_vec(),description:None}];

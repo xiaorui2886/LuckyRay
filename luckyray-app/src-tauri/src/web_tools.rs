@@ -2138,7 +2138,7 @@ mod tests {
             "luckyray-web-router-{label}-{}",
             rand::random::<u64>()
         ));
-        std::fs::create_dir_all(&root).unwrap();
+        crate::test_support::make_private(&root);
         BackendServices::initialize(&root).unwrap()
     }
 

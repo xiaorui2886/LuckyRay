@@ -1248,6 +1248,7 @@ mod tests {
     ) {
         let app_data = temp_dir(&format!("{label}-app"));
         let vault_root = temp_dir(&format!("{label}-vault"));
+        crate::test_support::make_private(&app_data);
         let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
         let vault = register_vault(&backend, &format!("vault-{label}"), &vault_root);
         let mut config = ServerConfig::test(app_data.clone());

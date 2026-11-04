@@ -12,6 +12,7 @@ struct Fixture { root: tempfile::TempDir, gateway:Arc<CompanionGateway>, device:
 impl Fixture {
     fn new() -> Self {
         let root=tempfile::tempdir().unwrap();
+        crate::test_support::make_private(root.path());
         let backend=Arc::new(BackendServices::initialize(root.path()).unwrap());
         let gateway=CompanionGateway::initialize_with_store(backend,Arc::new(MemoryStore::default()),GatewayPolicy::default());
         gateway.start("127.0.0.1",Some(0)).unwrap();

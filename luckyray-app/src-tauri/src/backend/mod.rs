@@ -3619,6 +3619,7 @@ mod tests {
     #[test]
     fn phone_trust_v26_upgrade_preserves_grants_and_does_not_authorize_devices() {
         let app_data = temp_app_data("phone-trust-v26-upgrade");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let connection = backend.open_write().unwrap();
         // Synthetic v26 fixture only: restore the exact former grant constraint.
@@ -3641,6 +3642,7 @@ mod tests {
         drop(connection);
         drop(backend);
         for _ in 0..2 {
+            crate::test_support::make_private(&app_data);
             let upgraded = BackendServices::initialize(&app_data).unwrap();
             assert_eq!(upgraded.status().schema_version, 27);
             // SQLite FTS5 quick_check requires a writable synthetic connection.
@@ -3661,6 +3663,7 @@ mod tests {
     #[test]
     fn material_library_r1_bootstrap_ledger24_restart_and_default_boundary() {
         let app_data=temp_app_data("material-library-r1-bootstrap");
+        crate::test_support::make_private(&app_data);
         let backend=BackendServices::initialize(&app_data).unwrap();
         let catalog=backend.material_catalog();
         let root=app_data.join("second-library");std::fs::create_dir(&root).unwrap();
@@ -3672,6 +3675,7 @@ mod tests {
         assert!(catalog.list_assets(&MaterialFilter::default()).unwrap().is_empty());
         assert!(catalog.companion_resource(&asset.id,false).is_err());
         drop(scoped);drop(catalog);drop(backend);
+        crate::test_support::make_private(&app_data);
         let restarted=BackendServices::initialize(&app_data).unwrap();
         let conn=restarted.open_read().unwrap();
         assert_eq!(conn.query_row("SELECT COUNT(*) FROM backend_schema_migration WHERE version=24",[],|r|r.get::<_,i64>(0)).unwrap(),1);
@@ -4003,6 +4007,7 @@ mod tests {
     #[test]
     fn fresh_backend_bootstrap_exposes_materials_and_knowledge_without_a_webview() {
         let app_data = temp_app_data("fresh");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
 
         assert!(backend.status().ready);
@@ -4035,6 +4040,7 @@ mod tests {
     #[test]
     fn fresh_backend_owns_the_media_transfer_service() {
         let app_data = temp_app_data("media-transfer");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
 
         let started = backend
@@ -4077,6 +4083,7 @@ mod tests {
     #[test]
     fn fresh_backend_retires_legacy_note_schema_without_touching_shared_domains() {
         let app_data = temp_app_data("fresh-retired-notes");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let connection = backend.open_read().unwrap();
 
@@ -4131,6 +4138,7 @@ mod tests {
         insert_v2_domain_sentinels(&connection);
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let first = BackendServices::initialize(&app_data).unwrap();
         let connection = first.open_write().unwrap();
         assert_eq!(first.status().schema_version, SCHEMA_VERSION);
@@ -4208,6 +4216,7 @@ mod tests {
         drop(connection);
         drop(first);
 
+        crate::test_support::make_private(&app_data);
         let second = BackendServices::initialize(&app_data).unwrap();
         let connection = second.open_read().unwrap();
         assert_eq!(
@@ -4237,6 +4246,7 @@ mod tests {
     #[test]
     fn recorded_v3_repairs_reintroduced_empty_retired_note_schema() {
         let app_data = temp_app_data("v3-reintroduced-empty-note-schema");
+        crate::test_support::make_private(&app_data);
         let first = BackendServices::initialize(&app_data).unwrap();
         let mut connection = first.open_write().unwrap();
         let transaction = connection
@@ -4247,6 +4257,7 @@ mod tests {
         drop(connection);
         drop(first);
 
+        crate::test_support::make_private(&app_data);
         let repaired = BackendServices::initialize(&app_data).unwrap();
         let connection = repaired.open_read().unwrap();
         verify_retired_note_schema_absent(&connection).unwrap();
@@ -4259,6 +4270,7 @@ mod tests {
     #[test]
     fn recorded_v3_refuses_to_remove_reintroduced_retired_note_data() {
         let app_data = temp_app_data("v3-reintroduced-nonempty-note-schema");
+        crate::test_support::make_private(&app_data);
         let first = BackendServices::initialize(&app_data).unwrap();
         let mut connection = first.open_write().unwrap();
         let transaction = connection
@@ -4281,6 +4293,7 @@ mod tests {
         drop(connection);
         drop(first);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, "backend-retired-schema-nonempty");
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
@@ -4306,6 +4319,7 @@ mod tests {
         insert_v2_domain_sentinels(&connection);
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize_with_v3_test_failure(&app_data)
             .err()
             .unwrap();
@@ -4355,6 +4369,7 @@ mod tests {
         );
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let recovered = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(recovered.status().schema_version, SCHEMA_VERSION);
         verify_retired_note_schema_absent(&recovered.open_read().unwrap()).unwrap();
@@ -4375,6 +4390,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, "backend-schema-trigger-mismatch");
         assert!(error.message.contains("note_search_ai"));
@@ -4411,6 +4427,7 @@ mod tests {
     #[test]
     fn webview_free_material_import_is_queryable_and_duplicate_is_a_noop() {
         let app_data = temp_app_data("webview-free-material");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let catalog = backend.material_catalog();
         let input = MaterialBytesInput {
@@ -4450,6 +4467,7 @@ mod tests {
     #[test]
     fn fresh_backend_contains_the_required_application_schema_manifest() {
         let app_data = temp_app_data("manifest");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let connection = backend.open_write().unwrap();
 
@@ -4492,6 +4510,7 @@ mod tests {
     #[test]
     fn fresh_collection_fts_supports_production_insert_update_delete_and_match() {
         let app_data = temp_app_data("fresh-collection-fts");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let connection = backend.open_write().unwrap();
 
@@ -4533,6 +4552,7 @@ mod tests {
 
         drop(connection);
         drop(backend);
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(
             restarted
@@ -4588,6 +4608,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let first = BackendServices::initialize(&app_data).unwrap();
         let connection = first.open_write().unwrap();
         let existing_rowid = connection
@@ -4632,6 +4653,7 @@ mod tests {
         drop(connection);
         drop(first);
 
+        crate::test_support::make_private(&app_data);
         let second = BackendServices::initialize(&app_data).unwrap();
         let connection = second.open_read().unwrap();
         assert_eq!(
@@ -4705,6 +4727,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize_with_v2_test_failure(&app_data)
             .err()
             .unwrap();
@@ -4763,6 +4786,7 @@ mod tests {
         );
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let recovered = BackendServices::initialize(&app_data).unwrap();
         assert!(recovered.status().ready);
         drop(recovered);
@@ -4787,12 +4811,14 @@ mod tests {
         let first_barrier = barrier.clone();
         let first = std::thread::spawn(move || {
             first_barrier.wait();
+            crate::test_support::make_private(&first_path);
             BackendServices::initialize(first_path)
         });
         let second_path = app_data.clone();
         let second_barrier = barrier.clone();
         let second = std::thread::spawn(move || {
             second_barrier.wait();
+            crate::test_support::make_private(&second_path);
             BackendServices::initialize(second_path)
         });
         barrier.wait();
@@ -4894,6 +4920,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, expected_code);
 
@@ -5022,6 +5049,7 @@ mod tests {
     #[test]
     fn ledger_v1_rejects_an_ordinary_table_impersonating_required_fts() {
         let app_data = temp_app_data("wrong-fts-type");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         drop(backend);
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
@@ -5035,6 +5063,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, "backend-schema-object-type");
         assert!(error.message.contains("collection_item_search"));
@@ -5045,6 +5074,7 @@ mod tests {
     #[test]
     fn current_ledger_rejects_a_required_table_missing_critical_columns() {
         let app_data = temp_app_data("missing-table-column");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         drop(backend);
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
@@ -5056,6 +5086,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, "backend-schema-column-mismatch");
         assert!(error.message.contains("asset.name"));
@@ -5066,6 +5097,7 @@ mod tests {
     #[test]
     fn current_ledger_rejects_a_same_name_index_with_wrong_columns() {
         let app_data = temp_app_data("wrong-index-columns");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         drop(backend);
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
@@ -5077,6 +5109,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, "backend-schema-index-mismatch");
         assert!(error.message.contains("idx_asset_content_hash"));
@@ -5087,6 +5120,7 @@ mod tests {
     #[test]
     fn current_ledger_rejects_a_same_name_index_owned_by_the_wrong_table() {
         let app_data = temp_app_data("wrong-index-owner");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         drop(backend);
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
@@ -5098,6 +5132,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, "backend-schema-index-mismatch");
         assert!(error.message.contains("idx_asset_content_hash"));
@@ -5108,6 +5143,7 @@ mod tests {
     #[test]
     fn ledger_v1_rejects_a_same_name_trigger_with_wrong_behavior() {
         let app_data = temp_app_data("wrong-trigger-behavior");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         drop(backend);
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
@@ -5121,6 +5157,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, "backend-schema-trigger-mismatch");
         assert!(error.message.contains("material_change_asset_insert"));
@@ -5131,6 +5168,7 @@ mod tests {
     #[test]
     fn current_ledger_rejects_a_same_name_trigger_owned_by_the_wrong_table() {
         let app_data = temp_app_data("wrong-trigger-owner");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         drop(backend);
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
@@ -5144,6 +5182,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let error = BackendServices::initialize(&app_data).err().unwrap();
         assert_eq!(error.code, "backend-schema-trigger-mismatch");
         assert!(error.message.contains("material_change_asset_insert"));
@@ -5199,6 +5238,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let first = BackendServices::initialize(&app_data).unwrap();
         let assets = first
             .material_catalog()
@@ -5238,6 +5278,7 @@ mod tests {
         drop(first_connection);
         drop(first);
 
+        crate::test_support::make_private(&app_data);
         let second = BackendServices::initialize(&app_data).unwrap();
         let second_connection = second.open_read().unwrap();
         assert_eq!(
@@ -5357,6 +5398,7 @@ mod tests {
         let connection = create_schema_v7_database(&app_data);
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let first = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(first.status().schema_version, SCHEMA_VERSION);
         let connection = first.open_read().unwrap();
@@ -5400,6 +5442,7 @@ mod tests {
         drop(connection);
         drop(first);
 
+        crate::test_support::make_private(&app_data);
         let second = BackendServices::initialize(&app_data).unwrap();
         let connection = second.open_read().unwrap();
         assert_eq!(
@@ -5442,12 +5485,14 @@ mod tests {
         let first_barrier = barrier.clone();
         let first = std::thread::spawn(move || {
             first_barrier.wait();
+            crate::test_support::make_private(&first_path);
             BackendServices::initialize(first_path)
         });
         let second_path = app_data.clone();
         let second_barrier = barrier.clone();
         let second = std::thread::spawn(move || {
             second_barrier.wait();
+            crate::test_support::make_private(&second_path);
             BackendServices::initialize(second_path)
         });
         barrier.wait();
@@ -5513,6 +5558,7 @@ mod tests {
             b"not a sqlite database",
         )
         .unwrap();
+        crate::test_support::make_private(&corrupt_app_data);
         let corrupt_error = BackendServices::initialize(&corrupt_app_data)
             .err()
             .unwrap();
@@ -5520,6 +5566,7 @@ mod tests {
         std::fs::remove_dir_all(corrupt_app_data).unwrap();
 
         let injected_app_data = temp_app_data("injected");
+        crate::test_support::make_private(&injected_app_data);
         let injected = BackendServices::initialize_with_test_failure(&injected_app_data)
             .err()
             .unwrap();
@@ -5534,6 +5581,7 @@ mod tests {
             .unwrap();
         assert_eq!(application_tables, 0);
         drop(connection);
+        crate::test_support::make_private(&injected_app_data);
         let recovered = BackendServices::initialize(&injected_app_data).unwrap();
         assert!(recovered.status().ready);
         drop(recovered);
@@ -5543,6 +5591,7 @@ mod tests {
     #[test]
     fn d1_fresh_backend_publishes_project_schema_v8_and_conversation_binding_columns() {
         let app_data = temp_app_data("d1-fresh-project-schema");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(backend.status().schema_version, SCHEMA_VERSION);
         let connection = backend.open_read().unwrap();
@@ -5576,6 +5625,7 @@ mod tests {
     #[test]
     fn d3_fresh_backend_publishes_project_knowledge_binding_schema_v9() {
         let app_data = temp_app_data("d3-fresh-project-knowledge-schema");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(backend.status().schema_version, SCHEMA_VERSION);
         let connection = backend.open_read().unwrap();
@@ -5644,6 +5694,7 @@ mod tests {
         let app_data = temp_app_data("v8-to-v9-project-knowledge");
         let workspace_root = app_data.join("project-root");
         std::fs::create_dir_all(&workspace_root).unwrap();
+        crate::test_support::make_private(&app_data);
         let initial = BackendServices::initialize(&app_data).unwrap();
         let grant = initial
             .workspace()
@@ -5678,6 +5729,7 @@ mod tests {
         );
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let upgraded = BackendServices::initialize(&app_data).unwrap();
         assert!(upgraded
             .projects()
@@ -5707,6 +5759,7 @@ mod tests {
         drop(connection);
         drop(upgraded);
 
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(
             restarted
@@ -5728,6 +5781,7 @@ mod tests {
     #[test]
     fn schema_v9_to_v10_adds_structured_message_action_truth_without_rewriting_legacy_content() {
         let app_data = temp_app_data("v9-to-v10-message-action-truth");
+        crate::test_support::make_private(&app_data);
         let initial = BackendServices::initialize(&app_data).unwrap();
         let connection = initial.open_write().unwrap();
         let legacy_content =
@@ -5757,6 +5811,7 @@ mod tests {
         drop(connection);
         drop(initial);
 
+        crate::test_support::make_private(&app_data);
         let upgraded = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(upgraded.status().schema_version, SCHEMA_VERSION);
         let connection = upgraded.open_read().unwrap();
@@ -5790,6 +5845,7 @@ mod tests {
         drop(connection);
         drop(upgraded);
 
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(
             restarted
@@ -5811,6 +5867,7 @@ mod tests {
     #[test]
     fn schema_v10_drift_fails_closed_without_recording_a_partial_migration() {
         let app_data = temp_app_data("v10-action-truth-drift");
+        crate::test_support::make_private(&app_data);
         let initial = BackendServices::initialize(&app_data).unwrap();
         let connection = initial.open_write().unwrap();
         connection
@@ -5829,6 +5886,7 @@ mod tests {
         drop(connection);
         drop(initial);
 
+        crate::test_support::make_private(&app_data);
         assert!(BackendServices::initialize(&app_data).is_err());
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
         assert_eq!(
@@ -5861,6 +5919,7 @@ mod tests {
     #[test]
     fn schema_v10_to_v11_adds_typed_run_stop_cause_and_restart_is_noop() {
         let app_data = temp_app_data("v10-to-v11-terminal-cause");
+        crate::test_support::make_private(&app_data);
         let initial = BackendServices::initialize(&app_data).unwrap();
         let connection = initial.open_write().unwrap();
         connection
@@ -5872,6 +5931,7 @@ mod tests {
         drop(connection);
         drop(initial);
 
+        crate::test_support::make_private(&app_data);
         let upgraded = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(upgraded.status().schema_version, SCHEMA_VERSION);
         let connection = upgraded.open_read().unwrap();
@@ -5895,6 +5955,7 @@ mod tests {
         drop(connection);
         drop(upgraded);
 
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(
             restarted
@@ -5915,6 +5976,7 @@ mod tests {
     #[test]
     fn schema_v11_to_v12_adds_terminal_recovery_facts_and_restart_is_noop() {
         let app_data = temp_app_data("v11-to-v12-terminal-recovery-facts");
+        crate::test_support::make_private(&app_data);
         let initial = BackendServices::initialize(&app_data).unwrap();
         let connection = initial.open_write().unwrap();
         connection
@@ -5928,6 +5990,7 @@ mod tests {
         drop(connection);
         drop(initial);
 
+        crate::test_support::make_private(&app_data);
         let upgraded = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(upgraded.status().schema_version, SCHEMA_VERSION);
         let connection = upgraded.open_read().unwrap();
@@ -5957,6 +6020,7 @@ mod tests {
         drop(connection);
         drop(upgraded);
 
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(
             restarted
@@ -5982,6 +6046,7 @@ mod tests {
         };
 
         let app_data = temp_app_data("structured-action-truth-settlement");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let narratives = [
             "plain narrative",
@@ -6134,6 +6199,7 @@ mod tests {
         );
 
         drop(backend);
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         let (conversation_id, message_id, narrative) = restart_target.unwrap();
         let message = restarted
@@ -6164,6 +6230,7 @@ mod tests {
         };
 
         let app_data = temp_app_data("structured-action-truth-invalid-query");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let conversation = backend
             .agent_runs()
@@ -6240,6 +6307,7 @@ mod tests {
         };
 
         let app_data = temp_app_data("structured-action-truth-rollback");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let conversation = backend
             .agent_runs()
@@ -6329,6 +6397,7 @@ mod tests {
         let app_data = temp_app_data("d1-project-create");
         let workspace_root = app_data.join("project-root");
         std::fs::create_dir_all(&workspace_root).unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let grant = backend
             .workspace()
@@ -6355,6 +6424,7 @@ mod tests {
         let workspace_b = app_data.join("project-b");
         std::fs::create_dir_all(&workspace_a).unwrap();
         std::fs::create_dir_all(&workspace_b).unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let grant_a = backend
             .workspace()
@@ -6409,6 +6479,7 @@ mod tests {
         let workspace_b = app_data.join("project-b");
         std::fs::create_dir_all(&workspace_a).unwrap();
         std::fs::create_dir_all(&workspace_b).unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let grant_a = backend
             .workspace()
@@ -6474,6 +6545,7 @@ mod tests {
         let app_data = temp_app_data("d2-p2-bound-grant-remove");
         let workspace_root = app_data.join("project-root");
         std::fs::create_dir_all(&workspace_root).unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let grant = backend
             .workspace()
@@ -6515,6 +6587,7 @@ mod tests {
             let workspace_b = app_data.join("project-b");
             std::fs::create_dir_all(&workspace_a).unwrap();
             std::fs::create_dir_all(&workspace_b).unwrap();
+            crate::test_support::make_private(&app_data);
             let backend = BackendServices::initialize(&app_data).unwrap();
             let grant_a = backend
                 .workspace()
@@ -6564,6 +6637,7 @@ mod tests {
         let app_data = temp_app_data("d2-project-create-with-conversation");
         let workspace_root = app_data.join("project-root");
         std::fs::create_dir_all(&workspace_root).unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let grant = backend
             .workspace()
@@ -6614,6 +6688,7 @@ mod tests {
         let app_data = temp_app_data("d1-project-conversation");
         let workspace_root = app_data.join("project-root");
         std::fs::create_dir_all(&workspace_root).unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let grant = backend
             .workspace()
@@ -6647,6 +6722,7 @@ mod tests {
         let app_data = temp_app_data("d1-forged-project-id");
         let workspace_root = app_data.join("project-root");
         std::fs::create_dir_all(&workspace_root).unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let grant = backend
             .workspace()
@@ -6682,6 +6758,7 @@ mod tests {
         let app_data = temp_app_data("d1-ordinary-conversation");
         let workspace_root = app_data.join("ordinary-root");
         std::fs::create_dir_all(&workspace_root).unwrap();
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let grant = backend
             .workspace()
@@ -6726,6 +6803,7 @@ mod tests {
     #[test]
     fn d2_standard_conversation_creation_is_backend_unbound_and_not_project_task() {
         let app_data = temp_app_data("d2-standard-conversation");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let conversation = backend
             .agent_runs()
@@ -6750,6 +6828,7 @@ mod tests {
     #[test]
     fn d1_conversation_pin_archive_restore_are_persistent_backend_state() {
         let app_data = temp_app_data("d1-conversation-lifecycle");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let conversation = backend
             .agent_runs()
@@ -6788,6 +6867,7 @@ mod tests {
     #[test]
     fn d1_conversation_delete_rejects_a_non_terminal_run_without_mutating_history() {
         let app_data = temp_app_data("d1-conversation-delete-safety");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let conversation = backend
             .agent_runs()
@@ -6841,6 +6921,7 @@ mod tests {
     fn p1_conversation_delete_rejects_terminal_failed_prepared_receipt_and_preserves_reconciliation_truth(
     ) {
         let app_data = temp_app_data("p1-terminal-prepared-receipt");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let journal_path = app_data.join(".lrw-p1-reconciliation.journal");
         std::fs::write(&journal_path, "durable reconciliation journal").unwrap();
@@ -6932,6 +7013,7 @@ mod tests {
     #[test]
     fn p1_conversation_delete_rejects_terminal_interrupted_uncertain_receipt() {
         let app_data = temp_app_data("p1-terminal-uncertain-receipt");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let conversation = backend
             .agent_runs()
@@ -7010,6 +7092,7 @@ mod tests {
     fn startup_recovers_prepared_execution_before_agent_terminal_reduction() {
         let app_data = temp_app_data("startup-execution-before-terminal");
         let (conversation_id, run_id) = {
+            crate::test_support::make_private(&app_data);
             let backend = BackendServices::initialize(&app_data).unwrap();
             let conversation = backend
                 .agent_runs()
@@ -7051,6 +7134,7 @@ mod tests {
             (conversation.id, run_id)
         };
 
+        crate::test_support::make_private(&app_data);
         let recovered = BackendServices::initialize(&app_data).unwrap();
         let run = recovered.agent_runs().get(&run_id).unwrap();
         assert_eq!(run.status, "failed");
@@ -7078,6 +7162,7 @@ mod tests {
         assert!(assistant[0].content.contains("待核对"));
 
         drop(recovered);
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(
             restarted
@@ -7098,6 +7183,7 @@ mod tests {
     fn startup_reconstructs_verified_execution_result_from_durable_artifact_only() {
         let app_data = temp_app_data("startup-verified-execution-result");
         let (conversation_id, run_id) = {
+            crate::test_support::make_private(&app_data);
             let backend = BackendServices::initialize(&app_data).unwrap();
             let conversation = backend
                 .agent_runs()
@@ -7146,6 +7232,7 @@ mod tests {
             (conversation.id, run_id)
         };
 
+        crate::test_support::make_private(&app_data);
         let recovered = BackendServices::initialize(&app_data).unwrap();
         let run = recovered.agent_runs().get(&run_id).unwrap();
         assert_eq!(run.status, "interrupted");
@@ -7168,6 +7255,7 @@ mod tests {
         );
         assert!(assistant[0].content.contains("package.json"));
         drop(recovered);
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(
             restarted
@@ -7187,6 +7275,7 @@ mod tests {
     fn failed_terminal_commits_remain_active_until_restart_uses_the_same_reducer() {
         let app_data = temp_app_data("terminal-settle-failure-restart");
         let (conversation_id, run_id) = {
+            crate::test_support::make_private(&app_data);
             let backend = BackendServices::initialize(&app_data).unwrap();
             let conversation = backend
                 .agent_runs()
@@ -7247,6 +7336,7 @@ mod tests {
             (conversation.id, run_id)
         };
 
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         let terminal = restarted.agent_runs().get(&run_id).unwrap();
         assert_eq!(terminal.status, "interrupted");
@@ -7262,6 +7352,7 @@ mod tests {
             1
         );
         drop(restarted);
+        crate::test_support::make_private(&app_data);
         let second_restart = BackendServices::initialize(&app_data).unwrap();
         assert_eq!(
             second_restart
@@ -7294,6 +7385,7 @@ mod tests {
                 let target = workspace_root.join("notes.txt");
                 std::fs::write(&target, "before").unwrap();
                 let (conversation_id, run_id) = {
+                    crate::test_support::make_private(&app_data);
                     let backend = BackendServices::initialize(&app_data).unwrap();
                     let grant = backend
                         .workspace()
@@ -7357,6 +7449,7 @@ mod tests {
                     (conversation.id, run_id)
                 };
 
+                crate::test_support::make_private(&app_data);
                 let recovered = BackendServices::initialize(&app_data).unwrap();
                 let run = recovered.agent_runs().get(&run_id).unwrap();
                 assert_eq!(run.status, expected_status, "{case}");
@@ -7378,6 +7471,7 @@ mod tests {
                     "{case}"
                 );
                 drop(recovered);
+                crate::test_support::make_private(&app_data);
                 let restarted = BackendServices::initialize(&app_data).unwrap();
                 assert_eq!(
                     restarted
@@ -7448,6 +7542,7 @@ mod tests {
             ("cancelled-uncertain", "cancelled", "uncertain"),
         ] {
             let app_data = temp_app_data(&format!("p1-terminal-matrix-{case}"));
+            crate::test_support::make_private(&app_data);
             let backend = BackendServices::initialize(&app_data).unwrap();
             let conversation = backend
                 .agent_runs()
@@ -7557,6 +7652,7 @@ mod tests {
             ("committed-warning", "committed-warning", "cancelled"),
         ] {
             let app_data = temp_app_data(&format!("p1-allowed-receipt-{case}"));
+            crate::test_support::make_private(&app_data);
             let backend = BackendServices::initialize(&app_data).unwrap();
             let conversation = backend
                 .agent_runs()
@@ -7649,6 +7745,7 @@ mod tests {
         }
 
         let app_data = temp_app_data("p1-allowed-empty-archived");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let conversation = backend
             .agent_runs()
@@ -7672,6 +7769,7 @@ mod tests {
     #[test]
     fn p1_conversation_delete_receipt_gate_is_linearized_with_a_concurrent_receipt_writer() {
         let app_data = temp_app_data("p1-concurrent-receipt-writer");
+        crate::test_support::make_private(&app_data);
         let backend = BackendServices::initialize(&app_data).unwrap();
         let conversation = backend
             .agent_runs()
@@ -7842,11 +7940,13 @@ mod tests {
         }
 
         let app_data = temp_app_data("companion-schema-v20");
+        crate::test_support::make_private(&app_data);
         let first = BackendServices::initialize(&app_data).unwrap();
         let db_path = first.db_path().to_path_buf();
         assert_schema(&db_path);
         drop(first);
 
+        crate::test_support::make_private(&app_data);
         let restarted = BackendServices::initialize(&app_data).unwrap();
         assert_schema(restarted.db_path());
         drop(restarted);
@@ -7886,6 +7986,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
+        crate::test_support::make_private(&app_data);
         let migrated = BackendServices::initialize(&app_data).unwrap();
         assert_schema(migrated.db_path());
         drop(migrated);
