@@ -21,10 +21,10 @@ pub(crate) mod test_support {
         }
     }
 
-    /// Asserts the exact entries of a Vault directory after knowledge writes.
-    /// On Linux every committed write keeps its `.lrk-<nonce>.receipt` for
-    /// recovery and review, and the directory keeps its cooperating-writer
-    /// lock file; other platforms leave only the user's entries.
+    /// Asserts the exact entries of a Vault directory after knowledge creates.
+    /// On Linux a committed write removes its journal, so no `.lrk-*` file is
+    /// left; the directory keeps only its one cooperating-writer lock file.
+    /// Other platforms leave only the user's entries.
     #[cfg(test)]
     pub(crate) fn assert_vault_entries(
         root: &std::path::Path,
@@ -37,17 +37,16 @@ pub(crate) mod test_support {
             .collect();
         #[cfg(target_os = "linux")]
         {
-            let receipts = names
-                .iter()
-                .filter(|name| name.starts_with(".lrk-") && name.ends_with(".receipt"))
-                .count();
+            assert!(
+                names.iter().all(|name| !name.starts_with(".lrk-")),
+                "{names:?}"
+            );
             let locks = names
                 .iter()
                 .filter(|name| name.as_str() == ".luckyray-write.lock")
                 .count();
-            assert_eq!(receipts, committed_writes, "{names:?}");
             assert_eq!(locks, usize::from(committed_writes > 0), "{names:?}");
-            assert_eq!(names.len(), user_entries + receipts + locks, "{names:?}");
+            assert_eq!(names.len(), user_entries + locks, "{names:?}");
         }
         #[cfg(not(target_os = "linux"))]
         {

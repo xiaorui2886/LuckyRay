@@ -199,13 +199,11 @@ fn write_inner(
     {
         return Err(conflict());
     }
-    dir.verify_named(OsStr::new(&journal_name), &journal_file)?;
-    dir.rename_new(
-        OsStr::new(&journal_name),
-        dir,
-        OsStr::new(&format!(".lrk-{}.receipt", journal.nonce)),
-    )?;
-    // The backup and receipt remain available for recovery and manual review.
+    // The target now holds `after`: acknowledge the transaction by removing
+    // its journal (unlink + directory sync). Recovery acts only on journals,
+    // so no per-write receipt is left behind in the user's directory. The
+    // backup of a replaced version stays available for manual review.
+    dir.remove_owned(OsStr::new(&journal_name), &journal_file)?;
     Ok(installed)
 }
 
@@ -319,12 +317,8 @@ fn recover_inner(dir: &Directory, private: bool, scope: Option<(&str, &[String])
             // Never overwrite an external edit during recovery.
             _ => return Err(conflict()),
         }
-        dir.verify_named(&name, &opened.file)?;
-        dir.rename_new(
-            &name,
-            dir,
-            OsStr::new(&format!(".lrk-{}.receipt", record.nonce)),
-        )?;
+        // Settled: acknowledge by removing the journal, as a committed write does.
+        dir.remove_owned(&name, &opened.file)?;
     }
     dir.verify()
 }
