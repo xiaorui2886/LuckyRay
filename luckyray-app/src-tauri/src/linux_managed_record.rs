@@ -146,8 +146,13 @@ mod tests {
                 let target = OsStr::new("managed.desktop");
                 dir.create(target, FAMILY[0]).unwrap();
                 let before = dir.read(target, false, MAX_BYTES).unwrap().unwrap();
+                // Existing-target branch: a crash after the journal, before the
+                // target is displaced. Displaced branch: interrupted after backup.
+                if !displaced {
+                    crate::linux_file_store::crash_next_write_after_journal();
+                }
                 assert!(crate::linux_file_store::write(
-                    &dir, target, Some(&before), FAMILY[1], false, !displaced, displaced,
+                    &dir, target, Some(&before), FAMILY[1], false, false, displaced,
                 ).is_err());
 
                 if acl_added {

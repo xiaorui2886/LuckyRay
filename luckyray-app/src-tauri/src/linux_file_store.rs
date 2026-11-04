@@ -33,6 +33,19 @@ fn same(left: Option<&Snapshot>, right: Option<&Snapshot>) -> bool {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static CRASH_AFTER_JOURNAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test seam distinct from `fail_before` (a clean, self-discarding failure):
+/// the next write on this thread stops as if the process died right after
+/// its journal became durable.
+#[cfg(test)]
+pub(crate) fn crash_next_write_after_journal() {
+    CRASH_AFTER_JOURNAL.with(|flag| flag.set(true));
+}
+
 pub(crate) fn write(
     dir: &Directory,
     name: &OsStr,
@@ -128,6 +141,12 @@ fn write_inner(
     };
     let journal_bytes = serde_json::to_vec(&journal).map_err(|_| conflict())?;
     let journal_file = dir.create(OsStr::new(&journal_name), &journal_bytes)?;
+    #[cfg(test)]
+    if CRASH_AFTER_JOURNAL.with(|flag| flag.replace(false)) {
+        // Simulated process death: the journal, draft and backup stay on disk
+        // for startup recovery, with the target untouched.
+        return Err(io::Error::other("linux-write-crashed-after-journal"));
+    }
     if fail_before {
         // No target mutation occurred: discard this transaction's own files,
         // journal first so recovery never acts on a half-removed set.
