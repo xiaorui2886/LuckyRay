@@ -3,12 +3,56 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MaterialError } from "../../materials-mcp/src/transport.mjs";
-import { LibraryTransport } from "./transport.mjs";
+import { LibraryTransport, credentialForConfig } from "./transport.mjs";
 import { serve } from "./protocol.mjs";
 import { LibraryTools, TOOLS } from "./library.mjs";
 // The tunnel parent needs its key; the MCP child never does.
 delete process.env.CONTROL_PLANE_API_KEY;
 delete process.env.OPENAI_API_KEY;
+// Linux has no DPAPI file to point at. The desktop hands the sealed pairing
+// (read from the Secret Service) to this process only: on stdin for the
+// one-shot `--check`, and through the tunnel's inherited environment for the
+// long-running server. Take it out of the environment before anything can
+// spawn, so no grandchild inherits it. Nothing is ever written to disk.
+export const LINUX_PAIR_ENV = "LUCKYRAY_LIBRARY_PAIR";
+export const LINUX_PAIR_LIMIT = 16384;
+export function takeLinuxPair(env) {
+  const raw = env[LINUX_PAIR_ENV];
+  delete env[LINUX_PAIR_ENV];
+  return typeof raw === "string" ? raw : undefined;
+}
+export function parseLinuxPair(raw) {
+  const bytes = typeof raw === "string" ? Buffer.from(raw, "utf8") : raw;
+  try {
+    if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > LINUX_PAIR_LIMIT)
+      throw new MaterialError("authorization-unavailable");
+    let pair;
+    try {
+      pair = JSON.parse(bytes.toString("utf8"));
+    } catch {
+      throw new MaterialError("authorization-unavailable");
+    }
+    if (!pair || typeof pair !== "object" || Array.isArray(pair))
+      throw new MaterialError("authorization-unavailable");
+    return pair;
+  } finally {
+    if (Buffer.isBuffer(bytes)) bytes.fill(0);
+  }
+}
+export async function readBoundedStdin(stream, limit = LINUX_PAIR_LIMIT) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of stream) {
+    size += chunk.length;
+    chunks.push(chunk);
+    if (size > limit) break;
+  }
+  const all = Buffer.concat(chunks);
+  for (const c of chunks) c.fill(0);
+  return all;
+}
+let linuxPair =
+  process.platform === "linux" ? takeLinuxPair(process.env) : undefined;
 async function main() {
   // Both desktop preflight and tunnel child use the same known Windows helpers,
   // independent of the launching Agent's inherited PATH.
@@ -37,8 +81,17 @@ async function main() {
     config.profileProofVersion !== 3
   )
     throw new MaterialError("library-grant-required");
-  const transport = new LibraryTransport(config);
-  if (process.argv.includes("--check")) {
+  const check = process.argv.includes("--check");
+  let deps = {};
+  if (process.platform === "linux") {
+    const pair = parseLinuxPair(
+      check ? await readBoundedStdin(process.stdin) : linuxPair,
+    );
+    linuxPair = undefined;
+    deps = { credential: async (c) => credentialForConfig(c, pair) };
+  }
+  const transport = new LibraryTransport(config, deps);
+  if (check) {
     process.stdout.write(JSON.stringify(await transport.status()) + "\n");
     return;
   }
