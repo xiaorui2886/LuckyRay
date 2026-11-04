@@ -4036,7 +4036,8 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+// The resolver building blocks exist only where the media engine ships.
+#[cfg(all(test, any(all(windows, feature = "browser-host-runtime"), target_os = "linux")))]
 mod media_engine_tests {
     // T16: the packaged media-engine authority is pure code, so its pinned
     // versions, per-file digests and inventory comparison are exercised with
@@ -4049,7 +4050,8 @@ mod media_engine_tests {
 
     struct Synthetic {
         root: PathBuf,
-        declared: BTreeMap<String, String>,
+        // relative path -> (size, sha256), exactly what the manifest declares.
+        declared: BTreeMap<String, (u64, String)>,
     }
 
     impl Synthetic {
@@ -4071,16 +4073,26 @@ mod media_engine_tests {
                 std::fs::create_dir_all(parent).expect("parent");
             }
             std::fs::write(&path, bytes).expect("synthetic file");
-            self.declared
-                .insert(relative.to_owned(), format!("{:x}", Sha256::digest(bytes)));
+            self.declared.insert(
+                relative.to_owned(),
+                (bytes.len() as u64, format!("{:x}", Sha256::digest(bytes))),
+            );
+        }
+
+        /// Write the manifest next to the declared files, the way the packaged
+        /// runtime ships it, and return the canonical root the resolver walks.
+        fn seal(&self) -> PathBuf {
+            std::fs::write(self.root.join("runtime-manifest.json"), self.manifest())
+                .expect("synthetic manifest");
+            self.root.canonicalize().expect("canonical synthetic root")
         }
 
         fn manifest(&self) -> Vec<u8> {
             let listed: Vec<String> = self
                 .declared
                 .iter()
-                .map(|(path, digest)| {
-                    format!(r#"{{"path":"{path}","sha256":"{digest}"}},"#)
+                .map(|(path, (size, digest))| {
+                    format!(r#"{{"path":"{path}","size":{size},"sha256":"{digest}"}},"#)
                 })
                 .collect();
             format!(
