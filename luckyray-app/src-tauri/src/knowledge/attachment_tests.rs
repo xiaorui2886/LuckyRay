@@ -3,7 +3,12 @@ use super::markdown_links::LinkSyntax;
 use super::*;
 
 pub(super) fn fixture(label: &str) -> (KnowledgeService, PathBuf, KnowledgeVaultRegistration) {
-    let base = PathBuf::from("C:/Cursor/_qa").join(format!(
+    // Windows keeps its QA root; elsewhere a relative "C:/..." would land in the crate dir.
+    #[cfg(windows)]
+    let qa = PathBuf::from("C:/Cursor/_qa");
+    #[cfg(not(windows))]
+    let qa = std::env::temp_dir().join("luckyray-qa");
+    let base = qa.join(format!(
         "vault-attachments-{label}-{:032x}",
         rand::random::<u128>()
     ));
