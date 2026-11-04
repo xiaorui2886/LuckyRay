@@ -1497,7 +1497,7 @@ mod tests {
 
     fn probe_temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("lr-import-file-{}-{}", label, std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::test_support::make_private(&dir);
         dir
     }
 

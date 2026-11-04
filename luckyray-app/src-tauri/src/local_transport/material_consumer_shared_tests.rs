@@ -489,6 +489,7 @@ impl TransportAdapter for FailureProjectionAdapter {
 #[test]
 fn material_consumer_shared_final_error_tcp_aliases_and_v1_keep_unknown() {
     let root = tempfile::tempdir().unwrap();
+    crate::test_support::make_private(root.path());
     let handle = start_server(ServerConfig::test(root.path().to_owned()), Arc::new(FailureProjectionAdapter)).unwrap();
     // This adapter supplies controlled refusals; actual TCP authentication,
     // adapter projection and final serialization are production code. No writes.
