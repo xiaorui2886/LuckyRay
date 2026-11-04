@@ -5238,7 +5238,12 @@ mod tests {
                     rusqlite::params![
                         format!("run-terminal-{index:03}"),
                         format!("trigger-{index:03}"),
-                        format!("2026-07-29T00:{:02}:00Z", index % 60)
+                        // Recent (inside the 90-day age window) so only the
+                        // 100-per-conversation cap applies, whenever this runs.
+                        (chrono::Utc::now()
+                            - chrono::Duration::days(1)
+                            - chrono::Duration::minutes(index))
+                        .to_rfc3339()
                     ],
                 )
                 .unwrap();
