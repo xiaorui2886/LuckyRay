@@ -48,10 +48,25 @@ fn concurrent_attachment_readers_share_a_guarded_vault_root() {
         assert_eq!(deletion.raw_os_error(), Some(32));
         eprintln!("root DELETE access remains fenced with Win32 error 32");
     }
-    let result = service.resolve_vault_attachment(&KnowledgeDocumentRef { vault_id: registration.id, relative_path: "n.md".into() }, "a.png", true);
+    let document = KnowledgeDocumentRef { vault_id: registration.id, relative_path: "n.md".into() };
+    let result = service.resolve_vault_attachment(&document, "a.png", true);
     assert!(result.is_ok(), "another production reader must coexist: {result:?}");
     guard.verify_current_path(&root).unwrap();
+    #[cfg(windows)]
     assert!(std::fs::rename(&root, root.with_file_name("replaced-vault")).is_err(), "live guards must still fence root replacement");
+    // Linux cannot lock a directory name against rename. The equivalent fence
+    // is detection: once the root is replaced, the live guard and every reader
+    // refuse the path instead of following it to another directory.
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::rename(&root, root.with_file_name("replaced-vault")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("n.md"), "![[a.png]]").unwrap();
+        std::fs::write(root.join("a.png"), b"other").unwrap();
+        assert!(guard.verify_current_path(&root).is_err(), "a replaced root must not verify");
+        let replaced = service.resolve_vault_attachment(&document, "a.png", true);
+        assert!(replaced.is_err(), "readers must refuse a replaced root: {replaced:?}");
+    }
 }
 
 #[cfg(windows)]
