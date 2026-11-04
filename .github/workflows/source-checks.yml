@@ -1,11 +1,8 @@
 name: Read-only canvas focused QA
 on:
-  workflow_dispatch:
-    inputs:
-      reviewed_sha:
-        description: Exact reviewed QA branch commit SHA
-        required: true
-        type: string
+  push:
+    branches: [qa/canvas-readonly-20261104]
+    paths: ['.github/workflows/source-checks.yml']
 permissions:
   contents: read
 concurrency:
@@ -13,7 +10,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   focused-readonly:
-    if: github.event_name == 'workflow_dispatch' && inputs.reviewed_sha == github.sha
+    if: >-
+      github.event_name == 'push' && github.event.before == 'c76e1117d94b4ed02edd9bbc06fab0b029ac8e04' && github.event.head_commit.message == 'test: run reviewed readonly canvas QA once (20261104-1927-desktop)'
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     defaults:
@@ -23,9 +21,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+          ref: c76e1117d94b4ed02edd9bbc06fab0b029ac8e04
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.14.1'
+      - name: Verify exact reviewed source commit
+        run: |
+          test "$(git rev-parse HEAD)" = "c76e1117d94b4ed02edd9bbc06fab0b029ac8e04"
+          git rev-parse HEAD
       - name: Verify reviewed source bytes
         run: sha256sum --check tests/canvas-qa-sources.sha256
       - name: Install public locked dependencies without lifecycle scripts
