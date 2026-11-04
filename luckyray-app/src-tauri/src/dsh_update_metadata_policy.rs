@@ -1,5 +1,17 @@
 //! Exact public metadata namespace; upstream artifact policies stay separate.
-pub const FEED: &str = "https://raw.githubusercontent.com/xiaorui2886/luckyray-update-metadata/main/catalog/preview/windows-x86_64.json";
+pub const WINDOWS_FEED: &str = "https://raw.githubusercontent.com/xiaorui2886/luckyray-update-metadata/main/catalog/preview/windows-x86_64.json";
+pub const LINUX_FEED: &str = "https://raw.githubusercontent.com/xiaorui2886/luckyray-update-metadata/main/catalog/preview/linux-x86_64.json";
+/// Feed of the platform this crate is compiled for. Windows/macOS unchanged.
+#[cfg(not(target_os = "linux"))]
+pub const FEED: &str = WINDOWS_FEED;
+#[cfg(target_os = "linux")]
+pub const FEED: &str = LINUX_FEED;
+
+/// Build scripts run on the host; they must pick the feed from
+/// CARGO_CFG_TARGET_OS rather than from their own cfg.
+pub fn feed_for_target_os(target_os: &str) -> &'static str {
+    if target_os == "linux" { LINUX_FEED } else { WINDOWS_FEED }
+}
 const DESCRIPTORS: &str = "https://raw.githubusercontent.com/xiaorui2886/luckyray-update-metadata/main/descriptors/";
 
 pub fn descriptor_url_matches(url: &str, sha256: &str) -> bool {
@@ -15,7 +27,7 @@ pub fn reviewed_production_key(config: &serde_json::Value, environment: &[&str])
     let object = config.as_object().ok_or("source-config-object")?;
     let fields: std::collections::BTreeSet<_> = object.keys().map(String::as_str).collect();
     if fields != ["schema", "state", "feedUrl", "publicKey", "fingerprintSha256", "centralReview"].into_iter().collect()
-        || config["schema"].as_u64() != Some(1) || config["feedUrl"].as_str() != Some(FEED) {
+        || config["schema"].as_u64() != Some(1) || config["feedUrl"].as_str() != Some(WINDOWS_FEED) {
         return Err("source-config-shape");
     }
     match config["state"].as_str() {
@@ -64,7 +76,7 @@ mod tests {
 
     #[test]
     fn pending_source_never_invents_a_production_root() {
-        let mut config = serde_json::json!({"schema":1,"state":"pending-root-review","feedUrl":FEED,
+        let mut config = serde_json::json!({"schema":1,"state":"pending-root-review","feedUrl":WINDOWS_FEED,
             "publicKey":null,"fingerprintSha256":null,"centralReview":null});
         assert_eq!(reviewed_production_key(&config, &[]), Ok(None));
         assert_eq!(reviewed_production_key(&config, &["LUCKYRAY_DEV_DSH_UPDATE_FEED"]), Ok(None));
@@ -79,7 +91,7 @@ mod tests {
         use sha2::{Digest, Sha256};
         // Parser input only: no private key, persisted config or compiled trust.
         let raw = [7_u8; 32];
-        let config = serde_json::json!({"schema":1,"state":"approved-production","feedUrl":FEED,
+        let config = serde_json::json!({"schema":1,"state":"approved-production","feedUrl":WINDOWS_FEED,
             "publicKey":URL_SAFE_NO_PAD.encode(raw),"fingerprintSha256":format!("{:x}",Sha256::digest(raw)),
             "centralReview":"https://github.com/xiaorui2886/LuckyRay/blob/main/docs/development/lsh-trust.md#review-123"});
         assert_eq!(reviewed_production_key(&config, &[]), Ok(config["publicKey"].as_str().map(str::to_owned)));
@@ -89,12 +101,26 @@ mod tests {
         }
         for (field, wrong) in [("schema",serde_json::json!(2)), ("state",serde_json::json!("ready")),
             ("publicKey",serde_json::json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB")),
-            ("fingerprintSha256",serde_json::json!("0".repeat(64))), ("feedUrl",serde_json::json!(FEED.replace("/main/", "/other/"))),
+            ("fingerprintSha256",serde_json::json!("0".repeat(64))), ("feedUrl",serde_json::json!(WINDOWS_FEED.replace("/main/", "/other/"))),
+            ("feedUrl",serde_json::json!(LINUX_FEED.replace("/main/", "/other/"))),
             ("centralReview",serde_json::json!("https://github.com/other/repo/issues/195#issuecomment-123")),
             ("centralReview",serde_json::json!("https://github.com/xiaorui2886/LuckyRay/blob/main/docs/development/lsh-trust.md#review-123?x=y")),
             ("extra",serde_json::json!("ignored"))] {
             let mut changed = config.clone(); changed[field] = wrong;
             assert!(reviewed_production_key(&changed, &[]).is_err(), "{field}");
         }
+    }
+
+    #[test]
+    fn feed_is_selected_per_target_platform() {
+        assert_eq!(feed_for_target_os("windows"), WINDOWS_FEED);
+        assert_eq!(feed_for_target_os("macos"), WINDOWS_FEED);
+        assert_eq!(feed_for_target_os("linux"), LINUX_FEED);
+        assert!(LINUX_FEED.ends_with("/main/catalog/preview/linux-x86_64.json"));
+        assert_eq!(LINUX_FEED.replace("linux-x86_64.json", "windows-x86_64.json"), WINDOWS_FEED);
+        #[cfg(target_os = "linux")]
+        assert_eq!(FEED, LINUX_FEED);
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(FEED, WINDOWS_FEED);
     }
 }

@@ -20,7 +20,10 @@ const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
 // The exact 0.2.1-rc.2 Windows closure has 35,173 files. Keep this bounded
 // metadata/tree limit aligned with MAX_DSH_CLOSURE_FILE_COUNT in the verifier.
 const MAX_CLOSURE_FILE_COUNT: u32 = 40_000;
+#[cfg(not(target_os = "linux"))]
 const PLATFORM: &str = "windows-x86_64";
+#[cfg(target_os = "linux")]
+const PLATFORM: &str = "linux-x86_64";
 const CHANNEL: &str = "preview";
 
 mod coordinator;
@@ -1724,7 +1727,7 @@ mod tests {
             ("migration", AdmissionError::InvalidManifest),
         ] {
             let (bytes, key) = fixture_with(|candidate| match change {
-                "platform" => candidate.platform = "linux-x86_64".into(),
+                "platform" => candidate.platform = if PLATFORM == "linux-x86_64" { "windows-x86_64" } else { "linux-x86_64" }.into(),
                 "channel" => candidate.channel = "stable".into(),
                 "package" => candidate.runtime_package = "foreign-package".into(),
                 "migration" => candidate.data_compatibility = "unknown-migration".into(),

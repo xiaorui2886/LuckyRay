@@ -84,7 +84,8 @@ fn configure_dsh_update_trust(profile: &str) {
             assert!(std::env::var_os(name).is_none(), "reviewed production source cannot mix environment trust or development CA");
         }
         println!("cargo:rustc-env=LUCKYRAY_DSH_UPDATE_TRUST_CLASS=production");
-        println!("cargo:rustc-env=LUCKYRAY_DSH_UPDATE_FEED={}", dsh_update_metadata_policy::FEED);
+        let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+        println!("cargo:rustc-env=LUCKYRAY_DSH_UPDATE_FEED={}", dsh_update_metadata_policy::feed_for_target_os(&target_os));
         println!("cargo:rustc-env=LUCKYRAY_DSH_UPDATE_PUBLIC_KEY={key}");
         return;
     }
