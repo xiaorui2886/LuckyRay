@@ -163,6 +163,45 @@ jobs:
         run: |
           python3 luckyray-app/tests/linux-notes-ci.py notes --work "$WORK_ROOT" \
             --driver "$WORK_ROOT/driver/bin/tauri-driver"
+      - name: Install the pinned headless Secret Service on the disposable runner
+        id: secret-service
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          # Independent of the dependencies step so a skipped native stage
+          # cannot leave stale package lists. gnome-keyring is pinned to the
+          # jammy-updates build; dbus-x11 follows the runner's security updates.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnome-keyring=40.0-3ubuntu3 dbus-x11
+          command -v dbus-run-session gnome-keyring-daemon
+      - name: Exercise the Companion identity through a real and an absent Secret Service
+        id: companion-keyring
+        if: ${{ !cancelled() && steps.secret-service.outcome == 'success' }}
+        timeout-minutes: 15
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-keyring-checks
+          KEYRING_SCRATCH: ${{ runner.temp }}/luckyray-linux-keyring-scratch
+        run: |
+          set -euo pipefail
+          manifest=luckyray-app/tests/linux-companion-keyring/Cargo.toml
+          session=luckyray-app/tests/linux-secret-service-session.sh
+          # Production keyring modules with fakes; the live tests stay ignored here.
+          rustup run 1.95.0 cargo test --locked --manifest-path "$manifest"
+          mkdir -m 700 "$KEYRING_SCRATCH"
+          # absent: no reachable Secret Service, every operation must refuse.
+          # present: throwaway gnome-keyring on a private bus, random unlock
+          # password never printed; store, load, replace and delete must work.
+          # Only test names and counts are logged, and each run must execute
+          # exactly its expected tests so an empty filter cannot pass.
+          for mode_count in absent:1 present:3; do
+            mode="${mode_count%%:*}"; count="${mode_count##*:}"
+            timeout 300 bash "$session" "$mode" "$KEYRING_SCRATCH/$mode" -- \
+              rustup run 1.95.0 cargo test --locked --manifest-path "$manifest" \
+              -- --ignored --test-threads=1 "live_${mode}_" | tee "$KEYRING_SCRATCH/$mode.log"
+            grep -qx "test result: ok. $count passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+              "$KEYRING_SCRATCH/$mode.log"
+          done
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -181,6 +220,8 @@ jobs:
           CI_RUNTIME: ${{ steps.runtime.outcome }}
           CI_RESOURCES: ${{ steps.resources.outcome }}
           CI_NOTES: ${{ steps.notes.outcome }}
+          CI_SECRET_SERVICE: ${{ steps.secret-service.outcome }}
+          CI_COMPANION_KEYRING: ${{ steps.companion-keyring.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}

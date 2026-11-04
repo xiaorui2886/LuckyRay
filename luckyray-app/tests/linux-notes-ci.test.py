@@ -2097,6 +2097,56 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("NATIVE_MESSAGING", ci.STEPS)
         self.assertLess(ci.STEPS.index("BUILD"), ci.STEPS.index("NATIVE_MESSAGING"))
 
+    def test_companion_keyring_runs_against_a_real_and_an_absent_secret_service(self):
+        # T43: a pinned headless Secret Service is installed only on the runner,
+        # the production keyring modules run live in both modes, finish() makes
+        # both step outcomes required, and nothing secret is ever echoed.
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        install = text.index("        id: secret-service")
+        live = text.index("        id: companion-keyring")
+        notes = text.index("        id: notes")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(notes, install)
+        self.assertLess(install, live)
+        self.assertLess(live, finish)
+        step = text[install:finish]
+        self.assertIn("gnome-keyring=40.0-3ubuntu3", step)
+        self.assertIn("linux-companion-keyring/Cargo.toml", step)
+        self.assertIn("linux-secret-service-session.sh", step)
+        self.assertIn("for mode_count in absent:1 present:3; do", step)
+        self.assertIn('"live_${mode}_"', step)
+        self.assertIn("test result: ok. $count passed; 0 failed; 0 ignored", step)
+        self.assertNotIn("set -x", step)
+        self.assertNotIn("curl", step)
+        self.assertNotIn("echo", step)
+        for name in ("SECRET_SERVICE", "COMPANION_KEYRING"):
+            self.assertIn(name, ci.STEPS)
+            self.assertIn("CI_" + name + ": ${{ steps.", text)
+        self.assertLess(ci.STEPS.index("NOTES"), ci.STEPS.index("SECRET_SERVICE"))
+        # Only the Linux preflight workflow carries the keyring.
+        for other in ("source-checks.yml", "updater-installed-acceptance.yml"):
+            self.assertNotIn("gnome-keyring", (root / ".github/workflows" / other).read_text())
+
+        session = (root / "luckyray-app/tests/linux-secret-service-session.sh").read_text()
+        self.assertIn("head -c 32 /dev/urandom", session)
+        self.assertIn("unset password", session)
+        self.assertIn("unset DISPLAY", session)
+        self.assertIn('mkdir -m 700 "$scratch"', session)
+        self.assertNotIn("set -x", session)
+        self.assertNotIn("pkill", session)
+        self.assertNotIn('echo "$password', session)
+        live_source = (root / "luckyray-app/tests/linux-companion-keyring/src/live_secret_service.rs").read_text()
+        self.assertEqual(live_source.count("#[ignore = \"needs tests/linux-secret-service-session.sh "), 4)
+        self.assertEqual(live_source.count('require_mode("present")'), 3)
+        self.assertEqual(live_source.count('require_mode("absent")'), 1)
+        self.assertNotIn("assert_eq!", live_source)  # would format secret bytes on failure
+        self.assertNotIn("dbg!", live_source)
+        self.assertNotIn("println!", live_source)
+        lib = (root / "luckyray-app/tests/linux-companion-keyring/src/lib.rs").read_text()
+        self.assertIn('#[path = "../../../src-tauri/src/companion_keyring.rs"]', lib)
+        self.assertIn('#[path = "../../../src-tauri/src/community_mcp_secret.rs"]', lib)
+
     def test_community_mcp_secrets_and_process_use_the_linux_seams(self):
         # T20: the plugin's two secrets live in the Secret Service through the
         # T19 backend (no second keyring client), and the plugin process is

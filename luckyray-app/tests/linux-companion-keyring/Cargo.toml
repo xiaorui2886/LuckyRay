@@ -1,0 +1,19 @@
+[package]
+name = "luckyray-linux-companion-keyring-checks"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# T43: compiles the *production* Linux Secret Service modules
+# (src-tauri/src/companion_keyring.rs and community_mcp_secret.rs) with the
+# same keyring version and feature set src-tauri pins, so the CI job can
+# exercise the real store/load/delete path against a throwaway headless
+# Secret Service without building the whole Tauri crate a second time.
+[lib]
+doctest = false
+
+[dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["async-secret-service", "tokio", "crypto-rust"] }
+base64 = "=0.22.1"
+zeroize = "=1.8.2"
+serde_json = "=1.0.150"

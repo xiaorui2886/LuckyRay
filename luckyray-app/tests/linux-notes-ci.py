@@ -35,7 +35,7 @@ EXCLUDED = {name: "NOT_RUN" for name in ("chromiumConsent", "nativeMessaging", "
     "externalApplicationDisplay", "trimmedFilenameEndToEnd", "videoCodecMatrix", "personalBrowserHost",
     "installer", "release", "waylandHardware", "oldMatrices", "lshFunctionalFlow")}
 STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENCIES", "RUST", "BUILD",
-         "NATIVE_MESSAGING", "DRIVER", "RUNTIME", "RESOURCES", "NOTES")
+         "NATIVE_MESSAGING", "DRIVER", "RUNTIME", "RESOURCES", "NOTES", "SECRET_SERVICE", "COMPANION_KEYRING")
 EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "nativeMessaging.json", "result.json")
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",
@@ -566,7 +566,9 @@ class Run(runtime.Run):
                  "cdpClient": "luckyray-app/tests/browser-extension-runtime/lib/cdp-client.mjs",
                  "driverPrep": "luckyray-app/tests/linux-tauri-driver-source.py",
                  "driverDiagnostic": "luckyray-app/tests/linux-tauri-driver-forward-diagnostics.rs",
-                 "nativeMessaging": "luckyray-app/tests/linux-native-registration-smoke.py"}
+                 "nativeMessaging": "luckyray-app/tests/linux-native-registration-smoke.py",
+                 "secretServiceSession": "luckyray-app/tests/linux-secret-service-session.sh",
+                 "secretServiceChecks": "luckyray-app/tests/linux-companion-keyring/src/live_secret_service.rs"}
         return {name: digest(self.repo / path) for name, path in paths.items()}
 
     def publish_notes(self, report):
