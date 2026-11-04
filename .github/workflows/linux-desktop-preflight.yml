@@ -5,8 +5,56 @@ on:
 permissions:
   contents: read
 jobs:
-  linux-notes-attachments-validation:
+  # T51: CI-artifact-only LGPL FFmpeg/ffprobe/libmpv bundle (never a release).
+  # Separate, cached job: a cold build is ~10-15 min, a cache hit ~1 min.
+  linux-media-bundle:
     if: github.repository == 'xiaorui2886/LuckyRay'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out only the public candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Restore the cached LGPL media bundle
+        id: bundle-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/lgpl-media-bundle.tar
+          key: linux-lgpl-media-bundle-v1-${{ hashFiles('luckyray-app/tools/linux-media-bundle/**') }}
+      - name: Install the pinned bundle build dependencies
+        if: steps.bundle-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          grep -v '^#' luckyray-app/tools/linux-media-bundle/ci-build-deps.txt \
+            | xargs sudo apt-get install -y --no-install-recommends build-essential
+      - name: Build the LGPL bundle from pinned sha256 tarballs
+        if: steps.bundle-cache.outputs.cache-hit != 'true'
+        env:
+          JOBS: '4'
+        run: |
+          set -euo pipefail
+          bash luckyray-app/tools/linux-media-bundle/build.sh \
+            "$RUNNER_TEMP/lgpl-bundle-work" "$RUNNER_TEMP/lgpl-bundle-out"
+          tar -C "$RUNNER_TEMP/lgpl-bundle-out" -cf "$RUNNER_TEMP/lgpl-media-bundle.tar" .
+      - name: Verify the bundle manifest and print the pins
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/lgpl-bundle-check" && mkdir "$RUNNER_TEMP/lgpl-bundle-check"
+          tar -C "$RUNNER_TEMP/lgpl-bundle-check" -xf "$RUNNER_TEMP/lgpl-media-bundle.tar"
+          python3 luckyray-app/tools/linux-media-bundle/bundle.py verify "$RUNNER_TEMP/lgpl-bundle-check"
+          python3 luckyray-app/tools/linux-media-bundle/bundle.py pins "$RUNNER_TEMP/lgpl-bundle-check"
+      - name: Keep the bundle as a short-lived CI-only artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-lgpl-media-bundle-ci-only
+          retention-days: 3
+          if-no-files-found: error
+          path: ${{ runner.temp }}/lgpl-media-bundle.tar
+  linux-notes-attachments-validation:
+    needs: linux-media-bundle
+    if: ${{ !cancelled() && github.repository == 'xiaorui2886/LuckyRay' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
@@ -364,6 +412,58 @@ jobs:
           # including both live libmpv tests and the real-GTK layer test.
           grep -qx "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t48-media-player.log"
+      - name: Fetch the CI-only LGPL bundle artifact
+        id: lgpl-bundle-artifact
+        if: ${{ !cancelled() && needs.linux-media-bundle.result == 'success' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: linux-lgpl-media-bundle-ci-only
+          path: ${{ runner.temp }}/lgpl-bundle-artifact
+      - name: Linux LGPL bundle libmpv real license gate and bundled ffprobe preview (synthetic)
+        id: media-lgpl-bundle
+        # Independent outcome; needs the CI-only bundle artifact from linux-media-bundle.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.linux-media-bundle.result == 'success' }}
+        timeout-minutes: 30
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          GH_ARTIFACT_DIR: ${{ runner.temp }}/lgpl-bundle-artifact
+        run: |
+          set -euo pipefail
+          test -f "$GH_ARTIFACT_DIR/lgpl-media-bundle.tar"
+          bundle="$WORK_ROOT/private/t51-bundle"; fx="$WORK_ROOT/private/t51-fixtures"
+          mkdir -p "$bundle"
+          tar -C "$bundle" -xf "$GH_ARTIFACT_DIR/lgpl-media-bundle.tar"
+          python3 luckyray-app/tools/linux-media-bundle/bundle.py verify "$bundle"
+          # The pins come only from the verified manifest.
+          eval "$(python3 luckyray-app/tools/linux-media-bundle/bundle.py pins "$bundle")"
+          export LUCKYRAY_LINUX_LIBMPV_SHA256 LUCKYRAY_LINUX_LIBMPV_SIZE
+          bash luckyray-app/tools/linux-media-bundle/live-fixtures.sh \
+            "$bundle/media-engine/ffmpeg/ffmpeg" "$fx"
+          LUCKYRAY_LIVE_LGPL_BUNDLE="$bundle" LUCKYRAY_LIVE_LGPL_CLIP="$fx/clip.mkv" \
+            timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- --ignored --exact \
+            material_native_video::lgpl_bundle_live::live_lgpl_bundle_libmpv_passes_the_real_license_gate_and_renders \
+            | tee "$WORK_ROOT/private/t51-lgpl-libmpv.log"
+          grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t51-lgpl-libmpv.log"
+          # Preview through the bundled ffmpeg/ffprobe (no distro FFmpeg).
+          res="$WORK_ROOT/private/t51-resources"
+          sha="$(python3 luckyray-app/tests/linux-media-preview-runtime.py "$res/media-engine" \
+            "$bundle/media-engine/ffmpeg/ffmpeg" "$bundle/media-engine/ffmpeg/ffprobe" | tail -n 1)"
+          LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256="$sha" LUCKYRAY_LIVE_FFMPEG=present \
+            LUCKYRAY_LIVE_MEDIA_RESOURCES="$res" LUCKYRAY_LIVE_MEDIA_VIDEO="$fx/rotated.mp4" \
+            LUCKYRAY_LIVE_MEDIA_AUDIO="$fx/audio.m4a" LUCKYRAY_LIVE_MEDIA_LONG="$fx/long.mp4" \
+            timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- --ignored --exact material_native_video::preview::tests::live_present_ffmpeg_preview \
+            | tee "$WORK_ROOT/private/t51-lgpl-preview.log"
+          grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t51-lgpl-preview.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -388,6 +488,7 @@ jobs:
           CI_MEDIA_PREVIEW: ${{ steps.media-preview.outcome }}
           CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}
           CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}
+          CI_MEDIA_LGPL_BUNDLE: ${{ steps.media-lgpl-bundle.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}

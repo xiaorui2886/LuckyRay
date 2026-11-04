@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "note": "Pinned upstream sources for the LGPL Linux media bundle. Same FFmpeg release and mpv commit as the Windows v1.9.9 pins (third_party/media-engine, third_party/native-video).",
+  "sources": [
+    {
+      "name": "ffmpeg",
+      "version": "9.0.1",
+      "license": "LGPL-2.1-or-later (built without --enable-gpl/--enable-nonfree/--enable-version3)",
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz",
+      "fileName": "ffmpeg-9.0.1.tar.xz",
+      "size": 12036420,
+      "sha256": "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635",
+      "licenseFiles": [
+        "COPYING.LGPLv2.1",
+        "LICENSE.md",
+        "CREDITS"
+      ]
+    },
+    {
+      "name": "libplacebo",
+      "version": "7.360.1",
+      "license": "LGPL-2.1-or-later",
+      "url": "https://code.videolan.org/videolan/libplacebo/-/archive/v7.360.1/libplacebo-v7.360.1.tar.gz",
+      "fileName": "libplacebo-v7.360.1.tar.gz",
+      "size": 862303,
+      "sha256": "14c0a99f4b01557ec9826ce6b1d52f6de21be274ba03fd5aab7307f18766dc39",
+      "licenseFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "lua",
+      "version": "5.2.4",
+      "role": "statically linked into libmpv (mpv scripting core, as on Windows)",
+      "license": "MIT",
+      "url": "https://www.lua.org/ftp/lua-5.2.4.tar.gz",
+      "fileName": "lua-5.2.4.tar.gz",
+      "size": 252651,
+      "sha256": "b9e2e4aad6789b3b63a056d442f7b39f0ecfca3ae0f1fc0ae4e9614401b69f4b",
+      "licenseFiles": [
+        "doc/readme.html"
+      ]
+    },
+    {
+      "name": "vulkan-headers",
+      "version": "1.4.309",
+      "role": "build-time headers for libplacebo's Vulkan stubs (no Vulkan code is shipped)",
+      "license": "Apache-2.0 OR MIT",
+      "url": "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.309.tar.gz",
+      "fileName": "Vulkan-Headers-1.4.309.tar.gz",
+      "size": 2572820,
+      "sha256": "437925ada160d86ed763d29dcb9318c1bb0d024d7deaf77bc7c170b8eb6b6f10",
+      "licenseFiles": [
+        "LICENSE.md"
+      ]
+    },
+    {
+      "name": "mpv",
+      "version": "git-3186d369f9f090cd1363be0ac46a037824b702c6",
+      "license": "LGPL-2.1-or-later (-Dgpl=false)",
+      "url": "https://github.com/mpv-player/mpv/archive/3186d369f9f090cd1363be0ac46a037824b702c6.tar.gz",
+      "fileName": "mpv-3186d369f9f090cd1363be0ac46a037824b702c6.tar.gz",
+      "size": 7475297,
+      "sha256": "9e160328ced1266571ee57ae5b16ea77cc5c8ac34ebc1ec549ea73b5b4c54128",
+      "licenseFiles": [
+        "Copyright",
+        "LICENSE.LGPL"
+      ]
+    },
+    {
+      "name": "meson",
+      "version": "1.5.2",
+      "role": "build-tool (not shipped)",
+      "license": "Apache-2.0",
+      "url": "https://files.pythonhosted.org/packages/55/a6/47b9353c331318a13eb050887eacfd61eb075746285f9baf7ef7de6ae235/meson-1.5.2-py3-none-any.whl",
+      "fileName": "meson-1.5.2-py3-none-any.whl",
+      "size": 968744,
+      "sha256": "77706e2368a00d789c097632ccf4fc39251fba56d03e1e1b262559a3c7a08f5b",
+      "licenseFiles": []
+    }
+  ]
+}

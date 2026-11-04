@@ -1,0 +1,10 @@
+# Pinned ubuntu-22.04 (jammy) packages for the linux-media-bundle CI job only.
+# Part of the bundle cache key. Never installed on the box.
+nasm=2.15.05-1
+ninja-build=1.10.1-1
+pkg-config=0.29.2-1ubuntu3
+python3-jinja2=3.0.3-1ubuntu0.4
+libass-dev=1:0.15.2-1
+libpulse-dev=1:15.99.1+dfsg1-1ubuntu2.2
+libasound2-dev=1.2.6.1-1ubuntu1.2
+zlib1g-dev=1:1.2.11.dfsg-2ubuntu9.2

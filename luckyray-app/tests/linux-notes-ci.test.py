@@ -1070,7 +1070,8 @@ class EvidenceTests(unittest.TestCase):
         workflow = Path(__file__).resolve().parents[2] / ".github/workflows/linux-desktop-preflight.yml"
         text = workflow.read_text()
         jobs = re.findall(r"^  ([a-z0-9-]+):$", text.split("jobs:\n", 1)[1], re.M)
-        self.assertEqual(jobs, ["linux-notes-attachments-validation"])
+        # T51: plus exactly the cached, CI-artifact-only LGPL media bundle job.
+        self.assertEqual(jobs, ["linux-media-bundle", "linux-notes-attachments-validation"])
         self.assertNotIn("linux-browser-ci.py", text)
         # The host is built only by the native-messaging step; the notes flow
         # still runs against the Main binary alone.
@@ -2147,13 +2148,53 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('#[path = "../../../src-tauri/src/companion_keyring.rs"]', lib)
         self.assertIn('#[path = "../../../src-tauri/src/community_mcp_secret.rs"]', lib)
 
+    def test_lgpl_media_bundle_is_a_cached_ci_only_artifact_feeding_the_real_gate(self):
+        # T51: the LGPL bundle is built in its own cached job from pinned sha256
+        # tarballs, uploaded only as a short-lived artifact (never a release), and
+        # the live step uses manifest-derived pins with the unmodified gate.
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        job = text[text.index("  linux-media-bundle:"):text.index("  linux-notes-attachments-validation:")]
+        for required in ("runs-on: ubuntu-22.04", "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
+                         "hashFiles('luckyray-app/tools/linux-media-bundle/**')",
+                         "steps.bundle-cache.outputs.cache-hit != 'true'", "ci-build-deps.txt",
+                         "bundle.py verify", "retention-days: 3", "linux-lgpl-media-bundle-ci-only",
+                         "persist-credentials: false"):
+            self.assertIn(required, job, required)
+        for forbidden in ("release", "gh ", "secrets.", "contents: write", "set -x"):
+            self.assertNotIn(forbidden, job, forbidden)
+        self.assertIn("    needs: linux-media-bundle\n", text)
+        start = text.index("        id: media-lgpl-bundle")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(text.index("        id: media-player"), start)
+        self.assertLess(start, finish)
+        step = text[start:finish]
+        for required in ("bundle.py verify", 'bundle.py pins "$bundle"',
+                         "export LUCKYRAY_LINUX_LIBMPV_SHA256 LUCKYRAY_LINUX_LIBMPV_SIZE",
+                         "--exact \\\n            material_native_video::lgpl_bundle_live::live_lgpl_bundle_libmpv_passes_the_real_license_gate_and_renders",
+                         "material_native_video::preview::tests::live_present_ffmpeg_preview",
+                         '"$bundle/media-engine/ffmpeg/ffprobe"', "timeout 900", "timeout-minutes: 30"):
+            self.assertIn(required, step, required)
+        self.assertEqual(step.count('grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored;'), 2)
+        for forbidden in ("echo", "apt", "set -x", "pkill", "OVERRIDE", "src-tauri/media-engine",
+                          "/usr/lib/x86_64-linux-gnu/libmpv", "--include-ignored"):
+            self.assertNotIn(forbidden, step, forbidden)
+        self.assertIn("CI_MEDIA_LGPL_BUNDLE: ${{ steps.media-lgpl-bundle.outcome }}", text)
+        self.assertEqual(ci.STEPS[-1], "MEDIA_LGPL_BUNDLE")
+        deps = (root / "luckyray-app/tools/linux-media-bundle/ci-build-deps.txt").read_text()
+        for line in deps.splitlines():
+            if line and not line.startswith("#"):
+                self.assertRegex(line, r"^[a-z0-9.+-]+=[0-9][^ ]*$")
+        live = (root / "luckyray-app/src-tauri/src/material_native_video/lgpl_bundle_live.rs").read_text()
+        self.assertIn("#[ignore", live)
+
     def test_media_player_step_runs_the_exact_linux_mpv_suite_with_the_live_test(self):
         # T48 V3: the Linux libmpv loader/license gate runs on synthetic cc-built
         # stand-ins plus the pinned jammy libmpv1, which must be refused as GPL.
         root = Path(__file__).resolve().parents[2]
         text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
         start = text.index("        id: media-player")
-        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        finish = text.index("Fetch the CI-only LGPL bundle artifact")
         self.assertLess(text.index("        id: media-resolver"), start)
         self.assertLess(start, finish)
         step = text[start:finish]
@@ -2181,7 +2222,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d  "
                       "/usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0\" | sha256sum -c -", deps)
         self.assertIn("CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}", text)
-        self.assertEqual(ci.STEPS[-1], "MEDIA_PLAYER")
+        self.assertEqual(ci.STEPS[-2], "MEDIA_PLAYER")
         source = (root / "luckyray-app/src-tauri/src/material_native_video/linux_mpv.rs").read_text()
         self.assertIn('if !self.property("mpv-configuration").contains("-Dgpl=false")', source)
         self.assertIn('"20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d"', source)
@@ -2232,7 +2273,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "--ignored", "set -x", "pkill", "echo", "apt", "src-tauri/media-engine"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}", text)
-        self.assertEqual(ci.STEPS[-3:-1], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
+        self.assertEqual(ci.STEPS[-4:-2], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
         source = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
         both = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
         for item in ("impl MediaResolver for ExternalMediaResolver", "fn write_site_cookie_file(",

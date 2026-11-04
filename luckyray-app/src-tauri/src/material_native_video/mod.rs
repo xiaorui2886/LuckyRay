@@ -132,6 +132,9 @@ mod linux_surface;
 mod linux_overlay;
 #[cfg(target_os = "linux")]
 mod linux_player;
+// T51: live LGPL bundle check (tests only; see the media-lgpl-bundle CI step).
+#[cfg(all(test, target_os = "linux"))]
+mod lgpl_bundle_live;
 // V1 (T45): metadata/thumbnail preview now runs on Linux with the verified
 // media-engine FFmpeg tools. mpv/surface_region/windows_player stay Windows-only
 // until V3. No Linux cfg change affects the Windows build or behaviour.
