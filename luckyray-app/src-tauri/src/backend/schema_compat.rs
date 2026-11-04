@@ -803,6 +803,8 @@ mod tests {
              DROP TABLE smart_folder_definition;",
         )
         .unwrap();
+        // Make the fixture the genuine v18 shape built by the real migration chain.
+        crate::backend::rewind_schema_for_test(&db, 18);
         drop(db);
         drop(first);
 
@@ -845,6 +847,10 @@ mod tests {
         let root = temp_app_data("legacy-lineage");
         let first = BackendServices::initialize(&root).unwrap();
         let db = Connection::open(first.db_path()).unwrap();
+        // Start from the genuine v17 shape built by the real migration chain,
+        // then turn it into the R6.2-F lineage: no DSH v13/v14 objects and the
+        // legacy v13/v14 ledger names.
+        crate::backend::rewind_schema_for_test(&db, 17);
         db.execute_batch(
             "DELETE FROM backend_schema_migration WHERE version>=13;
           DROP TRIGGER dsh_memory_operation_receipt_delete_immutable;
@@ -857,9 +863,6 @@ mod tests {
           DROP INDEX idx_dsh_permission_snapshot_active;
           DROP TABLE dsh_permission_snapshot;
           DROP TABLE dsh_permission_session;
-          DROP INDEX idx_favorite_item_type_favorited;
-          DROP TABLE favorite_item;
-          DROP TABLE smart_folder_definition;
           INSERT INTO backend_schema_migration VALUES(13,'agent-turn-control-v2','legacy');
           INSERT INTO backend_schema_migration VALUES(14,'agent-composer-turn-ux-v2','legacy');",
         )

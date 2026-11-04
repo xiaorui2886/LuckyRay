@@ -1377,6 +1377,181 @@ impl BackendServices {
     }
 }
 
+/// Test seam: rewinds a database that was created at the current schema (and
+/// usually seeded through the real services) to the genuine shape of schema
+/// `version`. The target shape is never hand-written: it is built by running
+/// the real migration chain up to `version` on a scratch database, and every
+/// table, column, index, trigger, view and ledger row of `connection` is made
+/// to match that reference. Rows in tables that also exist at `version` are
+/// kept, so upgrade tests can prove that user data survives the migration.
+#[cfg(test)]
+pub(crate) fn rewind_schema_for_test(connection: &Connection, version: u32) {
+    let mut reference = Connection::open_in_memory().expect("open reference schema");
+    reference
+        .pragma_update(None, "foreign_keys", true)
+        .expect("reference foreign keys");
+    migrate_schema_to(&mut reference, BootstrapFault::None, version)
+        .expect("build the reference schema with the real migration chain");
+
+    // (type, name, sql)
+    fn objects(db: &Connection) -> Vec<(String, String, String)> {
+        let mut statement = db
+            .prepare(
+                "SELECT type,name,COALESCE(sql,'') FROM sqlite_master
+                 WHERE name NOT LIKE 'sqlite_%' ORDER BY rowid",
+            )
+            .expect("read schema objects");
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("query schema objects")
+            .collect::<Result<Vec<(String, String, String)>, _>>()
+            .expect("collect schema objects");
+        rows
+    }
+    fn columns(db: &Connection, table: &str) -> Vec<String> {
+        let mut statement = db
+            .prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
+            .expect("read table columns");
+        let names = statement
+            .query_map([table], |row| row.get::<_, String>(0))
+            .expect("query table columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect table columns");
+        names
+    }
+    fn exists(db: &Connection, name: &str) -> bool {
+        db.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name=?1",
+            [name],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("probe schema object")
+            > 0
+    }
+    fn ledger(db: &Connection) -> Vec<(i64, String)> {
+        let mut statement = db
+            .prepare("SELECT version,name FROM backend_schema_migration ORDER BY version")
+            .expect("read ledger");
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query ledger")
+            .collect::<Result<Vec<(i64, String)>, _>>()
+            .expect("collect ledger");
+        rows
+    }
+    fn quote(name: &str) -> String {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    }
+    fn run(db: &Connection, sql: &str) {
+        db.execute_batch(sql)
+            .unwrap_or_else(|error| panic!("schema rewind step failed: {sql}: {error}"));
+    }
+
+    let wanted = objects(&reference);
+    // Only objects owned by the migration chain are rewound. Objects that
+    // services create outside the chain (and their rows) are left as they are.
+    let mut latest = Connection::open_in_memory().expect("open current schema");
+    latest
+        .pragma_update(None, "foreign_keys", true)
+        .expect("current foreign keys");
+    migrate_schema_to(&mut latest, BootstrapFault::None, SCHEMA_VERSION)
+        .expect("build the current schema with the real migration chain");
+    let chain_owned = objects(&latest)
+        .into_iter()
+        .map(|object| object.1)
+        .collect::<std::collections::HashSet<String>>();
+    drop(latest);
+    let wanted_sql = |kind: &str, name: &str| {
+        wanted
+            .iter()
+            .find(|object| object.0 == kind && object.1 == name)
+            .map(|object| object.2.clone())
+    };
+    run(connection, "PRAGMA foreign_keys=OFF;");
+
+    // 1. Triggers, views and indexes that the older schema did not have, or
+    //    had with a different definition.
+    for (kind, name, sql) in objects(connection) {
+        if matches!(kind.as_str(), "trigger" | "view" | "index")
+            && chain_owned.contains(&name)
+            && wanted_sql(&kind, &name).is_none_or(|wanted| wanted != sql)
+        {
+            run(
+                connection,
+                &format!("DROP {} IF EXISTS {};", kind.to_uppercase(), quote(&name)),
+            );
+        }
+    }
+
+    // 2. Tables introduced after `version` (virtual tables first, so their
+    //    shadow tables go with them).
+    let mut extra_tables = objects(connection)
+        .into_iter()
+        .filter(|object| {
+            object.0 == "table"
+                && chain_owned.contains(&object.1)
+                && wanted_sql("table", &object.1).is_none()
+        })
+        .map(|object| (object.1, object.2))
+        .collect::<Vec<_>>();
+    extra_tables.sort_by_key(|(_, sql)| !sql.starts_with("CREATE VIRTUAL"));
+    for (name, _) in extra_tables {
+        run(connection, &format!("DROP TABLE IF EXISTS {};", quote(&name)));
+    }
+
+    // 3. Tables of `version`: create missing ones, drop later columns, and
+    //    require the exact column list of the reference.
+    for (kind, table, sql) in &wanted {
+        if kind != "table" {
+            continue;
+        }
+        if !exists(connection, table) {
+            run(connection, &format!("{sql};"));
+            continue;
+        }
+        if sql.starts_with("CREATE VIRTUAL") {
+            continue;
+        }
+        let want = columns(&reference, table);
+        let have = columns(connection, table);
+        for extra in have.iter().rev().filter(|column| !want.contains(column)) {
+            run(
+                connection,
+                &format!("ALTER TABLE {} DROP COLUMN {};", quote(table), quote(extra)),
+            );
+        }
+        assert_eq!(
+            columns(connection, table),
+            want,
+            "rewound table {table} must have the columns of schema v{version}"
+        );
+    }
+
+    // 4. Indexes, views and triggers of `version`, exactly as the real chain
+    //    created them.
+    for wanted_kind in ["index", "view", "trigger"] {
+        for (kind, name, sql) in &wanted {
+            if kind == wanted_kind && !sql.is_empty() && !exists(connection, name) {
+                run(connection, &format!("{sql};"));
+            }
+        }
+    }
+
+    // 5. The ledger records exactly the migrations of `version`.
+    connection
+        .execute(
+            "DELETE FROM backend_schema_migration WHERE version>?1",
+            [version],
+        )
+        .expect("rewind ledger");
+    assert_eq!(
+        ledger(connection),
+        ledger(&reference),
+        "rewound ledger must match schema v{version}"
+    );
+    run(connection, "PRAGMA foreign_keys=ON;");
+}
+
 fn open_bootstrap_connection(db_path: &Path) -> Result<Connection, BackendBootstrapError> {
     let connection = open_connection(
         db_path,
@@ -1423,6 +1598,29 @@ fn migrate_schema(
     connection: &mut Connection,
     fault: BootstrapFault,
 ) -> Result<(), BackendBootstrapError> {
+    migrate_schema_to(connection, fault, SCHEMA_VERSION)
+}
+
+/// The migration chain, stopping after `ceiling`. Production always passes
+/// SCHEMA_VERSION, so every step and every verification runs exactly as
+/// before. Only tests pass a lower ceiling, to build an authentic older
+/// database (the same steps a user's database went through) as an upgrade
+/// fixture; the checks of the current schema are skipped only then, because
+/// an older database cannot satisfy them by definition.
+fn migrate_schema_to(
+    connection: &mut Connection,
+    fault: BootstrapFault,
+    ceiling: u32,
+) -> Result<(), BackendBootstrapError> {
+    // Versions 13..=16 are applied as one lineage step; a ceiling inside it
+    // would not be a state any real database was ever left in.
+    if ceiling == 0 || ceiling > SCHEMA_VERSION || (13..17).contains(&ceiling) {
+        return Err(BackendBootstrapError {
+            code: "backend-schema-ceiling-invalid",
+            message: format!("migration ceiling {ceiling} is not a released schema state"),
+        });
+    }
+    let current = ceiling == SCHEMA_VERSION;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| database_error("backend-migration-lock-failed", error))?;
@@ -1442,7 +1640,8 @@ fn migrate_schema(
             |row| row.get::<_, u32>(0),
         )
         .map_err(|error| database_error("backend-schema-version-failed", error))?;
-    if current_version > SCHEMA_VERSION {
+    let needs = |version: u32| current_version < version && version <= ceiling;
+    if current_version > ceiling {
         return Err(BackendBootstrapError {
             code: "backend-schema-too-new",
             message: format!(
@@ -1450,7 +1649,7 @@ fn migrate_schema(
             ),
         });
     }
-    if current_version < 1 {
+    if needs(1) {
         apply_schema_v1(&transaction, fault)?;
         transaction
             .execute(
@@ -1459,96 +1658,100 @@ fn migrate_schema(
             )
             .map_err(|error| database_error("backend-migration-record-failed", error))?;
     }
-    let needs_v2 = current_version < 2;
+    let needs_v2 = needs(2);
     if needs_v2 {
         apply_schema_v2(&transaction, fault)?;
     }
-    let needs_v3 = current_version < 3;
+    let needs_v3 = needs(3);
     if needs_v3 {
         apply_schema_v3(&transaction, fault)?;
     }
-    let needs_v4 = current_version < 4;
+    let needs_v4 = needs(4);
     if needs_v4 {
         crate::agent_runs::RunCoordinator::apply_schema(&transaction)
             .map_err(|error| database_error("backend-agent-run-schema-failed", error))?;
     }
-    let needs_v5 = current_version < 5;
+    let needs_v5 = needs(5);
     if needs_v5 {
         apply_schema_v5(&transaction)?;
     }
-    let needs_v6 = current_version < 6;
+    let needs_v6 = needs(6);
     if needs_v6 {
         apply_schema_v6(&transaction)?;
     }
-    let needs_v7 = current_version < 7;
+    let needs_v7 = needs(7);
     if needs_v7 {
         apply_schema_v7(&transaction)?;
     }
-    let needs_v8 = current_version < 8;
+    let needs_v8 = needs(8);
     if needs_v8 {
         apply_schema_v8(&transaction)?;
     }
-    let needs_v9 = current_version < 9;
+    let needs_v9 = needs(9);
     if needs_v9 {
         apply_schema_v9(&transaction)?;
     }
-    let needs_v10 = current_version < 10;
+    let needs_v10 = needs(10);
     if needs_v10 {
         apply_schema_v10(&transaction)?;
     }
-    let needs_v11 = current_version < 11;
+    let needs_v11 = needs(11);
     if needs_v11 {
         apply_schema_v11(&transaction)?;
     }
-    let needs_v12 = current_version < 12;
+    let needs_v12 = needs(12);
     if needs_v12 {
         apply_schema_v12(&transaction)?;
     }
-    schema_compat::migrate_schema_13_to_17(&transaction, current_version)?;
-    let needs_v18 = current_version < 18;
+    if ceiling >= 17 {
+        schema_compat::migrate_schema_13_to_17(&transaction, current_version)?;
+    }
+    let needs_v18 = needs(18);
     if needs_v18 {
         apply_schema_v18(&transaction)?;
     }
-    let needs_v19 = current_version < 19;
+    let needs_v19 = needs(19);
     if needs_v19 {
         apply_schema_v19(&transaction)?;
     }
-    let needs_v20 = current_version < 20;
+    let needs_v20 = needs(20);
     if needs_v20 {
         apply_schema_v20(&transaction)?;
     }
-    if current_version < 21 {
+    if needs(21) {
         crate::companion_gateway::content::notes::apply_schema(&transaction)
             .map_err(|error| database_error("backend-content-schema-failed", error))?;
         transaction.execute("INSERT INTO backend_schema_migration(version,name,applied_at) VALUES(21,'companion-content-notes',?1)", [chrono::Utc::now().to_rfc3339()])
             .map_err(|error| database_error("backend-migration-record-failed", error))?;
     }
-    let needs_v22 = current_version < 22;
+    let needs_v22 = needs(22);
     if needs_v22 {
         apply_schema_v22(&transaction)?;
     }
-    if current_version < 23 {
+    if needs(23) {
         apply_schema_v23(&transaction)?;
     }
-    if current_version < 24 {
+    if needs(24) {
         materials::apply_library_schema(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-libraries-migration-failed",message:error.message})?;
         transaction.execute("INSERT INTO backend_schema_migration(version,name,applied_at) VALUES(24,'material-libraries-r1',?1)",[chrono::Utc::now().to_rfc3339()]).map_err(|error|database_error("backend-migration-record-failed",error))?;
     }
-    materials::verify_library_schema(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-libraries-schema-invalid",message:error.message})?;
-    if current_version < 25 {
+    if ceiling >= 24 { materials::verify_library_schema(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-libraries-schema-invalid",message:error.message})?; }
+    if needs(25) {
         materials::apply_transfer_schema_v25(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-library-transfer-migration-failed",message:error.message})?;
         transaction.execute("INSERT INTO backend_schema_migration(version,name,applied_at) VALUES(25,'material-library-transfer-r2',?1)",[chrono::Utc::now().to_rfc3339()]).map_err(|error|database_error("backend-migration-record-failed",error))?;
     }
-    if current_version < 26 {
+    if needs(26) {
         materials::migrate_transfer_schema_v26(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-library-transfer-migration-failed",message:error.message})?;
         transaction.execute("INSERT INTO backend_schema_migration(version,name,applied_at) VALUES(26,'material-library-move-r3',?1)",[chrono::Utc::now().to_rfc3339()]).map_err(|error|database_error("backend-migration-record-failed",error))?;
     }
-    if current_version < 27 {
+    if needs(27) {
         transaction.execute_batch(include_str!("../companion_gateway/trust_schema.sql")).map_err(|error| database_error("backend-companion-trust-schema-failed",error))?;
     }
-    materials::verify_transfer_schema(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-library-transfer-schema-invalid",message:error.message})?;
+    if current { materials::verify_transfer_schema(&transaction).map_err(|error|BackendBootstrapError{code:"backend-material-library-transfer-schema-invalid",message:error.message})?; }
     repair_reintroduced_empty_retired_note_schema(&transaction)?;
-    verify_required_schema(&transaction)?;
+    if current {
+        verify_required_schema(&transaction)?;
+    }
     verify_retired_note_schema_absent(&transaction)?;
     if needs_v2 {
         transaction
@@ -5717,6 +5920,8 @@ mod tests {
                  DELETE FROM backend_schema_migration WHERE version>=9;",
             )
             .unwrap();
+        // Make the fixture the genuine v8 shape built by the real migration chain.
+        crate::backend::rewind_schema_for_test(&connection, 8);
         assert_eq!(
             connection
                 .query_row(
@@ -5808,6 +6013,8 @@ mod tests {
                  DELETE FROM backend_schema_migration WHERE version>=10;",
             )
             .unwrap();
+        // Make the fixture the genuine v9 shape built by the real migration chain.
+        crate::backend::rewind_schema_for_test(&connection, 9);
         drop(connection);
         drop(initial);
 
@@ -5928,6 +6135,8 @@ mod tests {
                  DELETE FROM backend_schema_migration WHERE version>=11;",
             )
             .unwrap();
+        // Make the fixture the genuine v10 shape built by the real migration chain.
+        crate::backend::rewind_schema_for_test(&connection, 10);
         drop(connection);
         drop(initial);
 
@@ -5987,6 +6196,8 @@ mod tests {
                  DELETE FROM backend_schema_migration WHERE version=12;",
             )
             .unwrap();
+        // Make the fixture the genuine v11 shape built by the real migration chain.
+        crate::backend::rewind_schema_for_test(&connection, 11);
         drop(connection);
         drop(initial);
 
@@ -7984,6 +8195,8 @@ mod tests {
                    DELETE FROM backend_schema_migration WHERE version>=20;",
             )
             .unwrap();
+        // Make the fixture the genuine v19 shape built by the real migration chain.
+        crate::backend::rewind_schema_for_test(&connection, 19);
         drop(connection);
 
         crate::test_support::make_private(&app_data);
