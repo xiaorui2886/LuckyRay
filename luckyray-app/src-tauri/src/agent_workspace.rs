@@ -2585,6 +2585,7 @@ struct ResolvedWorkspaceFile {
 
 fn validate_relative_path(value: &str) -> Result<(), WorkspaceError> {
     if value.is_empty()
+        || windows_form_path(value)
         || value.as_bytes().len() > 1024
         || value.contains('\0')
         || Path::new(value).is_absolute()
@@ -2607,8 +2608,21 @@ fn validate_relative_path(value: &str) -> Result<(), WorkspaceError> {
 /// ADS colons, trailing dots/spaces, Windows reserved device names, denied
 /// segments, sensitive credential/temp/backup targets, and non-text
 /// extensions. The policy is enforced by direct contract, never by prompt.
+/// Off Windows a backslash or a drive prefix is a literal name byte, so a
+/// Windows-form path (drive, UNC, or backslash traversal) would become one
+/// odd relative file. Agents speak both forms: reject them as paths.
+fn windows_form_path(value: &str) -> bool {
+    if cfg!(windows) {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    value.contains('\\')
+        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+}
+
 fn validate_write_target(value: &str) -> Result<(), WorkspaceError> {
     if value.is_empty()
+        || windows_form_path(value)
         || value.chars().count() > MAX_WRITE_PATH_CHARS
         || value.contains('\0')
         || Path::new(value).is_absolute()
@@ -4618,6 +4632,18 @@ mod tests {
             WorkspaceChangeSetReconciliation::Partial,
             "startup can honestly classify a stopped mid-commit set without replay"
         );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn windows_form_paths_are_rejected_off_windows_for_write_and_read() {
+        for path in ["C:\\Windows\\evil.md", "D:notes.md", "sub\\..\\escape.md",
+                     "\\\\server\\share\\x.md", "plain\\name.md"] {
+            assert_eq!(validate_write_target(path).unwrap_err().code, "workspace-path-invalid", "{path}");
+            assert_eq!(validate_relative_path(path).unwrap_err().code, "workspace-path-invalid", "{path}");
+        }
+        assert!(validate_write_target("sub/ok.md").is_ok());
+        assert!(validate_relative_path("sub/ok.md").is_ok());
     }
 
     #[test]
