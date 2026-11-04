@@ -8610,7 +8610,11 @@ mod tests {
     fn live_present_companion_pairing_smoke() {
         t44_require_present_secret_service();
         stage_log("pairing-smoke", "starting gateway with the real Secret Service identity store");
-        let root = tempfile::TempDir::new().expect("synthetic scratch directory");
+        // Linux profile roots must be private (0700); TempDir follows the umask.
+        let root = tempfile::Builder::new()
+            .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .tempdir()
+            .expect("synthetic scratch directory");
         let backend = Arc::new(BackendServices::initialize(root.path()).expect("synthetic backend"));
         let keyring: Arc<dyn crate::companion_keyring::SecretBackend> =
             Arc::new(crate::companion_keyring::SecretServiceBackend::new());

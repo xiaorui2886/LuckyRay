@@ -835,6 +835,12 @@ pub fn run() {
             runtime_profile
                 .validate_app_data_root(&identifier, &app_data)
                 .map_err(std::io::Error::other)?;
+            // Linux profile state must be a private (0700) directory before any
+            // service touches it; a umask-default create_dir_all elsewhere would
+            // otherwise leave a 0755 root that the knowledge store refuses.
+            #[cfg(target_os = "linux")]
+            linux_fs::Directory::private(&app_data, true)
+                .map_err(|_| std::io::Error::other("linux-app-data-private-unavailable"))?;
             // Update bootstrap must run before any service can hold data or tasks.
             #[cfg(windows)]
             desktop_app_update::initialize(app, &app_data).map_err(std::io::Error::other)?;

@@ -1058,6 +1058,15 @@ impl BackendServices {
         fault: BootstrapFault,
     ) -> Result<Self, BackendBootstrapError> {
         let app_data_dir = app_data_dir.to_path_buf();
+        // Linux: create the profile root private (0700) like the knowledge store
+        // requires; an existing non-private root is still refused there.
+        #[cfg(target_os = "linux")]
+        if !app_data_dir.exists() {
+            crate::linux_fs::Directory::private(&app_data_dir, true).map_err(|error| BackendBootstrapError {
+                code: "backend-app-data-unavailable",
+                message: format!("无法创建应用数据目录: {error}"),
+            })?;
+        }
         std::fs::create_dir_all(&app_data_dir).map_err(|error| BackendBootstrapError {
             code: "backend-app-data-unavailable",
             message: format!("无法创建应用数据目录: {error}"),
@@ -4003,6 +4012,24 @@ mod tests {
         assert_eq!(error.code, "knowledge-vault-required");
 
         std::fs::remove_dir_all(app_data).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_backend_creates_a_private_profile_root_and_still_refuses_a_shared_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let fresh = temp_app_data("t46-private-root");
+        BackendServices::initialize(&fresh).expect("a fresh Linux profile root must bootstrap");
+        assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777, 0o700);
+        std::fs::remove_dir_all(&fresh).unwrap();
+
+        let shared = temp_app_data("t46-shared-root");
+        std::fs::create_dir(&shared).unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let refused = BackendServices::initialize(&shared).err().expect("an existing 0755 profile root must be refused");
+        assert_eq!(refused.code, "knowledge-revision-conflict");
+        assert_eq!(std::fs::metadata(&shared).unwrap().permissions().mode() & 0o777, 0o755, "never silently re-permissioned");
+        std::fs::remove_dir_all(&shared).unwrap();
     }
 
     #[test]
