@@ -2143,6 +2143,34 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("fn stopping_the_group_leaves_no_descendant_of_the_plugin_shaped_tree()", owned)
         self.assertIn('"sleep 60 & echo $!; exec sleep 60"', owned)
 
+    def test_community_mcp_linux_package_profile_and_tunnel_scan(self):
+        # T42: per-platform package names, a Linux catalog that stays
+        # unpublished until release, and a /proc scan mirroring Toolhelp.
+        package = self.read("community_mcp_package.rs")
+        self.assertIn('node: "node.exe",', package)
+        self.assertIn('tunnel: "tunnel-client-runtime-cloudflared.exe",', package)
+        self.assertIn('cloudflared: "cloudflared.exe",', package)
+        self.assertIn('platform: "linux-x86_64",', package)
+        self.assertIn('include_str!("../community-mcp/catalog-linux-x86_64.json")', package)
+        self.assertIn('include_str!("../community-mcp/catalog.json")', package)
+        self.assertIn("c.platform == profile().platform", package)
+        self.assertIn('options.mode(if executable { 0o755 } else { 0o644 });', package)
+        self.assertIn('cfg!(all(any(windows, target_os = "linux"), target_arch = "x86_64"))', package)
+        catalog = json.loads((Path(__file__).resolve().parents[1] / "src-tauri/community-mcp/catalog-linux-x86_64.json").read_text())
+        self.assertEqual(catalog["platform"], "linux-x86_64")
+        for k in ("artifactUrl", "artifactSha256", "inventorySha256", "downloadBytes"):
+            self.assertIsNone(catalog[k], k)
+        gateway = self.read("community_mcp.rs")
+        self.assertNotIn('"node.exe"', gateway)
+        self.assertIn("&dir.join(names.tunnel),", gateway)
+        self.assertIn('env.insert("PATH".into(), format!("{dir}:/usr/bin:/bin"));', gateway)
+        # Pairing stays refused on Linux until the credential handoff exists.
+        self.assertIn('return Err("plugin-platform-unsupported".into());', gateway)
+        process = self.read("community_mcp_process.rs")
+        self.assertIn('linux_proc::tunnel_running(std::path::Path::new("/proc"))', process)
+        self.assertIn('"process-inventory-unavailable"', process)
+        self.assertIn('"tunnel-client-runtime-cloudflared",', process)
+
     def test_companion_keyring_uses_the_secret_service_without_touching_windows(self):
         # T19: the Linux identity store is backed by the freedesktop Secret
         # Service through keyring v3 with the pure-Rust backend, never by a
