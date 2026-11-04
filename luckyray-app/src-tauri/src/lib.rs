@@ -7473,7 +7473,7 @@ mod material_change_tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "
-            CREATE TABLE asset (id TEXT PRIMARY KEY);
+            CREATE TABLE asset (id TEXT PRIMARY KEY, updated_at TEXT NOT NULL DEFAULT 'synthetic-revision');
             CREATE TABLE folder (id TEXT PRIMARY KEY, scope TEXT NOT NULL);
             CREATE TABLE tag (id TEXT PRIMARY KEY, name TEXT NOT NULL);
             CREATE TABLE item_tag (id TEXT PRIMARY KEY, item_type TEXT NOT NULL, item_id TEXT NOT NULL, tag_id TEXT NOT NULL);
