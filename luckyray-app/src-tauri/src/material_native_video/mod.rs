@@ -124,6 +124,9 @@ mod mpv;
 // surface below the WebView are not wired yet; see linux_mpv.rs.
 #[cfg(target_os = "linux")]
 mod linux_mpv;
+// V3 (T49): Linux surface geometry, same rules as the Windows surface.
+#[cfg(target_os = "linux")]
+mod linux_surface;
 // V1 (T45): metadata/thumbnail preview now runs on Linux with the verified
 // media-engine FFmpeg tools. mpv/surface_region/windows_player stay Windows-only
 // until V3. No Linux cfg change affects the Windows build or behaviour.

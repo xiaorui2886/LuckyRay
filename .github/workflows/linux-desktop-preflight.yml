@@ -330,7 +330,7 @@ jobs:
           # Exactly the media_transfer suite: an empty or shrunken filter fails.
           grep -qx "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t47-media-resolver.log"
-      - name: Linux libmpv verified load and license gate (synthetic + pinned distro)
+      - name: Linux libmpv verified load, license gate and software render (synthetic + pinned distro)
         id: media-player
         # Independent of the preview and resolver steps (separate outcome).
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -340,19 +340,23 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
           TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
           LUCKYRAY_LIVE_LIBMPV: /usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0
+          LUCKYRAY_LIVE_CLIP: ${{ runner.temp }}/luckyray-linux-runtime-work/private/t49-testsrc.mp4
         run: |
           set -euo pipefail
           # Synthetic libmpv stand-ins are compiled by the tests with cc; the
           # live test copies the pinned distro library into a private root.
           test -f "$LUCKYRAY_LIVE_LIBMPV"
           command -v cc
+          # T49: a 1 s synthetic testsrc clip from the pinned FFmpeg (no real media).
+          ffmpeg -nostdin -loglevel error -f lavfi -i testsrc=size=64x48:rate=10 \
+            -t 1 -pix_fmt yuv420p "$LUCKYRAY_LIVE_CLIP"
           timeout 900 rustup run 1.95.0 cargo test --locked --lib \
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml \
-            -- material_native_video::linux_mpv:: --include-ignored \
+            -- material_native_video::linux_ --include-ignored \
             | tee "$WORK_ROOT/private/t48-media-player.log"
-          # Exactly the linux_mpv suite including the live test.
-          grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+          # Exactly the linux_mpv + linux_surface suites including both live tests.
+          grep -qx "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t48-media-player.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}

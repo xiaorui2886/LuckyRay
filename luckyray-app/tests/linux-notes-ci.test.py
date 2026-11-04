@@ -2163,8 +2163,10 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "set -euo pipefail",
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
-            "-- material_native_video::linux_mpv:: --include-ignored",
-            'grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured;',
+            "-- material_native_video::linux_ --include-ignored",
+            'grep -qx "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured;',
+            "LUCKYRAY_LIVE_CLIP: ${{ runner.temp }}/luckyray-linux-runtime-work/private/t49-testsrc.mp4",
+            "-f lavfi -i testsrc=size=64x48:rate=10",
             "LUCKYRAY_LIVE_LIBMPV: /usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0",
             "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
             "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
@@ -2186,6 +2188,10 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         module = (root / "luckyray-app/src-tauri/src/material_native_video/mod.rs").read_text()
         self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\nmod mpv;', module)
         self.assertIn('#[cfg(target_os = "linux")]\nmod linux_mpv;', module)
+        self.assertIn('#[cfg(target_os = "linux")]\nmod linux_surface;', module)
+        # Production can only mint the render token through the license gate.
+        self.assertIn("self.hardened(true).map(|()| Licensed(()))", source)
+        self.assertEqual(source.count("Licensed(())"), 3)
         self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\nmod windows_player;', module)
 
     def test_media_resolver_step_runs_the_exact_linux_media_transfer_suite(self):
@@ -2195,7 +2201,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
         start = text.index("        id: media-resolver")
         # T48 placed the media-player step directly after this one.
-        finish = text.index("      - name: Linux libmpv verified load and license gate")
+        finish = text.index("      - name: Linux libmpv verified load, license gate and software render")
         self.assertLess(text.index("        id: media-preview"), start)
         self.assertLess(start, finish)
         step = text[start:finish]

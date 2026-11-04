@@ -30,6 +30,24 @@ type Initialize = unsafe extern "C" fn(Handle) -> i32;
 type GetString = unsafe extern "C" fn(Handle, *const i8) -> *mut i8;
 type Free = unsafe extern "C" fn(*mut c_void);
 type Destroy = unsafe extern "C" fn(Handle);
+type Command = unsafe extern "C" fn(Handle, *const *const i8) -> i32;
+type RenderCreate = unsafe extern "C" fn(*mut *mut c_void, Handle, *mut RenderParam) -> i32;
+type RenderUpdate = unsafe extern "C" fn(*mut c_void) -> u64;
+type RenderRender = unsafe extern "C" fn(*mut c_void, *mut RenderParam) -> i32;
+type RenderFree = unsafe extern "C" fn(*mut c_void);
+#[repr(C)]
+pub struct RenderParam {
+    kind: i32,
+    data: *mut c_void,
+}
+// mpv/render.h
+const PARAM_INVALID: i32 = 0;
+const PARAM_API_TYPE: i32 = 1;
+const PARAM_SW_SIZE: i32 = 17;
+const PARAM_SW_FORMAT: i32 = 18;
+const PARAM_SW_STRIDE: i32 = 19;
+const PARAM_SW_POINTER: i32 = 20;
+const UPDATE_FRAME: u64 = 1;
 
 /// Relative location inside the app resources, the Linux twin of
 /// `native-video/libmpv-2.dll`.
@@ -71,8 +89,16 @@ pub struct Player {
     get: GetString,
     free: Free,
     destroy: Destroy,
+    command: Command,
+    render_create: RenderCreate,
+    render_update: RenderUpdate,
+    render_render: RenderRender,
+    render_free: RenderFree,
     _library: Library,
 }
+/// Proof that `mpv_initialize` ran in render mode AND the LGPL gate passed.
+/// Production code can only obtain it from `initialize_render`.
+pub struct Licensed(());
 impl Drop for Player {
     fn drop(&mut self) {
         unsafe {
@@ -167,14 +193,18 @@ impl Player {
             let destroy = symbol!("mpv_terminate_destroy", Destroy);
             // Present on Windows' symbol list; required so the same client can grow
             // into playback without a different runtime contract.
-            let _ = symbol!("mpv_command", *mut c_void);
+            let command = symbol!("mpv_command", Command);
+            let render_create = symbol!("mpv_render_context_create", RenderCreate);
+            let render_update = symbol!("mpv_render_context_update", RenderUpdate);
+            let render_render = symbol!("mpv_render_context_render", RenderRender);
+            let render_free = symbol!("mpv_render_context_free", RenderFree);
             let _ = symbol!("mpv_command_ret", *mut c_void);
             let _ = symbol!("mpv_free_node_contents", *mut c_void);
             let handle = create();
             if handle.is_null() {
                 return Err("native-video-create-failed".into());
             }
-            Ok(Self { handle, option, initialize, get, free, destroy, _library: library })
+            Ok(Self { handle, option, initialize, get, free, destroy, command, render_create, render_update, render_render, render_free, _library: library })
         }
     }
     fn option(&self, key: &str, value: &str) -> Result<()> {
@@ -194,9 +224,7 @@ impl Player {
             s
         }
     }
-    /// Same hardened options as Windows minus the surface (`wid`, d3d11), with
-    /// no video/audio output, then the same LGPL license-mode check.
-    pub fn initialize_headless(&self) -> Result<()> {
+    fn hardened(&self, render: bool) -> Result<()> {
         for (k, v) in [
             ("config", "no"),
             ("load-scripts", "no"),
@@ -209,7 +237,9 @@ impl Player {
             ("osc", "no"),
             ("osd-level", "0"),
             ("terminal", "no"),
-            ("vo", "null"),
+            // Render mode: frames only reach us through mpv_render_context (the
+            // Linux twin of the Windows `wid` child); never a window of mpv's own.
+            ("vo", if render { "libmpv" } else { "null" }),
             ("ao", "null"),
             ("audio", "no"),
             ("hwdec", "no"),
@@ -226,6 +256,84 @@ impl Player {
             return Err("native-video-runtime-license-mode-invalid".into());
         }
         Ok(())
+    }
+    /// Same hardened options as Windows minus the surface (`wid`, d3d11), with
+    /// no video/audio output, then the same LGPL license-mode check.
+    pub fn initialize_headless(&self) -> Result<()> {
+        self.hardened(false)
+    }
+    /// Render-API mode (`vo=libmpv`) for the GTK surface. Returns the only
+    /// production path to a `Licensed` token.
+    pub fn initialize_render(&self) -> Result<Licensed> {
+        self.hardened(true).map(|()| Licensed(()))
+    }
+    fn command(&self, args: &[&str]) -> Result<()> {
+        let values: Vec<_> = args.iter().map(|v| c(v)).collect::<Result<_>>()?;
+        let mut ptrs: Vec<_> = values.iter().map(|v| v.as_ptr()).collect();
+        ptrs.push(std::ptr::null());
+        check(unsafe { (self.command)(self.handle, ptrs.as_ptr()) })
+    }
+    /// Same contract as Windows `open_local`: absolute, existing local file only.
+    pub fn open_local(&self, path: &Path) -> Result<()> {
+        if !path.is_absolute() || !path.is_file() {
+            return Err("native-video-local-source-required".into());
+        }
+        self.command(&["loadfile", &path.to_string_lossy(), "replace"])
+    }
+    /// Software render context: the pixel source for the GTK surface. Works on
+    /// X11, Wayland and headless alike (no GL context needed).
+    pub fn software_surface(&self, _licensed: &Licensed) -> Result<SoftwareSurface<'_>> {
+        let api = c("sw")?;
+        let mut params = [
+            RenderParam { kind: PARAM_API_TYPE, data: api.as_ptr() as *mut c_void },
+            RenderParam { kind: PARAM_INVALID, data: std::ptr::null_mut() },
+        ];
+        let mut ctx = std::ptr::null_mut();
+        check(unsafe { (self.render_create)(&mut ctx, self.handle, params.as_mut_ptr()) })
+            .map_err(|_| "native-video-surface-create-failed".to_string())?;
+        if ctx.is_null() {
+            return Err("native-video-surface-create-failed".into());
+        }
+        Ok(SoftwareSurface { player: self, ctx })
+    }
+}
+
+/// Owned render context; freed before its player (borrow enforces order, like
+/// Windows dropping the Player before its Surface's parent).
+pub struct SoftwareSurface<'a> {
+    player: &'a Player,
+    ctx: *mut c_void,
+}
+impl Drop for SoftwareSurface<'_> {
+    fn drop(&mut self) {
+        unsafe { (self.player.render_free)(self.ctx) }
+    }
+}
+/// Max surface the GTK side will ever ask for (same ceiling as capture).
+const MAX_PIXELS: i64 = 33_177_600;
+impl SoftwareSurface<'_> {
+    /// True when mpv has a new frame to draw.
+    pub fn frame_pending(&self) -> bool {
+        unsafe { (self.player.render_update)(self.ctx) & UPDATE_FRAME != 0 }
+    }
+    /// Draw the current frame into a tightly packed `rgb0` buffer.
+    pub fn render(&self, width: i32, height: i32) -> Result<Vec<u8>> {
+        if width < 1 || height < 1 || i64::from(width) * i64::from(height) > MAX_PIXELS {
+            return Err("native-video-frame-size-invalid".into());
+        }
+        let mut size = [width, height];
+        let format = c("rgb0")?;
+        let mut stride: usize = width as usize * 4;
+        let mut pixels = vec![0u8; stride * height as usize];
+        let mut params = [
+            RenderParam { kind: PARAM_SW_SIZE, data: size.as_mut_ptr().cast() },
+            RenderParam { kind: PARAM_SW_FORMAT, data: format.as_ptr() as *mut c_void },
+            RenderParam { kind: PARAM_SW_STRIDE, data: (&mut stride as *mut usize).cast() },
+            RenderParam { kind: PARAM_SW_POINTER, data: pixels.as_mut_ptr().cast() },
+            RenderParam { kind: PARAM_INVALID, data: std::ptr::null_mut() },
+        ];
+        check(unsafe { (self.player.render_render)(self.ctx, params.as_mut_ptr()) })?;
+        Ok(pixels)
     }
 }
 
@@ -262,6 +370,14 @@ int mpv_command(void*h,const char**a){ (void)h;(void)a; return 0; }
 #endif
 int mpv_command_ret(void*h,const char**a,void*n){ (void)h;(void)a;(void)n; return 0; }
 void mpv_free_node_contents(void*n){ (void)n; }
+static int frames;
+int mpv_render_context_create(void**c,void*h,void*p){ (void)h;(void)p; *c=calloc(1,1); return 0; }
+unsigned long long mpv_render_context_update(void*c){ (void)c; return frames++ < 3 ? 1 : 0; }
+typedef struct { int type; void *data; } P;
+int mpv_render_context_render(void*c,P*p){ (void)c; int *sz=0; size_t *st=0; unsigned char *px=0;
+  for(;p->type;p++){ if(p->type==17) sz=p->data; if(p->type==19) st=p->data; if(p->type==20) px=p->data; }
+  if(!sz||!st||!px) return -18; for(int y=0;y<sz[1];y++) memset(px+y*(*st),0x7f,sz[0]*4); return 0; }
+void mpv_render_context_free(void*c){ free(c); }
 "#;
 
     fn root() -> tempfile::TempDir {
@@ -302,6 +418,8 @@ void mpv_free_node_contents(void*n){ (void)n; }
         let lib = build(dir.path(), "gpl.so", "-Dlibmpv=true", false);
         let (sha, size) = pin_of(&lib);
         assert_eq!(probe(&lib, Pin { sha256: &sha, size }).unwrap_err(), "native-video-runtime-license-mode-invalid");
+        let player = Player::load(&lib, Pin { sha256: &sha, size }).expect("load");
+        assert_eq!(player.initialize_render().err().as_deref(), Some("native-video-runtime-license-mode-invalid"));
     }
 
     #[test]
@@ -332,6 +450,24 @@ void mpv_free_node_contents(void*n){ (void)n; }
     }
 
     #[test]
+    fn licensed_runtime_renders_software_frames_and_validates_sizes() {
+        let dir = root();
+        let lib = build(dir.path(), "lgpl.so", "-Dgpl=false", false);
+        let (sha, size) = pin_of(&lib);
+        let player = Player::load(&lib, Pin { sha256: &sha, size }).expect("load");
+        let licensed = player.initialize_render().expect("LGPL render mode");
+        let surface = player.software_surface(&licensed).expect("surface");
+        assert!(surface.frame_pending());
+        let frame = surface.render(8, 4).expect("frame");
+        assert_eq!(frame.len(), 8 * 4 * 4);
+        assert!(frame.iter().all(|b| *b == 0x7f));
+        assert_eq!(surface.render(0, 4).unwrap_err(), "native-video-frame-size-invalid");
+        assert_eq!(surface.render(10_000, 10_000).unwrap_err(), "native-video-frame-size-invalid");
+        assert_eq!(player.open_local(Path::new("relative.mp4")).unwrap_err(), "native-video-local-source-required");
+        assert_eq!(player.open_local(&dir.path().join("absent.mp4")).unwrap_err(), "native-video-local-source-required");
+    }
+
+    #[test]
     fn production_has_no_pin_until_a_verified_lgpl_build_ships() {
         if option_env!("LUCKYRAY_LINUX_LIBMPV_SHA256").is_none() {
             assert_eq!(production_pin().err().as_deref(), Some("native-video-runtime-unpinned"));
@@ -357,5 +493,40 @@ void mpv_free_node_contents(void*n){ (void)n; }
         let player = Player::load(&lib, pin).expect("verified distro runtime loads");
         assert_eq!(player.initialize_headless().unwrap_err(), "native-video-runtime-license-mode-invalid");
         assert!(player.property("mpv-version").starts_with("mpv 0.34.1"));
+    }
+
+    /// Live (CI only): the pinned distro libmpv renders a real frame of a
+    /// synthetic clip through the software render API. The distro build is GPL,
+    /// so `initialize_render` MUST refuse it; only this test then mints the
+    /// token by hand to exercise the render path. Production never can.
+    #[test]
+    #[ignore]
+    fn live_pinned_distro_libmpv_renders_a_synthetic_frame() {
+        let src = std::env::var_os("LUCKYRAY_LIVE_LIBMPV").expect("LUCKYRAY_LIVE_LIBMPV");
+        let clip = std::env::var_os("LUCKYRAY_LIVE_CLIP").expect("LUCKYRAY_LIVE_CLIP");
+        let dir = root();
+        let lib = dir.path().join("libmpv.so.1");
+        std::fs::copy(&src, &lib).expect("copy");
+        std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o755)).expect("mode");
+        let pin = Pin {
+            sha256: "20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d",
+            size: 2_503_552,
+        };
+        let player = Player::load(&lib, pin).expect("verified distro runtime loads");
+        assert_eq!(player.initialize_render().err().as_deref(), Some("native-video-runtime-license-mode-invalid"));
+        let licensed = Licensed(());
+        let surface = player.software_surface(&licensed).expect("software surface");
+        player.open_local(Path::new(&clip)).expect("open synthetic clip");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut lit = 0usize;
+        while std::time::Instant::now() < deadline && lit == 0 {
+            if surface.frame_pending() {
+                let frame = surface.render(64, 48).expect("render");
+                lit = frame.chunks(4).filter(|p| p[0] | p[1] | p[2] != 0).count();
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        assert!(lit > 64 * 48 / 4, "a real testsrc frame must light most pixels, got {lit}");
     }
 }
