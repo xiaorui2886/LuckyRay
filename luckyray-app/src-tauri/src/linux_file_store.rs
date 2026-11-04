@@ -71,7 +71,7 @@ pub(crate) fn write(
 /// The Linux attachment store takes the Vault lease before a step runs, and a
 /// second flock on the same file from the same process fails instead of
 /// excluding anyone, so the attachment path reuses the lock it already holds.
-/// Everything else (expected-state proof, retained backup, journal, rename) is
+/// Everything else (expected-state proof, backup, journal, rename, cleanup) is
 /// identical to `write`.
 pub(crate) fn write_locked(
     dir: &Directory,
@@ -199,10 +199,16 @@ fn write_inner(
     {
         return Err(conflict());
     }
-    // The target now holds `after`: acknowledge the transaction by removing
-    // its journal (unlink + directory sync). Recovery acts only on journals,
-    // so no per-write receipt is left behind in the user's directory. The
-    // backup of a replaced version stays available for manual review.
+    // The target now holds `after`. As on Windows, the independent backup
+    // copy is no longer needed once the commit is verified: recovery reads it
+    // only while the target is missing. Remove it, then acknowledge the
+    // transaction by removing its journal (each unlink syncs the directory).
+    // Recovery acts only on journals, so no per-write receipt is left behind.
+    // The displaced original inode stays: an external editor that still holds
+    // it open can keep writing there, and unlinking it would lose those bytes.
+    if let Some(file) = backup_file.as_ref() {
+        dir.remove_owned(OsStr::new(&journal.backup), file)?;
+    }
     dir.remove_owned(OsStr::new(&journal_name), &journal_file)?;
     Ok(installed)
 }
@@ -317,7 +323,24 @@ fn recover_inner(dir: &Directory, private: bool, scope: Option<(&str, &[String])
             // Never overwrite an external edit during recovery.
             _ => return Err(conflict()),
         }
-        // Settled: acknowledge by removing the journal, as a committed write does.
+        // Settled. As Windows recovery does, remove this transaction's own
+        // draft and backup copies, but only when they still hold exactly the
+        // bytes the journal recorded; then acknowledge by removing the journal.
+        let leftovers = [
+            (record.next.as_str(), Some(&record.after)),
+            (record.backup.as_str(), record.before.as_ref()),
+        ];
+        for (leftover, expected) in leftovers {
+            if let (Some(copy), Some(expected)) = (
+                // An unreadable or unexpected copy is simply retained.
+                dir.read(OsStr::new(leftover), private, MAX_RECORD_BYTES).ok().flatten(),
+                expected,
+            ) {
+                if digest(&copy.bytes) == *expected {
+                    dir.remove_owned(OsStr::new(leftover), &copy.file)?;
+                }
+            }
+        }
         dir.remove_owned(&name, &opened.file)?;
     }
     dir.verify()
@@ -364,12 +387,19 @@ mod tests {
         )
         .is_err());
         assert_eq!(std::fs::read(root.path().join("note.md")).unwrap(), b"next");
-        let backup = std::fs::read_dir(root.path())
+        // The commit removed its backup copy and journal; only the displaced
+        // original inode remains for an editor that still holds it open.
+        let names: Vec<String> = std::fs::read_dir(root.path())
             .unwrap()
-            .map(|e| e.unwrap().path())
-            .find(|p| p.extension() == Some(OsStr::new("backup")))
-            .unwrap();
-        assert_eq!(std::fs::read(backup).unwrap(), b"original");
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert!(names.iter().any(|n| n == "note.md"), "{names:?}");
+        assert!(names.iter().any(|n| n == ".luckyray-write.lock"), "{names:?}");
+        assert!(
+            names.iter().any(|n| n.starts_with(".lrk-") && n.ends_with(".displaced")),
+            "{names:?}"
+        );
         assert_eq!(
             std::fs::metadata(root.path().join("note.md"))
                 .unwrap()
@@ -390,12 +420,6 @@ mod tests {
             std::fs::read(displaced).unwrap(),
             b"external edit to the displaced inode"
         );
-        let backup = std::fs::read_dir(root.path())
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .find(|p| p.extension() == Some(OsStr::new("backup")))
-            .unwrap();
-        assert_eq!(std::fs::read(backup).unwrap(), b"original");
 
         let current = dir
             .read(OsStr::new("note.md"), false, 1024)

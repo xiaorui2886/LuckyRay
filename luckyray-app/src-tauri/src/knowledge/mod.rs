@@ -4301,7 +4301,13 @@ mod tests {
         let app_data = service.app_data_dir.clone(); drop(service);
         let reopened = KnowledgeService::initialize(&app_data).unwrap();
         assert_eq!(reopened.read_document(&changed.document.summary.document_ref).unwrap().content, "next");
-        assert!(std::fs::read_dir(&root).unwrap().any(|entry| entry.unwrap().path().extension() == Some(OsStr::new("backup"))));
+        // One committed update: its backup copy and journal are gone and only
+        // the displaced original inode remains (for an editor still holding it).
+        let residue: Vec<String> = std::fs::read_dir(&root).unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".lrk-")).collect();
+        assert_eq!(residue.len(), 1, "{residue:?}");
+        assert!(residue[0].ends_with(".displaced"), "{residue:?}");
     }
 
     #[cfg(target_os = "linux")]
