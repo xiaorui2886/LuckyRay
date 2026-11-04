@@ -323,6 +323,16 @@ fn safe_component_with_limit(raw: &str, limit: usize) -> String {
     // Leave room for collision suffixes (` (10000)`) while keeping the
     // generated component within the same validation bound.
     let mut name = trimmed.chars().take(limit).collect::<String>();
+    // Linux/macOS limit a name to 255 *bytes* (NAME_MAX), not 255 UTF-16
+    // units: 140 CJK chars are 420 bytes. Keep the same headroom in bytes
+    // (collision suffix + extension stay under 255) on char boundaries.
+    #[cfg(not(windows))]
+    {
+        let budget = limit + 60;
+        while name.len() > budget { name.pop(); }
+        let kept = name.trim_end_matches([' ', '.']).len();
+        name.truncate(kept);
+    }
     if name.is_empty() { name = "untitled".into(); }
     let base = name.split('.').next().unwrap_or("").to_ascii_uppercase();
     let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
@@ -1006,6 +1016,9 @@ mod tests {
         assert_eq!(paths["one"], vec!["A_B"]);
         assert_eq!(paths["two"], vec!["A_B (2)"]);
         assert_ne!(paths["three"], paths["four"]);
+        for id in ["three", "four"] {
+            assert!(paths[id].iter().all(|part| part.len() <= 255), "{id} fits NAME_MAX bytes");
+        }
         let (_root, _catalog, _manager, output) = fixture();
         let output = output.canonicalize().unwrap();
         for id in ["one", "two", "three", "four"] {
