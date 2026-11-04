@@ -41,6 +41,8 @@ struct Service {
     trust: Trust,
 }
 type Shared = Arc<Service>;
+/// Process-lifetime owner lock; never released while this process runs.
+static OWNER_LOCK: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
 
 /// Same admission rule as Windows: only an enabled, official, release build.
 /// Linux replaces `production_nsis` with "validated AppImage target".
@@ -270,6 +272,13 @@ pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), String> {
         trust,
     });
     if enabled {
+        // Same lifetime ownership as Windows production NSIS: a second
+        // instance refuses to start services while another owns the install.
+        let lock = appimage::acquire_owner_lock(service.store.root(), Duration::from_secs(30)).map_err(|code| {
+            eprintln!("LuckyRay 或其更新仍在运行，或无法确认安装环境安全。请正常关闭另一个实例，再启动此版本。\nAnother LuckyRay instance may be running. Close it normally and try again. ({code})");
+            code.to_string()
+        })?;
+        OWNER_LOCK.set(lock).map_err(|_| "update-ownership-unknown")?;
         let main = app.get_webview_window("main");
         let pending = service.store.pending();
         if pending {

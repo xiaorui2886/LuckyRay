@@ -169,3 +169,38 @@ pub(crate) fn restart(target: &std::path::Path) -> Result<(), &'static str> {
         .map(|_| ())
         .map_err(|_| "update-appimage-restart-failed")
 }
+
+/// Linux counterpart of the Windows v1.9.9 `Ownership::acquire` lifetime lock
+/// (`owner.lock` in the update store plus a 30 s wait for the previous
+/// process). Held for the whole process lifetime by every admitted AppImage
+/// instance so a second instance cannot bootstrap or replace concurrently.
+/// The fd is close-on-exec, so the restarted AppImage does not inherit it and
+/// simply waits for the old process to exit. Never signals another process.
+pub(crate) fn acquire_owner_lock(
+    root: &std::path::Path,
+    wait: std::time::Duration,
+) -> Result<std::fs::File, &'static str> {
+    use std::os::unix::io::AsRawFd;
+    std::fs::create_dir_all(root).map_err(|_| "update-cache-unavailable")?;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join("owner.lock"))
+        .map_err(|_| "update-cache-unavailable")?;
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(lock);
+        }
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::EWOULDBLOCK) && err.kind() != io::ErrorKind::Interrupted {
+            return Err("update-ownership-unknown");
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("update-instance-active");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}

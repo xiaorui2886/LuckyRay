@@ -35,7 +35,7 @@ impl Store {
     pub(crate) fn new(root: PathBuf) -> Self {
         Self { root }
     }
-    // Only the Windows installer cache uses the root path directly.
+    // Windows installer cache and the Linux AppImage owner lock use the root.
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub(crate) fn root(&self) -> &Path {
         &self.root
