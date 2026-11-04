@@ -434,6 +434,18 @@ impl Directory {
         Ok(file)
     }
 
+    /// Unlink a name only while it still refers to `file` (an object this
+    /// process created). A substituted object is left in place.
+    pub(crate) fn remove_owned(&self, name: &OsStr, file: &File) -> io::Result<()> {
+        self.verify_named(name, file)?;
+        let name_c = component(name)?;
+        if unsafe { libc::unlinkat(self.file.as_raw_fd(), name_c.as_ptr(), 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        self.file.sync_all()?;
+        self.verify()
+    }
+
     pub(crate) fn rename_new(&self, from: &OsStr, other: &Self, to: &OsStr) -> io::Result<()> {
         self.verify()?;
         other.verify()?;

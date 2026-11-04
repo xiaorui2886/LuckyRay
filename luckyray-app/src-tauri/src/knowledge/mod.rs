@@ -5352,6 +5352,12 @@ mod tests {
     fn legacy_http_routes_use_vault_documents_and_leave_db_note_sentinels_untouched() {
         let app_data = temp_path("legacy-http-app");
         std::fs::create_dir_all(&app_data).unwrap();
+        // App data must be private, as the app itself creates it (0700).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&app_data, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let db_path = app_data.join("luckyray.db");
         let connection = rusqlite::Connection::open(&db_path).unwrap();
         connection

@@ -112,9 +112,10 @@ fn write_inner(
     }
     // An external editor can keep writing the old inode after it is moved.
     // Retain an independent copy of the version read by this transaction.
-    if let Some(previous) = current.as_ref() {
-        dir.create(OsStr::new(&backup), &previous.bytes)?;
-    }
+    let backup_file = match current.as_ref() {
+        Some(previous) => Some(dir.create(OsStr::new(&backup), &previous.bytes)?),
+        None => None,
+    };
     let journal = Journal {
         version: 1,
         nonce,
@@ -128,6 +129,13 @@ fn write_inner(
     let journal_bytes = serde_json::to_vec(&journal).map_err(|_| conflict())?;
     let journal_file = dir.create(OsStr::new(&journal_name), &journal_bytes)?;
     if fail_before {
+        // No target mutation occurred: discard this transaction's own files,
+        // journal first so recovery never acts on a half-removed set.
+        dir.remove_owned(OsStr::new(&journal_name), &journal_file)?;
+        if let Some(file) = backup_file.as_ref() {
+            dir.remove_owned(OsStr::new(&journal.backup), file)?;
+        }
+        dir.remove_owned(OsStr::new(&journal.next), &next_file)?;
         return Err(io::Error::other("linux-write-interrupted-before-commit"));
     }
     let checked = dir.read(name, private, MAX_RECORD_BYTES)?;

@@ -8,6 +8,10 @@ pub(super) fn failure(error_value: std::io::Error) -> KnowledgeError {
         "knowledge-permissions-unsupported"
     } else if error_value.kind() == std::io::ErrorKind::AlreadyExists {
         "knowledge-name-conflict"
+    } else if error_value.to_string() == "linux-write-interrupted-before-commit" {
+        // Nothing was renamed yet: the original is intact, matching the
+        // Windows atomic-write contract for a pre-commit failure.
+        "knowledge-write-failed"
     } else if error_value.to_string().contains("interrupted") {
         "knowledge-write-interrupted"
     } else {
