@@ -5281,12 +5281,26 @@ mod tests {
         let backend = BackendServices::initialize(&app_data).unwrap();
         drop(backend);
         let connection = Connection::open(app_data.join("luckyray.db")).unwrap();
+        // Only the column set may drift: the triggers that live on `asset`
+        // are restored with their exact definitions, so the failure under
+        // test is the missing critical columns and nothing else.
+        let asset_triggers = connection
+            .prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name='asset'")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(!asset_triggers.is_empty());
         connection
             .execute_batch(
                 "DROP TABLE asset;
                  CREATE TABLE asset (id TEXT PRIMARY KEY);",
             )
             .unwrap();
+        for trigger in &asset_triggers {
+            connection.execute_batch(&format!("{trigger};")).unwrap();
+        }
         drop(connection);
 
         crate::test_support::make_private(&app_data);
