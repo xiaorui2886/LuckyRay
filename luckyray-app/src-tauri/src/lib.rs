@@ -797,6 +797,26 @@ mod linux_desktop_admission_tests {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Startup message for a Linux profile root that cannot be used privately.
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_app_data_startup_message(path: &std::path::Path, error: &std::io::Error) -> String {
+    let folder = path.display();
+    if error.kind() == std::io::ErrorKind::PermissionDenied
+        && error.to_string().contains("linux-private-directory-permissions")
+    {
+        format!(
+            "应用数据文件夹的权限过宽，其他用户可以读取：{folder}\n\
+             为保护你的数据，LuckyRay 不会自动修改它。请在终端运行：\n\
+             chmod 700 \"{folder}\"\n然后重新打开 LuckyRay。"
+        )
+    } else {
+        format!(
+            "无法安全打开应用数据文件夹：{folder}\n\
+             请确认该文件夹归当前用户所有、不是符号链接，且权限为 700，然后重新打开 LuckyRay。"
+        )
+    }
+}
+
 pub fn run() {
     #[cfg(target_os = "linux")]
     if let Err(error) = linux_desktop_startup_admission() {
@@ -852,9 +872,20 @@ pub fn run() {
             // Linux profile state must be a private (0700) directory before any
             // service touches it; a umask-default create_dir_all elsewhere would
             // otherwise leave a 0755 root that the knowledge store refuses.
+            // An existing root that something else made group/world accessible
+            // is refused, never chmod-ed: tell the user which folder and how.
             #[cfg(target_os = "linux")]
-            linux_fs::Directory::private(&app_data, true)
-                .map_err(|_| std::io::Error::other("linux-app-data-private-unavailable"))?;
+            if let Err(error) = linux_fs::Directory::private(&app_data, true) {
+                let message = linux_app_data_startup_message(&app_data, &error);
+                eprintln!("LuckyRay: {message}");
+                let handle = app.handle().clone();
+                app.dialog()
+                    .message(message)
+                    .title("LuckyRay 无法启动")
+                    .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+                    .show(move |_| handle.exit(1));
+                return Ok(());
+            }
             // Update bootstrap must run before any service can hold data or tasks.
             #[cfg(windows)]
             desktop_app_update::initialize(app, &app_data).map_err(std::io::Error::other)?;
@@ -16739,5 +16770,23 @@ mod canvas_storage_tests {
             normalize_loaded_canvas(canvas).unwrap_err(),
             "canvas-content-digest-invalid"
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_app_data_startup_tests {
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn shared_existing_root_is_refused_unchanged_with_actionable_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("profile");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let error = crate::linux_fs::Directory::private(&root, true).err().expect("refused");
+        let message = super::linux_app_data_startup_message(&root, &error);
+        assert!(message.contains(&root.display().to_string()));
+        assert!(message.contains("chmod 700"));
+        let mode = std::fs::metadata(&root).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755, "existing root must not be chmod-ed");
     }
 }
