@@ -403,11 +403,13 @@ jobs:
           ffmpeg -nostdin -loglevel error -f lavfi -i testsrc=size=64x48:rate=10 \
             -t 1 -pix_fmt yuv420p "$LUCKYRAY_LIVE_CLIP"
           # T50: the GTK layer test runs on a private Xvfb display (xvfb-run -a).
+          # One test at a time: libmpv and GTK hold process-global native state
+          # (the tests also serialise themselves; run 41924878597 crashed).
           timeout 900 xvfb-run -a -s "-screen 0 640x480x24 -nolisten tcp" \
             rustup run 1.95.0 cargo test --locked --lib \
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml \
-            -- material_native_video::linux_ --include-ignored \
+            -- material_native_video::linux_ --include-ignored --test-threads=1 \
             | tee "$WORK_ROOT/private/t48-media-player.log"
           # Exactly linux_mpv + linux_surface + linux_player + linux_overlay,
           # including both live libmpv tests and the real-GTK layer test.

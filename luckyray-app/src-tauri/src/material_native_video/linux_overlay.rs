@@ -140,6 +140,7 @@ mod tests {
     #[test]
     #[ignore]
     fn live_gtk_layer_draws_frames_below_the_web_widget_and_nothing_when_detached() {
+        let _native = super::super::native_media_test_lock();
         gtk::init().expect("gtk under an X server");
         let window = gtk::OffscreenWindow::new();
         let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);

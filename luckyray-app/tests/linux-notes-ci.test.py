@@ -2204,7 +2204,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "set -euo pipefail",
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
-            "-- material_native_video::linux_ --include-ignored",
+            "-- material_native_video::linux_ --include-ignored --test-threads=1",
             'grep -qx "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured;',
             'timeout 900 xvfb-run -a -s "-screen 0 640x480x24 -nolisten tcp" \\',
             "LUCKYRAY_LIVE_CLIP: ${{ runner.temp }}/luckyray-linux-runtime-work/private/t49-testsrc.mp4",

@@ -595,6 +595,7 @@ void mpv_render_context_free(void*c){ free(c); }
 
     #[test]
     fn verified_lgpl_runtime_loads_and_passes_the_license_gate() {
+        let _native = super::super::native_media_test_lock();
         let dir = root();
         let lib = build(dir.path(), "lgpl.so", "-Dlibmpv=true -Dgpl=false", false);
         let (sha, size) = pin_of(&lib);
@@ -603,6 +604,7 @@ void mpv_render_context_free(void*c){ free(c); }
 
     #[test]
     fn gpl_runtime_is_refused_after_initialize_like_windows() {
+        let _native = super::super::native_media_test_lock();
         let dir = root();
         let lib = build(dir.path(), "gpl.so", "-Dlibmpv=true", false);
         let (sha, size) = pin_of(&lib);
@@ -613,6 +615,7 @@ void mpv_render_context_free(void*c){ free(c); }
 
     #[test]
     fn pin_mismatches_are_refused_before_anything_is_loaded() {
+        let _native = super::super::native_media_test_lock();
         let dir = root();
         let lib = build(dir.path(), "lgpl.so", "-Dgpl=false", false);
         let (sha, size) = pin_of(&lib);
@@ -623,6 +626,7 @@ void mpv_render_context_free(void*c){ free(c); }
 
     #[test]
     fn missing_symbol_and_unsafe_files_are_refused() {
+        let _native = super::super::native_media_test_lock();
         let dir = root();
         let lib = build(dir.path(), "partial.so", "-Dgpl=false", true);
         let (sha, size) = pin_of(&lib);
@@ -640,6 +644,7 @@ void mpv_render_context_free(void*c){ free(c); }
 
     #[test]
     fn licensed_runtime_renders_software_frames_and_validates_sizes() {
+        let _native = super::super::native_media_test_lock();
         let dir = root();
         let lib = build(dir.path(), "lgpl.so", "-Dgpl=false", false);
         let (sha, size) = pin_of(&lib);
@@ -658,6 +663,7 @@ void mpv_render_context_free(void*c){ free(c); }
 
     #[test]
     fn production_has_no_pin_until_a_verified_lgpl_build_ships() {
+        let _native = super::super::native_media_test_lock();
         if option_env!("LUCKYRAY_LINUX_LIBMPV_SHA256").is_none() {
             assert_eq!(production_pin().err().as_deref(), Some("native-video-runtime-unpinned"));
             assert_eq!(verify_bundled(Path::new("/nonexistent")).unwrap_err(), "native-video-runtime-unpinned");
@@ -670,6 +676,7 @@ void mpv_render_context_free(void*c){ free(c); }
     #[test]
     #[ignore]
     fn live_pinned_distro_libmpv_loads_and_is_refused_as_gpl() {
+        let _native = super::super::native_media_test_lock();
         let src = std::env::var_os("LUCKYRAY_LIVE_LIBMPV").expect("LUCKYRAY_LIVE_LIBMPV");
         let dir = root();
         let lib = dir.path().join("libmpv.so.1");
@@ -691,6 +698,7 @@ void mpv_render_context_free(void*c){ free(c); }
     #[test]
     #[ignore]
     fn live_pinned_distro_libmpv_renders_a_synthetic_frame() {
+        let _native = super::super::native_media_test_lock();
         let src = std::env::var_os("LUCKYRAY_LIVE_LIBMPV").expect("LUCKYRAY_LIVE_LIBMPV");
         let clip = std::env::var_os("LUCKYRAY_LIVE_CLIP").expect("LUCKYRAY_LIVE_CLIP");
         let dir = root();

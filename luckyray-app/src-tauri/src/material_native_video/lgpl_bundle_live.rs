@@ -16,6 +16,7 @@ fn live_env(name: &str) -> PathBuf {
 #[test]
 #[ignore = "needs LUCKYRAY_LIVE_LGPL_BUNDLE, LUCKYRAY_LIVE_LGPL_CLIP and the bundle's compile-time pin"]
 fn live_lgpl_bundle_libmpv_passes_the_real_license_gate_and_renders() {
+    let _native = super::native_media_test_lock();
     let bundle = live_env("LUCKYRAY_LIVE_LGPL_BUNDLE");
     let clip = live_env("LUCKYRAY_LIVE_LGPL_CLIP");
     let pin = linux_mpv::production_pin().expect("the bundle pin must be compiled in");
