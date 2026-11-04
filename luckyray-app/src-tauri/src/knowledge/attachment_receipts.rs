@@ -42,7 +42,18 @@ impl KnowledgeService {
         {
             let directory = crate::linux_fs::Directory::private(&self.app_data_dir, false).map_err(linux_transactions::failure)?;
             let name = OsStr::new(RECEIPT_KEY_FILE);
-            let mut snapshot = directory.read(name, true, 32).map_err(linux_transactions::failure)?;
+            // An existing key that is linked, shared, oversized or changing is
+            // refused and never replaced, with the same codes as Windows.
+            let key_failure = |e: std::io::Error| {
+                if e.raw_os_error() == Some(libc::ELOOP) {
+                    error("knowledge-path-reparse-forbidden", "Recovery key must not be a linked file")
+                } else if e.kind() == std::io::ErrorKind::Unsupported {
+                    linux_transactions::failure(e)
+                } else {
+                    error("knowledge-recovery-key-invalid", "Recovery key file is invalid or not private to this user")
+                }
+            };
+            let mut snapshot = directory.read(name, true, 32).map_err(key_failure)?;
             if snapshot.is_none() && create {
                 let key: [u8; 32] = rand::random();
                 match directory.create_private(name, &key) {
@@ -50,10 +61,13 @@ impl KnowledgeService {
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
                     Err(e) => return Err(linux_transactions::failure(e)),
                 }
-                snapshot = directory.read(name, true, 32).map_err(linux_transactions::failure)?;
+                snapshot = directory.read(name, true, 32).map_err(key_failure)?;
             }
             let snapshot = snapshot.ok_or_else(|| error("knowledge-recovery-key-unavailable", "Recovery key is unavailable"))?;
-            crate::linux_fs::private_file_metadata(&snapshot.file).map_err(linux_transactions::failure)?;
+            // An existing key that is not a private 0600 file is refused as invalid
+            // and left untouched; it is never replaced.
+            crate::linux_fs::private_file_metadata(&snapshot.file)
+                .map_err(|_| error("knowledge-recovery-key-invalid", "Recovery key file is not private to this user"))?;
             return snapshot.bytes.as_slice().try_into().map_err(|_| error("knowledge-recovery-key-invalid", "Invalid recovery key length"));
         }
         let path = self.app_data_dir.join(RECEIPT_KEY_FILE);
