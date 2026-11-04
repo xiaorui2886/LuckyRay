@@ -312,6 +312,7 @@ impl KnowledgeService {
         guard: &FilesystemDirectoryIdentityGuard,
         cancelled: &AtomicBool,
         admission_error: &mut Option<KnowledgeError>,
+        markdown: bool,
     ) -> io::Result<()> {
         if let Err(failure) =
             self.assert_expected_target_unlocked(vault, Some(identity), Some(guard))
@@ -319,12 +320,20 @@ impl KnowledgeService {
             *admission_error = Some(failure);
             return Err(crate::linux_fs::conflict());
         }
+        if cancelled.load(Ordering::Acquire) {
+            return Err(io::Error::from(io::ErrorKind::Interrupted));
+        }
         // Test-only seams shared with the Windows engine: a hook that runs
         // after final validation (the target is then re-proved) and an
         // injected write failure before publication.
         #[cfg(test)]
         {
-            let hook = self.after_final_validation.lock().expect("knowledge test hook lock").take();
+            // Windows runs this hook only inside Markdown writes.
+            let hook = if markdown {
+                self.after_final_validation.lock().expect("knowledge test hook lock").take()
+            } else {
+                None
+            };
             if let Some(hook) = hook {
                 hook();
                 if let Err(failure) =
@@ -342,9 +351,7 @@ impl KnowledgeService {
                 return Err(io::Error::other("injected write failure"));
             }
         }
-        if cancelled.load(Ordering::Acquire) {
-            return Err(io::Error::from(io::ErrorKind::Interrupted));
-        }
+        let _ = markdown;
         Ok(())
     }
 
@@ -364,6 +371,11 @@ impl KnowledgeService {
         let after = bytes(&file.after)?;
         let key = self.attachment_receipt_key(false)?;
         let private = step_is_private(&file.relative_path);
+        // Cancellation is honoured between files, as on Windows: a request
+        // that arrives inside a step never splits that step's publication
+        // from its re-proof, so a published file is never reported unfinished.
+        let step_cancelled = AtomicBool::new(cancelled.load(Ordering::Acquire));
+        let cancelled = &step_cancelled;
         // A note move publishes the rewritten document under its new name and
         // keeps the ordinary mode of the document it replaces; the source is the
         // plan's only removal. Every other creation is a private attachment.
@@ -392,6 +404,7 @@ impl KnowledgeService {
                             guard,
                             cancelled,
                             &mut admission_error,
+!private,
                         )
                     },
                 ),
@@ -402,6 +415,7 @@ impl KnowledgeService {
                         guard,
                         cancelled,
                         &mut admission_error,
+!private,
                     )
                 }),
             },
@@ -428,6 +442,7 @@ impl KnowledgeService {
                             guard,
                             cancelled,
                             &mut admission_error,
+!private,
                         )
                     },
                 )
@@ -449,6 +464,7 @@ impl KnowledgeService {
                         guard,
                         cancelled,
                         &mut admission_error,
+!private,
                     )
                 })
             }
@@ -505,6 +521,11 @@ impl KnowledgeService {
         };
         let key = self.attachment_receipt_key(false)?;
         let private = step_is_private(&file.relative_path);
+        // Cancellation is honoured between files, as on Windows: a request
+        // that arrives inside a step never splits that step's publication
+        // from its re-proof, so a published file is never reported unfinished.
+        let step_cancelled = AtomicBool::new(cancelled.load(Ordering::Acquire));
+        let cancelled = &step_cancelled;
         let mut admission_error: Option<KnowledgeError> = None;
         let outcome: StepOutcome = match after.as_deref() {
             Some(_) => store.restore_replaced(index, &file.relative_path, previous, &key, || {
@@ -514,6 +535,7 @@ impl KnowledgeService {
                     guard,
                     cancelled,
                     &mut admission_error,
+!private,
                 )
             }),
             None => store.restore_removed(
@@ -529,6 +551,7 @@ impl KnowledgeService {
                         guard,
                         cancelled,
                         &mut admission_error,
+!private,
                     )
                 },
             ),
