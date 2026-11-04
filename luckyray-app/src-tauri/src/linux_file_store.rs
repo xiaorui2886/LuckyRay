@@ -210,7 +210,77 @@ fn write_inner(
         dir.remove_owned(OsStr::new(&journal.backup), file)?;
     }
     dir.remove_owned(OsStr::new(&journal_name), &journal_file)?;
+    if current.is_some() {
+        // The save is committed; pruning is best effort and never turns a
+        // committed save into an error (a caller must not retry it).
+        let _ = retain_newest_displaced(dir, target, &journal.displaced, private);
+    }
     Ok(installed)
+}
+
+/// Keep only the newest displaced inode per note. The just-committed one is
+/// renamed to record (note, mtime, content digest) as of its displacement; an
+/// older one for the same note is unlinked only when its current mtime and
+/// content still equal that record, i.e. nothing wrote to it afterwards. A
+/// modified or unreadable one is kept.
+fn retain_newest_displaced(
+    dir: &Directory,
+    target: &str,
+    displaced: &str,
+    private: bool,
+) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let note = &digest(target.as_bytes())[..16];
+    let moved = dir
+        .read(OsStr::new(displaced), private, MAX_RECORD_BYTES)?
+        .ok_or_else(conflict)?;
+    let meta = moved.file.metadata()?;
+    let stamp = format!("{}.{:09}", meta.mtime(), meta.mtime_nsec());
+    let nonce = displaced
+        .strip_prefix(".lrk-")
+        .and_then(|rest| rest.strip_suffix(".displaced"))
+        .ok_or_else(conflict)?;
+    let recorded = format!(".lrk-{nonce}.{note}.{stamp}.{}.displaced", digest(&moved.bytes));
+    dir.verify_named(OsStr::new(displaced), &moved.file)?;
+    dir.rename_new(OsStr::new(displaced), dir, OsStr::new(&recorded))?;
+    dir.verify()?;
+    let listing = std::fs::read_dir(format!(
+        "/proc/self/fd/{}",
+        std::os::fd::AsRawFd::as_raw_fd(&dir.file)
+    ))?;
+    let mut older = Vec::new();
+    for (count, item) in listing.enumerate() {
+        if count > 100_000 {
+            return Err(conflict());
+        }
+        let Ok(name) = item?.file_name().into_string() else { continue };
+        if name == recorded {
+            continue;
+        }
+        let Some(fields) = name
+            .strip_prefix(".lrk-")
+            .and_then(|rest| rest.strip_suffix(".displaced"))
+        else {
+            continue;
+        };
+        // nonce . note . secs . nanos . sha256
+        let parts: Vec<&str> = fields.split('.').collect();
+        if parts.len() == 5 && parts[1] == note {
+            older.push((name.clone(), format!("{}.{}", parts[2], parts[3]), parts[4].to_string()));
+        }
+    }
+    for (name, stamp, sha) in older {
+        let Ok(Some(old)) = dir.read(OsStr::new(&name), private, MAX_RECORD_BYTES) else {
+            continue;
+        };
+        let Ok(meta) = old.file.metadata() else { continue };
+        if format!("{}.{:09}", meta.mtime(), meta.mtime_nsec()) == stamp
+            && digest(&old.bytes) == sha
+        {
+            let _ = dir.remove_owned(OsStr::new(&name), &old.file);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn recover(dir: &Directory, private: bool) -> io::Result<()> {
@@ -352,6 +422,51 @@ mod tests {
     use std::io::Write;
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::MetadataExt;
+    fn displaced_names(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension() == Some(OsStr::new("displaced")))
+            .collect()
+    }
+
+    #[test]
+    fn linux_second_save_keeps_only_newest_displaced() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = Directory::open(root.path()).unwrap();
+        dir.create(OsStr::new("note.md"), b"v0").unwrap();
+        let v0 = dir.read(OsStr::new("note.md"), false, 1024).unwrap().unwrap();
+        let v1 = write(&dir, OsStr::new("note.md"), Some(&v0), b"v1", false, false, false).unwrap();
+        assert_eq!(displaced_names(root.path()).len(), 1);
+        write(&dir, OsStr::new("note.md"), Some(&v1), b"v2", false, false, false).unwrap();
+        let left = displaced_names(root.path());
+        assert_eq!(left.len(), 1, "{left:?}");
+        assert_eq!(std::fs::read(&left[0]).unwrap(), b"v1");
+        assert_eq!(std::fs::read(root.path().join("note.md")).unwrap(), b"v2");
+    }
+
+    #[test]
+    fn linux_modified_older_displaced_is_kept() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = Directory::open(root.path()).unwrap();
+        dir.create(OsStr::new("note.md"), b"v0").unwrap();
+        let v0 = dir.read(OsStr::new("note.md"), false, 1024).unwrap().unwrap();
+        let mut late = std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.path().join("note.md"))
+            .unwrap();
+        let v1 = write(&dir, OsStr::new("note.md"), Some(&v0), b"v1", false, false, false).unwrap();
+        late.write_all(b"late editor write").unwrap();
+        late.sync_all().unwrap();
+        write(&dir, OsStr::new("note.md"), Some(&v1), b"v2", false, false, false).unwrap();
+        let mut left: Vec<Vec<u8>> = displaced_names(root.path())
+            .iter()
+            .map(|p| std::fs::read(p).unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, vec![b"late editor write".to_vec(), b"v1".to_vec()]);
+    }
+
     #[test]
     fn linux_commit_preserves_backup_and_rejects_stale_revision() {
         let root = tempfile::tempdir().unwrap();
