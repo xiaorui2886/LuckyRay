@@ -2147,13 +2147,55 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn('#[path = "../../../src-tauri/src/companion_keyring.rs"]', lib)
         self.assertIn('#[path = "../../../src-tauri/src/community_mcp_secret.rs"]', lib)
 
+    def test_media_player_step_runs_the_exact_linux_mpv_suite_with_the_live_test(self):
+        # T48 V3: the Linux libmpv loader/license gate runs on synthetic cc-built
+        # stand-ins plus the pinned jammy libmpv1, which must be refused as GPL.
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        start = text.index("        id: media-player")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(text.index("        id: media-resolver"), start)
+        self.assertLess(start, finish)
+        step = text[start:finish]
+        for required in (
+            "timeout-minutes: 30",
+            "timeout 900",
+            "set -euo pipefail",
+            "--target x86_64-unknown-linux-gnu",
+            "--manifest-path luckyray-app/src-tauri/Cargo.toml",
+            "-- material_native_video::linux_mpv:: --include-ignored",
+            'grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured;',
+            "LUCKYRAY_LIVE_LIBMPV: /usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0",
+            "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
+            "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
+        ):
+            self.assertIn(required, step, required)
+        for forbidden in ("steps.media-preview.outcome", "steps.media-resolver.outcome",
+                          "set -x", "pkill", "echo", "apt", "src-tauri/media-engine"):
+            self.assertNotIn(forbidden, step, forbidden)
+        deps = text[text.index("        id: dependencies"):text.index("        id: rust")]
+        self.assertIn("sudo apt-get install -y --no-install-recommends libmpv1=0.34.1-1ubuntu3", deps)
+        self.assertIn("20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d  "
+                      "/usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0\" | sha256sum -c -", deps)
+        self.assertIn("CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}", text)
+        self.assertEqual(ci.STEPS[-1], "MEDIA_PLAYER")
+        source = (root / "luckyray-app/src-tauri/src/material_native_video/linux_mpv.rs").read_text()
+        self.assertIn('if !self.property("mpv-configuration").contains("-Dgpl=false")', source)
+        self.assertIn('"20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d"', source)
+        self.assertIn('option_env!("LUCKYRAY_LINUX_LIBMPV_SHA256")', source)
+        module = (root / "luckyray-app/src-tauri/src/material_native_video/mod.rs").read_text()
+        self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\nmod mpv;', module)
+        self.assertIn('#[cfg(target_os = "linux")]\nmod linux_mpv;', module)
+        self.assertIn('#[cfg(all(windows, feature = "browser-host-runtime"))]\nmod windows_player;', module)
+
     def test_media_resolver_step_runs_the_exact_linux_media_transfer_suite(self):
         # T47 V2: the app-owned resolver path runs on Linux against synthetic
         # runner scripts, reusing the Main build target, with an exact count.
         root = Path(__file__).resolve().parents[2]
         text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
         start = text.index("        id: media-resolver")
-        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        # T48 placed the media-player step directly after this one.
+        finish = text.index("      - name: Linux libmpv verified load and license gate")
         self.assertLess(text.index("        id: media-preview"), start)
         self.assertLess(start, finish)
         step = text[start:finish]
@@ -2173,7 +2215,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "--ignored", "set -x", "pkill", "echo", "apt", "src-tauri/media-engine"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}", text)
-        self.assertEqual(ci.STEPS[-2:], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
+        self.assertEqual(ci.STEPS[-3:-1], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
         source = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
         both = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
         for item in ("impl MediaResolver for ExternalMediaResolver", "fn write_site_cookie_file(",

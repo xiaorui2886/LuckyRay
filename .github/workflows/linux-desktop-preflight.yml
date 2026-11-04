@@ -67,6 +67,10 @@ jobs:
           # Ubuntu's package is a GPL build; see T45-result.md for V4 licensing.
           sudo apt-cache policy ffmpeg
           sudo apt-get install -y --no-install-recommends ffmpeg=7:4.4.2-0ubuntu0.22.04.1
+          # T48: a pinned distro libmpv for the loader/license-gate smoke only
+          # (runner only, never shipped; it is a GPL build and must be refused).
+          sudo apt-get install -y --no-install-recommends libmpv1=0.34.1-1ubuntu3
+          echo "20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d  /usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0" | sha256sum -c -
           ffmpeg -version | sed -n '1p'
           ffprobe -version | sed -n '1p'
           sha256sum "$(command -v ffmpeg)" "$(command -v ffprobe)"
@@ -326,6 +330,30 @@ jobs:
           # Exactly the media_transfer suite: an empty or shrunken filter fails.
           grep -qx "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t47-media-resolver.log"
+      - name: Linux libmpv verified load and license gate (synthetic + pinned distro)
+        id: media-player
+        # Independent of the preview and resolver steps (separate outcome).
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 30
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          LUCKYRAY_LIVE_LIBMPV: /usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0
+        run: |
+          set -euo pipefail
+          # Synthetic libmpv stand-ins are compiled by the tests with cc; the
+          # live test copies the pinned distro library into a private root.
+          test -f "$LUCKYRAY_LIVE_LIBMPV"
+          command -v cc
+          timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- material_native_video::linux_mpv:: --include-ignored \
+            | tee "$WORK_ROOT/private/t48-media-player.log"
+          # Exactly the linux_mpv suite including the live test.
+          grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t48-media-player.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -349,6 +377,7 @@ jobs:
           CI_COMPANION_PAIRING: ${{ steps.companion-pairing.outcome }}
           CI_MEDIA_PREVIEW: ${{ steps.media-preview.outcome }}
           CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}
+          CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}

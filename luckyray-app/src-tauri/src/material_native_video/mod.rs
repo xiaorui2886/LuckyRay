@@ -120,6 +120,10 @@ pub(crate) enum Request {
 
 #[cfg(all(windows, feature = "browser-host-runtime"))]
 mod mpv;
+// V3 (T48): verified libmpv load + LGPL license gate on Linux. Playback and the
+// surface below the WebView are not wired yet; see linux_mpv.rs.
+#[cfg(target_os = "linux")]
+mod linux_mpv;
 // V1 (T45): metadata/thumbnail preview now runs on Linux with the verified
 // media-engine FFmpeg tools. mpv/surface_region/windows_player stay Windows-only
 // until V3. No Linux cfg change affects the Windows build or behaviour.
@@ -226,7 +230,12 @@ pub(crate) async fn material_native_video_command(
                 .map_err(|_| "native-video-resources-unavailable".to_string())?;
             let verified = crate::media_transfer::verified_local_video_tools(&resources);
             if matches!(request, Request::Capability) {
-                return Ok(crate::linux_media_runtime::capability_payload(&verified));
+                let mut payload = crate::linux_media_runtime::capability_payload(&verified);
+                payload["playerRuntime"] = match linux_mpv::verify_bundled(&resources) {
+                    Ok(()) => "verified".into(),
+                    Err(code) => code.into(),
+                };
+                return Ok(payload);
             }
             if let Some(payload) = crate::linux_media_runtime::component_missing_error(&verified) {
                 return Err(payload);
