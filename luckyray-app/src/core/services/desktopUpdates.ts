@@ -35,10 +35,26 @@ export function isOfficialDesktopLink(url: string): boolean {
     || /^https:\/\/github\.com\/xiaorui2886\/LuckyRay\/releases\/tag\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(url);
 }
 export type DesktopRelease = { version: string; url: string };
+export type DesktopAssetFormat = "nsis" | "appimage" | "deb";
 export type DesktopUpdateResult =
   | { status: "available" | "current"; release: DesktopRelease }
-  | { status: "error"; reason: "network" | "invalid" | "unavailable" | "response-limit" };
-export function selectDesktopRelease(input: unknown): DesktopRelease | null {
+  | { status: "error"; reason: "network" | "invalid" | "unavailable" | "response-limit" | "no-platform-asset" };
+const DESKTOP_ASSET_NAME: Record<DesktopAssetFormat, (version: string) => string> = {
+  nsis: (version) => `LuckyRay_${version}_x64-setup.exe`,
+  appimage: (version) => `LuckyRay_${version}_amd64.AppImage`,
+  deb: (version) => `LuckyRay_${version}_amd64.deb`,
+};
+export function desktopAssetName(format: DesktopAssetFormat, version: string): string {
+  return DESKTOP_ASSET_NAME[format](version);
+}
+/** Windows installs keep the exact nsis asset; every other platform starts on
+ *  the deb fallback until the running format is known (the native layer can
+ *  refine this with the standard APPIMAGE signal). */
+export function resolveDesktopAssetFormat(userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent): DesktopAssetFormat {
+  return /Windows/i.test(userAgent) ? "nsis" : "deb";
+}
+export function selectDesktopRelease(input: unknown, format: DesktopAssetFormat = "nsis"): DesktopRelease | null {
+  const assetName = (version: string) => DESKTOP_ASSET_NAME[format](version);
   if (!Array.isArray(input)) throw new Error("invalid-response");
   let latest: DesktopRelease | null = null;
   for (const raw of input) {
@@ -49,7 +65,7 @@ export function selectDesktopRelease(input: unknown): DesktopRelease | null {
     const version = r.tag_name.slice(1);
     parseVersion(version);
     const url = `${DESKTOP_LINKS.releases}/tag/${r.tag_name}`;
-    const name = `LuckyRay_${version}_x64-setup.exe`;
+    const name = assetName(version);
     if (r.html_url !== url || !Array.isArray(r.assets) || !r.assets.some((a: unknown) => {
       if (!a || typeof a !== "object") return false;
       const asset = a as Record<string, unknown>;
@@ -100,7 +116,7 @@ async function readReleasePage(response: Response, signal: AbortSignal): Promise
 }
 
 /** One in-flight request; cache both errors and success to bound rapid retries. */
-export function createDesktopUpdateChecker(fetcher: typeof fetch = fetch, now = Date.now, timeoutMs = 12000) {
+export function createDesktopUpdateChecker(fetcher: typeof fetch = fetch, now = Date.now, timeoutMs = 12000, format: DesktopAssetFormat = "nsis") {
   let pending: Promise<DesktopUpdateResult> | null = null;
   let cached: { version: string; until: number; result: DesktopUpdateResult } | null = null;
   return (currentVersion: string): Promise<DesktopUpdateResult> => {
@@ -122,8 +138,18 @@ export function createDesktopUpdateChecker(fetcher: typeof fetch = fetch, now = 
           const batch = await readReleasePage(response, controller.signal);
           releases.push(...batch);
           if (batch.length < 100) {
-            const release = selectDesktopRelease(releases);
-            if (!release) return { status: "error", reason: "unavailable" };
+            const release = selectDesktopRelease(releases, format);
+            if (!release) {
+              // A release existed but carried no asset for this platform: never
+              // offer a foreign platform's installer instead.
+              return { status: "error", reason: releases.some((item) => {
+                if (!item || typeof item !== "object") return false;
+                const raw = item as Record<string, unknown>;
+                return raw.draft === false && raw.prerelease === false
+                  && typeof raw.tag_name === "string"
+                  && /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(raw.tag_name);
+              }) ? "no-platform-asset" : "unavailable" };
+            }
             return { status: compareVersions(release.version, currentVersion) > 0 ? "available" : "current", release };
           }
         }
@@ -144,7 +170,7 @@ export const checkDesktopUpdates = createDesktopUpdateChecker();
 
 /** Small session snapshot: settings may unmount, but discovery and preferences survive. */
 export function createDesktopUpdateSession(
-  checker = checkDesktopUpdates,
+  checker = createDesktopUpdateChecker(fetch, Date.now, 12000, resolveDesktopAssetFormat()),
   storage: () => Pick<Storage, "getItem" | "setItem"> = () => localStorage,
   now = Date.now,
 ) {

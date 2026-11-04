@@ -243,6 +243,8 @@ export const settingsEnUS = {
   "settings.update.entry.available": "Stable {version} available",
   "settings.update.entry.current": "No newer stable release",
   "settings.update.entry.failed": "Check failed · view details",
+  "settings.update.entry.noPlatformAsset": "No Linux build in this release yet.",
+  "settings.update.noPlatformAsset": "No Linux build in this release yet. See the releases page.",
   "settings.update.manualInstall": "In-app installation is not enabled. Download the Windows x64 installer from the official release page, save your work, and quit normally before installing manually.",
   "settings.update.automatic": "Check when opening About (at most once a day)",
   "settings.update.checking": "Checking…",

@@ -245,6 +245,8 @@ export const settingsZhCN = {
   "settings.update.entry.available": "稳定版 {version} 可用",
   "settings.update.entry.current": "未发现新的稳定版",
   "settings.update.entry.failed": "检查未成功，点击查看",
+  "settings.update.entry.noPlatformAsset": "此版本尚未提供 Linux 构建安装包",
+  "settings.update.noPlatformAsset": "此版本尚未提供 Linux 构建安装包，可到发布页查看。",
   "settings.update.manualInstall": "应用内安装尚未启用。请从官方发布页下载 Windows x64 安装包，保存工作并正常退出应用后手动安装。",
   "settings.update.automatic": "打开“关于”时自动检查（每天最多一次）",
   "settings.update.checking": "正在检查…",

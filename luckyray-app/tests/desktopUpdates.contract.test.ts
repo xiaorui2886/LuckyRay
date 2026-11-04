@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { createDesktopUpdateSession, compareVersions, selectDesktopRelease, createDesktopUpdateChecker, isOfficialDesktopLink, DESKTOP_LINKS } from "../src/core/services/desktopUpdates.ts";
+import { createDesktopUpdateSession, compareVersions, selectDesktopRelease, createDesktopUpdateChecker, isOfficialDesktopLink, resolveDesktopAssetFormat, DESKTOP_LINKS } from "../src/core/services/desktopUpdates.ts";
 
 function release(version = "1.9.5", overrides = {}) {
   const tag = `v${version}`, name = `LuckyRay_${version}_x64-setup.exe`;
@@ -33,6 +33,52 @@ test("only exact stable desktop tag and uploaded Windows x64 installer qualify",
   assert.equal(selectDesktopRelease([...bad, release("1.9.5"), release("1.10.0"), release("1.9.9")])?.version, "1.10.0");
   assert.throws(() => selectDesktopRelease({}));
 });
+test("T34: the running platform picks the release asset; Windows stays byte-identical", () => {
+  // Default (and every pre-existing call) keeps the exact Windows nsis asset.
+  assert.equal(selectDesktopRelease([release("1.10.0")])?.version, "1.10.0");
+  assert.equal(selectDesktopRelease([release("1.10.0")], "nsis")?.version, "1.10.0");
+  // Linux formats match their own assets, never the Windows installer.
+  const appimage = { ...release("1.10.0"), assets: [{
+    name: "LuckyRay_1.10.0_amd64.AppImage", state: "uploaded", size: 100,
+    browser_download_url: `${DESKTOP_LINKS.releases}/download/v1.10.0/LuckyRay_1.10.0_amd64.AppImage` }] };
+  assert.equal(selectDesktopRelease([appimage], "appimage")?.version, "1.10.0");
+  assert.equal(selectDesktopRelease([appimage], "deb"), null);
+  const deb = { ...release("1.10.0"), assets: [{
+    name: "LuckyRay_1.10.0_amd64.deb", state: "uploaded", size: 100,
+    browser_download_url: `${DESKTOP_LINKS.releases}/download/v1.10.0/LuckyRay_1.10.0_amd64.deb` }] };
+  assert.equal(selectDesktopRelease([deb], "deb")?.version, "1.10.0");
+  assert.equal(selectDesktopRelease([deb], "appimage"), null);
+  // A Windows-only release never offers the .exe to a Linux format.
+  assert.equal(selectDesktopRelease([release("1.10.0")], "appimage"), null);
+  assert.equal(selectDesktopRelease([release("1.10.0")], "deb"), null);
+  // The running-platform resolver: Windows UA stays nsis, everything else
+  // starts on the deb fallback (the native layer refines with APPIMAGE later).
+  assert.equal(resolveDesktopAssetFormat("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"), "nsis");
+  assert.equal(resolveDesktopAssetFormat("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15"), "deb");
+  assert.equal(resolveDesktopAssetFormat(""), "deb");
+});
+test("T34: a Linux check against a Windows-only release reports no platform asset", async () => {
+  const check = createDesktopUpdateChecker(fetcher(async () => response([release()])), Date.now, 12000, "deb");
+  const result = await check("1.9.4");
+  assert.equal(result.status, "error");
+  assert.equal(result.reason, "no-platform-asset");
+  // A release for the platform still compares versions normally.
+  const linuxCheck = createDesktopUpdateChecker(
+    fetcher(async () => response([{ ...release("1.10.0"), assets: [{
+      name: "LuckyRay_1.10.0_amd64.deb", state: "uploaded", size: 100,
+      browser_download_url: `${DESKTOP_LINKS.releases}/download/v1.10.0/LuckyRay_1.10.0_amd64.deb` }] }])),
+    Date.now, 12000, "deb");
+  const available = await linuxCheck("1.9.4");
+  assert.equal(available.status, "available");
+  if (available.status === "available") {
+    assert.equal(available.release.url, `${DESKTOP_LINKS.releases}/tag/v1.10.0`);
+  }
+  // No qualifying release at all stays "unavailable", not "no asset".
+  const empty = await createDesktopUpdateChecker(fetcher(async () => response([])), Date.now, 12000, "deb")("1.9.4");
+  assert.equal(empty.status, "error");
+  assert.equal(empty.reason, "unavailable");
+});
+
 test("external links are exact official targets, never API-provided arbitrary URLs", () => {
   for (const url of Object.values(DESKTOP_LINKS)) assert.equal(isOfficialDesktopLink(url), true);
   assert.equal(isOfficialDesktopLink(`${DESKTOP_LINKS.releases}/tag/v1.10.0`), true);

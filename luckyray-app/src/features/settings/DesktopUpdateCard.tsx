@@ -51,6 +51,8 @@ export default function DesktopUpdateCard({ version, active, openLink }: {
   const hasUpdate = nativeEnabled ? Boolean(nativeStatus && ["available","ready","scheduled"].includes(nativeStatus.phase)) : available;
   const description = nativeEnabled && nativeStatus ? updateText(nativeStatus.phase) : busy ? t("settings.update.checking")
     : available ? t("settings.update.entry.available", { version: result.release.version })
+    : visible && result.status === "error" && result.reason === "no-platform-asset"
+      ? t("settings.update.entry.noPlatformAsset")
     : visible && result.status === "error" ? t("settings.update.entry.failed")
     : visible && result.status === "current" ? t("settings.update.entry.current")
     : t("settings.about.checkUpdates");
@@ -93,7 +95,7 @@ export default function DesktopUpdateCard({ version, active, openLink }: {
         <button type="button" className="settings-btn" onClick={() => void openLink(t("settings.update.download"), !nativeEnabled && result && result.status === "available" ? result.release.url : DESKTOP_LINKS.releases)}>{t("settings.update.download")}</button>
       </div>
       {!nativeEnabled && visible && <div className={`settings-update-status${result.status === "available" ? " has-update" : ""}`} role="status" aria-live="polite">
-        <p>{result.status === "error" ? t(result.reason === "response-limit" ? "settings.update.responseLimit" : "settings.update.failed") : result.status === "available"
+        <p>{result.status === "error" ? t(result.reason === "response-limit" ? "settings.update.responseLimit" : result.reason === "no-platform-asset" ? "settings.update.noPlatformAsset" : "settings.update.failed") : result.status === "available"
           ? t("settings.update.available", { version: result.release.version })
           : t("settings.update.current", { version })}</p>
         {result.status === "available" && <button type="button" className="settings-btn" onClick={() => {
