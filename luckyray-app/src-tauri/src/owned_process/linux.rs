@@ -272,13 +272,43 @@ pub(crate) fn spawn_in_owned_job(
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+    /// Copy an executable fixture and wait until it is exec-able.
+    ///
+    /// `fs::copy` holds a write fd on the new inode. A sibling test that forks
+    /// during that window gives its child a copy of the fd until the child's
+    /// own exec (O_CLOEXEC closes it only there), and exec of the fixture fails
+    /// with ETXTBSY while any such fd is open. Our fd is closed once `copy`
+    /// returns, so no new holder can appear; a probe exec that succeeds proves
+    /// every inherited one is gone, and the launcher then sees a quiet file.
+    fn owned_executable_copy(source: &Path, dest: &Path) {
+        std::fs::copy(source, dest).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match std::process::Command::new(dest)
+                .args(["-c", "exit 0"])
+                .stdin(std::process::Stdio::null())
+                .status()
+            {
+                Ok(status) => {
+                    assert!(status.success(), "fixture probe failed");
+                    return;
+                }
+                Err(e) if e.raw_os_error() == Some(libc::ETXTBSY)
+                    && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("fixture not executable: {e}"),
+            }
+        }
+    }
     #[test]
     fn linux_owned_process_stdio_exit_and_group_cleanup() {
         let root = tempfile::tempdir().unwrap();
         // The launcher validates ELF + file attributes, so the synthetic shell
         // lives in the owned directory (as the packaged plugin will).
         let shell = root.path().join("sh");
-        std::fs::copy(Path::new("/bin/sh").canonicalize().unwrap(), &shell).unwrap();
+        owned_executable_copy(&Path::new("/bin/sh").canonicalize().unwrap(), &shell);
         let args = vec![
             "-c".into(),
             "read value; /bin/sleep 30 & printf diagnostic >&2; printf '%s' \"$value\"; wait"
@@ -319,7 +349,7 @@ mod tests {
         std::os::unix::fs::symlink(&shell, &link).unwrap();
         assert!(spawn_in_owned_job(&link, &[], root.path(), Vec::new(), false).is_err());
         let owned = root.path().join("sh-ok");
-        std::fs::copy(&shell, &owned).unwrap();
+        owned_executable_copy(&shell, &owned);
         let success = spawn_in_owned_job(
             &owned,
             &["-c".into(), "exit 0".into()],
@@ -342,7 +372,7 @@ mod tests {
         // synthetic executable lives in the owned directory (exactly where the
         // packaged plugin will live) instead of a read-only system path.
         let shell = root.path().join("sh");
-        std::fs::copy(Path::new("/bin/sh").canonicalize().unwrap(), &shell).unwrap();
+        owned_executable_copy(&Path::new("/bin/sh").canonicalize().unwrap(), &shell);
         let args = vec![
             "-c".into(),
             "sleep 60 & echo $!; exec sleep 60".into(),
