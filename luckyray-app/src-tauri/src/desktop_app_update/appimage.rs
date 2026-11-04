@@ -54,6 +54,17 @@ pub(crate) fn resolve_target() -> Result<PathBuf, &'static str> {
     Ok(path)
 }
 
+/// Runtime install format on Linux. Only a validated AppImage target
+/// self-updates; a missing `APPIMAGE` or an invalid target (deb install,
+/// symlink, foreign owner, read-only, wrong suffix) is notice-only.
+pub(crate) fn install_format() -> &'static str {
+    if resolve_target().is_ok() {
+        "appimage"
+    } else {
+        "deb"
+    }
+}
+
 /// Verifies the staged bytes with the Linux release identity.
 pub(crate) fn verify(
     bytes: &[u8],
