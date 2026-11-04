@@ -162,6 +162,11 @@ impl KnowledgeService {
             return Err(knowledge_target_not_current());
         }
         self.assert_expected_target_unlocked(vault, Some(&identity), Some(&guard))?;
+        // Same rule as Windows: every before-state is proved before the
+        // durable intent is published, so a stale plan publishes nothing.
+        for file in &operation.files {
+            require_linux_before_state(vault, file)?;
+        }
         let intent = self.prepare_linux_attachment_operation(
             vault,
             operation,
@@ -626,4 +631,33 @@ fn count_tombstones(root: &Path) -> Result<usize, KnowledgeError> {
         }
     }
     Ok(count)
+}
+
+/// Reads the planned path without following links (the parent chain is
+/// opened by the same no-follow walk as every write) and compares its digest
+/// to the plan's recorded before-state; absence must match an absent state.
+fn require_linux_before_state(
+    vault: &TrustedVault,
+    file: &AttachmentFileChange,
+) -> Result<(), KnowledgeError> {
+    let relative = safe_relative_path(&file.relative_path, false)?;
+    let path = vault.root.join(relative);
+    // A missing name (or missing parent) is the absent state; every later
+    // publication re-proves the parent chain without following links.
+    let actual = match std::fs::symlink_metadata(&path) {
+        Err(failure) if failure.kind() == io::ErrorKind::NotFound => None,
+        _ => {
+            let (dir, name) = linux_transactions::parent(&path)?;
+            dir.read(&name, false, 64 * 1024 * 1024)
+                .map_err(linux_transactions::failure)?
+                .map(|found| sha256_hex(&found.bytes))
+        }
+    };
+    if actual != file.before_revision {
+        return Err(error(
+            "knowledge-revision-conflict",
+            "File differs from both expected operation states; external edits are preserved",
+        ));
+    }
+    Ok(())
 }
