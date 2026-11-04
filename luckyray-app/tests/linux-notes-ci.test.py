@@ -2180,13 +2180,53 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "/usr/lib/x86_64-linux-gnu/libmpv", "--include-ignored"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_LGPL_BUNDLE: ${{ steps.media-lgpl-bundle.outcome }}", text)
-        self.assertEqual(ci.STEPS[-1], "MEDIA_LGPL_BUNDLE")
+        self.assertEqual(ci.STEPS[-2], "MEDIA_LGPL_BUNDLE")
         deps = (root / "luckyray-app/tools/linux-media-bundle/ci-build-deps.txt").read_text()
         for line in deps.splitlines():
             if line and not line.startswith("#"):
                 self.assertRegex(line, r"^[a-z0-9.+-]+=[0-9][^ ]*$")
         live = (root / "luckyray-app/src-tauri/src/material_native_video/lgpl_bundle_live.rs").read_text()
         self.assertIn("#[ignore", live)
+
+    def test_port_fixtures_step_runs_exactly_the_fixed_upgrade_and_knowledge_tests(self):
+        # T54: genuine old-schema fixtures plus Vault-scoped agent knowledge tests.
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        start = text.index("        id: port-fixtures")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(text.index("        id: media-lgpl-bundle"), start)
+        self.assertLess(start, finish)
+        step = text[start:finish]
+        for required in (
+            "timeout-minutes: 30", "timeout 900", "set -euo pipefail",
+            "--target x86_64-unknown-linux-gnu",
+            "--manifest-path luckyray-app/src-tauri/Cargo.toml",
+            "-- --exact --test-threads=1 \\",
+            'grep -qx "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured;',
+            "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
+            "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
+            "            backend::schema_compat::tests::legacy_v13_v14_names_reconcile_without_rewriting_history",
+            "            backend::schema_compat::tests::schema18_upgrades_to_smart_folder_definitions_without_result_storage",
+            "            backend::tests::companion_gateway_schema_is_additive_restart_safe_and_migrates_from_v19",
+            "            backend::tests::current_ledger_rejects_a_required_table_missing_critical_columns",
+            "            backend::tests::schema_v10_to_v11_adds_typed_run_stop_cause_and_restart_is_noop",
+            "            backend::tests::schema_v11_to_v12_adds_terminal_recovery_facts_and_restart_is_noop",
+            "            backend::tests::schema_v8_to_v9_is_additive_default_off_and_restart_noop",
+            "            backend::tests::schema_v9_to_v10_adds_structured_message_action_truth_without_rewriting_legacy_content",
+            "            local_transport::tests::tool_request_ids_are_isolated_by_authenticated_extension_origin",
+            "            material_change_tests::material_change_tracks_folder_and_asset_tag_writes",
+            "            material_change_tests::material_change_version_advances_only_after_successful_material_write",
+            "            tools::tests::agent_catalog_is_exact14_and_write_tools_remain_unexecutable_without_a_permit",
+            "            tools::tests::agent_write_source_epoch_guard_covers_permit_consume_and_handler",
+            "            tools::tests::authenticated_capability_snapshot_is_the_single_dynamic_agent_gate",
+            "            tools::tests::cached_write_is_reauthorized_against_the_live_vault",
+        ):
+            self.assertIn(required, step, required)
+        self.assertEqual(step.count("::tests::") + step.count("material_change_tests::"), 15)
+        for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt", "curl", "secrets."):
+            self.assertNotIn(forbidden, step, forbidden)
+        self.assertIn("CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}", text)
+        self.assertEqual(ci.STEPS[-1], "PORT_FIXTURES")
 
     def test_media_player_step_runs_the_exact_linux_mpv_suite_with_the_live_test(self):
         # T48 V3: the Linux libmpv loader/license gate runs on synthetic cc-built
@@ -2222,7 +2262,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d  "
                       "/usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0\" | sha256sum -c -", deps)
         self.assertIn("CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}", text)
-        self.assertEqual(ci.STEPS[-2], "MEDIA_PLAYER")
+        self.assertEqual(ci.STEPS[-3], "MEDIA_PLAYER")
         source = (root / "luckyray-app/src-tauri/src/material_native_video/linux_mpv.rs").read_text()
         self.assertIn('if !self.property("mpv-configuration").contains("-Dgpl=false")', source)
         self.assertIn('"20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d"', source)
@@ -2273,7 +2313,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "--ignored", "set -x", "pkill", "echo", "apt", "src-tauri/media-engine"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}", text)
-        self.assertEqual(ci.STEPS[-4:-2], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
+        self.assertEqual(ci.STEPS[-5:-3], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
         source = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
         both = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
         for item in ("impl MediaResolver for ExternalMediaResolver", "fn write_site_cookie_file(",
