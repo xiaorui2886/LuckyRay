@@ -1384,6 +1384,36 @@ impl BackendServices {
 /// table, column, index, trigger, view and ledger row of `connection` is made
 /// to match that reference. Rows in tables that also exist at `version` are
 /// kept, so upgrade tests can prove that user data survives the migration.
+/// Every column the migration chain adds with `ensure_column`, by the schema
+/// version whose migration adds it (apply_schema_v5..v12 here, v15/v17 in
+/// schema_compat). Keep in step with those migrations.
+#[cfg(test)]
+const COLUMNS_ADDED_BY_LATER_MIGRATIONS: &[(u32, &str, &str)] = &[
+    (5, "memory_entries", "scope_kind"),
+    (5, "memory_entries", "scope_id"),
+    (5, "memory_entries", "revision"),
+    (5, "memory_entries", "updated_at"),
+    (5, "memory_entries", "expires_at"),
+    (5, "memory_entries", "source_kind"),
+    (5, "memory_entries", "source_ref"),
+    (6, "agent_schedule", "retired_at"),
+    (6, "agent_schedule", "completed_at"),
+    (6, "agent_schedule_fire", "stop_requested_at"),
+    (7, "ai_conversation", "agent_mode"),
+    (8, "ai_conversation", "project_id"),
+    (8, "ai_conversation", "pinned_at"),
+    (8, "ai_conversation", "archived_at"),
+    (11, "ai_run", "stop_cause"),
+    (12, "ai_run", "stop_transport"),
+    (12, "ai_run_artifact", "action_truth"),
+    (12, "ai_run_artifact", "safe_result_summary"),
+    (15, "ai_conversation", "runtime_kind"),
+    (15, "ai_conversation", "dsh_session_ref"),
+    (15, "ai_conversation", "dsh_permission_session_key"),
+    (17, "ai_conversation", "dsh_provider_binding_digest"),
+    (17, "dsh_conversation_start", "provider_binding_digest"),
+];
+
 #[cfg(test)]
 pub(crate) fn rewind_schema_for_test(connection: &Connection, version: u32) {
     let mut reference = Connection::open_in_memory().expect("open reference schema");
@@ -1507,12 +1537,21 @@ pub(crate) fn rewind_schema_for_test(connection: &Connection, version: u32) {
         }
         if !exists(connection, table) {
             run(connection, &format!("{sql};"));
-            continue;
         }
         if sql.starts_with("CREATE VIRTUAL") {
             continue;
         }
-        let want = columns(&reference, table);
+        // A database really created at `version` did not have the columns
+        // that a later migration adds with `ensure_column`, even though the
+        // current CREATE TABLE statements already declare them.
+        let want = columns(&reference, table)
+            .into_iter()
+            .filter(|column| {
+                !COLUMNS_ADDED_BY_LATER_MIGRATIONS.iter().any(|(added_in, owner, name)| {
+                    *added_in > version && *owner == table.as_str() && *name == column.as_str()
+                })
+            })
+            .collect::<Vec<_>>();
         let have = columns(connection, table);
         for extra in have.iter().rev().filter(|column| !want.contains(column)) {
             run(
