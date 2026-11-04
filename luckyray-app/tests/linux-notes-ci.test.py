@@ -2160,7 +2160,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertLess(pairing, finish)
         step = text[pairing:finish]
         for required in (
-            "steps.companion-keyring.outcome == 'success'",
+            "steps.build.outcome == 'success' && steps.companion-keyring.outcome == 'success'",
             "timeout-minutes: 55",
             "websockets==15.0.1",
             "LUCKYRAY_COMPANION_WS_PYTHON: python3",
@@ -2168,7 +2168,8 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "linux-secret-service-session.sh",
             'present "$KEYRING_SCRATCH/pairing" --',
             "cargo test --locked --lib",
-            "--manifest-path luckyray-app/src-tauri/Cargo.toml",
+            # Same triple as the Main build, or every dependency is rebuilt.
+            "--target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml",
             "-- --ignored --exact",
             "companion_gateway::tests::live_present_companion_pairing_smoke",
             "timeout 900",

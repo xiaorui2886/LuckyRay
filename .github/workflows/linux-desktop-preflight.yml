@@ -204,7 +204,7 @@ jobs:
           done
       - name: Pair a synthetic phone through the real keyring-backed Companion gateway
         id: companion-pairing
-        if: ${{ !cancelled() && steps.companion-keyring.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.companion-keyring.outcome == 'success' }}
         timeout-minutes: 55
         env:
           WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
@@ -223,7 +223,10 @@ jobs:
           python3 -m pip install --disable-pip-version-check --no-cache-dir \
             --target "$WORK_ROOT/private/t44-ws-deps" "websockets==15.0.1"
           test -f "$PYTHONPATH/websockets/sync/client.py"
-          # Reuse the native build target; only the lib test binary is added.
+          # Reuse the native build target: the same --target triple as the Main
+          # build, so its dependency artifacts are reused and only the lib test
+          # binary is added (without it Cargo would rebuild every dependency
+          # under a second target/debug tree).
           # Run inside a fresh private Secret Service session so the real
           # LinuxIdentityStore reads and writes a throwaway keyring only.
           test_name=companion_gateway::tests::live_present_companion_pairing_smoke
@@ -231,7 +234,7 @@ jobs:
           timeout 900 bash luckyray-app/tests/linux-secret-service-session.sh \
             present "$KEYRING_SCRATCH/pairing" -- \
             rustup run 1.95.0 cargo test --locked --lib \
-            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            --target x86_64-unknown-linux-gnu --manifest-path luckyray-app/src-tauri/Cargo.toml \
             -- --ignored --exact "$test_name" --test-threads=1 \
             | tee "$WORK_ROOT/private/t44-pairing.log"
           # An empty filter must never count as a pass: require exactly one test.
