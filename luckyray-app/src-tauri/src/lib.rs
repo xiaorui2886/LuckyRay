@@ -837,6 +837,8 @@ pub fn run() {
             // Update bootstrap must run before any service can hold data or tasks.
             #[cfg(windows)]
             desktop_app_update::initialize(app, &app_data).map_err(std::io::Error::other)?;
+            #[cfg(target_os = "linux")]
+            desktop_app_update::initialize(app).map_err(std::io::Error::other)?;
             let resource_dir = app.path().resource_dir().map_err(std::io::Error::other)?;
             let dsh_host = dsh_host::DshHostService::production_background(&resource_dir, &app_data);
             DSH_HOST_SERVICE
@@ -1321,6 +1323,39 @@ fn quit_for_desktop_update(
     })?;
     // The already-running installer owns /R (reopen). Do not spawn Main here
     // or depend on the user launching it after this process has exited.
+    app.exit(0);
+    Ok(())
+}
+
+/// Linux AppImage counterpart of `quit_for_desktop_update`: the same saved
+/// quit barrier, run admission and LSH reservation. `prepare` runs before any
+/// service stops; `start` (record attempt, atomic replace, launch) runs only
+/// after the drain succeeded, where Windows starts its suspended installer.
+#[cfg(target_os = "linux")]
+fn quit_for_appimage_update(
+    app: &tauri::AppHandle,
+    prepare: impl FnOnce() -> Result<(), &'static str>,
+    start: impl FnOnce() -> Result<(), &'static str>,
+) -> Result<(), &'static str> {
+    with_saved_application_quit(app, || {
+        let backend = backend_services().map_err(|_| "update-task-state-unavailable")?;
+        let runs = backend.agent_runs();
+        let _run_admission = runs.acquire_transient("desktop-update")
+            .map_err(|_| "update-generation-active")?;
+        if runs.has_active_background_run().map_err(|_| "update-task-state-unavailable")? {
+            return Err("update-generation-active");
+        }
+        let mut _host_admission = match DSH_HOST_SERVICE.get() {
+            Some(host) => Some(host.reserve_desktop_update_restart()?),
+            None => None,
+        };
+        prepare()?;
+        if let Some(host) = _host_admission.as_mut() { host.stop_surface()?; }
+        if !drain_application_services() { return Err("update-service-drain-incomplete"); }
+        start()?;
+        Ok(())
+    })?;
+    // The replaced AppImage was already launched by `start`.
     app.exit(0);
     Ok(())
 }
