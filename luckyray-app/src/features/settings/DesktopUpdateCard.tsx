@@ -3,7 +3,7 @@ import { desktopUpdateMessages } from "./desktopUpdateMessages";
 import type { InstallStatus } from "../../core/services/desktopUpdateInstall";
 import DesktopInstallPanel from "./DesktopInstallPanel";
 import { useEffect, useId, useRef, useState } from "react";
-import { desktopUpdateSession, DESKTOP_LINKS, type DesktopUpdateResult } from "../../core/services/desktopUpdates";
+import { desktopUpdateSession, DESKTOP_LINKS, desktopAssetName, resolveDesktopAssetFormat, type DesktopAssetFormat, type DesktopUpdateResult } from "../../core/services/desktopUpdates";
 import { useI18n } from "../../core/i18n/index";
 
 export default function DesktopUpdateCard({ version, active, openLink }: {
@@ -18,6 +18,13 @@ export default function DesktopUpdateCard({ version, active, openLink }: {
   const [result, setResult] = useState<DesktopUpdateResult | null>(() => desktopUpdateSession.result(version));
   const [dismissed, setDismissed] = useState(desktopUpdateSession.dismissed);
   const [expanded, setExpanded] = useState(false);
+  // Windows resolves to nsis synchronously; Linux refines appimage/deb from native.
+  const [format, setFormat] = useState<DesktopAssetFormat>(() => resolveDesktopAssetFormat());
+  useEffect(() => {
+    let live = true;
+    void desktopUpdateSession.format().then((value) => { if (live) setFormat(value); });
+    return () => { live = false; };
+  }, []);
   const panelId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const mounted = useRef(true);
@@ -81,7 +88,7 @@ export default function DesktopUpdateCard({ version, active, openLink }: {
         </button>
       </div>
       <DesktopInstallPanel active={active} visible={expanded} automatic={automatic} onStatus={setNativeStatus} />
-      {!nativeEnabled && <p className="settings-update-description">{t("settings.update.manualInstall")}</p>}
+      {!nativeEnabled && <p className="settings-update-description">{format === "nsis" ? t("settings.update.manualInstall") : format === "deb" ? t("settings.update.manualInstallDeb") : t("settings.update.manualInstallLinux")}</p>}
       <div className="settings-update-preference">
         <span id={`${panelId}-automatic`}>{t("settings.update.automatic")}</span>
         <button type="button" role="switch" className={`toggle${automatic ? " on" : ""}`} aria-checked={automatic}
@@ -96,7 +103,9 @@ export default function DesktopUpdateCard({ version, active, openLink }: {
       </div>
       {!nativeEnabled && visible && <div className={`settings-update-status${result.status === "available" ? " has-update" : ""}`} role="status" aria-live="polite">
         <p>{result.status === "error" ? t(result.reason === "response-limit" ? "settings.update.responseLimit" : result.reason === "no-platform-asset" ? "settings.update.noPlatformAsset" : "settings.update.failed") : result.status === "available"
-          ? t("settings.update.available", { version: result.release.version })
+          ? format === "deb"
+            ? t("settings.update.debAvailable", { version: result.release.version, asset: desktopAssetName("deb", result.release.version) })
+            : t("settings.update.available", { version: result.release.version })
           : t("settings.update.current", { version })}</p>
         {result.status === "available" && <button type="button" className="settings-btn" onClick={() => {
           setDismissed(result.release.version); desktopUpdateSession.dismiss(result.release.version);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { createDesktopUpdateSession, compareVersions, selectDesktopRelease, createDesktopUpdateChecker, isOfficialDesktopLink, resolveDesktopAssetFormat, DESKTOP_LINKS } from "../src/core/services/desktopUpdates.ts";
+import { createDesktopUpdateSession, compareVersions, selectDesktopRelease, createDesktopUpdateChecker, isOfficialDesktopLink, resolveDesktopAssetFormat, detectDesktopAssetFormat, desktopAssetName, DESKTOP_LINKS } from "../src/core/services/desktopUpdates.ts";
 
 function release(version = "1.9.5", overrides = {}) {
   const tag = `v${version}`, name = `LuckyRay_${version}_x64-setup.exe`;
@@ -141,7 +141,14 @@ test("settings retains bridge URL guard, opt-out/dismiss and manual-install disc
   assert.match(card, /if \(!active \|\| !automatic \|\| nativeStatus\?\.phase!=="disabled"\) return/);
   assert.match(card, /desktopUpdateSession.dismiss\(result.release.version\)/);
   assert.match(zh, /应用内安装尚未启用/); assert.match(en, /In-app installation is not enabled/);
-  assert.match(card, /!nativeEnabled && <p[^>]*>\{t\("settings.update.manualInstall"\)\}/);
+  assert.match(card, /!nativeEnabled && <p[^>]*>\{format === "nsis" \? t\("settings.update.manualInstall"\) : format === "deb" \? t\("settings.update.manualInstallDeb"\) : t\("settings.update.manualInstallLinux"\)\}/);
+  // T36: deb installs get a notice naming the deb asset; Windows wording is unchanged.
+  assert.match(card, /format === "deb"\s*\? t\("settings.update.debAvailable", \{ version: result.release.version, asset: desktopAssetName\("deb", result.release.version\) \}\)\s*: t\("settings.update.available"/);
+  assert.match(zh, /"settings.update.manualInstall": "应用内安装尚未启用。请从官方发布页下载 Windows x64 安装包，保存工作并正常退出应用后手动安装。"/);
+  assert.match(zh, /"settings.update.debAvailable": "发现稳定版 \{version\}。deb 安装版需手动更新：请在官方发布页下载 \{asset\} 并安装。"/);
+  assert.match(en, /"settings.update.debAvailable": [^\n]*\{asset\}/);
+  assert.match(zh, /"settings.update.manualInstallDeb": "deb 安装版不支持应用内更新/);
+  assert.match(en, /"settings.update.manualInstallDeb": "The deb install cannot update in-app/);
   assert.match(card, /<DesktopInstallPanel active=\{active\}/);
   assert.doesNotMatch(card, /relaunch|\.install\(|downloadAndInstall/);
 });
@@ -230,4 +237,50 @@ test("About opens browser synchronously even when a non-native bridge exists; na
   assert.equal(bridgeCalls, 1); assert.equal(browserCalls, 1);
   await browser("Bad", "javascript:alert(1)"); await native("Bad", "https://evil.invalid");
   assert.equal(browserCalls, 1); assert.equal(bridgeCalls, 1);
+});
+
+test("T36: install format detection - Windows never asks native, Linux fails closed to deb", async () => {
+  const win = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+  const linux = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15";
+  let asked = 0;
+  const answer = (value: unknown) => async () => { asked++; return value; };
+  assert.equal(await detectDesktopAssetFormat(win, answer({ format: "appimage" })), "nsis");
+  assert.equal(asked, 0);
+  assert.equal(await detectDesktopAssetFormat(linux, answer({ format: "appimage" })), "appimage");
+  assert.equal(await detectDesktopAssetFormat(linux, answer({ format: "deb" })), "deb");
+  for (const odd of [null, "appimage", {}, { format: "AppImage" }, { format: "rpm" }, { format: "nsis" }]) {
+    assert.equal(await detectDesktopAssetFormat(linux, answer(odd)), "deb");
+  }
+  // macOS / older builds reject the "format" action: notice-only deb fallback.
+  assert.equal(await detectDesktopAssetFormat(linux, async () => { throw "update-action-unavailable"; }), "deb");
+  assert.equal(await detectDesktopAssetFormat("", async () => { throw new Error("no tauri"); }), "deb");
+});
+
+test("T36: the checker matches the detected format's asset and resolves it once", async () => {
+  const linuxRelease = (version: string, names: string[]) => ({ ...release(version), assets: names.map((name) => ({
+    name, state: "uploaded", size: 100, browser_download_url: `${DESKTOP_LINKS.releases}/download/v${version}/${name}` })) });
+  const both = linuxRelease("1.10.0", [desktopAssetName("appimage", "1.10.0"), desktopAssetName("deb", "1.10.0")]);
+  const appimageOnly = linuxRelease("1.11.0", [desktopAssetName("appimage", "1.11.0")]);
+  assert.equal(desktopAssetName("deb", "1.10.0"), "LuckyRay_1.10.0_amd64.deb");
+  assert.equal(desktopAssetName("appimage", "1.10.0"), "LuckyRay_1.10.0_amd64.AppImage");
+  let resolved = 0;
+  const deb = createDesktopUpdateChecker(fetcher(async () => response([both, appimageOnly])), () => 0, 12000,
+    async () => { resolved++; return "deb"; });
+  const debResult = await deb("1.9.9");
+  assert.equal(debResult.status, "available");
+  if (debResult.status === "available") assert.equal(debResult.release.version, "1.10.0");
+  assert.equal(await deb.format(), "deb");
+  assert.equal(resolved, 1);
+  const app = createDesktopUpdateChecker(fetcher(async () => response([both, appimageOnly])), Date.now, 12000, async () => "appimage");
+  const appResult = await app("1.9.9");
+  assert.equal(appResult.status === "available" && appResult.release.version, "1.11.0");
+  // A failing provider fails closed to deb.
+  const broken = createDesktopUpdateChecker(fetcher(async () => response([appimageOnly])), Date.now, 12000, () => Promise.reject(new Error("x")));
+  const brokenResult = await broken("1.9.9");
+  assert.equal(brokenResult.status === "error" && brokenResult.reason, "no-platform-asset");
+  assert.equal(await broken.format(), "deb");
+  // Windows default is unchanged.
+  assert.equal(await createDesktopUpdateChecker(fetcher(async () => response([]))).format(), "nsis");
+  const session = createDesktopUpdateSession(deb, () => { throw new Error("storage blocked"); });
+  assert.equal(await session.format(), "deb");
 });
