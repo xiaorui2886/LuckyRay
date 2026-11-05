@@ -267,8 +267,10 @@ def main():
                 raise RuntimeError("production autostart disable did not retain a hidden entry")
             if not any(path.stat().st_ino == inode for path in entry.parent.glob(".lrk-*.displaced")):
                 raise RuntimeError("autostart did not retain the prior inode")
-            if not any(path.read_bytes() == enabled and path.stat().st_ino != inode for path in entry.parent.glob(".lrk-*.backup")):
-                raise RuntimeError("autostart did not retain an independent backup")
+            if any(entry.parent.glob(".lrk-*.backup")) or any(entry.parent.glob(".lrk-*.journal")):
+                raise RuntimeError("autostart left a committed backup or journal behind")
+            if not any(path.read_bytes() == enabled for path in entry.parent.glob(".lrk-*.displaced")):
+                raise RuntimeError("autostart displaced inode does not hold the prior entry")
             invoke("set_auto_launch_enabled", {"enabled": True})
             if entry.read_bytes() != enabled or not read_auto_launch("reenabled"):
                 raise RuntimeError("production autostart re-enable failed")

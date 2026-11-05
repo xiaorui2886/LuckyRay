@@ -189,9 +189,10 @@ mod tests {
         let displaced = files.iter().find(|path| path.extension().is_some_and(|ext| ext == "displaced")).unwrap();
         assert_eq!(fs::metadata(displaced).unwrap().ino(), inode);
         assert_eq!(fs::read(displaced).unwrap(), before);
-        let backup = files.iter().find(|path| path.extension().is_some_and(|ext| ext == "backup")).unwrap();
-        assert_ne!(fs::metadata(backup).unwrap().ino(), inode);
-        assert_eq!(fs::read(backup).unwrap(), before);
+        // Committed: the independent backup copy and journal are removed (as on
+        // Windows, which deletes the Run value); only the prior inode remains.
+        assert_eq!(files.len(), 3, "{files:?}"); // entry, lock, one displaced inode
+        assert!(!files.iter().any(|path| path.extension().is_some_and(|ext| ext == "backup" || ext == "journal" || ext == "tmp")));
         set_at(&scratch.0, &app, true).unwrap();
         assert!(enabled_at(&scratch.0, &app).unwrap());
         assert_eq!(fs::read(entry_path(&scratch.0)).unwrap(), before);

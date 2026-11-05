@@ -105,14 +105,20 @@ def main():
         assert len(list(path.parent.iterdir())) == 1
         run("--revoke-linux-registration", "chromium", expected="registration-revoked")
         assert json.loads(path.read_bytes())["allowed_origins"] == []
-        old = [p for p in path.parent.iterdir() if p.suffix == ".displaced"]
-        copies = [p for p in path.parent.iterdir() if p.suffix == ".backup"]
-        assert len(old) == len(copies) == 1
+        # Committed revoke: no backup copy, journal or draft remains (Windows
+        # deletes the registry key outright); only the prior inode is kept.
+        names = sorted(p.name for p in path.parent.iterdir())
+        old = [p for p in path.parent.iterdir() if p.name.startswith(".lrk-") and p.suffix == ".displaced"]
+        assert len(old) == 1, names
+        assert not [n for n in names if n.endswith((".backup", ".journal", ".tmp", ".delete-receipt", ".deleted"))], names
+        assert set(names) <= {path.name, ".luckyray-write.lock", old[0].name} and len(names) == 3, names
         assert old[0].stat().st_ino == inode and old[0].read_bytes() == active
-        assert copies[0].stat().st_ino != inode and copies[0].read_bytes() == active
         run("--revoke-linux-registration", "chromium", expected="registration-already-revoked")
         run("--install-linux-manifest", "chromium", expected="re-enabled")
         assert path.read_bytes() == active
+        # Re-enable displaced the revoked inode; the older, unmodified one is pruned.
+        old = [p for p in path.parent.iterdir() if p.suffix == ".displaced"]
+        assert len(old) == 1 and json.loads(old[0].read_bytes())["allowed_origins"] == []
         path.write_bytes(b"foreign registration")
         run("--revoke-linux-registration", "chromium")
         assert path.read_bytes() == b"foreign registration"
