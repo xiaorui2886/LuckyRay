@@ -267,37 +267,7 @@ pub(crate) fn spawn_in_owned_job(
             stderr,
         })
     };
-    let traced = |stage: &'static str, result: std::io::Result<()>| -> std::io::Result<()> {
-        #[cfg(test)]
-        if let Err(error) = &result { eprintln!("agent-host-trace: launcher stage={stage} error={error:?}"); }
-        let _ = stage;
-        result
-    };
-    let probe = || -> std::io::Result<()> {
-        let parent = Directory::open(executable.parent().ok_or_else(crate::linux_fs::conflict)?)?;
-        traced("parent-open", Ok(()))?;
-        let executable_file = parent.open_file(executable.file_name().ok_or_else(crate::linux_fs::conflict)?, false)?;
-        let metadata = executable_file.metadata()?;
-        traced("open-file", Ok(()))?;
-        traced("xattrs", crate::linux_fs::no_attributes(&executable_file))?;
-        if metadata.mode() & 0o111 == 0 || metadata.mode() & 0o6022 != 0
-            || ![0, unsafe { libc::geteuid() }].contains(&metadata.uid()) {
-            traced("mode-uid", Err(crate::linux_fs::conflict()))?;
-        }
-        let mut header = [0; 4];
-        executable_file.read_exact_at(&mut header, 0)?;
-        traced("elf", if header == *b"\x7fELF" { Ok(()) } else { Err(crate::linux_fs::conflict()) })?;
-        let cwd = Directory::open(current_dir)?;
-        traced("cwd-open", Ok(()))?;
-        traced("verify-named", parent.verify_named(executable.file_name().unwrap(), &executable_file))?;
-        traced("cwd-verify", cwd.verify())
-    };
-    let _ = probe();
-    run().map_err(|error| {
-        #[cfg(test)]
-        eprintln!("agent-host-trace: launcher io error {error:?}");
-        OwnedProcessError
-    })
+    run().map_err(|_| OwnedProcessError)
 }
 
 #[cfg(test)]

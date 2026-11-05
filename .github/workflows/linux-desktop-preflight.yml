@@ -576,29 +576,20 @@ jobs:
             --features browser-host-poc-fixture \
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml
-          # The product resolves the host strictly next to the test binary (debug/deps/).
-          # Stage the real just-built sidecar there; no test or caller may supply its own path.
-          # cargo hard-links the bin into debug/, giving nlink=2; the product launcher
-          # refuses multi-link executables. Install an independent single-link copy.
-          rm -f "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"
-          install -m 0755 "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-browser-host" \
-            "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"
-          test "$(stat -c %h "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host")" = 1
-          # Diagnostic: which exact precondition rejects the sidecar (product rules unchanged).
-          host="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"
-          stat -c 'host mode=%a uid=%u size=%s' "$host"
-          if command -v getfattr >/dev/null; then getfattr -d -m - "$host"; fi
-          ls -l -Z "$host" 2>/dev/null || ls -l "$host"
-          ls -ld "${TMPDIR:-/tmp}" "${TMPDIR:-/tmp}/LuckyRay" "${TMPDIR:-/tmp}/LuckyRay/AgentBrowser" "${TMPDIR:-/tmp}/LuckyRay/AgentBrowser/v1" 2>/dev/null || true
-          # Drive the exact staged sidecar once, the way AgentHost does, to see the real refusal.
-          namei -l "$host"
-          python3 "$GITHUB_WORKSPACE/luckyray-app/tests/linux-agent-host-probe.py" "$host" "$LUCKYRAY_AGENT_BROWSER_TEST_SHELL"
+          # exact_browser_host_path() resolves debug/luckyray-browser-host (it strips deps/).
+          # cargo leaves that file group-writable (runner umask) and hard-linked; the product
+          # launcher refuses both. Replace it with an independent 0755 single-link copy.
+          host="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-browser-host"
+          install -m 0755 "$host" "$host.staged"
+          mv -f "$host.staged" "$host"
+          test "$(stat -c %h "$host")" = 1
+          test "$(stat -c %a "$host")" = 755
           # Each name runs with --exact: a renamed or missing test shrinks the count.
           timeout 900 rustup run 1.95.0 cargo test --locked --lib \
             --features browser-host-poc-fixture \
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml \
-            -- --exact --test-threads=1 --nocapture \
+            -- --exact --test-threads=1 \
             dsh_resource_broker::tests::dsh_search_drives_the_isolated_agent_browser_and_generation_cleanup \
             agent_browser::runtime::tests::linux_agent_host_refuses_a_host_that_is_not_an_executable_sidecar \
             agent_browser::runtime::tests::linux_agent_host_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway \
