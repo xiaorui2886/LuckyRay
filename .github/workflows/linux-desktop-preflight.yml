@@ -483,6 +483,8 @@ jobs:
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml \
             -- --exact --test-threads=1 \
+            agent_browser::linux_host_policy::tests::linux_policy_rejects_local_credentials_controls_and_non_http_schemes \
+            agent_browser::linux_host_policy::tests::same_rules_as_windows_host \
             agent_runs::tests::retention_caps_terminal_metadata_without_deleting_active_runs_or_messages \
             backend::schema_compat::tests::legacy_v13_v14_names_reconcile_without_rewriting_history \
             backend::schema_compat::tests::schema18_upgrades_to_smart_folder_definitions_without_result_storage \
@@ -508,7 +510,7 @@ jobs:
             tools::tests::definitions_are_deterministic_and_equal_across_internal_test_principals \
             tools::tests::memory_list_is_bounded_safe_and_cross_conversation_with_current_vault_isolation \
             | tee "$WORK_ROOT/private/t54-port-fixtures.log"
-          grep -qx "test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+          grep -qx "test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t54-port-fixtures.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}

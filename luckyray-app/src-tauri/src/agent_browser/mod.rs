@@ -1,6 +1,9 @@
 //! Turn-scoped, read-only Agent Browser runtime.
 
 mod gateway;
+/// Linux host rules kept identical to the Windows WebView2 host (T55 slice 1).
+#[cfg(all(target_os = "linux", feature = "browser-host-runtime"))]
+mod linux_host_policy;
 mod runtime;
 
 pub(crate) use runtime::{

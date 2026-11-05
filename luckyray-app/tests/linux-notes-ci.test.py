@@ -2202,9 +2202,11 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
             "-- --exact --test-threads=1 \\",
-            'grep -qx "test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured;',
+            'grep -qx "test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured;',
             "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
             "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
+            "            agent_browser::linux_host_policy::tests::linux_policy_rejects_local_credentials_controls_and_non_http_schemes",
+            "            agent_browser::linux_host_policy::tests::same_rules_as_windows_host",
             "            agent_runs::tests::retention_caps_terminal_metadata_without_deleting_active_runs_or_messages",
             "            backend::schema_compat::tests::legacy_v13_v14_names_reconcile_without_rewriting_history",
             "            backend::schema_compat::tests::schema18_upgrades_to_smart_folder_definitions_without_result_storage",
@@ -2231,7 +2233,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "            tools::tests::memory_list_is_bounded_safe_and_cross_conversation_with_current_vault_isolation",
         ):
             self.assertIn(required, step, required)
-        self.assertEqual(step.count("::tests::") + step.count("material_change_tests::") + step.count("::attachment_tests::"), 24)
+        self.assertEqual(step.count("::tests::") + step.count("material_change_tests::") + step.count("::attachment_tests::"), 26)
         for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}", text)
