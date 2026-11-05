@@ -2317,6 +2317,9 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "timeout-minutes: 30", "timeout 900", "set -euo pipefail",
             "cargo build --locked --bin luckyray-browser-host",
             "--features browser-host-poc-fixture",
+            # exact_browser_host_path() resolves only next to the test binary; no caller-supplied path.
+            'cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-browser-host" \\',
+            '"$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"',
             "cargo test --locked --lib",
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
