@@ -11,8 +11,18 @@
 
 use serde::Deserialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::io::{Read, Write};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
+use std::time::Duration;
+
+/// The Linux engine (T55 slice 2): pinned headless shell over a pipe, every
+/// request mediated through the parent gateway with the rules below.
+#[path = "linux_host_engine.rs"]
+pub(super) mod engine;
+
+const MAX_NONCE_BYTES: usize = 96;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HostFailure {
@@ -26,10 +36,11 @@ impl HostFailure {
     }
 }
 
-/// Same switch as the Windows host: the loopback exception exists only in a
-/// debug build of the explicit fixture feature.
+/// The Windows host's switch (a debug build of the explicit fixture feature),
+/// plus this crate's own unit-test build, the same way `gateway.rs` opens its
+/// exact-loopback fixture policy. A release product build never has either.
 fn fixture_runtime_enabled() -> bool {
-    cfg!(all(feature = "browser-host-poc-fixture", debug_assertions))
+    cfg!(any(test, all(feature = "browser-host-poc-fixture", debug_assertions)))
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -350,6 +361,135 @@ fn ipv6_is_forbidden(address: Ipv6Addr) -> bool {
 }
 // --- END same-as-windows region 2 ---
 
+// --- BEGIN same-as-windows region 3 ---
+struct GatewayResource {
+    status: i32,
+    reason: &'static str,
+    content_type: String,
+    final_url: String,
+    body: Vec<u8>,
+}
+
+fn fetch_agent_resource(
+    gateway_address: SocketAddr,
+    gateway_token: &str,
+    method: &str,
+    url: &str,
+) -> Result<GatewayResource, ()> {
+    const MAX_HEADER: usize = 32 * 1024;
+    const MAX_BODY: usize = 2 * 1024 * 1024;
+    if !matches!(method, "GET" | "HEAD")
+        || url.as_bytes().len() > 8 * 1024
+        || gateway_token.is_empty()
+        || gateway_token.as_bytes().len() > MAX_NONCE_BYTES
+    {
+        return Err(());
+    }
+    let payload =
+        serde_json::to_vec(&serde_json::json!({"method":method,"url":url})).map_err(|_| ())?;
+    let mut stream =
+        TcpStream::connect_timeout(&gateway_address, Duration::from_secs(1)).map_err(|_| ())?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(16)))
+        .map_err(|_| ())?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| ())?;
+    write!(
+        stream,
+        "POST /__luckyray_agent_fetch HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {gateway_token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        payload.len()
+    )
+    .map_err(|_| ())?;
+    stream.write_all(&payload).map_err(|_| ())?;
+    let mut response = Vec::new();
+    stream
+        .take((MAX_HEADER + MAX_BODY + 1) as u64)
+        .read_to_end(&mut response)
+        .map_err(|_| ())?;
+    if response.len() > MAX_HEADER + MAX_BODY {
+        return Err(());
+    }
+    let boundary = response
+        .windows(4)
+        .position(|value| value == b"\r\n\r\n")
+        .ok_or(())?;
+    if boundary > MAX_HEADER {
+        return Err(());
+    }
+    let header = std::str::from_utf8(&response[..boundary]).map_err(|_| ())?;
+    let mut lines = header.split("\r\n");
+    let status_line = lines.next().ok_or(())?;
+    if status_line != "HTTP/1.1 200 OK" {
+        return Err(());
+    }
+    let mut length = None;
+    let mut origin_status = None;
+    let mut content_type = None;
+    let mut final_url = None;
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else {
+            return Err(());
+        };
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            length = value.parse::<usize>().ok();
+        } else if name.eq_ignore_ascii_case("x-luckyray-origin-status") {
+            origin_status = value.parse::<i32>().ok();
+        } else if name.eq_ignore_ascii_case("x-luckyray-origin-content-type") {
+            content_type = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("x-luckyray-final-url") {
+            final_url = Some(value.to_owned());
+        }
+    }
+    let body = response[(boundary + 4)..].to_vec();
+    if length != Some(body.len()) || body.len() > MAX_BODY {
+        return Err(());
+    }
+    let status = origin_status
+        .filter(|value| (100..=599).contains(value))
+        .ok_or(())?;
+    let content_type = content_type
+        .filter(|value| {
+            !value.is_empty()
+                && value.as_bytes().len() <= 256
+                && value
+                    .bytes()
+                    .all(|byte| byte == b' ' || byte.is_ascii_graphic())
+        })
+        .ok_or(())?;
+    let final_url = final_url
+        .filter(|value| {
+            !value.is_empty()
+                && value.as_bytes().len() <= 8 * 1024
+                && value.chars().all(|character| !character.is_control())
+        })
+        .ok_or(())?;
+    Ok(GatewayResource {
+        status,
+        reason: if (200..=299).contains(&status) {
+            "OK"
+        } else {
+            "Upstream"
+        },
+        content_type,
+        final_url,
+        body,
+    })
+}
+
+// --- END same-as-windows region 3 ---
+
+// --- BEGIN same-as-windows region 4 ---
+fn browser_document_token(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"luckyray-agent-browser-source-v1\0");
+    hasher.update(value.as_bytes());
+    format!("src-b-{:x}", hasher.finalize())
+}
+
+// --- END same-as-windows region 4 ---
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,6 +515,15 @@ mod tests {
         let linux_2 = slice(THIS, "fn bounded_title", "// --- END same-as-windows region 2");
         assert_eq!(compact(linux_1), compact(windows_1));
         assert_eq!(compact(linux_2), compact(windows_2));
+        let windows_3 = slice(WINDOWS_HOST, "struct GatewayResource {", "#[derive(Clone, Debug, Serialize)]");
+        let windows_4 = slice(WINDOWS_HOST, "fn browser_document_token", "#[cfg(windows)]\ntype ActiveProduction");
+        let linux_3 = slice(THIS, "struct GatewayResource {", "// --- END same-as-windows region 3");
+        let linux_4 = slice(THIS, "fn browser_document_token", "// --- END same-as-windows region 4");
+        assert_eq!(compact(linux_3), compact(windows_3));
+        assert_eq!(compact(linux_4), compact(windows_4));
+        assert!(WINDOWS_HOST.contains("const MAX_NONCE_BYTES: usize = 96;"));
+        assert!(WINDOWS_HOST.contains("const MAX_PENDING_AGENT_RESOURCES: usize = 128;"));
+        assert!(WINDOWS_HOST.contains("const AGENT_RESOURCE_DEADLINE: Duration = Duration::from_secs(18);"));
         // The argv form carries exactly the Windows argument string's flags.
         let windows_args = slice(WINDOWS_HOST, "fn agent_browser_arguments", "fn pump_messages");
         let windows_args = slice(windows_args, "\"--proxy-server", "\"\n");
@@ -421,10 +570,10 @@ mod tests {
             assert!(validated_top_level_url(target, None).is_err(), "target={target:?}");
         }
         assert!(validated_top_level_url("https://example.com/page", None).is_ok());
-        // Without the debug fixture build the loopback exception never opens.
-        if !fixture_runtime_enabled() {
-            assert!(validated_top_level_url("http://127.0.0.1:32123/page", Some(32123)).is_err());
-        }
+        // The loopback exception is the one exact fixture port and nothing else.
+        assert!(validated_top_level_url("http://127.0.0.1:32123/page", None).is_err());
+        assert!(validated_top_level_url("http://127.0.0.1:32124/page", Some(32123)).is_err());
+        assert!(validated_top_level_url("http://127.0.0.2:32123/page", Some(32123)).is_err());
         assert!(subresource_target_is_forbidden("http://192.168.1.1/x.png", None));
         assert!(!subresource_target_is_forbidden("data:image/png;base64,AA==", None));
         let mut policy = AgentTopLevelPolicy::default();
