@@ -87,7 +87,8 @@ jobs:
             luckyray-app/tests/vaultImportSourceActivation.contract.test.cjs \
             luckyray-app/tests/linuxVaultPath.contract.test.cjs \
             luckyray-app/tests/linux-package-config.test.mjs \
-            luckyray-app/tests/linux-agent-browser-bundle.test.mjs
+            luckyray-app/tests/linux-agent-browser-bundle.test.mjs \
+            luckyray-app/tests/linux-lsh-package.test.mjs
       - name: Build the required embedded frontend once
         id: frontend
         working-directory: luckyray-app
@@ -715,6 +716,25 @@ jobs:
             "$WORK_ROOT/private/t52-s2-gate.log"
           rm -rf "$lgpl" "$app/media-engine"
           find "$app/binaries" -mindepth 1 ! -name .gitignore -delete
+      - name: Seal the genuine LSH runtime at the Tauri package paths and refuse a changed byte
+        id: linux-lsh-package
+        # T52 S3: src-tauri/dsh plus pinned dsh-host and the four redistribution
+        # records are checked by the Linux package gate, which refuses one changed byte.
+        if: ${{ !cancelled() && steps.resources.outcome == 'success' }}
+        timeout-minutes: 15
+        working-directory: luckyray-app
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: |
+          set -euo pipefail
+          rm -rf src-tauri/dsh
+          node scripts/linux/stage-lsh-package.mjs "$WORK_ROOT/runtime" > "$WORK_ROOT/private/t52-s3-stage.json"
+          node scripts/linux/check-lsh-package.mjs
+          if grep -q "LSH:" <(node scripts/linux/prepare-tauri-build.mjs 2>&1 || true); then exit 1; fi
+          printf 'x' >> src-tauri/dsh/node/node
+          if node scripts/linux/check-lsh-package.mjs 2> "$WORK_ROOT/private/t52-s3-gate.log"; then exit 1; fi
+          grep -q "LSH: sealed LSH runtime at src-tauri/dsh" "$WORK_ROOT/private/t52-s3-gate.log"
+          rm -rf src-tauri/dsh
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -747,6 +767,7 @@ jobs:
           CI_AGENT_BROWSER_BUNDLE: ${{ steps.agent-browser-bundle.outcome }}
           CI_MEDIA_ENGINE: ${{ steps.media-engine.outcome }}
           CI_LINUX_SIDECARS: ${{ steps.linux-sidecars.outcome }}
+          CI_LINUX_LSH_PACKAGE: ${{ steps.linux-lsh-package.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
