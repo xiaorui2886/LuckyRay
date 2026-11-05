@@ -28,8 +28,24 @@ test('Linux build preparation refuses unresolved release inputs', () => {
   assert.throws(() => execFileSync(process.execPath, [script], { stdio: 'pipe' }), error => {
     assert.equal(error.status, 1);
     assert.match(error.stderr.toString(), /LSH: sealed LSH runtime missing at src-tauri\/dsh/);
-    assert.match(error.stderr.toString(), /browser-host native messaging revocation/);
+    const stderr = error.stderr.toString();
+    assert.doesNotMatch(stderr, /browser-host native messaging revocation/);
+    assert.match(stderr, /Sidecars: linux sidecars refused/);
+    assert.match(stderr, /Media engine: linux-media-engine/);
+    assert.doesNotMatch(stderr, /Notices:/);
     assert.match(error.stderr.toString(), /Agent Browser: agent-browser bundle missing/);
     return true;
   });
+});
+
+test('Linux build preparation reports each gate by name and passes only with no problems', async () => {
+  const { linuxPackageProblems, requiredNotices } = await import('../scripts/linux/prepare-tauri-build.mjs');
+  const calls = [];
+  const problems = await linuxPackageProblems({ run: (_root, args) => { calls.push(args[0]); return ['refused x']; } });
+  assert.deepEqual(calls, ['tools/linux-sidecars/sidecars.py', 'tools/linux-media-engine/engine.py']);
+  assert.ok(problems.includes('Sidecars: refused x'));
+  assert.ok(problems.includes('Media engine: refused x'));
+  assert.ok(problems.some(p => p.startsWith('LSH: ')));
+  assert.ok(problems.some(p => p.startsWith('Agent Browser: ')));
+  assert.equal(requiredNotices.length, 5);
 });
