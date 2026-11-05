@@ -2982,6 +2982,89 @@ mod tests {
         std::fs::remove_dir_all(scratch).unwrap();
     }
 
+    /// T52 S1: the assembled Linux engine (tools/linux-media-engine) must pass
+    /// the production `app_owned` verifier with its compile-time pin and probe
+    /// a synthetic loopback HLS master through the real runner and yt-dlp.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "needs LUCKYRAY_LIVE_MEDIA_ENGINE_RESOURCES (an assembled engine) and its compile-time manifest pin"]
+    fn live_linux_app_owned_engine_probes_a_synthetic_loopback_hls_master() {
+        let resources = PathBuf::from(
+            std::env::var_os("LUCKYRAY_LIVE_MEDIA_ENGINE_RESOURCES")
+                .expect("LUCKYRAY_LIVE_MEDIA_ENGINE_RESOURCES"),
+        );
+        let mut resolver = ExternalMediaResolver::app_owned(&resources)
+            .expect("the assembled engine must pass the production verifier")
+            .expect("the build must carry LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256");
+        // Loopback is allowed only for this synthetic fixture.
+        resolver.allow_loopback = true;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let base = format!("http://{address}");
+            let body = format!(
+                "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n{base}/private-360.m3u8?token=PRIVATE\n#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720\n{base}/private-720.m3u8?token=PRIVATE\n"
+            );
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut served = 0;
+            while Instant::now() < deadline && served < 2 {
+                match listener.accept() {
+                    Ok((mut socket, _)) => {
+                        socket.set_nonblocking(false).unwrap();
+                        let mut request = [0u8; 2048];
+                        let read = socket.read(&mut request).unwrap();
+                        let is_head = request[..read].starts_with(b"HEAD ");
+                        write!(
+                            socket,
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len(),
+                        )
+                        .unwrap();
+                        if !is_head {
+                            socket.write_all(body.as_bytes()).unwrap();
+                        }
+                        served += 1;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("fixture server failed: {error}"),
+                }
+            }
+        });
+        let scratch = temp_root();
+        let mut probe_limits = test_limits();
+        probe_limits.deadline = Duration::from_secs(60);
+        let formats = resolver
+            .probe(
+                &MediaProbeRequest {
+                    url: format!("http://{address}/master.m3u8"),
+                    source_page_url: Some(format!("http://{address}/watch")),
+                    site_auth: None,
+                },
+                &scratch,
+                &probe_limits,
+            )
+            .unwrap();
+        assert_eq!(
+            formats
+                .iter()
+                .map(|format| format.height)
+                .collect::<Vec<_>>(),
+            [720, 360]
+        );
+        let safe = formats
+            .iter()
+            .map(|format| format.label.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!safe.contains("PRIVATE"));
+        assert!(!safe.contains("127.0.0.1"));
+        server.join().unwrap();
+        std::fs::remove_dir_all(scratch).unwrap();
+    }
+
     #[test]
     fn public_hls_parser_selects_highest_variant_and_accepts_fmp4_vod() {
         let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\nlow/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900\nhigh/index.m3u8\n";

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "status": "ci-artifact-not-a-release",
+  "sharedManifest": "third_party/media-engine/manifest.json",
+  "sharedManifestSha256": "00533f7e0483983c73819ad19d3681ed161bc6b964c34b157101b643a4a0e9eb",
+  "python": {
+    "version": "3.11.8",
+    "fileName": "cpython-3.11.8+20240224-x86_64-unknown-linux-gnu-install_only.tar.gz",
+    "url": "https://github.com/indygreg/python-build-standalone/releases/download/20240224/cpython-3.11.8%2B20240224-x86_64-unknown-linux-gnu-install_only.tar.gz",
+    "size": 29798726,
+    "sha256": "94e13d0e5ad417035b80580f3e893a72e094b0900d5d64e7e34ab08e95439987",
+    "license": "Python-2.0 (plus statically linked components, see pythonLicenses)"
+  },
+  "pythonLicenses": {
+    "comment": "Same build (20240224, 3.11.8, x86_64-unknown-linux-gnu); only python/licenses/ and PYTHON.json are read.",
+    "fileName": "cpython-3.11.8+20240224-x86_64-unknown-linux-gnu-pgo+lto-full.tar.zst",
+    "url": "https://github.com/indygreg/python-build-standalone/releases/download/20240224/cpython-3.11.8%2B20240224-x86_64-unknown-linux-gnu-pgo%2Blto-full.tar.zst",
+    "size": 55260441,
+    "sha256": "ae1bf11b438304622d9334092491266f908f26d76da03f1125514a192cf093f8"
+  },
+  "deno": {
+    "version": "2.9.4",
+    "fileName": "deno-x86_64-unknown-linux-gnu.zip",
+    "url": "https://github.com/denoland/deno/releases/download/v2.9.4/deno-x86_64-unknown-linux-gnu.zip",
+    "size": 43834754,
+    "sha256": "c24f955d9fbfe0ea5ae2b501c8e71ae76e31e4c9782390a54a284b3364fda725",
+    "license": "MIT"
+  }
+}
