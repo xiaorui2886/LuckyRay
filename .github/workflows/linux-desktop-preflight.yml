@@ -681,6 +681,40 @@ jobs:
           grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t52-media-engine.log"
           rm -rf "$lgpl" "$res"
+      - name: Build and attest the Linux release sidecars, then let build.rs judge them
+        id: linux-sidecars
+        # T52 S2: four ELF sidecars plus the CLI identity and origin attestation;
+        # the unchanged build.rs validators accept them and refuse a one-byte change.
+        if: ${{ !cancelled() && steps.media-engine.outcome == 'success' }}
+        timeout-minutes: 60
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/release-target
+          GH_ARTIFACT_DIR: ${{ runner.temp }}/lgpl-bundle-artifact
+        run: |
+          set -euo pipefail
+          tool=luckyray-app/tools/linux-sidecars
+          app=luckyray-app/src-tauri
+          lgpl="$WORK_ROOT/private/t52-s2-lgpl-bundle"
+          python3 "$tool/test_sidecars.py"
+          rm -rf "$lgpl" "$app/media-engine"; mkdir -p "$lgpl"
+          tar -C "$lgpl" -xf "$GH_ARTIFACT_DIR/lgpl-media-bundle.tar"
+          python3 luckyray-app/tools/linux-media-engine/engine.py assemble \
+            "$RUNNER_TEMP/linux-media-engine-downloads" "$lgpl" "$app/media-engine"
+          timeout 3000 rustup run 1.95.0 python3 "$tool/sidecars.py" build "$app" "$app/binaries" \
+            | tee "$WORK_ROOT/private/t52-s2-sidecars.json"
+          python3 "$tool/sidecars.py" verify "$app" "$app/binaries"
+          gate=(timeout 900 rustup run 1.95.0 cargo check --locked --release --lib
+            --target x86_64-unknown-linux-gnu --manifest-path "$app/Cargo.toml")
+          export TAURI_CONFIG='{"build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"resources":null}}'
+          "${gate[@]}"
+          printf 'x' >> "$app/binaries/luckyray-mcp-x86_64-unknown-linux-gnu"
+          if python3 "$tool/sidecars.py" verify "$app" "$app/binaries"; then exit 1; fi
+          if "${gate[@]}" 2> "$WORK_ROOT/private/t52-s2-gate.log"; then exit 1; fi
+          grep -q "release sidecars do not match the current canonical extension-origin configuration" \
+            "$WORK_ROOT/private/t52-s2-gate.log"
+          rm -rf "$lgpl" "$app/media-engine"
+          find "$app/binaries" -mindepth 1 ! -name .gitignore -delete
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -712,6 +746,7 @@ jobs:
           CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}
           CI_AGENT_BROWSER_BUNDLE: ${{ steps.agent-browser-bundle.outcome }}
           CI_MEDIA_ENGINE: ${{ steps.media-engine.outcome }}
+          CI_LINUX_SIDECARS: ${{ steps.linux-sidecars.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
