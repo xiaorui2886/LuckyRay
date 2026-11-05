@@ -512,6 +512,55 @@ jobs:
             | tee "$WORK_ROOT/private/t54-port-fixtures.log"
           grep -qx "test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t54-port-fixtures.log"
+      - name: Restore the cached pinned Agent Browser engine archive
+        id: agent-browser-cache
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/chrome-headless-shell-linux64.zip
+          key: linux-agent-browser-shell-v1-${{ hashFiles('luckyray-app/tools/linux-agent-browser/**') }}
+      - name: Fetch and verify the pinned Agent Browser engine (sha256)
+        id: agent-browser-shell
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 10
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CACHE_HIT: ${{ steps.agent-browser-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/chrome-headless-shell-linux64.zip"
+          if [ "$CACHE_HIT" != "true" ]; then
+            python3 luckyray-app/tools/linux-agent-browser/shell.py fetch "$archive"
+          fi
+          rm -rf "$WORK_ROOT/agent-browser-shell"
+          python3 luckyray-app/tools/linux-agent-browser/shell.py unpack "$archive" "$WORK_ROOT/agent-browser-shell"
+          shell="$WORK_ROOT/agent-browser-shell/chrome-headless-shell-linux64/chrome-headless-shell"
+          if ldd "$shell" | grep -q "not found"; then exit 1; fi
+      - name: Linux Agent Browser engine over a pipe, sandboxed and gateway-mediated (synthetic loopback)
+        id: agent-browser-engine
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.agent-browser-shell.outcome == 'success' }}
+        timeout-minutes: 30
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          LUCKYRAY_AGENT_BROWSER_TEST_SHELL: ${{ runner.temp }}/luckyray-linux-runtime-work/agent-browser-shell/chrome-headless-shell-linux64/chrome-headless-shell
+        run: |
+          set -euo pipefail
+          # Each name runs with --exact: a renamed or missing test shrinks the count.
+          timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- --exact --test-threads=1 \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_arguments_are_pipe_only_and_cdp_frames_are_bounded \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_blocks_private_targets_unmediated_channels_and_popups \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_follows_gateway_redirects_once_and_denies_unpermitted_navigation \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_refuses_a_shell_or_profile_that_does_not_match \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_sandbox_check_refuses_unsandboxed_or_missing_renderers \
+            | tee "$WORK_ROOT/private/t55-agent-browser-engine.log"
+          grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t55-agent-browser-engine.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -538,6 +587,8 @@ jobs:
           CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}
           CI_MEDIA_LGPL_BUNDLE: ${{ steps.media-lgpl-bundle.outcome }}
           CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}
+          CI_AGENT_BROWSER_SHELL: ${{ steps.agent-browser-shell.outcome }}
+          CI_AGENT_BROWSER_ENGINE: ${{ steps.agent-browser-engine.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
