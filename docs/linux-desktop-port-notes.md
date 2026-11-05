@@ -326,3 +326,24 @@ loopback HLS master through the real runner and yt-dlp (`ok. 1 passed`). The
 Not covered: real (non-loopback) site extraction and downloads, CA lookup on
 non-Debian systems (OpenSSL default `/etc/ssl`), and packaging the engine into
 the deb/AppImage (S4).
+
+## 14. T52 S2 — Linux release sidecars with source-bound identities
+
+`luckyray-app/tools/linux-sidecars/sidecars.py` (Linux-only) builds
+luckyray-native-host, luckyray-cli, luckyray-mcp and luckyray-browser-host for
+x86_64-unknown-linux-gnu in release (`--locked`, stripped, HOME/source root
+remapped, `-DNDEBUG`), refuses non-x86-64-ELF output and a CLI that embeds the
+build root or HOME, and writes `luckyray-cli-x86_64-unknown-linux-gnu.identity.json`
+plus `luckyray-sidecars.origin.identity.json` in exactly the form the unchanged
+build.rs validators check. Origins are the canonical private-release config;
+Linux accepts no override. The browser host is the Agent Browser host only
+(T55 slice 3); PersonalBrowser stays unsupported.
+
+CI step `linux-sidecars` (after `media-engine`) runs the 14 offline tests,
+re-assembles the media engine (release build.rs requires it), builds, runs
+`verify`, then a release `cargo check --lib` without `LUCKYRAY_SIDECAR_PREPARE`
+must pass, and after appending one byte to the mcp sidecar both `verify` and
+build.rs must refuse. Locally checked: the unchanged build.rs accepted
+Python-written records over synthetic ELF stubs and refused the tampered one.
+Windows `prepare-native-host.ps1`, build.rs and sidecar code are untouched.
+Not yet: packaging (S4), LSH resources (S3).
