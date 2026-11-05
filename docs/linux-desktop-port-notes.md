@@ -294,3 +294,35 @@ Left for a real machine: AppArmor profile load on Ubuntu 24.04, deb and
 AppImage installs end to end, the real restricted-userns refusal, the
 AppImage squashfs owner under the trusted-directory/uid checks, and DNS
 rebinding through a real resolver (CI uses `localhost` as a stand-in).
+
+## 13. T52 S1: Linux app-owned media engine
+
+`luckyray-app/tools/linux-media-engine/engine.py` assembles
+`resources/media-engine/` in the exact shape `ExternalMediaResolver::app_owned`
+verifies: CPython 3.11.8 (python-build-standalone 20240224, the interpreter,
+`libpython3.11.so.1.0`, `lib-dynload` and the stdlib as one deterministic
+`python311.zip`, so the tree has 38 files and stays under the 512 cap and
+symlink-free), yt-dlp 2026.7.4 and yt-dlp-ejs 0.8.0 from the shared Windows
+manifest (bound by sha256), Deno 2.9.4, and `ffmpeg`/`ffprobe` only from a T51
+bundle that `bundle.py verify` accepts. Licences: the CPython build's full
+licence set (OpenSSL, SQLite, libffi, zlib, …) and `PYTHON.json`, the T51 LGPL
+licences/source offer/manifest, and the yt-dlp, yt-dlp-ejs and Deno licences.
+
+Linux ships its own runner at `tools/linux-media-engine/runner.py` (bare
+`ffmpeg`/`ffprobe` ELF names). The shared Windows
+`third_party/media-engine/runner.py` is left byte-identical to origin
+(sha256 `189408ad…`); `engine.py` pins that sha and refuses to assemble if
+either runner drifts from the documented transform (only the two Path
+constructions change). Windows prepare-media-engine.ps1 and its runtime
+manifest hash are untouched.
+
+CI `media-engine`: offline `test_engine.py` (16 tests), sha-checked fetch
+(cached), assemble, `pin`, then exactly one ignored live test
+(`media_transfer::tests::live_linux_app_owned_engine_probes_a_synthetic_loopback_hls_master`)
+that runs the production verifier with the compile-time pin and probes a
+loopback HLS master through the real runner and yt-dlp (`ok. 1 passed`). The
+`media-resolver` step now expects `30 passed; 0 failed; 1 ignored`.
+
+Not covered: real (non-loopback) site extraction and downloads, CA lookup on
+non-Debian systems (OpenSSL default `/etc/ssl`), and packaging the engine into
+the deb/AppImage (S4).
