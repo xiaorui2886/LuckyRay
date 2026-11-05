@@ -378,3 +378,24 @@ Not yet: packaging (S4), LSH resources (S3).
   requires, plus `LuckyRay-MIT-LICENSE`. No Linux copy or override exists.
 - CI step `linux-package-prepare` stages all inputs, requires acceptance, appends one byte to the
   CLI sidecar, requires refusal, then cleans up.
+
+## 17. T52 S5 — Real deb and AppImage from tauri build (CI-only)
+
+- CI step `linux-package-build` stages the same inputs as `linux-package-prepare`: the Agent
+  Browser bundle, the LSH runtime at `src-tauri/dsh`, the media engine and the release sidecars.
+  It then runs `pnpm tauri build --ci --bundles deb,appimage`. The beforeBuildCommand
+  (`prepare-tauri-build.mjs`) is the Linux gate.
+- `tools/linux-package/artifacts.py verify <bundle> <src-tauri>` requires
+  `LuckyRay_<version>_amd64.deb` and `LuckyRay_<version>_amd64.AppImage`, then extracts both. In
+  each package's `usr/lib/LuckyRay`, it compares these with the staged inputs byte-for-byte, with
+  matching executable bits:
+  - `lr-lsh/199-1/{deepseek-harness,dsh-host}`, `agent-browser`, `media-engine` and
+    `third-party-notices`;
+  - `licenses/lsh-linux` (4 records).
+  It also checks the four sidecars and the main binary in `usr/bin`, and the deb's AppArmor
+  profile. There are offline tests in `test_artifacts.py`.
+- The packages are unsigned and kept only as the CI artifact `linux-packages-ci-only` for 3 days.
+  There is no Release, feed or signing key. Signing and the update smoke come in S6, with a
+  throwaway key.
+- `APPIMAGE_EXTRACT_AND_RUN=1` lets linuxdeploy run without FUSE on the runner. This affects only
+  the build tools and changes no sandbox.
