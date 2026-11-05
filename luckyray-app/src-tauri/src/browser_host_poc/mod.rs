@@ -1346,14 +1346,18 @@ mod linux_agent_session {
         ProductionRequest, ProductionState,
     };
     use serde_json::Value;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::{mpsc, Arc};
     use std::thread::JoinHandle;
 
     /// The pinned engine, verified by sha256 before every start.
     const PIN: &str = include_str!("../../../tools/linux-agent-browser/pin.json");
-    /// Installed next to this host; never looked up on PATH.
-    const ENGINE_RELATIVE: &str = "agent-browser/chrome-headless-shell-linux64/chrome-headless-shell";
+    /// The packaged resource, relative to the prefix above this host's `bin`
+    /// directory: deb `/usr/bin/..` -> `/usr/lib/LuckyRay/agent-browser/...`
+    /// (the exact path the shipped AppArmor profile names), AppImage
+    /// `$APPDIR/usr/bin/..` likewise. Never looked up on PATH.
+    const ENGINE_RELATIVE: &str =
+        "lib/LuckyRay/agent-browser/chrome-headless-shell-linux64/chrome-headless-shell";
     /// Fixture builds only (debug + `browser-host-poc-fixture`, test mode).
     const TEST_SHELL_ENV: &str = "LUCKYRAY_AGENT_BROWSER_TEST_SHELL";
 
@@ -1385,8 +1389,15 @@ mod linux_agent_session {
             }
         }
         let current = std::env::current_exe().map_err(|_| unavailable("engine-path"))?;
-        let directory = current.parent().ok_or_else(|| unavailable("engine-path"))?;
-        Ok(directory.join(ENGINE_RELATIVE))
+        packaged_engine_path(&current)
+    }
+
+    fn packaged_engine_path(host: &Path) -> Result<PathBuf, HostFailure> {
+        let prefix = host
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| unavailable("engine-path"))?;
+        Ok(prefix.join(ENGINE_RELATIVE))
     }
 
     /// The engine is started on, and owned by, a dedicated thread that lives
