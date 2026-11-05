@@ -2318,7 +2318,8 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "cargo build --locked --bin luckyray-browser-host",
             "--features browser-host-poc-fixture",
             # exact_browser_host_path() resolves only next to the test binary; no caller-supplied path.
-            'cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-browser-host" \\',
+            'install -m 0755 "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-browser-host" \\',
+            'test "$(stat -c %h "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host")" = 1',
             '"$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"',
             "if command -v getfattr",
             "stat -c 'host mode=%a uid=%u size=%s'",
