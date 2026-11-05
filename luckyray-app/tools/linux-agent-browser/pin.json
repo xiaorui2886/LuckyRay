@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "note": "T55 Agent Browser engine for Linux. Re-pin and release on every Chromium security update. CI downloads it for synthetic loopback tests only; not shipped from CI.",
+  "note": "T55 Agent Browser engine for Linux. Re-pin and release on every Chromium security update. Packaged into the deb and AppImage at usr/lib/LuckyRay/agent-browser/ only through shell.py stage and scripts/linux/check-agent-browser-bundle.mjs; CI never uploads it.",
   "name": "chrome-headless-shell",
   "channel": "Stable",
   "version": "157.0.8103.38",
@@ -11,5 +11,9 @@
   "sha256": "deafffa74660b34853a4119c361fd427ac8c9fcb62db51ddb8a797cd83a4ba2d",
   "executable": "chrome-headless-shell-linux64/chrome-headless-shell",
   "executableSha256": "8e48f6ba1eefe1d41a143daa07115d099572a6239107808966af9143c59186d2",
-  "licenseFiles": ["chrome-headless-shell-linux64/LICENSE.headless_shell", "chrome-headless-shell-linux64/ABOUT"]
+  "licenseFiles": ["chrome-headless-shell-linux64/LICENSE.headless_shell", "chrome-headless-shell-linux64/ABOUT"],
+  "bundleSha256": "75b4da3f4c29ba079d1bc3f8c7ef65d129c292d9e5d1d4d8ef4995c0dd6bc41e",
+  "bundleFileCount": 287,
+  "installPath": "/usr/lib/LuckyRay/agent-browser",
+  "appArmorProfile": "src-tauri/linux/apparmor/luckyray-agent-browser"
 }

@@ -4,6 +4,13 @@
     shell.py fetch <archive>      download pin.json's url, check size + sha256
     shell.py unpack <archive> <dir>  check the archive again, unpack, check the executable
     shell.py verify <dir>         re-check the unpacked executable and licence files
+    shell.py stage <archive> <dir>   unpack into a fresh <dir> and check the whole-bundle digest
+    shell.py bundle-digest <dir>  print the whole-bundle digest and file count
+
+The bundle digest is the sha256 of the sorted manifest lines
+"<sha256>  <mode>  <path>\n" over every regular file (mode 755 or 644, paths
+relative to <dir>). Symlinks, special files and other modes are refused.
+scripts/linux/check-agent-browser-bundle.mjs computes the same digest.
 
 Prints only the pinned version and hashes, never environment or paths of the
 user. Exits non-zero on any mismatch.
@@ -77,8 +84,48 @@ def verify(target):
     print(f"chrome-headless-shell {PIN['version']} archive-sha256={PIN['sha256']} executable-sha256={PIN['executableSha256']}")
 
 
+def bundle_manifest(target):
+    root = pathlib.Path(target)
+    lines = []
+    for current, directories, files in os.walk(root):
+        for name in sorted(directories + files):
+            path = pathlib.Path(current) / name
+            info = path.lstat()
+            if stat.S_ISDIR(info.st_mode):
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                sys.exit("bundle entry is not a regular file")
+            mode = stat.S_IMODE(info.st_mode)
+            if mode not in (0o755, 0o644):
+                sys.exit("bundle file mode refused")
+            lines.append(f"{sha256(path)}  {mode:o}  {path.relative_to(root).as_posix()}\n")
+    lines.sort()
+    return lines
+
+
+def bundle_digest(target, quiet=False):
+    lines = bundle_manifest(target)
+    digest = hashlib.sha256("".join(lines).encode()).hexdigest()
+    if not quiet:
+        print(f"bundle-sha256={digest} files={len(lines)}")
+    return digest, len(lines)
+
+
+def stage(archive, target):
+    unpack(archive, target)
+    if bundle_digest(target, quiet=True) != (PIN["bundleSha256"], PIN["bundleFileCount"]):
+        sys.exit("pinned bundle mismatch")
+    print(f"bundle-sha256={PIN['bundleSha256']} files={PIN['bundleFileCount']}")
+
+
 if __name__ == "__main__":
-    commands = {"fetch": (fetch, 1), "unpack": (unpack, 2), "verify": (verify, 1)}
+    commands = {
+        "fetch": (fetch, 1),
+        "unpack": (unpack, 2),
+        "verify": (verify, 1),
+        "stage": (stage, 2),
+        "bundle-digest": (bundle_digest, 1),
+    }
     if len(sys.argv) < 2 or sys.argv[1] not in commands or len(sys.argv) != commands[sys.argv[1]][1] + 2:
         sys.exit(__doc__)
     commands[sys.argv[1]][0](*sys.argv[2:])
