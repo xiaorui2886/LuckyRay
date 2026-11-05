@@ -39,7 +39,8 @@ STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENC
          "COMPANION_PAIRING", "MEDIA_PREVIEW", "MEDIA_RESOLVER",
          "MEDIA_PLAYER", "MEDIA_LGPL_BUNDLE", "PORT_FIXTURES", "AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE", "AGENT_BROWSER_RUNTIME",
          "AGENT_BROWSER_BUNDLE", "MEDIA_ENGINE", "LINUX_SIDECARS",
-         "LINUX_LSH_PACKAGE", "LINUX_PACKAGE_PREPARE")
+         "LINUX_LSH_PACKAGE", "LINUX_PACKAGE_PREPARE",
+         "LINUX_PACKAGE_BUILD")
 EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "nativeMessaging.json", "result.json")
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",

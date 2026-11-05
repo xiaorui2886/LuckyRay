@@ -769,6 +769,43 @@ jobs:
           grep -q "Sidecars: linux sidecars refused" "$WORK_ROOT/private/t52-s4-refused.log"
           rm -rf "$lgpl" "$app/media-engine" "$app/agent-browser" "$app/dsh"
           find "$app/binaries" -mindepth 1 ! -name .gitignore -delete
+      - name: Build the deb and AppImage with tauri build and verify every packaged release input
+        id: linux-package-build
+        # T52 S5: the real `tauri build` from the same staged set as linux-package-prepare;
+        # its beforeBuildCommand is the Linux gate, and artifacts.py compares both packages
+        # byte-for-byte with the staged inputs. Packages are CI-only artifacts (no Release).
+        if: ${{ !cancelled() && steps.linux-package-prepare.outcome == 'success' }}
+        timeout-minutes: 90
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/release-target
+          GH_ARTIFACT_DIR: ${{ runner.temp }}/lgpl-bundle-artifact
+          PACKAGES: ${{ runner.temp }}/luckyray-linux-packages
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          set -euo pipefail
+          app=luckyray-app/src-tauri
+          tool=luckyray-app/tools/linux-package
+          lgpl="$WORK_ROOT/private/t52-s5-lgpl-bundle"
+          bundle="$CARGO_TARGET_DIR/release/bundle"
+          python3 "$tool/test_artifacts.py"
+          rm -rf "$app/dsh" "$app/agent-browser" "$app/media-engine" "$lgpl" "$bundle" "$PACKAGES"
+          mkdir -p "$lgpl" "$PACKAGES"
+          python3 luckyray-app/tools/linux-agent-browser/shell.py stage \
+            "$RUNNER_TEMP/chrome-headless-shell-linux64.zip" "$app/agent-browser"
+          node luckyray-app/scripts/linux/stage-lsh-package.mjs "$WORK_ROOT/runtime" > "$WORK_ROOT/private/t52-s5-lsh.json"
+          tar -C "$lgpl" -xf "$GH_ARTIFACT_DIR/lgpl-media-bundle.tar"
+          python3 luckyray-app/tools/linux-media-engine/engine.py assemble \
+            "$RUNNER_TEMP/linux-media-engine-downloads" "$lgpl" "$app/media-engine"
+          timeout 2400 rustup run 1.95.0 python3 luckyray-app/tools/linux-sidecars/sidecars.py build \
+            "$app" "$app/binaries" > "$WORK_ROOT/private/t52-s5-sidecars.json"
+          (cd luckyray-app && timeout 4200 rustup run 1.95.0 pnpm tauri build --ci --bundles deb,appimage) \
+            > "$WORK_ROOT/private/t52-s5-tauri-build.log" 2>&1
+          python3 "$tool/artifacts.py" verify "$bundle" "$app" | tee "$WORK_ROOT/private/t52-s5-artifacts.json"
+          cp "$bundle"/deb/LuckyRay_*_amd64.deb "$bundle"/appimage/LuckyRay_*_amd64.AppImage "$PACKAGES/"
+          test "$(find "$PACKAGES" -type f | wc -l)" = 2
+          rm -rf "$app/dsh" "$app/agent-browser" "$app/media-engine" "$lgpl"
+          find "$app/binaries" -mindepth 1 ! -name .gitignore -delete
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -803,6 +840,7 @@ jobs:
           CI_LINUX_SIDECARS: ${{ steps.linux-sidecars.outcome }}
           CI_LINUX_LSH_PACKAGE: ${{ steps.linux-lsh-package.outcome }}
           CI_LINUX_PACKAGE_PREPARE: ${{ steps.linux-package-prepare.outcome }}
+          CI_LINUX_PACKAGE_BUILD: ${{ steps.linux-package-build.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
@@ -818,3 +856,15 @@ jobs:
             ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/notes.json
             ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/nativeMessaging.json
             ${{ runner.temp }}/luckyray-linux-runtime-work/evidence/result.json
+      - name: Retain the unsigned Linux deb and AppImage as short-lived CI artifacts only
+        # T52 S5: no Release, no feed, no signature; three-day retention.
+        if: ${{ !cancelled() && steps.linux-package-build.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-packages-ci-only
+          retention-days: 3
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            ${{ runner.temp }}/luckyray-linux-packages/LuckyRay_*_amd64.deb
+            ${{ runner.temp }}/luckyray-linux-packages/LuckyRay_*_amd64.AppImage
