@@ -583,8 +583,9 @@ jobs:
           # Diagnostic: which exact precondition rejects the sidecar (product rules unchanged).
           host="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"
           stat -c 'host mode=%a uid=%u size=%s' "$host"
-          getfattr -d -m - "$host" || true
-          ls -ld "$TMPDIR" "$TMPDIR/LuckyRay" "$TMPDIR/LuckyRay/AgentBrowser" "$TMPDIR/LuckyRay/AgentBrowser/v1" 2>/dev/null || true
+          if command -v getfattr >/dev/null; then getfattr -d -m - "$host"; fi
+          ls -l -Z "$host" 2>/dev/null || ls -l "$host"
+          ls -ld "${TMPDIR:-/tmp}" "${TMPDIR:-/tmp}/LuckyRay" "${TMPDIR:-/tmp}/LuckyRay/AgentBrowser" "${TMPDIR:-/tmp}/LuckyRay/AgentBrowser/v1" 2>/dev/null || true
           # Each name runs with --exact: a renamed or missing test shrinks the count.
           timeout 900 rustup run 1.95.0 cargo test --locked --lib \
             --features browser-host-poc-fixture \
