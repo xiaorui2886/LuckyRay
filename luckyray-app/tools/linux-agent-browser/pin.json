@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "note": "T55 Agent Browser engine for Linux. Re-pin and release on every Chromium security update. CI downloads it for synthetic loopback tests only; not shipped from CI.",
+  "name": "chrome-headless-shell",
+  "channel": "Stable",
+  "version": "157.0.8103.38",
+  "platform": "linux64",
+  "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux64/chrome-headless-shell-linux64.zip",
+  "fileName": "chrome-headless-shell-linux64.zip",
+  "size": 128168542,
+  "sha256": "deafffa74660b34853a4119c361fd427ac8c9fcb62db51ddb8a797cd83a4ba2d",
+  "executable": "chrome-headless-shell-linux64/chrome-headless-shell",
+  "executableSha256": "8e48f6ba1eefe1d41a143daa07115d099572a6239107808966af9143c59186d2",
+  "licenseFiles": ["chrome-headless-shell-linux64/LICENSE.headless_shell", "chrome-headless-shell-linux64/ABOUT"]
+}
