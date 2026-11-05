@@ -478,10 +478,6 @@ jobs:
           TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
         run: |
           set -euo pipefail
-          # The product resolves the host strictly next to the test binary (debug/deps/).
-          # Stage the real just-built sidecar there; no test or caller may supply its own path.
-          cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-browser-host" \
-            "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"
           # Each name runs with --exact: a renamed or missing test shrinks the count.
           timeout 900 rustup run 1.95.0 cargo test --locked --lib \
             --target x86_64-unknown-linux-gnu \
@@ -584,6 +580,11 @@ jobs:
           # Stage the real just-built sidecar there; no test or caller may supply its own path.
           cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-browser-host" \
             "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"
+          # Diagnostic: which exact precondition rejects the sidecar (product rules unchanged).
+          host="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"
+          stat -c 'host mode=%a uid=%u size=%s' "$host"
+          getfattr -d -m - "$host" || true
+          ls -ld "$TMPDIR" "$TMPDIR/LuckyRay" "$TMPDIR/LuckyRay/AgentBrowser" "$TMPDIR/LuckyRay/AgentBrowser/v1" 2>/dev/null || true
           # Each name runs with --exact: a renamed or missing test shrinks the count.
           timeout 900 rustup run 1.95.0 cargo test --locked --lib \
             --features browser-host-poc-fixture \

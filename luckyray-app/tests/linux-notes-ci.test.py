@@ -2320,6 +2320,8 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             # exact_browser_host_path() resolves only next to the test binary; no caller-supplied path.
             'cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/luckyray-browser-host" \\',
             '"$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"',
+            "getfattr -d -m - \"$host\"",
+            "stat -c 'host mode=%a uid=%u size=%s'",
             "cargo test --locked --lib",
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
