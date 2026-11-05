@@ -598,7 +598,7 @@ jobs:
             --features browser-host-poc-fixture \
             --target x86_64-unknown-linux-gnu \
             --manifest-path luckyray-app/src-tauri/Cargo.toml \
-            -- --exact --test-threads=1 \
+            -- --exact --test-threads=1 --nocapture \
             dsh_resource_broker::tests::dsh_search_drives_the_isolated_agent_browser_and_generation_cleanup \
             agent_browser::runtime::tests::linux_agent_host_refuses_a_host_that_is_not_an_executable_sidecar \
             agent_browser::runtime::tests::linux_agent_host_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway \

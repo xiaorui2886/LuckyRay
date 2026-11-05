@@ -2176,7 +2176,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                          '"$bundle/media-engine/ffmpeg/ffprobe"', "timeout 900", "timeout-minutes: 30"):
             self.assertIn(required, step, required)
         self.assertEqual(step.count('grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored;'), 2)
-        for forbidden in ("echo", "apt", "set -x", "pkill", "OVERRIDE", "src-tauri/media-engine",
+        for forbidden in ("echo", "apt ", "apt-", "set -x", "pkill", "OVERRIDE", "src-tauri/media-engine",
                           "/usr/lib/x86_64-linux-gnu/libmpv", "--include-ignored"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_LGPL_BUNDLE: ${{ steps.media-lgpl-bundle.outcome }}", text)
@@ -2234,7 +2234,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         ):
             self.assertIn(required, step, required)
         self.assertEqual(step.count("::tests::") + step.count("material_change_tests::") + step.count("::attachment_tests::"), 26)
-        for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt", "curl", "secrets."):
+        for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}", text)
         self.assertEqual(ci.STEPS[-4], "PORT_FIXTURES")
@@ -2283,7 +2283,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         ):
             self.assertIn(required, step, required)
         self.assertEqual(step.count("::engine::tests::"), 6)
-        for forbidden in ("--include-ignored", "--ignored", "--skip", "set -x", "pkill", "echo", "apt", "curl",
+        for forbidden in ("--include-ignored", "--ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl",
                           "secrets.", "--no-sandbox", "remote-debugging-port"):
             self.assertNotIn(forbidden, step + shell_step, forbidden)
         self.assertIn("CI_AGENT_BROWSER_SHELL: ${{ steps.agent-browser-shell.outcome }}", text)
@@ -2327,7 +2327,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "cargo test --locked --lib",
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
-            "-- --exact --test-threads=1 \\",
+            "-- --exact --test-threads=1 --nocapture \\",
             'grep -qx "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured;',
             "steps.agent-browser-shell.outcome == 'success'",
             "LUCKYRAY_AGENT_BROWSER_TEST_SHELL: ${{ runner.temp }}/luckyray-linux-runtime-work/agent-browser-shell/chrome-headless-shell-linux64/chrome-headless-shell",
@@ -2335,7 +2335,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         ):
             self.assertIn(required, step, required)
         self.assertEqual(step.count("::tests::"), 4)
-        for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt", "curl", "secrets."):
+        for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}", text)
         self.assertEqual(ci.STEPS[-1], "AGENT_BROWSER_RUNTIME")
@@ -2367,7 +2367,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         ):
             self.assertIn(required, step, required)
         for forbidden in ("steps.media-preview.outcome", "steps.media-resolver.outcome",
-                          "set -x", "pkill", "echo", "apt", "src-tauri/media-engine"):
+                          "set -x", "pkill", "echo", "apt ", "apt-", "src-tauri/media-engine"):
             self.assertNotIn(forbidden, step, forbidden)
         deps = text[text.index("        id: dependencies"):text.index("        id: rust")]
         self.assertIn("sudo apt-get install -y --no-install-recommends libmpv1=0.34.1-1ubuntu3", deps)
@@ -2422,7 +2422,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         ):
             self.assertIn(required, step, required)
         for forbidden in ("steps.media-preview.outcome", "steps.companion-pairing.outcome",
-                          "--ignored", "set -x", "pkill", "echo", "apt", "src-tauri/media-engine"):
+                          "--ignored", "set -x", "pkill", "echo", "apt ", "apt-", "src-tauri/media-engine"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}", text)
         self.assertEqual(ci.STEPS[-8:-6], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))

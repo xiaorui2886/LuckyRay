@@ -267,7 +267,11 @@ pub(crate) fn spawn_in_owned_job(
             stderr,
         })
     };
-    run().map_err(|_| OwnedProcessError)
+    run().map_err(|error| {
+        #[cfg(test)]
+        eprintln!("agent-host-trace: launcher io error {error:?}");
+        OwnedProcessError
+    })
 }
 
 #[cfg(test)]

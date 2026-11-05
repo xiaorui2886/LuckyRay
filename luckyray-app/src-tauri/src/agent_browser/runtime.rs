@@ -730,6 +730,8 @@ impl AgentHost {
         gateway_mode: GatewayMode,
         surface: Option<&AgentBrowserSurface>,
     ) -> Result<Self, AgentBrowserError> {
+        #[cfg(test)]
+        eprintln!("agent-host-trace: path={host_path:?} absolute={} file={}", host_path.is_absolute(), host_path.is_file());
         if !host_path.is_absolute() || !host_path.is_file() {
             return Err(AgentBrowserError::new("agent-browser-unavailable"));
         }
@@ -739,8 +741,12 @@ impl AgentHost {
             GatewayMode::ExactLoopback(origin) => GatewayPolicy::exact_loopback_for_fixture(origin),
         };
         let gateway = ValidatingGateway::start(gateway_policy)
-            .map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
-        let profile = create_profile_root()?;
+            .map_err(|error| { #[cfg(test)] eprintln!("agent-host-trace: gateway={error}"); AgentBrowserError::new("agent-browser-unavailable") })?;
+        #[cfg(test)]
+        eprintln!("agent-host-trace: gateway-ok");
+        let profile = create_profile_root().map_err(|error| { #[cfg(test)] eprintln!("agent-host-trace: profile={error:?}"); error })?;
+        #[cfg(test)]
+        eprintln!("agent-host-trace: profile-ok {profile:?}");
         let child_temp = std::env::temp_dir()
             .canonicalize()
             .map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
@@ -786,7 +792,9 @@ impl AgentHost {
             stderr,
             job,
         } = spawn_in_owned_job(host_path, &launch_args, current_dir, environment, false)
-            .map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
+            .map_err(|error| { #[cfg(test)] eprintln!("agent-host-trace: spawn={error:?}"); AgentBrowserError::new("agent-browser-unavailable") })?;
+        #[cfg(test)]
+        eprintln!("agent-host-trace: spawned");
         let job = Arc::new(job);
         let (response_tx, responses) = mpsc::channel();
         let reader = std::thread::spawn(move || {
