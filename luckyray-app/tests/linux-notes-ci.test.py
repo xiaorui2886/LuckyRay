@@ -2165,7 +2165,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             self.assertNotIn(forbidden, job, forbidden)
         self.assertIn("    needs: linux-media-bundle\n", text)
         start = text.index("        id: media-lgpl-bundle")
-        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        finish = text.index("      - name: Restore the cached pinned Linux media engine downloads")
         self.assertLess(text.index("        id: media-player"), start)
         self.assertLess(start, finish)
         step = text[start:finish]
@@ -2180,13 +2180,56 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "/usr/lib/x86_64-linux-gnu/libmpv", "--include-ignored"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_LGPL_BUNDLE: ${{ steps.media-lgpl-bundle.outcome }}", text)
-        self.assertEqual(ci.STEPS[-6], "MEDIA_LGPL_BUNDLE")
+        self.assertEqual(ci.STEPS[-7], "MEDIA_LGPL_BUNDLE")
         deps = (root / "luckyray-app/tools/linux-media-bundle/ci-build-deps.txt").read_text()
         for line in deps.splitlines():
             if line and not line.startswith("#"):
                 self.assertRegex(line, r"^[a-z0-9.+-]+=[0-9][^ ]*$")
         live = (root / "luckyray-app/src-tauri/src/material_native_video/lgpl_bundle_live.rs").read_text()
         self.assertIn("#[ignore", live)
+
+    def test_media_engine_step_assembles_the_pinned_engine_and_runs_the_exact_live_probe(self):
+        # T52 S1: Linux app-owned media engine from pinned downloads plus the
+        # verified T51 artifact, checked by the production app_owned verifier.
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        cache = text.index("        id: media-engine-cache")
+        start = text.index("        id: media-engine\n")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(text.index("        id: agent-browser-bundle"), cache)
+        self.assertLess(cache, start)
+        self.assertLess(start, finish)
+        cached = text[cache:start]
+        self.assertIn("uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830", cached)
+        self.assertIn("hashFiles('luckyray-app/tools/linux-media-engine/sources.json', 'luckyray-app/third_party/media-engine/manifest.json')", cached)
+        step = text[start:finish]
+        for required in (
+            "if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.linux-media-bundle.result == 'success' }}",
+            "timeout-minutes: 30", "timeout 900", "set -euo pipefail",
+            'python3 "$tool/test_engine.py"',
+            'python3 "$tool/engine.py" fetch "$downloads"',
+            'tar -C "$lgpl" -xf "$GH_ARTIFACT_DIR/lgpl-media-bundle.tar"',
+            'python3 "$tool/engine.py" assemble "$downloads" "$lgpl" "$res/media-engine"',
+            'eval "$(python3 "$tool/engine.py" pin "$res/media-engine")"',
+            '[[ "$LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]',
+            "-- --ignored --exact \\\n            media_transfer::tests::live_linux_app_owned_engine_probes_a_synthetic_loopback_hls_master",
+            'rm -rf "$lgpl" "$res"',
+        ):
+            self.assertIn(required, step, required)
+        self.assertEqual(step.count('grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored;'), 1)
+        for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl",
+                          "secrets.", "--no-sandbox", "upload-artifact", "src-tauri/media-engine", "OVERRIDE"):
+            self.assertNotIn(forbidden, step + cached, forbidden)
+        self.assertIn("CI_MEDIA_ENGINE: ${{ steps.media-engine.outcome }}", text)
+        self.assertEqual(ci.STEPS[-1], "MEDIA_ENGINE")
+        rust = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
+        live = rust[rust.index("fn live_linux_app_owned_engine_probes_a_synthetic_loopback_hls_master"):]
+        live = live[:live.index("\n    #[test]")]
+        self.assertIn("ExternalMediaResolver::app_owned(&resources)", live)
+        self.assertIn('#[ignore = "needs LUCKYRAY_LIVE_MEDIA_ENGINE_RESOURCES', rust)
+        sources = json.loads((root / "luckyray-app/tools/linux-media-engine/sources.json").read_text())
+        shared = root / "luckyray-app/third_party/media-engine/manifest.json"
+        self.assertEqual(sources["sharedManifestSha256"], hashlib.sha256(shared.read_bytes()).hexdigest())
 
     def test_port_fixtures_step_runs_exactly_the_fixed_upgrade_and_knowledge_tests(self):
         # T54: genuine old-schema fixtures plus Vault-scoped agent knowledge tests.
@@ -2237,7 +2280,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}", text)
-        self.assertEqual(ci.STEPS[-5], "PORT_FIXTURES")
+        self.assertEqual(ci.STEPS[-6], "PORT_FIXTURES")
 
     def test_agent_browser_engine_steps_pin_the_shell_and_run_exactly_seven_synthetic_tests(self):
         # T55 slice 2: pinned chrome-headless-shell (sha256, cached), pipe-only,
@@ -2247,7 +2290,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         cache = text.index("        id: agent-browser-cache")
         fetch = text.index("        id: agent-browser-shell")
         start = text.index("        id: agent-browser-engine")
-        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        finish = text.index("      - name: Restore the cached pinned Linux media engine downloads")
         self.assertLess(text.index("        id: port-fixtures"), cache)
         self.assertLess(cache, fetch)
         self.assertLess(fetch, start)
@@ -2295,7 +2338,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             self.assertNotIn(forbidden, step + shell_step, forbidden)
         self.assertIn("CI_AGENT_BROWSER_SHELL: ${{ steps.agent-browser-shell.outcome }}", text)
         self.assertIn("CI_AGENT_BROWSER_ENGINE: ${{ steps.agent-browser-engine.outcome }}", text)
-        self.assertEqual(ci.STEPS[-4:-1], ("AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE", "AGENT_BROWSER_RUNTIME"))
+        self.assertEqual(ci.STEPS[-5:-2], ("AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE", "AGENT_BROWSER_RUNTIME"))
         pin = json.loads((root / "luckyray-app/tools/linux-agent-browser/pin.json").read_text())
         self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(pin["executableSha256"], r"^[0-9a-f]{64}$")
@@ -2343,14 +2386,14 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}", text)
-        self.assertEqual(ci.STEPS[-2], "AGENT_BROWSER_RUNTIME")
+        self.assertEqual(ci.STEPS[-3], "AGENT_BROWSER_RUNTIME")
 
     def test_agent_browser_bundle_step_stages_the_pinned_bundle_and_refuses_missing_or_tampered(self):
         # T55 slice 4: deb/AppImage resources only from the verified, digest-pinned bundle.
         root = Path(__file__).resolve().parents[2]
         text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
         start = text.index("        id: agent-browser-bundle")
-        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        finish = text.index("      - name: Restore the cached pinned Linux media engine downloads")
         self.assertLess(text.index("        id: agent-browser-runtime"), start)
         step = text[start:finish]
         for required in (
@@ -2371,7 +2414,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("luckyray-app/tests/linux-agent-browser-bundle.test.mjs", text[text.index("        id: offline"):text.index("        id: frontend")])
         self.assertIn("CI_AGENT_BROWSER_BUNDLE: ${{ steps.agent-browser-bundle.outcome }}", text)
-        self.assertEqual(ci.STEPS[-1], "AGENT_BROWSER_BUNDLE")
+        self.assertEqual(ci.STEPS[-2], "AGENT_BROWSER_BUNDLE")
         pin = json.loads((root / "luckyray-app/tools/linux-agent-browser/pin.json").read_text())
         self.assertRegex(pin["bundleSha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(pin["installPath"], "/usr/lib/LuckyRay/agent-browser")
@@ -2413,7 +2456,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d  "
                       "/usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0\" | sha256sum -c -", deps)
         self.assertIn("CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}", text)
-        self.assertEqual(ci.STEPS[-7], "MEDIA_PLAYER")
+        self.assertEqual(ci.STEPS[-8], "MEDIA_PLAYER")
         source = (root / "luckyray-app/src-tauri/src/material_native_video/linux_mpv.rs").read_text()
         self.assertIn('if !self.property("mpv-configuration").contains("-Dgpl=false")', source)
         self.assertIn('"20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d"', source)
@@ -2455,7 +2498,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
             "-- media_transfer::",
-            'grep -qx "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured;',
+            'grep -qx "test result: ok. 30 passed; 0 failed; 1 ignored; 0 measured;',
             "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
             "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
         ):
@@ -2464,7 +2507,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "--ignored", "set -x", "pkill", "echo", "apt ", "apt-", "src-tauri/media-engine"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}", text)
-        self.assertEqual(ci.STEPS[-9:-7], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
+        self.assertEqual(ci.STEPS[-10:-8], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
         source = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
         both = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
         for item in ("impl MediaResolver for ExternalMediaResolver", "fn write_site_cookie_file(",

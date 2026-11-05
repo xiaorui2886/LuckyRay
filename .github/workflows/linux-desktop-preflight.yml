@@ -381,7 +381,8 @@ jobs:
             -- media_transfer:: \
             | tee "$WORK_ROOT/private/t47-media-resolver.log"
           # Exactly the media_transfer suite: an empty or shrunken filter fails.
-          grep -qx "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+          # The one ignored test is the T52 live engine probe (media-engine step).
+          grep -qx "test result: ok. 30 passed; 0 failed; 1 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t47-media-resolver.log"
       - name: Linux libmpv verified load, license gate and software render (synthetic + pinned distro)
         id: media-player
@@ -636,6 +637,50 @@ jobs:
           if node "$gate" "$tampered" 2> "$WORK_ROOT/private/t55-bundle-tampered.log"; then exit 1; fi
           grep -q "digest does not match pin.json" "$WORK_ROOT/private/t55-bundle-tampered.log"
           rm -rf "$bundle" "$tampered"
+      - name: Restore the cached pinned Linux media engine downloads
+        id: media-engine-cache
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.linux-media-bundle.result == 'success' }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/linux-media-engine-downloads
+          key: linux-media-engine-v1-${{ hashFiles('luckyray-app/tools/linux-media-engine/sources.json', 'luckyray-app/third_party/media-engine/manifest.json') }}
+      - name: Assemble the Linux app-owned media engine and probe it through the production verifier (synthetic loopback)
+        id: media-engine
+        # T52 S1: pinned CPython/yt-dlp/Deno plus the LGPL ffmpeg/ffprobe from
+        # the verified T51 artifact; app_owned is the only authority at runtime.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.linux-media-bundle.result == 'success' }}
+        timeout-minutes: 30
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          GH_ARTIFACT_DIR: ${{ runner.temp }}/lgpl-bundle-artifact
+        run: |
+          set -euo pipefail
+          tool=luckyray-app/tools/linux-media-engine
+          downloads="$RUNNER_TEMP/linux-media-engine-downloads"
+          lgpl="$WORK_ROOT/private/t52-lgpl-bundle"; res="$WORK_ROOT/private/t52-resources"
+          command -v zstd
+          python3 "$tool/test_engine.py"
+          # Every download is size+sha256 checked, cached or not.
+          python3 "$tool/engine.py" fetch "$downloads"
+          rm -rf "$lgpl" "$res"; mkdir -p "$lgpl" "$res"
+          tar -C "$lgpl" -xf "$GH_ARTIFACT_DIR/lgpl-media-bundle.tar"
+          python3 "$tool/engine.py" assemble "$downloads" "$lgpl" "$res/media-engine"
+          # The compile-time pin comes only from the verified runtime manifest.
+          eval "$(python3 "$tool/engine.py" pin "$res/media-engine")"
+          [[ "$LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256="$LUCKYRAY_MEDIA_ENGINE_MANIFEST_SHA256" \
+            LUCKYRAY_LIVE_MEDIA_ENGINE_RESOURCES="$res" \
+            timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- --ignored --exact \
+            media_transfer::tests::live_linux_app_owned_engine_probes_a_synthetic_loopback_hls_master \
+            | tee "$WORK_ROOT/private/t52-media-engine.log"
+          grep -qx "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t52-media-engine.log"
+          rm -rf "$lgpl" "$res"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -666,6 +711,7 @@ jobs:
           CI_AGENT_BROWSER_ENGINE: ${{ steps.agent-browser-engine.outcome }}
           CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}
           CI_AGENT_BROWSER_BUNDLE: ${{ steps.agent-browser-bundle.outcome }}
+          CI_MEDIA_ENGINE: ${{ steps.media-engine.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
