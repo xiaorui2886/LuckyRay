@@ -133,14 +133,78 @@ fn argument_is_forbidden(argument: &str, profile: &Path) -> bool {
     if argument == format!("--user-data-dir={}", profile.display()) {
         return false;
     }
+    // Chromium on POSIX accepts both `--switch` and `-switch`.
+    let Some(bare) = argument.strip_prefix("--").or_else(|| argument.strip_prefix('-')) else {
+        return false;
+    };
     FORBIDDEN_SWITCHES.iter().any(|switch| {
-        argument == *switch
-            || argument
-                .strip_prefix(switch)
-                .is_some_and(|rest| rest.starts_with('='))
+        let switch = switch.trim_start_matches('-');
+        bare == switch || bare.strip_prefix(switch).is_some_and(|rest| rest.starts_with('='))
     })
 }
 
+/// The engine executable, opened once without following links and checked
+/// as an object: a regular single-link ELF file owned by root or this user,
+/// with no set-id or group/other write bits and no extended attributes
+/// (file capabilities, ACLs, labels), inside a trusted directory chain. The
+/// pin is hashed from this descriptor and the engine is executed from it, so
+/// a swap of the path after the check cannot change what runs.
+struct VerifiedEngine {
+    directory: crate::linux_fs::Directory,
+    name: std::ffi::OsString,
+    file: File,
+}
+
+fn open_verified_engine(shell: &Path, expected: &str) -> Result<VerifiedEngine, HostFailure> {
+    use std::os::unix::fs::FileExt;
+    let integrity = || HostFailure::new("agent-browser-engine-integrity", "engine-integrity");
+    let (Some(parent), Some(name)) = (shell.parent(), shell.file_name()) else {
+        return Err(integrity());
+    };
+    if !shell.is_absolute()
+        || shell
+            .components()
+            .any(|part| !matches!(part, std::path::Component::RootDir | std::path::Component::Normal(_)))
+    {
+        return Err(integrity());
+    }
+    let directory = crate::linux_fs::Directory::trusted(parent).map_err(|_| integrity())?;
+    let file = directory.open_file(name, false).map_err(|_| integrity())?;
+    let metadata = file.metadata().map_err(|_| integrity())?;
+    if metadata.mode() & 0o111 == 0
+        || metadata.mode() & 0o6022 != 0
+        || ![0, unsafe { libc::geteuid() }].contains(&metadata.uid())
+    {
+        return Err(integrity());
+    }
+    crate::linux_fs::no_attributes(&file).map_err(|_| integrity())?;
+    let mut header = [0u8; 4];
+    file.read_exact_at(&mut header, 0).map_err(|_| integrity())?;
+    if header != *b"\x7fELF" {
+        return Err(integrity());
+    }
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1 << 16];
+    let mut offset = 0u64;
+    loop {
+        let read = file.read_at(&mut buffer, offset).map_err(|_| integrity())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        offset += read as u64;
+    }
+    if expected.len() != 64 || format!("{:x}", hasher.finalize()) != expected {
+        return Err(integrity());
+    }
+    Ok(VerifiedEngine {
+        directory,
+        name: name.to_owned(),
+        file,
+    })
+}
+
+#[cfg(test)]
 fn sha256_file(path: &Path) -> Result<String, HostFailure> {
     let mut file = File::open(path)
         .map_err(|_| HostFailure::new("agent-browser-engine-unavailable", "engine-integrity"))?;
@@ -165,6 +229,15 @@ fn prepare_profile(requested: &Path) -> Result<PathBuf, HostFailure> {
     if !requested.is_absolute() {
         return Err(failure());
     }
+    // No `.`/`..` or symlinked component anywhere on the way: the walk opens
+    // every ancestor with O_NOFOLLOW and refuses one another user can write.
+    if requested
+        .components()
+        .any(|part| !matches!(part, std::path::Component::RootDir | std::path::Component::Normal(_)))
+    {
+        return Err(failure());
+    }
+    crate::linux_fs::Directory::private(requested, false).map_err(|_| failure())?;
     let metadata = fs::symlink_metadata(requested).map_err(|_| failure())?;
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
@@ -289,6 +362,11 @@ impl<R: Read> FrameReader<R> {
     pub(crate) fn next_frame(&mut self) -> Result<Option<Vec<u8>>, ()> {
         loop {
             if let Some(position) = self.buffer.iter().position(|byte| *byte == 0) {
+                // A frame over the cap is refused even when its terminator
+                // arrived in the same read.
+                if position > MAX_CDP_MESSAGE_BYTES {
+                    return Err(());
+                }
                 let frame: Vec<u8> = self.buffer.drain(..=position).collect();
                 return Ok(Some(frame[..frame.len() - 1].to_vec()));
             }
@@ -467,8 +545,15 @@ impl Shared {
                 .unwrap_or_else(|error| error.into_inner())
                 .contains(frame)
         });
+        // Service worker scripts (Chromium marks them `Service-Worker:
+        // script`) are refused, so no worker can be registered (design §5).
+        let service_worker_script = params
+            .pointer("/request/headers")
+            .and_then(Value::as_object)
+            .is_some_and(|headers| headers.keys().any(|name| name.eq_ignore_ascii_case("service-worker")));
         if !self.active.load(Ordering::Acquire)
             || from_popup
+            || service_worker_script
             || !matches!(method.as_str(), "GET" | "HEAD")
             || self.in_flight.load(Ordering::Acquire) >= MAX_PENDING_AGENT_RESOURCES
         {
@@ -713,9 +798,11 @@ impl LinuxAgentEngine {
             return Err(HostFailure::new("agent-browser-gateway-unavailable", "engine-config"));
         }
         let expected = config.expected_sha256.to_ascii_lowercase();
-        if expected.len() != 64 || sha256_file(&config.shell)? != expected {
-            return Err(HostFailure::new("agent-browser-engine-integrity", "engine-integrity"));
-        }
+        let verified = open_verified_engine(&config.shell, &expected)?;
+        // Above 4, so the child's dup2 onto 3/4 cannot replace the image.
+        let image = high_fd(&OwnedFd::from(verified.file.try_clone().map_err(|_| {
+            HostFailure::new("agent-browser-engine-integrity", "engine-integrity")
+        })?))?;
         let profile = prepare_profile(&config.profile_root)?;
         let arguments = engine_arguments(&profile.join("chrome"), config.gateway_address.port());
         if arguments
@@ -735,8 +822,9 @@ impl LinuxAgentEngine {
         let child_in_raw = child_in.as_raw_fd();
         let child_out_raw = child_out.as_raw_fd();
 
-        let mut command = Command::new(&config.shell);
+        let mut command = Command::new(format!("/proc/self/fd/{}", image.as_raw_fd()));
         command
+            .arg0(&config.shell)
             .args(&arguments)
             .env_clear()
             .env("HOME", profile.join("home"))
@@ -766,7 +854,15 @@ impl LinuxAgentEngine {
             .map_err(|_| HostFailure::new("agent-browser-engine-unavailable", "engine-spawn"))?;
         drop(child_in);
         drop(child_out);
+        drop(image);
         let browser_pid = child.id();
+        // The name must still be the object that was hashed and executed.
+        if verified.directory.verify_named(&verified.name, &verified.file).is_err() {
+            let mut child = child;
+            unsafe { libc::kill(-(browser_pid as i32), libc::SIGKILL) };
+            let _ = child.wait();
+            return Err(HostFailure::new("agent-browser-engine-integrity", "engine-integrity"));
+        }
 
         let alive = Arc::new(AtomicBool::new(true));
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
@@ -1246,6 +1342,14 @@ fn dispatch(shared: &Arc<Shared>, jobs: &mpsc::Sender<Paused>, message: Value) {
                             .call("Target.closeTarget", json!({"targetId": target_id}), None);
                         return;
                     }
+                    Some("service_worker") => {
+                        // Defence in depth: a worker that somehow started is
+                        // closed before it runs.
+                        let _ = worker
+                            .cdp
+                            .call("Target.closeTarget", json!({"targetId": target_id}), None);
+                        return;
+                    }
                     Some("iframe") => {
                         if prepare_document_session(&worker, &child_session).is_err() {
                             let _ = worker
@@ -1382,7 +1486,10 @@ mod tests {
 
     impl Fixture {
         fn start(routes: HashMap<&'static str, Route>) -> Self {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            Self::serve_on(TcpListener::bind("127.0.0.1:0").unwrap(), routes)
+        }
+
+        fn serve_on(listener: TcpListener, routes: HashMap<&'static str, Route>) -> Self {
             let address = listener.local_addr().unwrap();
             let hits = Arc::new(Mutex::new(Vec::new()));
             let connections = Arc::new(AtomicUsize::new(0));
@@ -1672,7 +1779,17 @@ mod tests {
         assert!(LinuxAgentEngine::start(config(profile.clone(), "00".repeat(32))).is_err());
         assert!(!marker.exists());
 
-        // Right hash, bad profiles: refused before spawn as well.
+        // Right hash, bad profiles: refused before spawn as well. The engine
+        // must be an ELF image now, so a synthetic stand-in is used here.
+        let fake_shell = synthetic_engine(root.path(), "stand-in", 0o700);
+        let config = |profile: PathBuf, sha: String| EngineConfig {
+            shell: fake_shell.clone(),
+            expected_sha256: sha,
+            profile_root: profile,
+            gateway_address: "127.0.0.1:9".parse().unwrap(),
+            gateway_token: "synthetic-token".to_owned(),
+            test_fixture_port: None,
+        };
         let real_sha = sha256_file(&fake_shell).unwrap();
         fs::write(profile.join("stale"), b"x").unwrap();
         let failure = LinuxAgentEngine::start(config(profile.clone(), real_sha.clone())).err().unwrap();
@@ -1781,5 +1898,342 @@ mod tests {
         assert!(frames.next_frame().is_err());
         assert_eq!(MAX_PENDING_AGENT_RESOURCES, 128);
         assert_eq!(AGENT_RESOURCE_DEADLINE, Duration::from_secs(18));
+    }
+
+    // ------------------------------------------------------------ attacks
+    // T55 slice 5: every case below must be refused (fail closed) with the
+    // production checks unchanged. Synthetic data only.
+
+    /// A small ELF image standing in for the engine; it is never started by
+    /// these tests because every case is refused before spawn.
+    fn synthetic_engine(directory: &Path, name: &str, mode: u32) -> PathBuf {
+        let path = directory.join(name);
+        fs::copy("/bin/true", &path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        path
+    }
+
+    fn set_synthetic_xattr(path: &Path) {
+        let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        let rc = unsafe {
+            libc::setxattr(
+                name.as_ptr(),
+                c"user.luckyray-synthetic".as_ptr(),
+                b"1".as_ptr().cast(),
+                1,
+                0,
+            )
+        };
+        assert_eq!(rc, 0, "the test filesystem must support user xattrs");
+    }
+
+    fn private_dir(path: &Path) -> PathBuf {
+        fs::create_dir_all(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        path.to_owned()
+    }
+
+    fn start_code(shell: &Path, sha: &str, profile: PathBuf) -> &'static str {
+        match LinuxAgentEngine::start(EngineConfig {
+            shell: shell.to_owned(),
+            expected_sha256: sha.to_owned(),
+            profile_root: profile,
+            gateway_address: "127.0.0.1:9".parse().unwrap(),
+            gateway_token: "synthetic-token".to_owned(),
+            test_fixture_port: None,
+        }) {
+            Ok(_) => "started",
+            Err(failure) => failure.code,
+        }
+    }
+
+    #[test]
+    fn linux_engine_attack_refuses_a_swapped_linked_writable_or_attributed_engine() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = private_dir(&root.path().join("bin"));
+        let good = synthetic_engine(&bin, "chrome-headless-shell", 0o755);
+        let sha = sha256_file(&good).unwrap();
+        // A profile that is not empty: the integrity checks run first, so a
+        // passing engine reaches the profile check and stops there.
+        let stale = private_dir(&root.path().join("stale"));
+        fs::write(stale.join("x"), b"x").unwrap();
+        let bad_profile = || stale.clone();
+        assert_eq!(start_code(&good, &sha, bad_profile()), "agent-browser-profile-invalid");
+
+        let integrity = "agent-browser-engine-integrity";
+        // Symlink to the pinned image.
+        let link = bin.join("link");
+        std::os::unix::fs::symlink(&good, &link).unwrap();
+        assert_eq!(start_code(&link, &sha, bad_profile()), integrity);
+        // Symlinked directory on the way.
+        let dir_link = root.path().join("bin-link");
+        std::os::unix::fs::symlink(&bin, &dir_link).unwrap();
+        assert_eq!(start_code(&dir_link.join("chrome-headless-shell"), &sha, bad_profile()), integrity);
+        // `..` in the path.
+        assert_eq!(
+            start_code(&bin.join("..").join("bin").join("chrome-headless-shell"), &sha, bad_profile()),
+            integrity
+        );
+        // Hard link: both names refused while nlink > 1.
+        let hard = bin.join("hard");
+        fs::hard_link(&good, &hard).unwrap();
+        assert_eq!(start_code(&hard, &sha, bad_profile()), integrity);
+        assert_eq!(start_code(&good, &sha, bad_profile()), integrity);
+        fs::remove_file(&hard).unwrap();
+        assert_eq!(start_code(&good, &sha, bad_profile()), "agent-browser-profile-invalid");
+        // Group/other-writable, set-id or non-executable image.
+        for mode in [0o775, 0o757, 0o4755, 0o2755, 0o644] {
+            fs::set_permissions(&good, fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(start_code(&good, &sha, bad_profile()), integrity, "{mode:o}");
+        }
+        fs::set_permissions(&good, fs::Permissions::from_mode(0o755)).unwrap();
+        // Group-writable directory holding the image.
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o775)).unwrap();
+        assert_eq!(start_code(&good, &sha, bad_profile()), integrity);
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o700)).unwrap();
+        // Extended attribute on the image (file capabilities, labels, ACLs).
+        let attributed = synthetic_engine(&bin, "attributed", 0o755);
+        set_synthetic_xattr(&attributed);
+        assert_eq!(start_code(&attributed, &sha, bad_profile()), integrity);
+        // A swapped image (another binary renamed over the name) fails the pin.
+        let other = bin.join("other");
+        fs::write(&other, b"\x7fELF synthetic swapped image").unwrap();
+        fs::set_permissions(&other, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::rename(&other, &good).unwrap();
+        assert_eq!(start_code(&good, &sha, bad_profile()), integrity);
+        // Swapped after the check: the name no longer is the verified object.
+        let fresh = synthetic_engine(&bin, "fresh", 0o755);
+        let fresh_sha = sha256_file(&fresh).unwrap();
+        let verified = open_verified_engine(&fresh, &fresh_sha).expect("baseline verifies");
+        assert!(verified.directory.verify_named(&verified.name, &verified.file).is_ok());
+        let replacement = synthetic_engine(&bin, "replacement", 0o755);
+        fs::rename(&replacement, &fresh).unwrap();
+        assert!(verified.directory.verify_named(&verified.name, &verified.file).is_err());
+        // Missing engine.
+        assert_eq!(start_code(&bin.join("missing"), &sha, bad_profile()), integrity);
+        assert!(fs::read_dir(&stale).unwrap().count() == 1);
+    }
+
+    #[test]
+    fn linux_engine_attack_profile_path_escapes_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = private_dir(&root.path().join("bin"));
+        let engine = synthetic_engine(&bin, "chrome-headless-shell", 0o755);
+        let sha = sha256_file(&engine).unwrap();
+        let invalid = "agent-browser-profile-invalid";
+        let target = private_dir(&root.path().join("target"));
+        // `..` and `.` components, even when they resolve to a valid empty dir.
+        let base = private_dir(&root.path().join("base"));
+        assert_eq!(start_code(&engine, &sha, base.join("..").join("target")), invalid);
+        assert_eq!(start_code(&engine, &sha, base.join(".").join("..").join("target")), invalid);
+        // A symlinked ancestor.
+        let real_parent = private_dir(&root.path().join("real-parent"));
+        let escaped = private_dir(&real_parent.join("profile"));
+        let parent_link = root.path().join("parent-link");
+        std::os::unix::fs::symlink(&real_parent, &parent_link).unwrap();
+        assert_eq!(start_code(&engine, &sha, parent_link.join("profile")), invalid);
+        // A group-writable ancestor.
+        let shared = private_dir(&root.path().join("shared"));
+        let under_shared = private_dir(&shared.join("profile"));
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o770)).unwrap();
+        assert_eq!(start_code(&engine, &sha, under_shared.clone()), invalid);
+        // An attributed profile directory.
+        let attributed = private_dir(&root.path().join("attributed"));
+        set_synthetic_xattr(&attributed);
+        assert_eq!(start_code(&engine, &sha, attributed.clone()), invalid);
+        // Relative and missing.
+        assert_eq!(start_code(&engine, &sha, PathBuf::from("profile")), invalid);
+        assert_eq!(start_code(&engine, &sha, root.path().join("missing")), invalid);
+        // Nothing was created in any target.
+        for directory in [&target, &escaped, &under_shared, &attributed] {
+            assert!(fs::read_dir(directory).unwrap().next().is_none(), "{}", directory.display());
+        }
+    }
+
+    #[test]
+    fn linux_engine_attack_switch_injection_is_refused_and_absent_from_the_running_tree() {
+        let profile = Path::new("/tmp/LuckyRay/AgentBrowser/v1/synthetic/chrome");
+        for injected in [
+            "--no-sandbox",
+            "-no-sandbox",
+            "--no-sandbox=1",
+            "--remote-debugging-port=9222",
+            "-remote-debugging-port=0",
+            "--remote-debugging-address=0.0.0.0",
+            "--remote-allow-origins=*",
+            "--disable-web-security",
+            "--single-process",
+            "--no-zygote",
+            "--user-data-dir=/tmp/LuckyRay/AgentBrowser/v1/synthetic/chrome/../other",
+            "-user-data-dir=/tmp/other",
+            "--load-extension=/tmp/synthetic",
+        ] {
+            assert!(argument_is_forbidden(injected, profile), "{injected}");
+        }
+        for allowed in ["--remote-debugging-pipe", "about:blank", "--disable-sync", "no-sandbox"] {
+            assert!(!argument_is_forbidden(allowed, profile), "{allowed}");
+        }
+
+        // The real engine tree: no process carries a forbidden switch, the
+        // environment is the cleared allowlist, and nothing listens on TCP.
+        let fixture = Fixture::start(HashMap::from([("/", page("<title>Tree</title>"))]));
+        let running = start_engine(&fixture);
+        let engine = &running.engine;
+        assert_eq!(load(engine, &format!("{}/", fixture.origin())).status, "loaded");
+        let browser = engine.browser_pid();
+        let mut tree = vec![browser];
+        let mut index = 0;
+        while index < tree.len() {
+            let parent = tree[index];
+            for entry in fs::read_dir("/proc").unwrap().flatten() {
+                let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+                let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else { continue };
+                let Some(rest) = stat.rfind(')').map(|at| &stat[at + 1..]) else { continue };
+                if rest.split_whitespace().nth(1).and_then(|v| v.parse::<u32>().ok()) == Some(parent)
+                    && !tree.contains(&pid)
+                {
+                    tree.push(pid);
+                }
+            }
+            index += 1;
+        }
+        assert!(tree.len() >= 2, "the engine runs renderers");
+        let allowed_env = ["HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR", "PATH", "LANG"];
+        let user_data = format!("--user-data-dir={}", running._root.path().join("profile").canonicalize().unwrap().join("chrome").display());
+        for pid in &tree {
+            let Ok(cmdline) = fs::read(format!("/proc/{pid}/cmdline")) else { continue };
+            for argument in cmdline.split(|byte| *byte == 0).filter(|a| !a.is_empty()) {
+                let argument = String::from_utf8_lossy(argument);
+                if argument == user_data {
+                    continue;
+                }
+                assert!(
+                    !argument_is_forbidden(&argument, Path::new("/nonexistent")),
+                    "pid {pid}: {argument}"
+                );
+            }
+            if *pid == browser {
+                let environ = fs::read(format!("/proc/{pid}/environ")).unwrap();
+                for pair in environ.split(|byte| *byte == 0).filter(|p| !p.is_empty()) {
+                    let key = String::from_utf8_lossy(pair.split(|b| *b == b'=').next().unwrap()).into_owned();
+                    assert!(allowed_env.contains(&key.as_str()), "engine env {key}");
+                }
+                let exe = fs::read_link(format!("/proc/{pid}/exe")).unwrap();
+                assert_eq!(exe, pinned_shell().canonicalize().unwrap());
+            }
+        }
+        assert!(engine_has_no_listening_tcp(Path::new("/proc"), browser));
+    }
+
+    #[test]
+    fn linux_engine_attack_gateway_bypass_rebinding_workers_downloads_and_permissions_are_blocked() {
+        let outsider = Fixture::start(HashMap::new());
+        let body = r#"<!doctype html><title>Bypass</title>
+<img src="http://[::ffff:127.0.0.1]:__PORT__/v4mapped.png">
+<img src="http://localhost:__PORT__/rebind.png">
+<img src="http://169.254.169.254/latest/meta-data/">
+<img src="http://[::1]:__PORT__/v6loopback.png">
+<script>
+window.__probe = {};
+const note = (key) => (value) => { window.__probe[key] = value; };
+fetch('http://localhost:__PORT__/rebind-fetch').then(r => note('rebind')(r.status), () => note('rebind')('error'));
+fetch('http://[::ffff:127.0.0.1]:__PORT__/v4mapped-fetch').then(r => note('mapped')(r.status), () => note('mapped')('error'));
+fetch('/to-metadata').then(r => r.text()).then(note('metadata'), () => note('metadata')('error'));
+fetch('/to-outsider').then(r => r.text()).then(note('outsider'), () => note('outsider')('error'));
+try { new EventSource('http://localhost:__PORT__/events').onerror = () => note('events')('error'); } catch (e) { note('events')('throw'); }
+if (navigator.serviceWorker) {
+  navigator.serviceWorker.register('/sw.js').then(() => note('sw')('registered'), () => note('sw')('refused'));
+} else { note('sw')('absent'); }
+(typeof Notification === 'undefined' ? Promise.resolve('absent') : Notification.requestPermission())
+  .then(note('notification'), () => note('notification')('refused'));
+navigator.permissions.query({name: 'geolocation'}).then(s => note('geo')(s.state), () => note('geo')('refused'));
+setTimeout(() => note('done')(true), 1500);
+</script>"#;
+        // Bind first, then serve the page that names its own port.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut routes = HashMap::new();
+        routes.insert("/", page(&body.replace("__PORT__", &address.port().to_string())));
+        routes.insert("/to-metadata", (302, "text/plain", String::new(), Some("http://169.254.169.254/latest/meta-data/".to_owned())));
+        routes.insert("/to-outsider", (302, "text/plain", String::new(), Some(format!("{}/redirected", outsider.origin()))));
+        routes.insert("/sw.js", (200, "text/javascript", "self.addEventListener('fetch', () => {});".to_owned(), None));
+        routes.insert("/download", (200, "application/octet-stream", "synthetic-download-body".to_owned(), None));
+        let fixture = Fixture::serve_on(listener, routes);
+        let running = start_engine(&fixture);
+        let engine = &running.engine;
+        assert_eq!(load(engine, &format!("{}/", fixture.origin())).status, "loaded");
+        assert!(wait_until(|| {
+            engine
+                .probe("JSON.stringify(window.__probe)")
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .is_some_and(|value| value.contains("\"done\""))
+        }));
+        std::thread::sleep(Duration::from_millis(500));
+        let probe = engine.probe("window.__probe").unwrap();
+        for key in ["rebind", "mapped"] {
+            assert_ne!(probe[key], 200, "{key}: {probe}");
+        }
+        assert_ne!(probe["metadata"], Value::Null, "{probe}");
+        assert!(!probe["metadata"].as_str().unwrap_or("").contains("meta-data"), "{probe}");
+        assert_ne!(probe["sw"], "registered", "{probe}");
+        assert_eq!(fixture.hits_for("/sw.js"), 0, "a worker script never reaches a server");
+        assert_ne!(probe["notification"], "granted", "{probe}");
+        assert_ne!(probe["geo"], "granted", "{probe}");
+        // Loopback by another name, a v4-mapped or v6 literal, a redirect to
+        // another origin or the metadata address: none reached a server.
+        for path in ["/v4mapped.png", "/rebind.png", "/v6loopback.png", "/rebind-fetch", "/v4mapped-fetch", "/events"] {
+            assert_eq!(fixture.hits_for(path), 0, "{path}");
+        }
+        assert_eq!(outsider.connections.load(Ordering::Acquire), 0);
+        // A download link clicked by the page: denied or cancelled, and no
+        // file with the synthetic name lands anywhere in the profile.
+        let _ = engine.probe(
+            "(() => { const a = document.createElement('a'); a.href = '/download'; \
+             a.download = 'synthetic.bin'; document.body.appendChild(a); a.click(); return 1; })()",
+        );
+        std::thread::sleep(Duration::from_millis(1500));
+        let mut stack = vec![running._root.path().to_owned()];
+        while let Some(directory) = stack.pop() {
+            for entry in fs::read_dir(&directory).into_iter().flatten().flatten() {
+                let kind = entry.file_type().unwrap();
+                if kind.is_dir() {
+                    stack.push(entry.path());
+                } else if kind.is_file() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    assert!(!name.contains("synthetic.bin") && !name.ends_with(".crdownload"), "{name}");
+                }
+            }
+        }
+        // The download click is a page-initiated navigation: it is either
+        // ignored or cancelled (fail closed), never followed.
+        let snapshot = engine.snapshot();
+        assert!(
+            snapshot.status == "loaded"
+                || snapshot.title.as_deref() == Some("agent-browser-navigation-denied"),
+            "{snapshot:?}"
+        );
+        assert!(engine_has_no_listening_tcp(Path::new("/proc"), engine.browser_pid()));
+    }
+
+    #[test]
+    fn linux_engine_attack_oversized_or_malformed_cdp_input_fails_closed() {
+        // Exactly at the cap is accepted, one byte over is refused, and a
+        // stream that never terminates its frame is refused at the cap.
+        let mut at_cap = vec![b'a'; MAX_CDP_MESSAGE_BYTES];
+        at_cap.push(0);
+        let mut frames = FrameReader::new(std::io::Cursor::new(at_cap));
+        assert_eq!(frames.next_frame().unwrap().unwrap().len(), MAX_CDP_MESSAGE_BYTES);
+        let mut over = vec![b'a'; MAX_CDP_MESSAGE_BYTES + 1];
+        over.push(0);
+        assert!(FrameReader::new(std::io::Cursor::new(over)).next_frame().is_err());
+        struct Endless;
+        impl Read for Endless {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                buffer.fill(b'a');
+                Ok(buffer.len())
+            }
+        }
+        assert!(FrameReader::new(Endless).next_frame().is_err());
     }
 }

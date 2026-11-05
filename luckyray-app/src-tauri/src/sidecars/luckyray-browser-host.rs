@@ -6,6 +6,12 @@
 #[allow(dead_code)]
 mod browser_host;
 
+/// Descriptor-based file checks the Linux Agent Browser engine launch uses.
+#[cfg(target_os = "linux")]
+#[path = "../linux_fs.rs"]
+#[allow(dead_code)]
+mod linux_fs;
+
 fn main() {
     std::process::exit(browser_host::run_production());
 }

@@ -745,6 +745,18 @@ impl AgentHost {
         if !host_path.is_absolute() || !host_path.is_file() {
             return Err(AgentBrowserError::new("agent-browser-unavailable"));
         }
+        // Linux: the sidecar's directory chain must be one no other user can
+        // rewrite (no symlinked, group- or other-writable ancestor), so the
+        // host cannot be swapped by name. The file itself is then checked and
+        // executed by descriptor in `spawn_in_owned_job`.
+        #[cfg(target_os = "linux")]
+        if host_path
+            .parent()
+            .map(crate::linux_fs::Directory::trusted)
+            .map_or(true, |directory| directory.is_err())
+        {
+            return Err(AgentBrowserError::new("agent-browser-unavailable"));
+        }
         let gateway_policy = match gateway_mode {
             GatewayMode::Production => GatewayPolicy::production(),
             #[cfg(test)]
@@ -1148,6 +1160,77 @@ mod tests {
         assert!(AgentHost::spawn(root.path(), GatewayMode::Production, None).is_err());
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
         assert_eq!(fs::read(host).unwrap(), b"synthetic");
+    }
+
+    /// T55 slice 5: a linked, writable, attributed, set-id or swapped
+    /// sidecar, or one in an unsafe directory, is refused before it runs.
+    /// The same copy in a clean directory starts, so each refusal is due to
+    /// the one attribute under test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_agent_host_attack_refuses_a_linked_writable_attributed_or_swapped_host() {
+        use std::os::unix::fs::PermissionsExt;
+        let sidecar = crate::browser_broker::exact_browser_host_path().unwrap();
+        let address = serve_linux_synthetic_page();
+        let root = tempfile::tempdir().unwrap();
+        let private = |path: PathBuf| {
+            fs::create_dir_all(&path).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            path
+        };
+        let bin = private(root.path().join("bin"));
+        let good = bin.join("luckyray-browser-host");
+        fs::copy(&sidecar, &good).unwrap();
+        fs::set_permissions(&good, fs::Permissions::from_mode(0o755)).unwrap();
+        let spawn = |path: &Path| AgentHost::spawn(path, GatewayMode::ExactLoopback(address), None);
+        let refused = |path: &Path, case: &str| {
+            assert_eq!(
+                spawn(path).err().map(|error| error.code),
+                Some("agent-browser-unavailable"),
+                "{case}"
+            );
+        };
+        drop(spawn(&good).expect("the clean copy starts"));
+
+        let link = bin.join("link");
+        std::os::unix::fs::symlink(&good, &link).unwrap();
+        refused(&link, "symlinked host");
+        let bin_link = root.path().join("bin-link");
+        std::os::unix::fs::symlink(&bin, &bin_link).unwrap();
+        refused(&bin_link.join("luckyray-browser-host"), "symlinked directory");
+        let hard = bin.join("hard");
+        fs::hard_link(&good, &hard).unwrap();
+        refused(&hard, "hard link");
+        refused(&good, "hard-linked original");
+        fs::remove_file(&hard).unwrap();
+        for mode in [0o775, 0o757, 0o4755, 0o2755, 0o644] {
+            fs::set_permissions(&good, fs::Permissions::from_mode(mode)).unwrap();
+            refused(&good, &format!("mode {mode:o}"));
+        }
+        fs::set_permissions(&good, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o775)).unwrap();
+        refused(&good, "group-writable directory");
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o700)).unwrap();
+        let attributed = bin.join("attributed");
+        fs::copy(&good, &attributed).unwrap();
+        let name = std::ffi::CString::new(attributed.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(
+            unsafe { libc::setxattr(name.as_ptr(), c"user.luckyray-synthetic".as_ptr(), b"1".as_ptr().cast(), 1, 0) },
+            0
+        );
+        refused(&attributed, "extended attribute");
+        // Swapped for a non-ELF image under the same name.
+        let swapped = bin.join("swapped");
+        fs::write(&swapped, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&swapped, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::rename(&swapped, &good).unwrap();
+        refused(&good, "swapped image");
+        // `..` in the path is refused even when it resolves to the copy.
+        let clean = private(root.path().join("clean"));
+        fs::copy(&sidecar, clean.join("luckyray-browser-host")).unwrap();
+        fs::set_permissions(clean.join("luckyray-browser-host"), fs::Permissions::from_mode(0o755)).unwrap();
+        refused(&bin.join("..").join("clean").join("luckyray-browser-host"), "dot-dot path");
+        drop(spawn(&clean.join("luckyray-browser-host")).expect("the clean copy still starts"));
     }
 
     #[cfg(target_os = "linux")]
