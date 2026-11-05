@@ -363,3 +363,18 @@ Not yet: packaging (S4), LSH resources (S3).
   release-time item.
 - CI step `linux-lsh-package` stages the genuine runtime and requires the gate to pass. It then
   appends one byte to `src-tauri/dsh/node/node`, requires a refusal, and removes `src-tauri/dsh`.
+
+## 16. T52 S4 — Linux package preparation gate
+
+- `scripts/linux/prepare-tauri-build.mjs` (the Linux `beforeBuildCommand`) now manufactures
+  nothing and judges everything. It runs the Agent Browser bundle gate, the LSH package gate,
+  `tools/linux-sidecars/sidecars.py verify`, `tools/linux-media-engine/engine.py verify`, the
+  required notices and `dist/index.html`. It exits 0 only with no problems, and each problem
+  names its gate.
+- The browser-host native messaging revocation item is dropped, as settled (Agent Browser only,
+  T55 slice 3).
+- `third-party-notices/` is tracked at `luckyray-app/third-party-notices` and is bundled unchanged
+  by the shared base config. The Linux gate requires the same files the Windows readiness gate
+  requires, plus `LuckyRay-MIT-LICENSE`. No Linux copy or override exists.
+- CI step `linux-package-prepare` stages all inputs, requires acceptance, appends one byte to the
+  CLI sidecar, requires refusal, then cleans up.
