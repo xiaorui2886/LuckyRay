@@ -267,3 +267,30 @@ other launch failure stays `agent-browser-unavailable`.
 Not verified here: loading the profile on a real Ubuntu 24.04 host and an
 installed deb/AppImage end to end (no AppArmor userns kernel or apt on the
 build box). CI checks the profile text, the deb wiring and the bundle gate.
+
+## 12. T55 slice 5: Agent Browser attack suite
+
+The engine is opened once from a trusted (root- or user-owned, not group/other
+writable) directory with `O_NOFOLLOW`. It must be a single-link ELF with an exec
+bit, no setid or group/other write, no xattrs, and match the pinned sha256. It is
+exec'd from that descriptor (`/proc/self/fd/N`), and its name is re-checked
+after spawn; a swap kills the process group. The sidecar host must live in a
+trusted directory too. Forbidden switches are refused with one or two dashes,
+profile paths with `..`/non-normal components or untrusted parents are refused,
+CDP frames over the cap are refused even when the terminator arrives in the
+same read, and service-worker requests and targets are blocked.
+
+CI: `agent-browser-engine` runs exactly 12 named tests (`ok. 12 passed`),
+`agent-browser-runtime` exactly 6 (`ok. 6 passed`). The attack tests cover a
+swapped/symlinked/hardlinked/xattr'd/group-writable/setid host and engine,
+profile escapes, switch injection plus a live process-tree scan (no forbidden
+switch, env allowlist, no TCP listener), gateway bypass (v4-mapped, localhost
+and `[::1]`, metadata, redirects, EventSource, service workers, downloads,
+notification/geolocation) and oversized or malformed CDP input. The bundle
+gate's node tests already refuse a mutated, extra, mode-changed, symlinked or
+unlicensed bundle.
+
+Left for a real machine: AppArmor profile load on Ubuntu 24.04, deb and
+AppImage installs end to end, the real restricted-userns refusal, the
+AppImage squashfs owner under the trusted-directory/uid checks, and DNS
+rebinding through a real resolver (CI uses `localhost` as a stand-in).
