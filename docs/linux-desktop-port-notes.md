@@ -183,3 +183,45 @@ store (or a dismissed unlock prompt) refuses with `companion-keyring-locked` /
 `getifaddrs` (the existing `libc` dependency) with the same private-LAN
 filtering as Windows. The community MCP plugin runner stays Windows-only
 (`plugin-platform-unsupported`) until its packaged plugin exists.
+
+## 10. T55 slice 3: Linux Agent Browser through the real host
+
+The read-only Agent Browser now uses `luckyray-browser-host --agent-readonly`
+on Linux. The sidecar verifies the pinned Chrome for Testing headless shell,
+then starts and owns it on the dedicated `luckyray-agent-browser-engine`
+thread. That thread remains alive for the session, so the engine's
+`PR_SET_PDEATHSIG` remains attached to its spawning thread. Status, navigation,
+read and extract are generation-bound; a dead engine pipe or keeper thread
+fails closed. The Agent Browser's two Linux runtime availability gates are
+removed without changing the Personal Browser's unsupported response or any
+Windows branch.
+
+Session profiles are created as `0700`; the effective-UID-owned real
+`LuckyRay/AgentBrowser/v1` directory chain is closed to group and other users
+before use. Only fixture/test builds accept the absolute
+`LUCKYRAY_AGENT_BROWSER_TEST_SHELL` override. Production resolves the shell
+beside the host at
+`agent-browser/chrome-headless-shell-linux64/chrome-headless-shell` and checks
+it against `tools/linux-agent-browser/pin.json`; it never searches `PATH`.
+Installing that pinned production engine is packaging work outside this slice.
+
+Verification uses synthetic loopback pages only, through the real gateway,
+sidecar, pinned shell and `dsh_resource_broker` `luckyray_browser_open` /
+`read` / `extract` path. The scratch harness completed 11 tests, including
+generation cleanup, sidecar rejection, rendered read/extract and SIGKILL of the
+sidecar with disappearance of the whole Chrome process group followed by a
+failed read. Its app-service shims and omitted unrelated DSH operation bodies
+are harness-only, not product fallbacks. The preflight workflow builds the
+real sidecar, runs exactly four named runtime/DSH tests and fails unless the
+summary is exactly four passed; missing or renamed tests therefore fail the
+step. Both `linux-notes-ci.test.py` (118 tests) and
+`linux-runtime-ci.test.py` (4 tests) pass locally.
+
+The local app crate cannot be compiled on this box because `glib-sys` is not
+installed, so end-to-end execution used the scratch harness around the real
+product sources. Engine tests live in the app library rather than the sidecar
+binary's own test harness because they depend on the library gateway. The
+pre-existing profile-directory residue after a spawn failure is not broadened
+or claimed fixed here. Startup recovery, `browser_broker`, LSH/DSH behavior
+outside the existing browser-operation path, releases, installers, feeds and
+keys are unchanged.
