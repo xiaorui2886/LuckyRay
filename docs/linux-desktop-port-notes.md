@@ -200,10 +200,10 @@ Session profiles are created as `0700`; the effective-UID-owned real
 `LuckyRay/AgentBrowser/v1` directory chain is closed to group and other users
 before use. Only fixture/test builds accept the absolute
 `LUCKYRAY_AGENT_BROWSER_TEST_SHELL` override. Production resolves the shell
-beside the host at
-`agent-browser/chrome-headless-shell-linux64/chrome-headless-shell` and checks
-it against `tools/linux-agent-browser/pin.json`; it never searches `PATH`.
-Installing that pinned production engine is packaging work outside this slice.
+at `<prefix>/lib/LuckyRay/agent-browser/chrome-headless-shell-linux64/chrome-headless-shell`
+(the prefix above the host's `bin`, changed in slice 4) and checks it against
+`tools/linux-agent-browser/pin.json`; it never searches `PATH`. Packaging is
+section 11.
 
 Verification uses synthetic loopback pages only, through the real gateway,
 sidecar, pinned shell and `dsh_resource_broker` `luckyray_browser_open` /
@@ -225,3 +225,45 @@ pre-existing profile-directory residue after a spawn failure is not broadened
 or claimed fixed here. Startup recovery, `browser_broker`, LSH/DSH behavior
 outside the existing browser-operation path, releases, installers, feeds and
 keys are unchanged.
+
+## 11. T55 slice 4: packaging the Agent Browser engine
+
+The deb and AppImage carry the pinned `chrome-headless-shell` 157.0.8103.38 as
+the Tauri resource `agent-browser/`, installed at
+`/usr/lib/LuckyRay/agent-browser/` (AppImage: `$APPDIR/usr/lib/LuckyRay/...`).
+Before a Linux bundle, stage it from the verified archive:
+
+    python3 luckyray-app/tools/linux-agent-browser/shell.py stage <archive> luckyray-app/src-tauri/agent-browser
+
+`stage` checks the archive size and sha256, unpacks with zip-slip and symlink
+guards, re-checks the executable sha256 and licence files, then requires the
+whole-bundle digest (`bundleSha256`, sorted `<sha256>  <mode>  <path>` lines
+over all 287 regular files) and file count from `pin.json`. The staged
+directory is gitignored. `scripts/linux/check-agent-browser-bundle.mjs`
+recomputes the same digest and refuses a missing, mismatched, extended,
+symlinked or unlicensed bundle, a missing or loosened AppArmor profile, or a
+host engine path that differs. `prepare-tauri-build.mjs` runs it first and
+still exits 1 on the remaining unresolved inputs, so no Linux bundle is
+produced yet.
+
+Licence notices: `LICENSE.headless_shell` (Chromium and its third-party
+licences) and `ABOUT` ship unmodified beside the engine and are required by
+both checks. The shared `third-party-notices/` supplement is a Windows release
+input and is not changed.
+
+Sandbox: the engine always runs with its renderer sandbox and never with
+`--no-sandbox`. Ubuntu 23.10+ (`kernel.apparmor_restrict_unprivileged_userns=1`)
+blocks the user namespace it needs. The deb ships
+`src-tauri/linux/apparmor/luckyray-agent-browser` (`flags=(unconfined)` plus
+`userns,` for exactly the root-owned installed engine path) to
+`/usr/share/luckyray/apparmor/`; postinst installs and loads it only where
+`/etc/apparmor.d/abi/4.0` exists, postrm unloads and removes it. No SUID
+helper, no profile on a user-writable path, no sysctl change. The AppImage
+gets no profile: if the engine dies at start while the sysctl is `1` the host
+reports `agent-browser-sandbox-unavailable` (phase
+`sandbox-userns-restricted`) and the runtime surfaces exactly that code; every
+other launch failure stays `agent-browser-unavailable`.
+
+Not verified here: loading the profile on a real Ubuntu 24.04 host and an
+installed deb/AppImage end to end (no AppArmor userns kernel or apt on the
+build box). CI checks the profile text, the deb wiring and the bundle gate.
