@@ -1,10 +1,51 @@
 use super::*;
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+#[cfg(target_os = "macos")]
+#[path = "ingest/macos_store.rs"]
+mod macos_store;
 
 const MAX_UPLOAD: u64 = 64 * 1024 * 1024;
 const MAX_CHUNK: usize = 256 * 1024;
 
+#[cfg(target_os = "macos")]
+pub(super) fn retire_macos_service_staging_for_clear(connection: &mut Connection) -> ServiceResult<()> {
+    macos_store::retire_for_clear(connection, &chrono::Utc::now().to_rfc3339())
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn recover_completed_macos_uploads(gateway: &CompanionGateway) -> ServiceResult<()> {
+    macos_store::reclaim_completed(&mut database(gateway)?, gateway.backend.app_data_dir())
+}
+
+#[cfg(target_os = "macos")]
+fn reclaim_completed_macos_upload(gateway: &CompanionGateway, job: &str) {
+    // A receipt is already durable. Reclamation must never turn that success
+    // into a failed upload; retained ownership rows make later retry possible.
+    if let Ok(mut connection)=database(gateway) {
+        let _=macos_store::reclaim_upload(&mut connection, gateway.backend.app_data_dir(), job);
+    }
+}
+
 fn hex_digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
+
+#[cfg(target_os = "macos")]
+fn macos_active_jobs(connection: &Connection, instance: &str, device: &str, knowledge: bool) -> ServiceResult<u64> {
+    let sessions_exist: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('companion_macos_service_session','companion_macos_service_retired'))",
+        [], |row| row.get(0),
+    ).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
+    if sessions_exist || knowledge {
+        macos_store::prepare(connection)?;
+        connection.query_row("SELECT COUNT(*) FROM companion_service_upload u WHERE u.instance_id=?1 AND u.device_id=?2
+          AND u.stage IN ('staging','committing') AND NOT EXISTS (SELECT 1 FROM companion_macos_service_session s
+          WHERE s.job_id=u.job_id AND s.instance_id=u.instance_id AND s.device_id=u.device_id AND s.clear_uncertain=1) AND NOT EXISTS (SELECT 1 FROM companion_macos_service_retired r
+          WHERE r.job_id=u.job_id AND r.instance_id=u.instance_id AND r.device_id=u.device_id AND r.op_id=u.op_id)", params![instance, device], |row| row.get(0))
+          .map_err(|_| (503, "SERVICE_UNAVAILABLE"))
+    } else {
+        connection.query_row("SELECT COUNT(*) FROM companion_service_upload WHERE instance_id=?1 AND device_id=?2 AND stage IN ('staging','committing')",
+          params![instance, device], |row| row.get(0)).map_err(|_| (503, "SERVICE_UNAVAILABLE"))
+    }
+}
 
 fn validate_begin(value: &Value) -> ServiceResult<()> {
     let obj = value.as_object().ok_or((400, "INPUT_INVALID"))?;
@@ -200,17 +241,36 @@ pub(super) fn begin(gateway: &CompanionGateway, device: &PairedDevice, generatio
         let old: Value = serde_json::from_str(&old).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
         let old_hash = hex_digest(&serde_json::to_vec(&old).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?);
         if old_hash != hash { return Err((409, "OP_ID_REUSED")); }
+        #[cfg(target_os = "macos")]
+        if old["target"]["domain"] == "knowledge" && matches!(stage.as_str(), "staging" | "committing")
+            && !macos_store::owned(&connection, &job_id, &instance, &device.device_id, &old)? {
+            return Err((503, "SERVICE_UNAVAILABLE"));
+        }
         let receipt = receipt.map(|r| serde_json::from_str(&r).map_err(|_| (503, "SERVICE_UNAVAILABLE")))
             .transpose()?;
+        #[cfg(target_os = "macos")]
+        if old["target"]["domain"] == "knowledge" && stage == "completed" {
+            reclaim_completed_macos_upload(gateway, &job_id);
+        }
         return Ok((200, job_value(&job_id, op_id, &stage, offset, receipt)));
     }
+    #[cfg(not(target_os = "macos"))]
     let active: u64 = connection.query_row(
         "SELECT COUNT(*) FROM companion_service_upload WHERE instance_id=?1 AND device_id=?2 AND stage IN ('staging','committing')",
         params![instance, device.device_id], |row| row.get(0),
     ).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
+    #[cfg(target_os = "macos")]
+    let active = macos_active_jobs(&connection, &instance, &device.device_id, manifest["target"]["domain"] == "knowledge")?;
     if active >= 2 { return Err((429, "RATE_LIMITED")); }
     let mut random = [0u8; 16]; OsRng.fill_bytes(&mut random);
     let job_id = random.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    #[cfg(target_os = "macos")]
+    if manifest["target"]["domain"] == "knowledge" {
+        let mut connection = connection;
+        let committed = macos_store::begin(&mut connection, &job_id, &instance, &device.device_id,
+            op_id, &manifest, &chrono::Utc::now().to_rfc3339())?;
+        return Ok((201, job_value(&job_id, op_id, "staging", committed, None)));
+    }
     let path = staging_file(gateway, &job_id)?;
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)
         .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
@@ -236,7 +296,20 @@ pub(super) fn begin(gateway: &CompanionGateway, device: &PairedDevice, generatio
 pub(super) fn status(gateway: &CompanionGateway, device: &PairedDevice, generation: u64,
     admission_permission: u64, job_id: &str) -> ServiceResult<Value> {
     let _transition = service_transition(gateway, device, generation, admission_permission)?;
-    let (_manifest, offset, stage, receipt, op_id) = load_job(gateway, device, job_id)?;
+    let (manifest, offset, stage, receipt, op_id) = load_job(gateway, device, job_id)?;
+    #[cfg(target_os = "macos")]
+    if manifest["target"]["domain"] == "knowledge" && matches!(stage.as_str(), "staging" | "committing") {
+        let instance = gateway.identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.instance_id.clone();
+        if !macos_store::owned(&database(gateway)?, job_id, &instance, &device.device_id, &manifest)? {
+            return Err((503, "SERVICE_UNAVAILABLE"));
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = manifest;
+    #[cfg(target_os = "macos")]
+    if manifest["target"]["domain"] == "knowledge" && stage == "completed" {
+        reclaim_completed_macos_upload(gateway, job_id);
+    }
     Ok(job_value(job_id, &op_id, &stage, offset, receipt))
 }
 
@@ -261,6 +334,13 @@ pub(super) fn chunk(
     let total = manifest["sizeBytes"].as_u64().ok_or((503, "SERVICE_UNAVAILABLE"))?;
     if offset.checked_add(bytes.len() as u64).is_none_or(|end| end > total) {
         return Err((409, "UPLOAD_OFFSET_MISMATCH"));
+    }
+    #[cfg(target_os = "macos")]
+    if manifest["target"]["domain"] == "knowledge" {
+        let instance = gateway.identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.instance_id.clone();
+        let next = macos_store::append(&mut database(gateway)?, gateway.backend.app_data_dir(), job_id,
+            &instance, &device.device_id, &manifest, offset, bytes, &chrono::Utc::now().to_rfc3339())?;
+        return Ok(job_value(job_id, &op_id, "staging", next, None));
     }
     let path = staging_file(gateway, job_id)?;
     let metadata = std::fs::symlink_metadata(&path).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
@@ -353,6 +433,8 @@ fn map_note_error((status, code): (u16, &'static str)) -> (u16, &'static str) {
         "DESKTOP_DRAFT_BUSY" => (503, "DESKTOP_DRAFT_BUSY"),
         "REVISION_CONFLICT" | "KNOWLEDGE_CHANGED" | "VAULT_CHANGED" => (409, "REVISION_CONFLICT"),
         "OP_ID_REUSED" => (409, "OP_ID_REUSED"),
+        #[cfg(target_os = "macos")]
+        "UPLOAD_PUBLICATION_UNCERTAIN" => (409, "UPLOAD_PUBLICATION_UNCERTAIN"),
         "NOTE_INPUT_INVALID" | "ATTACHMENT_INPUT_INVALID" => (400, "INPUT_INVALID"),
         _ if status == 404 => (404, "ENTITY_NOT_FOUND"),
         _ => (503, "SERVICE_UNAVAILABLE"),
@@ -401,6 +483,52 @@ fn finish_knowledge(
         let publication = if started["complete"] == true {
             started["publication"].clone()
         } else {
+            #[cfg(target_os = "macos")]
+            {
+                let total = manifest["sizeBytes"].as_u64().filter(|size| (1..=MAX_UPLOAD).contains(size))
+                    .ok_or((503, "SERVICE_UNAVAILABLE"))?;
+                let _resume_offset = started["offset"].as_u64().filter(|offset| *offset <= total)
+                    .ok_or((503, "SERVICE_UNAVAILABLE"))?;
+                // The existing service chunks are already durable and bound to
+                // this job. Read them with their object/hash checks; Content
+                // journals publication using these bytes rather than writing a
+                // second copy into its own staging directory.
+                let mut bytes = Vec::new();
+                bytes.try_reserve_exact(total as usize).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
+                let mut at = 0u64;
+                while at < total {
+                    let part = macos_store::range(&database(gateway)?, gateway.backend.app_data_dir(), job_id,
+                        total, at, (total - at).min(MAX_CHUNK as u64) as usize)?;
+                    if part.is_empty() { return Err((409, "UPLOAD_INCOMPLETE")); }
+                    at = at.checked_add(part.len() as u64).ok_or((503, "SERVICE_UNAVAILABLE"))?;
+                    if at > total { return Err((503, "SERVICE_UNAVAILABLE")); }
+                    bytes.extend_from_slice(&part);
+                }
+                #[cfg(test)]
+                if let Some(gate) = gateway.policy.services_before_knowledge_attachment_commit_gate.as_ref() {
+                    gate.pause_if_armed();
+                }
+                // Serialize authorization through the entire domain write,
+                // just as mutate_knowledge does for a Content mutation.
+                let _transition = service_transition(gateway, device, generation, admission_permission)?;
+                authorized_target(gateway, device, manifest)?;
+                let (stored, committed, stage, _, _) = load_job(gateway, device, job_id)?;
+                if stored != *manifest || committed != total || stage != "committing"
+                    || presented_device_id(request) != Some(device.device_id.as_str()) {
+                    return Err((503, "SERVICE_UNAVAILABLE"));
+                }
+                let instance = gateway.identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.instance_id.clone();
+                if !macos_store::owned(&database(gateway)?, job_id, &instance, &device.device_id, manifest)? {
+                    return Err((503, "SERVICE_UNAVAILABLE"));
+                }
+                let completed = content::notes::macos_complete_attachment_from_service(
+                    gateway, &note_request(request, "POST", format!("{upload_path}/complete"), json!({"vaultId": vault})),
+                    job_id, &bytes,
+                ).map_err(map_note_error)?;
+                completed["publication"].clone()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
             let mut offset = started["offset"].as_u64().ok_or((503, "SERVICE_UNAVAILABLE"))?;
             let mut file = std::fs::File::open(path).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
             file.seek(SeekFrom::Start(offset)).map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
@@ -417,6 +545,7 @@ fn finish_knowledge(
             let completed = mutate_knowledge(gateway, device, generation, admission_permission, manifest, &note_request(request, "POST",
                 format!("{upload_path}/complete"), json!({"vaultId": vault})))?;
             completed["publication"].clone()
+            }
         };
         let markdown = publication["markdown"].as_str().filter(|s| !s.is_empty())
             .ok_or((503, "SERVICE_UNAVAILABLE"))?;
@@ -430,6 +559,32 @@ fn finish_knowledge(
     Ok(json!({"domain": "knowledge", "vaultId": vault, "noteId": note_id, "revision": revision}))
 }
 
+#[cfg(target_os = "macos")]
+fn complete_macos_knowledge(gateway: &CompanionGateway, device: &PairedDevice, generation: u64,
+    admission_permission: u64, job_id: &str, request: &HttpRequest, manifest: &Value,
+    committed: u64, stage: &str, op_id: &str) -> ServiceResult<Value> {
+    let instance = gateway.identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.instance_id.clone();
+    macos_store::verify(&database(gateway)?, gateway.backend.app_data_dir(), job_id, &instance,
+        &device.device_id, manifest, committed)?;
+    if stage == "staging" {
+        let _transition = service_transition(gateway, device, generation, admission_permission)?;
+        authorized_target(gateway, device, manifest)?;
+        let n = database(gateway)?.execute("UPDATE companion_service_upload SET stage='committing',updated_at=?1
+          WHERE job_id=?2 AND instance_id=?3 AND device_id=?4 AND stage='staging' AND committed_bytes=?5",
+          params![chrono::Utc::now().to_rfc3339(), job_id, instance, device.device_id, committed])
+          .map_err(|_| (503, "SERVICE_UNAVAILABLE"))?;
+        if n != 1 { return Err((503, "SERVICE_UNAVAILABLE")); }
+    }
+    let receipt = finish_knowledge(gateway, device, generation, admission_permission, manifest,
+        job_id, std::path::Path::new(""), request)?;
+    let _transition = service_transition(gateway, device, generation, admission_permission)?;
+    authorized_target(gateway, device, manifest)?;
+    macos_store::terminal(&mut database(gateway)?, job_id, &instance, &device.device_id, manifest,
+        "completed", Some(&receipt.to_string()), &chrono::Utc::now().to_rfc3339())?;
+    reclaim_completed_macos_upload(gateway, job_id);
+    Ok(job_value(job_id, op_id, "completed", committed, Some(receipt)))
+}
+
 pub(super) fn complete(
     gateway: &CompanionGateway, device: &PairedDevice, generation: u64,
     admission_permission: u64, job_id: &str, request: &HttpRequest,
@@ -438,10 +593,19 @@ pub(super) fn complete(
         return Err((403, "SCOPE_DENIED"));
     }
     let (manifest, committed, stage, receipt, op_id) = load_job(gateway, device, job_id)?;
-    if stage == "completed" { return Ok(job_value(job_id, &op_id, &stage, committed, receipt)); }
+    if stage == "completed" {
+        #[cfg(target_os = "macos")]
+        if manifest["target"]["domain"] == "knowledge" { reclaim_completed_macos_upload(gateway, job_id); }
+        return Ok(job_value(job_id, &op_id, &stage, committed, receipt));
+    }
     if !matches!(stage.as_str(), "staging" | "committing") { return Err((410, "RECEIPT_EXPIRED")); }
     let total = manifest["sizeBytes"].as_u64().ok_or((503, "SERVICE_UNAVAILABLE"))?;
     if committed != total { return Err((409, "UPLOAD_INCOMPLETE")); }
+    #[cfg(target_os = "macos")]
+    if manifest["target"]["domain"] == "knowledge" {
+        return complete_macos_knowledge(gateway, device, generation, admission_permission, job_id,
+            request, &manifest, committed, &stage, &op_id);
+    }
     let path = staging_file(gateway, job_id)?;
     if stage == "committing" && manifest["target"]["domain"] == "materials" && !path.exists() {
         let _transition = service_transition(gateway, device, generation, admission_permission)?;
@@ -502,10 +666,19 @@ pub(super) fn complete(
 pub(super) fn cancel(gateway: &CompanionGateway, device: &PairedDevice, generation: u64,
     admission_permission: u64, job_id: &str) -> ServiceResult<Value> {
     let _transition = service_transition(gateway, device, generation, admission_permission)?;
-    let (_manifest, _committed, stage, _receipt, op_id) = load_job(gateway, device, job_id)?;
+    let (manifest, _committed, stage, _receipt, op_id) = load_job(gateway, device, job_id)?;
     if stage == "completed" { return Err((409, "OP_ID_REUSED")); }
     if stage == "cancelled" { return Ok(job_value(job_id, &op_id, &stage, 0, None)); }
     if stage != "staging" { return Err((503, "SERVICE_UNAVAILABLE")); }
+    #[cfg(target_os = "macos")]
+    if manifest["target"]["domain"] == "knowledge" {
+        let instance = gateway.identity().map_err(|_| (503, "SERVICE_UNAVAILABLE"))?.instance_id.clone();
+        macos_store::terminal(&mut database(gateway)?, job_id, &instance, &device.device_id, &manifest,
+            "cancelled", None, &chrono::Utc::now().to_rfc3339())?;
+        return Ok(job_value(job_id, &op_id, "cancelled", 0, None));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = manifest;
     database(gateway)?.execute(
         "UPDATE companion_service_upload SET stage='cancelled',committed_bytes=0,updated_at=?1 WHERE job_id=?2 AND device_id=?3 AND stage='staging'",
         params![chrono::Utc::now().to_rfc3339(), job_id, device.device_id],

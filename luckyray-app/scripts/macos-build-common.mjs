@@ -14,6 +14,7 @@ export const BUILD = join(TAURI, ".macos-build");
 export const TARGET = "aarch64-apple-darwin";
 export const SIDECARS = Object.freeze(["luckyray-native-host", "luckyray-cli", "luckyray-mcp"]);
 export const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+export const isMacosValidationRepository = value => value === "xiaorui2886/LuckyRay";
 
 export function requireNative() {
   if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("macos-arm64-build-required");

@@ -195,6 +195,50 @@ mod live_sync_tests {
         fn remove(&self) -> Result<(), GatewayError> { *self.0.lock().unwrap() = None; Ok(()) }
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_authenticated_service_create_resumes_the_same_operation() {
+        let root = tempfile::tempdir().unwrap();
+        let fixture_root = crate::companion_gateway::content::notes::fixture_support::root(root.path());
+        let vault_root = fixture_root.join("vault");
+        fs::create_dir_all(vault_root.join(".luckyray")).unwrap();
+        let registration = KnowledgeVaultRegistration { id: "macos-service-vault".into(), name: "Synthetic Vault".into(),
+            root_path: vault_root.to_string_lossy().into(), mode: "vault-bound".into(), created_at: "2026-09-30T00:00:00Z".into(),
+            last_opened_at: "2026-09-30T00:00:00Z".into(), schema_version: 1, link_update_policy: Default::default() };
+        fs::write(vault_root.join(".luckyray/vault.json"), serde_json::to_vec(&registration).unwrap()).unwrap();
+        fs::write(vault_root.join("Phone.md"), "external").unwrap();
+        let backend = Arc::new(crate::companion_gateway::content::notes::fixture_support::backend(&fixture_root.join("app")));
+        backend.knowledge().register_current_vault(&registration).unwrap();
+        let gateway = CompanionGateway::initialize_with_store(backend, Arc::new(MemoryIdentity::default()), GatewayPolicy::default());
+        gateway.start("127.0.0.1", Some(0)).unwrap();
+        let generation = gateway.lifecycle.lock().unwrap().running.as_ref().unwrap().generation;
+        let envelope = gateway.issue_pairing().unwrap();
+        let pairing = gateway.exchange_pairing(&serde_json::to_vec(&json!({"secret":envelope.secret,
+            "fingerprint":envelope.certificate_fingerprint,"deviceLabel":"Mac synthetic test"})).unwrap(), generation).unwrap();
+        let credential = pairing["credential"].as_str().unwrap();
+        let device_id = pairing["deviceId"].as_str().unwrap();
+        let (_, vault) = content::notes::target(&gateway).unwrap();
+        gateway.set_service_grant(device_id, "content.write", "vault", &vault, true).unwrap();
+        let request = HttpRequest { method:"POST".into(), path:"/v1/services/knowledge/notes".into(),
+            headers:HashMap::from([("authorization".into(),format!("Bearer {credential}"))]),
+            body:serde_json::to_vec(&json!({"opId":"macos-service-create","noteId":"kn-phone",
+                "kind":"create","vaultId":vault,"title":"Phone","content":"phone body\n","expectedRevision":""})).unwrap() };
+        let send = || {
+            let device = gateway.authenticate_request(&request).unwrap();
+            route(&gateway, &device, generation, permission_revision(&gateway, device_id).unwrap(), &request)
+        };
+        crate::knowledge::fail_once_after_prepare();
+        assert_eq!(send().unwrap_err(), (503,"SERVICE_UNAVAILABLE"));
+        let created = send().unwrap();
+        assert_eq!(created["document"]["noteId"], "kn-phone");
+        assert_eq!(created["document"]["relativePath"], "Phone（副本）.md");
+        assert_eq!(created["document"]["content"], "phone body\n");
+        assert_eq!(send().unwrap(), created);
+        assert_eq!(fs::read_to_string(vault_root.join("Phone.md")).unwrap(), "external");
+        assert_eq!(fs::read_to_string(vault_root.join("Phone（副本）.md")).unwrap(), "phone body\n");
+        gateway.stop().unwrap();
+    }
+
     #[test]
     fn production_knowledge_routes_create_presence_directory_relations_and_revoke() {
         let root = tempfile::tempdir().unwrap();
@@ -439,6 +483,7 @@ pub(super) fn move_note(
     let move_input = crate::knowledge::KnowledgeMoveInput {
         document_ref: document_ref.clone(), title: title.to_owned(),
         expected_revision: snapshot.revision.clone(), parent_relative_path: Some(parent.to_owned()),
+        expected_file_identity: None,
     };
     let expected_after = knowledge.companion_expected_move_revision_for_target(
         &target, &move_input, &planned_path,

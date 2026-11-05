@@ -604,6 +604,17 @@ pub(super) fn serve(
     device: &PairedDevice,
     generation: u64,
 ) -> io::Result<()> {
+    // An ingest completion makes several separately authorized calls. Keep
+    // the whole request outside a concurrent user data clear/restore, not just
+    // the short transition for each individual call.
+    #[cfg(target_os = "macos")]
+    let _upload_guard = if request.path == "/v1/services/ingest/jobs"
+        || request.path.starts_with("/v1/services/ingest/jobs/") {
+        match super::macos_upload_guard() {
+            Ok(guard) => Some(guard),
+            Err(()) => return write_json(stream, 503, &json!({"code":"SERVICE_UNAVAILABLE"})),
+        }
+    } else { None };
     diagnostics::stage(diagnostics::Stage::Scope);
     let scoped = match gateway.scope_for_request(request) {
         Ok(scoped) => scoped,
@@ -693,6 +704,21 @@ pub(super) fn serve(
         },
         Err((status, code)) => write_json(stream, status, &json!({"code": code})),
     }
+}
+
+/// Retire owned Mac ingest staging before the user explicitly clears it.
+/// The caller holds the exclusive upload/data-clear gate for this operation.
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_retire_staging_for_clear(gateway: &CompanionGateway) -> Result<(), &'static str> {
+    let mut connection = database(gateway).map_err(|_| "companion-upload-store-unavailable")?;
+    ingest::retire_macos_service_staging_for_clear(&mut connection)
+        .map_err(|_| "companion-upload-store-unavailable")
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_recover_completed_uploads(gateway: &CompanionGateway) -> Result<(), &'static str> {
+    ingest::recover_completed_macos_uploads(gateway)
+        .map_err(|_| "companion-upload-reclaim-pending")
 }
 
 #[derive(Clone, Debug, Deserialize)]

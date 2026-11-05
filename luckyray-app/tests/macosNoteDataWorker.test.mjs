@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile, mkdtemp, readdir, rm, mkdir, writeFile } from "node:fs/promises";
+import { readFile, mkdtemp, realpath, readdir, rm, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { NOTE_DATA_CASES, NOTE_DATA_MESSAGE_FORMAT, noteDataCompileEnvironment, nativeCaseDisposition, safeNoteDataExecution, singleNativeTestPassed } from "../scripts/check-macos-note-data.mjs";
+import { NOTE_DATA_CASES, INTEGRATION_NATIVE_CASES, NOTE_DATA_MESSAGE_FORMAT, noteDataCompileEnvironment, nativeCaseDisposition, safeNoteDataExecution, singleNativeTestPassed } from "../scripts/check-macos-note-data.mjs";
 import { DiagnosticCollector, safeDiagnosticSummary } from "../scripts/macos-native-diagnostics.mjs";
 import { APP, directory, download } from "../scripts/macos-build-common.mjs";
 import { PHASES, publishableReport } from "../scripts/check-macos-internal.mjs";
@@ -41,7 +41,9 @@ test("real Cargo retains compile and test failure locations plus test-artifact J
   const available = spawnSync(cargo, ["--version"], { encoding: "utf8", timeout: 10000 });
   if (available.error?.code === "ENOENT") return t.skip("Rust toolchain is not installed");
   assert.equal(available.status, 0);
-  const root = await mkdtemp(join(tmpdir(), "luckyray-note-cargo-"));
+  // Cargo reports an absolute source path through the canonical working
+  // directory. Match that owned fixture root, including macOS /var aliases.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "luckyray-note-cargo-")));
   const canary = "private_fixture_must_not_be_published";
   const env = noteDataCompileEnvironment({ ...process.env, CARGO_TARGET_DIR: join(root, "target") });
   const run = () => spawnSync(cargo, ["test", "--locked", "--offline", "--lib", "--no-run", NOTE_DATA_MESSAGE_FORMAT, "--color=never"],
@@ -77,6 +79,7 @@ test("real Cargo retains compile and test failure locations plus test-artifact J
     const tests = new DiagnosticCollector(new Set(), files);
     tests.feed("stderr", 'MACOS_NATIVE_EVENT {"event":"start","id":"2:1","stage":"native-note-data-test","command":"other"}\n');
     tests.feed("stdout", execution.text);
+    tests.feed("stderr", execution.stderrText ?? "");
     tests.feed("stderr", 'MACOS_NATIVE_EVENT {"event":"exit","id":"2:2","startedId":"2:1","stage":"native-note-data-test","command":"other","exit":101}\n');
     const testSummary = safeDiagnosticSummary(tests.summary(), new Set(), files);
     assert(testSummary.issues.some(item => item.class === "rust-test-panic" && item.file === "src/lib.rs" && item.line === 2 && item.column > 0));
@@ -149,7 +152,7 @@ test("worker projection requires the complete fixed set and strips unexpected ma
   const canary = "private_fixture_must_not_be_published";
   const complete = { status: "passed", compiled: true, failure: "none", raw: canary,
     cases: NOTE_DATA_CASES.map(({ id }) => ({ id, status: "passed", exit: 0, raw: canary })) };
-  const projected = safeNoteDataExecution(complete);assert.equal(projected.total, 20);assert.equal(projected.passedCount, 20);
+  const projected = safeNoteDataExecution(complete);assert.equal(projected.total, NOTE_DATA_CASES.length);assert.equal(projected.passedCount, NOTE_DATA_CASES.length);
   assert(!JSON.stringify(projected).includes(canary));
   assert.throws(() => safeNoteDataExecution({ ...complete, cases: complete.cases.slice(1) }));
   assert.throws(() => safeNoteDataExecution({ ...complete, compiled: false }));
@@ -159,26 +162,55 @@ test("worker projection requires the complete fixed set and strips unexpected ma
   const collected = { ...complete, status: "failed", failure: "test-failed", cases: complete.cases.map((item, i) =>
     [1, 8].includes(i) ? { ...item, status: "failed", exit: 101 } : item) };
   const all = safeNoteDataExecution(collected);
-  assert.equal(all.passedCount, 18);assert.equal(all.status, "failed");assert.equal(all.total, 20);
+  assert.equal(all.passedCount, NOTE_DATA_CASES.length - 2);assert.equal(all.status, "failed");assert.equal(all.total, NOTE_DATA_CASES.length);
   assert.throws(() => safeNoteDataExecution({ ...collected, status: "passed" }));
   assert.throws(() => safeNoteDataExecution({ ...collected, cases: collected.cases.map((item, i) =>
     i === 1 ? { ...item, exit: "SIGTERM" } : item) }), /macos-note-data-result-invalid/);
   const sourceBlocked = { schemaVersion: 1, mode: "internal-native-validation", binaryExport: false, status: "failed",
     source: { repository: "xiaorui2886/LuckyRay", commit: "a".repeat(40), tree: "b".repeat(40) }, workerExit: 1, workerSignal: null,
-    distributionReady: false, build: null, lsh: null, noteData: complete,
+    distributionReady: false, build: null, lsh: null, noteData: { ...complete, cases: INTEGRATION_NATIVE_CASES.map(({ id }) => ({ id, status: 'passed', exit: 0 })) },
     phases: PHASES.map((phase, index) => ({ phase, status: index < 2 ? "passed" : index === 2 ? "failed" : "not-run" })),
     failure: { code: "macos-note-data-source-input-missing" }, diagnostics: {}, privateMaterial: canary };
   const report = publishableReport(sourceBlocked);
-  assert.equal(report.status, "failed");assert.equal(report.noteData.passedCount, 20);
+  assert.equal(report.status, "failed");assert.equal(report.noteData.passedCount, INTEGRATION_NATIVE_CASES.length);
   assert.equal(report.coverage.notesRecoveryUi, "not-run");assert(!JSON.stringify(report).includes(canary));
   assert.throws(() => publishableReport({ ...sourceBlocked, noteData: null }), /macos-internal-result-invalid/);
 });
 
+test("the integrated candidate uses an explicit smaller selection and keeps historical assertions separate", () => {
+  assert.equal(new Set(INTEGRATION_NATIVE_CASES.map(item => item.id)).size, INTEGRATION_NATIVE_CASES.length);
+  assert.equal(new Set(INTEGRATION_NATIVE_CASES.map(item => item.test)).size, INTEGRATION_NATIVE_CASES.length);
+  assert(INTEGRATION_NATIVE_CASES.some(item => item.id === 'identity-lan-tls'));
+  assert(INTEGRATION_NATIVE_CASES.some(item => item.id === 'upload-service-reclaim-route'));
+  assert(INTEGRATION_NATIVE_CASES.some(item => item.id === 'folder-product-post-interruption'));
+  assert(!INTEGRATION_NATIVE_CASES.some(item => item.id === 'identity-record-process-recreate' || item.id === 'folder-mutation-closed'));
+  const full = { status: 'passed', compiled: true, failure: 'none', cases: INTEGRATION_NATIVE_CASES.map(({ id }) => ({ id, status: 'passed', exit: 0 })) };
+  assert.equal(safeNoteDataExecution(full, INTEGRATION_NATIVE_CASES).total, INTEGRATION_NATIVE_CASES.length);
+  assert.throws(() => safeNoteDataExecution(full), /result-invalid/);
+});
+
 test("every exact native case names an existing production test", async () => {
+  const moveTests = [
+    "macos_note_move_fixture_preserves_the_attachment_target_and_source",
+    "macos_note_move_rejects_stale_or_replaced_source_and_occupied_target",
+    "macos_move_note_rejects_replaced_file_object_with_same_path_and_content",
+    "macos_move_note_succeeds_after_normal_save_with_updated_file_identity",
+    "macos_ui_rename_preserves_bytes_and_rejects_replacement_or_occupied_target",
+    "macos_folder_mutation_entry_gate_fails_closed",
+  ];
+  for (const name of moveTests) {
+    assert.equal(NOTE_DATA_CASES.filter(item => item.test === `knowledge::macos_operation_recovery_tests::${name}`).length, 1, name);
+  }
   for (const item of NOTE_DATA_CASES) {
     const parts = item.test.split("::"); const module = parts[1]; const fn = parts.at(-1);
-    const file = module === "macos_transactions" ? "macos_transaction_tests" : module;
-    const source = await readFile(join(APP, "src-tauri/src/knowledge", `${file}.rs`), "utf8");
+    const file = module === "macos_transactions" ? "macos_transaction_tests" : module === "tests" ? "mod" : module;
+    const relative = parts[0] === "companion_gateway" && parts.includes("fixture_support") ? "companion_gateway/content/notes/fixture_support.rs"
+      : parts[0] === "companion_gateway" && parts[1] === "services" ? "companion_gateway/services/knowledge.rs"
+      : parts[0] === "companion_gateway" ? "companion_gateway/content/notes.rs"
+      : parts[0] === "knowledge" && parts.includes("macos_companion_folder_create") ? "knowledge/macos_companion_folder_create.rs"
+      : parts[0] === "knowledge" ? `knowledge/${file}.rs`
+      : ["tools", "local_transport"].includes(parts[0]) ? `${parts[0]}/mod.rs` : `${parts[0]}.rs`;
+    const source = await readFile(join(APP, "src-tauri/src", relative), "utf8");
     assert(source.includes(`fn ${fn}(`), item.id);
   }
 });

@@ -22,6 +22,8 @@ import {
 import { createRealVaultLibraryAssetResolver } from "../markdown/realVaultEmbeds";
 import { createRealVaultWikiTargetResolver } from "../markdown/wikiTargets";
 import { knowledgeStore } from "./knowledgeStore";
+import { readActiveKnowledgeWriteSource } from "./knowledgeSource";
+import { isMacPlatform } from "../../app/macosPresentation";
 
 export type LegacyBridgeNote = {
   id: string;
@@ -49,8 +51,8 @@ export type KnowledgeLegacyBridgeDependencies = {
   readDocument(documentRef: KnowledgeDocumentRef): Promise<KnowledgeDocumentSnapshot>;
   createDocument(input: KnowledgeCreateInput): Promise<KnowledgeDocumentSnapshot>;
   replaceDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision: string): Promise<KnowledgeMutationResult>;
-  moveDocument(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null): Promise<KnowledgeDocumentSnapshot>;
-  deleteDocument(documentRef: KnowledgeDocumentRef, expectedRevision: string): Promise<void>;
+  moveDocument(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null, expectedFileIdentity?: string | null): Promise<KnowledgeDocumentSnapshot>;
+  deleteDocument(documentRef: KnowledgeDocumentRef, expectedRevision: string, expectedFileIdentity?: string | null): Promise<void>;
   indexSnapshot(): Promise<KnowledgeIndexSnapshot>;
   setDocumentTags(documentRef: KnowledgeDocumentRef, expectedRevision: string, tags: string[]): Promise<KnowledgeMutationResult>;
   listAssets?(): Promise<Array<{ id: string; name: string; originalPath?: string | null; libraryPath?: string | null }>>;
@@ -145,6 +147,31 @@ function requireKnowledgeFolder(folderId: string | null | undefined) {
 }
 
 export function createKnowledgeLegacyBridgeAdapter(dependencies: KnowledgeLegacyBridgeDependencies) {
+  const readMutationDocument = async (noteId: string) => {
+    const reference = requireDocumentRef(noteId);
+    const mac = isMacPlatform();
+    const origin = mac ? readActiveKnowledgeWriteSource() : null;
+    if (mac && (!origin || origin.vaultId !== reference.vaultId))
+      throw new KnowledgeServiceError("knowledge-source-inactive", "Open the current vault before changing a note");
+    const snapshot = await dependencies.readDocument(reference);
+    if (mac && (readActiveKnowledgeWriteSource() !== origin
+        || snapshot.documentRef.vaultId !== reference.vaultId || snapshot.documentRef.relativePath !== reference.relativePath))
+      throw new KnowledgeServiceError("knowledge-source-inactive", "The vault or document changed before the operation started");
+    return { snapshot, origin, mac };
+  };
+  const assertMutationCurrent = (state: Awaited<ReturnType<typeof readMutationDocument>>, snapshot: KnowledgeDocumentSnapshot, identity: boolean) => {
+    if (!state.mac) return;
+    if (!state.origin || readActiveKnowledgeWriteSource() !== state.origin)
+      throw new KnowledgeServiceError("knowledge-source-inactive", "The vault changed before the operation started");
+    if (identity && !snapshot.fileIdentity)
+      throw new KnowledgeServiceError("knowledge-identity-unavailable", "Reopen the note before changing its location");
+  };
+  const moveSnapshot = (state: Awaited<ReturnType<typeof readMutationDocument>>, snapshot: KnowledgeDocumentSnapshot, title: string, parent?: string | null) => {
+    assertMutationCurrent(state, snapshot, true);
+    return state.mac
+      ? dependencies.moveDocument(snapshot.documentRef, title, snapshot.revision, parent, snapshot.fileIdentity)
+      : dependencies.moveDocument(snapshot.documentRef, title, snapshot.revision, parent);
+  };
   const readIndexedDocument = async (noteId: string) => {
     const documentRef = requireDocumentRef(noteId);
     const snapshot = await dependencies.indexSnapshot();
@@ -189,17 +216,19 @@ export function createKnowledgeLegacyBridgeAdapter(dependencies: KnowledgeLegacy
     },
 
     async updateNote(noteId: string, patch: LegacyBridgeUpdateInput): Promise<LegacyBridgeNote | null> {
-      let snapshot = await dependencies.readDocument(requireDocumentRef(noteId));
+      const state = await readMutationDocument(noteId);
+      let snapshot = state.snapshot;
       const parent = requireKnowledgeFolder(patch.folderId);
       if (parent && parent.vaultId !== snapshot.documentRef.vaultId) {
         throw new KnowledgeServiceError("knowledge-vault-not-current", "Knowledge folder belongs to another Vault");
       }
       if (patch.title !== undefined && patch.title.trim() && patch.title.trim() !== snapshot.title) {
-        snapshot = await dependencies.moveDocument(snapshot.documentRef, patch.title.trim(), snapshot.revision, parent?.relativePath);
+        snapshot = await moveSnapshot(state, snapshot, patch.title.trim(), parent?.relativePath);
       } else if (parent) {
-        snapshot = await dependencies.moveDocument(snapshot.documentRef, snapshot.title, snapshot.revision, parent.relativePath);
+        snapshot = await moveSnapshot(state, snapshot, snapshot.title, parent.relativePath);
       }
       if (patch.contentText !== undefined && patch.contentText !== snapshot.content) {
+        assertMutationCurrent(state, snapshot, false);
         snapshot = (await dependencies.replaceDocument(
           snapshot.documentRef,
           patch.contentText,
@@ -210,8 +239,11 @@ export function createKnowledgeLegacyBridgeAdapter(dependencies: KnowledgeLegacy
     },
 
     async deleteNote(noteId: string): Promise<void> {
-      const snapshot = await dependencies.readDocument(requireDocumentRef(noteId));
-      await dependencies.deleteDocument(snapshot.documentRef, snapshot.revision);
+      const state = await readMutationDocument(noteId);
+      const snapshot = state.snapshot;
+      assertMutationCurrent(state, snapshot, true);
+      if (state.mac) await dependencies.deleteDocument(snapshot.documentRef, snapshot.revision, snapshot.fileIdentity);
+      else await dependencies.deleteDocument(snapshot.documentRef, snapshot.revision);
     },
 
     async listNoteFolders() {
@@ -251,12 +283,13 @@ export function createKnowledgeLegacyBridgeAdapter(dependencies: KnowledgeLegacy
     },
 
     async moveNoteToFolder(input: { noteId: string; folderId: string | null }) {
-      const snapshot = await dependencies.readDocument(requireDocumentRef(input.noteId));
+      const state = await readMutationDocument(input.noteId);
+      const snapshot = state.snapshot;
       const folder = requireKnowledgeFolder(input.folderId);
       if (folder && folder.vaultId !== snapshot.documentRef.vaultId) {
         throw new KnowledgeServiceError("knowledge-vault-not-current", "Knowledge folder belongs to another Vault");
       }
-      await dependencies.moveDocument(snapshot.documentRef, snapshot.title, snapshot.revision, folder?.relativePath || "");
+      await moveSnapshot(state, snapshot, snapshot.title, folder?.relativePath || "");
     },
 
     async getNoteTags(noteId: string): Promise<string[]> {
@@ -479,13 +512,19 @@ export function createDefaultKnowledgeLegacyBridgeAdapter(
       await requireVaultSource();
       return replaceKnowledgeDocument(documentRef, content, expectedRevision);
     },
-    moveDocument: async (documentRef, title, expectedRevision, parentRelativePath) => {
+    moveDocument: async (documentRef, title, expectedRevision, parentRelativePath, expectedFileIdentity) => {
+      const origin = isMacPlatform() ? readActiveKnowledgeWriteSource() : null;
       await requireVaultSource();
-      return moveKnowledgeDocument(documentRef, title, expectedRevision, parentRelativePath);
+      if (isMacPlatform() && readActiveKnowledgeWriteSource() !== origin)
+        throw new KnowledgeServiceError("knowledge-source-inactive", "The vault changed before the move started");
+      return moveKnowledgeDocument(documentRef, title, expectedRevision, parentRelativePath, expectedFileIdentity);
     },
-    deleteDocument: async (documentRef, expectedRevision) => {
+    deleteDocument: async (documentRef, expectedRevision, expectedFileIdentity) => {
+      const origin = isMacPlatform() ? readActiveKnowledgeWriteSource() : null;
       await requireVaultSource();
-      return deleteKnowledgeDocument(documentRef, expectedRevision);
+      if (isMacPlatform() && readActiveKnowledgeWriteSource() !== origin)
+        throw new KnowledgeServiceError("knowledge-source-inactive", "The vault changed before deletion started");
+      return deleteKnowledgeDocument(documentRef, expectedRevision, expectedFileIdentity);
     },
     indexSnapshot: readKnowledgeIndexSnapshot,
     setDocumentTags: async (documentRef, expectedRevision, tags) => {

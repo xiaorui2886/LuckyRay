@@ -350,6 +350,69 @@ pub(super) fn refresh_attachment_binding(
     Ok(())
 }
 impl MaterialCatalog {
+    /// Projection after a confirmed Mac folder move. The filesystem transaction
+    /// owns the directory; this transaction only moves existing catalog paths.
+    /// A missing/replaced attachment leaves the whole projection pending.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn project_macos_note_folder_move(
+        &self, vault_id: &str, root: &Path, old_relative: &str, new_relative: &str,
+    ) -> MaterialResult<()> {
+        validate_document(vault_id, old_relative)?;
+        validate_document(vault_id, new_relative)?;
+        if old_relative == new_relative { return Ok(()); }
+        let old_directory = root.join(old_relative);
+        let new_directory = root.join(new_relative);
+        use std::os::unix::fs::MetadataExt;
+        let old_lookup = std::fs::symlink_metadata(&old_directory);
+        let same_directory_spelling = old_lookup.as_ref().ok().is_some_and(|old| {
+            std::fs::symlink_metadata(&new_directory).ok().is_some_and(|new|
+                old.is_dir() && new.is_dir() && old.dev() == new.dev() && old.ino() == new.ino())
+        });
+        if !same_directory_spelling && !old_lookup
+            .is_err_and(|failure| failure.kind() == std::io::ErrorKind::NotFound) {
+            return Err(MaterialError::new("attachment-folder-projection-pending", "原文件夹路径已存在对象，请检查附件索引"));
+        }
+        let conn = self.open_write()?;
+        ensure_note_attachment_schema(&conn)?;
+        begin_transaction(&conn)?;
+        let bindings = {
+            let mut statement = conn.prepare("SELECT ni.asset_id,ni.canonical_path,ni.file_identity FROM material_note_identity ni JOIN material_note_vault nv ON nv.asset_id=ni.asset_id WHERE nv.vault_id=?1")
+                .map_err(|failure| MaterialError::database("Read moved folder attachments", failure))?;
+            let rows = statement.query_map([vault_id], |row| Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?)))
+                .map_err(|failure| MaterialError::database("Read moved folder attachments", failure))?
+                .collect::<Result<Vec<_>,_>>()
+                .map_err(|failure| MaterialError::database("Read moved folder attachment rows", failure))?;
+            rows
+        };
+        let mut changed = Vec::new();
+        for (id, old_path, original_identity) in bindings {
+            let Ok(suffix) = Path::new(&old_path).strip_prefix(&old_directory) else { continue; };
+            let (canonical, identity, _handle) = file_binding(&new_directory.join(suffix))?;
+            if identity != original_identity || !canonical.starts_with(&new_directory) {
+                return Err(MaterialError::new("attachment-folder-projection-pending", "移动后的附件对象发生变化，保留原索引等待检查"));
+            }
+            let asset = read_asset_unrestricted(&conn, &id)?;
+            if actual_path(&asset)? != old_path {
+                return Err(MaterialError::new("attachment-folder-projection-pending", "附件登记位置发生变化，请重新检查"));
+            }
+            let next = canonical.to_string_lossy().into_owned();
+            conn.execute("UPDATE asset SET original_path=CASE WHEN storage_mode='linked' THEN ?2 ELSE original_path END,library_path=CASE WHEN storage_mode IN ('managed','source') THEN ?2 ELSE library_path END,thumbnail_url=CASE WHEN thumbnail_url=?3 THEN ?2 ELSE thumbnail_url END,updated_at=?4 WHERE id=?1",
+                rusqlite::params![id,next,old_path,now()])
+                .map_err(|failure| MaterialError::database("Project moved attachment path", failure))?;
+            conn.execute("UPDATE material_note_identity SET canonical_path=?2 WHERE asset_id=?1 AND file_identity=?3",
+                rusqlite::params![id,next,original_identity])
+                .map_err(|failure| MaterialError::database("Project moved attachment identity", failure))?;
+            changed.push(id);
+        }
+        conn.execute("UPDATE material_note_ref SET note_path=?3||substr(note_path,length(?2)+1) WHERE vault_id=?1 AND substr(note_path,1,length(?2)+1)=?2||'/'",
+            rusqlite::params![vault_id,old_relative,new_relative])
+            .map_err(|failure| MaterialError::database("Project moved note references", failure))?;
+        if !changed.is_empty() {
+            publish_change_metadata(&conn, "note-folder-move", changed, false)?;
+        }
+        commit_transaction(&conn)
+    }
+
     pub(crate) fn register_note_attachment(
         &self,
         path: &Path,
@@ -1005,6 +1068,77 @@ impl MaterialCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_folder_projection_keeps_attachment_identity_and_references_on_move_and_undo() {
+        let temporary = tempfile::tempdir().unwrap();
+        // macOS may spell its temporary directory through /var -> /private/var.
+        // Exercise the real attachment guard with a canonical fixture root.
+        let catalog = MaterialCatalog::new_for_test_at(temporary.path().canonicalize().unwrap());
+        let file = source(&catalog, "vault/folder/image.png");
+        let root = file.parent().unwrap().parent().unwrap().canonicalize().unwrap();
+        let asset = catalog.register_note_attachment(&file, "v", None).unwrap();
+        // This read-only lookup intentionally exposes ordinary materials only.
+        // Keep its original Some(id) assertions and cover note-only use separately.
+        catalog.promote_note_attachment(&asset.id, None).unwrap();
+        assert_eq!(catalog.material_id_for_vault_attachment("v", &file).unwrap(), Some(asset.id.clone()));
+        let note_only_file = source(&catalog, "vault/folder/note-only.png");
+        let note_only = catalog.register_note_attachment(&note_only_file, "v", None).unwrap();
+        let note_only_identity = file_binding(&note_only_file).unwrap().1;
+        assert_ne!(note_only.id, asset.id);
+        catalog.replace_note_attachment_refs("v", "folder/note-only.md", &[NoteAttachmentRefInput {
+            asset_id: note_only.id.clone(), target: "note-only.png".into(),
+        }]).unwrap();
+        let assert_note_only = |folder: &str| {
+            let path = root.join(folder).join("note-only.png");
+            let details = catalog.attachment_details(&note_only.id).unwrap();
+            assert_eq!(details.asset_id, note_only.id);
+            assert!(!details.ordinary);
+            assert_eq!(details.absolute_path, Some(path.to_string_lossy().into_owned()));
+            assert_eq!(file_binding(&path).unwrap().1, note_only_identity);
+            assert_eq!(catalog.note_attachment_refs("v", &format!("{folder}/note-only.md")).unwrap()[0].asset_id, note_only.id);
+            assert_eq!(catalog.register_note_attachment(&path, "v", None).unwrap().id, note_only.id);
+            assert_eq!(catalog.material_id_for_vault_attachment("v", &path).unwrap(), None);
+        };
+        assert_note_only("folder");
+        catalog.replace_note_attachment_refs("v", "folder/note.md", &[NoteAttachmentRefInput {asset_id:asset.id.clone(),target:"image.png".into()}]).unwrap();
+        catalog.replace_note_attachment_refs("other", "folder/note.md", &[]).unwrap();
+        std::fs::rename(root.join("folder"), root.join("renamed")).unwrap();
+        catalog.project_macos_note_folder_move("v", &root, "folder", "renamed").unwrap();
+        assert!(catalog.note_attachment_refs("v", "folder/note.md").unwrap().is_empty());
+        assert_eq!(catalog.note_attachment_refs("v", "renamed/note.md").unwrap()[0].asset_id, asset.id);
+        assert_eq!(catalog.material_id_for_vault_attachment("v", &root.join("renamed/image.png")).unwrap(), Some(asset.id.clone()));
+        assert_note_only("renamed");
+        catalog.project_macos_note_folder_move("v", &root, "folder", "renamed").unwrap();
+        std::fs::rename(root.join("renamed"), root.join("folder")).unwrap();
+        catalog.project_macos_note_folder_move("v", &root, "renamed", "folder").unwrap();
+        assert_eq!(catalog.note_attachment_refs("v", "folder/note.md").unwrap()[0].asset_id, asset.id);
+        assert_eq!(catalog.material_id_for_vault_attachment("v", &root.join("folder/image.png")).unwrap(), Some(asset.id));
+        assert_note_only("folder");
+        std::fs::rename(root.join("folder"), root.join("Folder")).unwrap();
+        catalog.project_macos_note_folder_move("v", &root, "folder", "Folder").unwrap();
+        assert!(catalog.note_attachment_refs("v", "folder/note.md").unwrap().is_empty());
+        assert_eq!(catalog.note_attachment_refs("v", "Folder/note.md").unwrap().len(), 1);
+        assert_note_only("Folder");
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_folder_projection_rejects_replacement_and_keeps_previous_references() {
+        let temporary = tempfile::tempdir().unwrap();
+        let catalog = MaterialCatalog::new_for_test_at(temporary.path().canonicalize().unwrap());
+        let file = source(&catalog, "vault/folder/image.png");
+        let root = file.parent().unwrap().parent().unwrap().canonicalize().unwrap();
+        let asset = catalog.register_note_attachment(&file, "v", None).unwrap();
+        catalog.replace_note_attachment_refs("v", "folder/note.md", &[NoteAttachmentRefInput {asset_id:asset.id.clone(),target:"image.png".into()}]).unwrap();
+        std::fs::rename(root.join("folder"), root.join("renamed")).unwrap();
+        std::fs::rename(root.join("renamed/image.png"), root.join("retained-original.png")).unwrap();
+        std::fs::write(root.join("renamed/image.png"), b"same bytes").unwrap();
+        assert!(catalog.project_macos_note_folder_move("v", &root, "folder", "renamed").is_err());
+        assert_eq!(catalog.note_attachment_refs("v", "folder/note.md").unwrap()[0].asset_id, asset.id);
+        assert!(catalog.note_attachment_refs("v", "renamed/note.md").unwrap().is_empty());
+        assert_eq!(std::fs::read(root.join("renamed/image.png")).unwrap(), b"same bytes");
+        assert_eq!(std::fs::read(root.join("retained-original.png")).unwrap(), b"same bytes");
+    }
     fn scope(vault: &str, unreferenced: bool) -> MaterialQueryScope {
         MaterialQueryScope {
             scope: "note-attachments".into(),

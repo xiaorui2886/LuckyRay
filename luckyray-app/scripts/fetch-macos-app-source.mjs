@@ -58,7 +58,9 @@ export async function fetchPinnedSource(input, {
       || !/^[a-f0-9]{64}$/.test(input.sha256)) throw fail("descriptor-invalid");
   await requireNoCurlConfig(env, accountHome);
   const args = ["-q", "--silent", "--show-error", "--fail", "--no-insecure", "--no-proxy-insecure",
-    "--connect-timeout", "15", "--max-time", "120", "--max-filesize", String(input.bytes),
+    // Keep a single bounded request, while allowing a slow runner connection
+    // more than the previous 15 seconds to establish TLS.
+    "--connect-timeout", "45", "--max-time", "120", "--max-filesize", String(input.bytes),
     "--proto", "=https", "--max-redirs", "0", "--output", "-",
     "--write-out", `${TRAILER_PREFIX}%{http_code}\n`, OFFICIAL_SOURCE_URL];
 

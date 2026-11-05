@@ -8,8 +8,13 @@
 //! ```
 
 mod desktop_app_update;
+mod folder_mutation_guard;
 #[cfg(target_os = "macos")]
 mod macos_fs;
+#[cfg(target_os = "macos")]
+pub fn run_macos_folder_helper() -> i32 {
+    knowledge::macos_folder_mutations::run_folder_helper()
+}
 #[cfg(target_os = "macos")]
 mod quit_transaction;
 #[cfg(all(target_os = "macos", feature = "macos-material-flow"))]
@@ -739,6 +744,31 @@ pub fn run() {
     let builder = dsh_host::macos_surface_flow::configure(builder);
     #[cfg(all(target_os = "macos", feature = "macos-note-flow"))]
     let builder = macos_note_flow::configure(builder);
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(|app| {
+            let menu = Menu::default(app)?;
+            // In pinned Tauri 2.11.2 the first submenu is the application
+            // menu and its last item is Quit. Its predefined terminate:
+            // action bypasses our editor save barrier; keep the other items.
+            let application_menu = menu.items()?.into_iter().next()
+                .and_then(|item| item.as_submenu().cloned())
+                .ok_or_else(|| std::io::Error::other("macos-application-menu-unavailable"))?;
+            let predefined_quit = application_menu.items()?.pop()
+                .and_then(|item| item.as_predefined_menuitem().cloned())
+                .ok_or_else(|| std::io::Error::other("macos-application-quit-unavailable"))?;
+            let quit = MenuItem::with_id(
+                app, "macos-application-quit", predefined_quit.text()?, true, Some("Cmd+Q"),
+            )?;
+            application_menu.remove(&predefined_quit)?;
+            application_menu.append(&quit)?;
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "macos-application-quit" {
+                request_normal_quit(app.clone(), false);
+            }
+        });
     builder
         .on_webview_event(|webview, event| {
             if webview.label() == "main" {
@@ -918,6 +948,7 @@ pub fn run() {
             set_auto_launch_enabled,
             get_backend_bootstrap_status,
             companion_gateway::companion_gateway_status,
+            companion_gateway::companion_gateway_retry_identity,
             companion_gateway::companion_gateway_start,
             companion_gateway::companion_gateway_stop,
             companion_gateway::companion_gateway_restart,
@@ -1060,6 +1091,10 @@ pub fn run() {
             move_notes_vault_folder,
             delete_notes_vault_markdown_file,
             delete_notes_vault_empty_folder,
+            macos_mutate_vault_folder,
+            macos_prepare_vault_folder,
+            macos_list_vault_folder_recoveries,
+            macos_restore_vault_folder,
             export_assets_index,
             classify_dropped_paths,
             material_catalog_list_assets,
@@ -2747,11 +2782,15 @@ fn knowledge_move_document(
     input: knowledge::KnowledgeMoveInput,
     source_epoch: u64,
 ) -> Result<knowledge::KnowledgeDocumentSnapshot, String> {
+    #[cfg(target_os = "macos")]
+    if input.expected_file_identity.as_deref().filter(|value| !value.is_empty()).is_none() {
+        return Err("knowledge-identity-unavailable: Reopen the note before moving it".into());
+    }
     let service=knowledge_service()?;
     let scope=service.capture_workspace_scope(&input.document_ref.vault_id).map_err(knowledge_error)?;
     let registry=app.state::<workspace_windows::WorkspaceWindows>();
     let _retirement=registry.guard_main_document_retirement(&scope,&input.document_ref)?;
-    move_document_with_services(&service,&backend_services()?.material_catalog(),&input,source_epoch)
+    move_document_with_services(&scope,&backend_services()?.material_catalog(),&input,source_epoch)
 }
 
 fn move_document_with_services(service:&knowledge::KnowledgeService,catalog:&materials::MaterialCatalog,input:&knowledge::KnowledgeMoveInput,source_epoch:u64)->Result<knowledge::KnowledgeDocumentSnapshot,String> {
@@ -2964,12 +3003,24 @@ fn knowledge_delete_document(
     input: knowledge::KnowledgeDeleteInput,
     source_epoch: u64,
 ) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if input.expected_file_identity.as_deref().filter(|value| !value.is_empty()).is_none() {
+        return Err("knowledge-identity-unavailable: Reopen the note before deleting it".into());
+    }
     let service=knowledge_service()?;
     let scope=service.capture_workspace_scope(&input.document_ref.vault_id).map_err(knowledge_error)?;
     let registry=app.state::<workspace_windows::WorkspaceWindows>();
     let _retirement=registry.guard_main_document_retirement(&scope,&input.document_ref)?;
     service.delete_document_from_ui(source_epoch, &input)
         .map_err(knowledge_error)?;
+    #[cfg(target_os = "macos")]
+    {
+        let incomplete = || "knowledge-delete-projection-incomplete: The note was retained for recovery, but its attachment index could not be updated. Refresh the vault and inspect recovery before retrying.".to_owned();
+        return backend_services().map_err(|_| incomplete())?.material_catalog()
+            .replace_note_attachment_refs(&input.document_ref.vault_id, &input.document_ref.relative_path, &[])
+            .map_err(|_| incomplete());
+    }
+    #[cfg(not(target_os = "macos"))]
     backend_services()?.material_catalog().replace_note_attachment_refs(&input.document_ref.vault_id,&input.document_ref.relative_path,&[]).map_err(|e|e.message)
 }
 
@@ -4867,6 +4918,9 @@ fn clear_all_data(
     app: tauri::AppHandle,
     backend: tauri::State<'_, Arc<backend::BackendServices>>,
 ) -> Result<ClearAllDataResult, String> {
+    #[cfg(target_os = "macos")]
+    let _upload_guard = companion_gateway::macos_clear_data_guard()
+        .map_err(|_| "companion-upload-busy: 请等待手机上传完成后重试".to_owned())?;
     if !backend.stop_all_runs_and_wait(std::time::Duration::from_secs(10)) {
         return Err("agent-run-stop-timeout".to_owned());
     }
@@ -4874,6 +4928,17 @@ fn clear_all_data(
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let db_path = app_data.join("luckyray.db");
     let mut cleared_tables = Vec::new();
+
+    // The user's data-clear also removes media-transfer-staging. Preserve
+    // operation tombstones first, so an old phone retry cannot publish twice
+    // or occupy a pending-upload slot forever after the bytes are cleared.
+    #[cfg(target_os = "macos")]
+    if let Some(gateway) = COMPANION_GATEWAY.get() {
+        companion_gateway::content::notes::macos_cancel_uploads_for_clear(gateway)
+            .map_err(str::to_owned)?;
+        companion_gateway::services::macos_retire_staging_for_clear(gateway)
+            .map_err(str::to_owned)?;
+    }
 
     if db_path.exists() {
         let conn =
@@ -5270,6 +5335,9 @@ fn restore_backup(
     backend: tauri::State<'_, Arc<backend::BackendServices>>,
     backup_id: String,
 ) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    let _upload_guard = companion_gateway::macos_clear_data_guard()
+        .map_err(|_| "companion-upload-busy: 请等待手机上传完成后重试".to_owned())?;
     if !backend.stop_all_runs_and_wait(std::time::Duration::from_secs(10)) {
         return Err("agent-run-stop-timeout".to_owned());
     }
@@ -5696,7 +5764,21 @@ fn collect_notes_vault_asset_basename_matches(
     }
     Ok(())
 }
+// The legacy parser accepts Windows separators and trims every component.
+// On macOS these can be literal characters in distinct entries, so never
+// silently redirect an operation to the normalized spelling.
+#[cfg(target_os = "macos")]
+fn reject_ambiguous_macos_vault_path(value: &str) -> Result<(), String> {
+    if value.contains('\\') || value.starts_with('/') || value.ends_with('/') && !value.is_empty()
+        || value.split('/').any(|part| part != part.trim()) {
+        return Err("path-ambiguous: this vault path cannot be identified safely".into());
+    }
+    Ok(())
+}
+
 fn safe_vault_relative_markdown_path(relative_path: &str) -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    reject_ambiguous_macos_vault_path(relative_path)?;
     let trimmed = relative_path.trim().replace('\\', "/");
     if trimmed.is_empty() {
         return Err("试迁移路径不能为空".to_string());
@@ -5725,6 +5807,8 @@ fn safe_vault_relative_markdown_path(relative_path: &str) -> Result<std::path::P
 }
 
 fn safe_vault_relative_directory_path(relative_path: &str) -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    reject_ambiguous_macos_vault_path(relative_path)?;
     let trimmed = relative_path
         .trim()
         .replace('\\', "/")
@@ -6552,6 +6636,22 @@ fn export_notes_vault_markdown_folder(
     })
 }
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn create_notes_vault_folder(
+    vault: NotesVaultMetadata,
+    parent_relative_path: String,
+    name: String,
+    source_epoch: Option<u64>,
+) -> Result<NotesVaultFileNode, String> {
+    let epoch = source_epoch.ok_or_else(||
+        "knowledge-source-inactive: Open the current vault before creating a folder".to_owned())?;
+    create_macos_notes_vault_folder(
+        &knowledge_service()?, &vault.id, epoch, &parent_relative_path, &name,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 fn create_notes_vault_folder(
     vault: NotesVaultMetadata,
@@ -6575,6 +6675,77 @@ fn create_notes_vault_folder(
     notes_vault_file_node(&root, &target, target_relative)
 }
 
+/// Desktop Mac uses the same exclusive parent-handle operation as the
+/// companion. The UI source lock prevents a concurrent in-app vault switch;
+/// the target identity checks bind this operation to the captured root.
+#[cfg(target_os = "macos")]
+fn create_macos_notes_vault_folder(
+    service: &knowledge::KnowledgeService,
+    vault_id: &str,
+    source_epoch: u64,
+    parent_relative_path: &str,
+    name: &str,
+) -> Result<NotesVaultFileNode, String> {
+    let parent = safe_vault_relative_directory_path(parent_relative_path)?;
+    if notes_vault_relative_path_string(&parent) != parent_relative_path {
+        return Err("path-ambiguous: this vault path cannot be identified safely".into());
+    }
+    let folder_name = safe_notes_vault_entity_name(name, "文件夹")?;
+    let _source = service.lock_active_ui_source(source_epoch, Some(vault_id))
+        .map_err(knowledge_error)?;
+    let scope = service.capture_workspace_scope(vault_id).map_err(knowledge_error)?;
+    let target = scope.current_target_identity().map_err(knowledge_error)?;
+    let root = scope.workspace_recovery_record().map_err(knowledge_error)?;
+    let relative = scope.companion_create_folder_for_target(
+        &target, Some(parent_relative_path), &folder_name,
+    ).map_err(macos_desktop_folder_create_error)?;
+    // Do not traverse the path after creation: an uncoordinated process could
+    // replace the new name before a path-based directory walk. The UI refreshes
+    // the tree separately; this is only the initial node projection.
+    let absolute = root.root_path().join(&relative);
+    Ok(NotesVaultFileNode {
+        kind: "folder".to_owned(),
+        name: folder_name,
+        relative_path: relative,
+        absolute_path: absolute.to_string_lossy().into_owned(),
+        children: Vec::new(),
+        mtime: None,
+        size: 0,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_desktop_folder_create_error(failure: knowledge::KnowledgeError) -> String {
+    // These particular failures happen before mkdir, or report an existing
+    // entry without creating anything. Other failures can follow mkdir, so
+    // preserve the uncertain outcome instead of inviting a blind retry.
+    if matches!(failure.code,
+        "knowledge-name-conflict" | "knowledge-path-invalid" |
+        "knowledge-parent-missing" | "knowledge-path-outside-vault" |
+        "knowledge-invalid-document-ref") {
+        return knowledge_error(failure);
+    }
+    format!("knowledge-create-unconfirmed: Folder creation may have occurred ({}); inspect the original vault before retrying", failure.code)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "macos_desktop_folder_tests.rs"]
+mod macos_desktop_folder_tests;
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn create_notes_vault_markdown_file(
+    vault: NotesVaultMetadata,
+    parent_relative_path: String,
+    name: String,
+    source_epoch: Option<u64>,
+) -> Result<NotesVaultMarkdownFile, String> {
+    let epoch = source_epoch.ok_or_else(||
+        "knowledge-source-inactive: Open the current vault before creating a note".to_owned())?;
+    create_macos_legacy_vault_note(&knowledge_service()?, &vault, epoch, &parent_relative_path, &name)
+}
+
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 fn create_notes_vault_markdown_file(
     vault: NotesVaultMetadata,
@@ -6619,6 +6790,130 @@ fn create_notes_vault_markdown_file(
         size: metadata.len(),
     })
 }
+
+/// Preserve the legacy initial Markdown content while using the protected
+/// Knowledge create authority and the exact UI source that requested it.
+#[cfg(target_os = "macos")]
+fn create_macos_legacy_vault_note(
+    service: &knowledge::KnowledgeService,
+    vault: &NotesVaultMetadata,
+    source_epoch: u64,
+    parent_relative_path: &str,
+    name: &str,
+) -> Result<NotesVaultMarkdownFile, String> {
+    let parent = safe_vault_relative_directory_path(parent_relative_path)?;
+    if notes_vault_relative_path_string(&parent) != parent_relative_path {
+        return Err("path-ambiguous: this vault path cannot be identified safely".into());
+    }
+    let file_name = safe_notes_vault_markdown_file_name(name)?;
+    let title = std::path::Path::new(&file_name).file_stem().and_then(|s| s.to_str()).unwrap_or("未命名文档");
+    let content = format!("# {}\n", title);
+    let _source = service.lock_active_ui_source(source_epoch, Some(&vault.id)).map_err(knowledge_error)?;
+    let scope = service.capture_workspace_scope(&vault.id).map_err(knowledge_error)?;
+    let target = scope.current_target_identity().map_err(knowledge_error)?;
+    let root = scope.workspace_recovery_record().map_err(knowledge_error)?;
+    if root.root_path() != std::path::Path::new(&vault.root_path) {
+        return Err("knowledge-source-inactive: The requested vault root changed".into());
+    }
+    let created_parent = ensure_macos_legacy_note_parent(&scope, &target, root.root_path(), &parent)?;
+    let expected_relative = parent.join(&file_name);
+    let input = knowledge::KnowledgeCreateInput {
+        title: file_name.clone(),
+        parent_relative_path: Some(parent_relative_path.to_owned()),
+        content: content.clone(),
+    };
+    let outcome = scope.create_document_for_target(&target, &input)
+        .map_err(|failure| if created_parent {
+            "knowledge-create-unconfirmed: 目录已创建，但笔记创建结果需要检查，请先检查原知识库。".to_owned()
+        } else { macos_legacy_note_create_error(failure) })?;
+    if outcome.index_stale || outcome.index_warning.is_some() {
+        return Err("knowledge-create-unconfirmed: 笔记可能已创建，请先检查原知识库，再决定是否重试。".into());
+    }
+    let created = outcome.document;
+    if created.summary.document_ref.vault_id != vault.id
+        || created.summary.relative_path != notes_vault_relative_path_string(&expected_relative)
+        || created.content != content
+    {
+        return Err("knowledge-create-unconfirmed: 笔记可能已创建，请先检查原知识库，再决定是否重试。".into());
+    }
+    Ok(NotesVaultMarkdownFile {
+        name: file_name,
+        relative_path: created.summary.relative_path,
+        absolute_path: root.root_path().join(expected_relative).to_string_lossy().into_owned(),
+        content_text: content.clone(),
+        mtime: created.summary.modified_at,
+        size: content.len() as u64,
+    })
+}
+
+/// Legacy missing links may contain new intermediate folders. Resolve each
+/// through a held no-follow directory and create missing components with the
+/// same target-bound exclusive mkdir used by the Mac folder command.
+#[cfg(target_os = "macos")]
+fn ensure_macos_legacy_note_parent(
+    scope: &knowledge::KnowledgeService,
+    target: &knowledge::KnowledgeTargetIdentity,
+    root: &std::path::Path,
+    parent: &std::path::Path,
+) -> Result<bool, String> {
+    use std::path::Component;
+    let mut directory = macos_fs::Directory::open(root, false, false)
+        .map_err(|_| "knowledge-source-inactive: The vault root is unavailable".to_owned())?;
+    let mut relative = std::path::PathBuf::new();
+    let mut created_parent = false;
+    for component in parent.components() {
+        let Component::Normal(name) = component else { return Err("path-ambiguous: invalid parent".into()); };
+        let child = match directory.child(name, false) {
+            Ok(child) => child,
+            Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => {
+                let leaf = name.to_str().ok_or_else(|| "path-ambiguous: invalid parent".to_owned())?;
+                let prefix = notes_vault_relative_path_string(&relative);
+                match scope.companion_create_folder_for_target(target, Some(&prefix), leaf) {
+                    Ok(_) => { created_parent = true; },
+                    // Another creator may have made the folder. It is only
+                    // accepted after the held parent opens it without links.
+                    Err(failure) if failure.code == "knowledge-name-conflict" => {},
+                    Err(failure) => return Err(if created_parent {
+                        "knowledge-create-unconfirmed: 部分目录已创建，请先检查原知识库，再决定是否重试。".to_owned()
+                    } else { macos_desktop_folder_create_error(failure) }),
+                }
+                directory.child(name, false).map_err(|_|
+                    "knowledge-create-unconfirmed: 目录状态已更改，请检查原知识库后再重试。".to_owned())?
+            },
+            Err(_) => return Err(if created_parent {
+                "knowledge-create-unconfirmed: 部分目录已创建，但父目录已改变，请先检查原知识库。".to_owned()
+            } else { "knowledge-path-invalid: 父目录不可用或包含链接".to_owned() }),
+        };
+        scope.with_current_target_response_lease(target, || ()).map_err(|failure| if created_parent {
+            "knowledge-create-unconfirmed: 部分目录已创建，但知识库状态已改变，请先检查原知识库。".to_owned()
+        } else { macos_legacy_note_create_error(failure) })?;
+        child.current().map_err(|_|
+            "knowledge-create-unconfirmed: 目录状态已更改，请检查原知识库后再重试。".to_owned())?;
+        relative.push(name);
+        directory = child;
+    }
+    Ok(created_parent)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_legacy_note_create_error(failure: knowledge::KnowledgeError) -> String {
+    if failure.code == "knowledge-name-conflict" {
+        return "already-exists: Markdown 文件已存在".into();
+    }
+    // A write or parent creation may already have occurred. Do not invite a
+    // blind retry when the transaction or vault could not be verified.
+    if matches!(failure.code, "knowledge-revision-conflict" | "knowledge-recovery-required"
+        | "knowledge-create-unconfirmed" | "knowledge-vault-changed"
+        | "knowledge-vault-unavailable" | "knowledge-target-not-current"
+        | "knowledge-operation-unavailable") {
+        return "knowledge-create-unconfirmed: 笔记或目录可能已创建，请先检查原知识库，再决定是否重试。".into();
+    }
+    knowledge_error(failure)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "macos_legacy_note_create_tests.rs"]
+mod macos_legacy_note_create_tests;
 
 fn is_windows_reserved_name(name: &str) -> bool {
     let upper = name.trim().trim_end_matches('.').to_ascii_uppercase();
@@ -6990,6 +7285,9 @@ fn write_notes_vault_markdown_file(
     relative_path: String,
     content_text: String,
 ) -> Result<NotesVaultWriteResult, String> {
+    if cfg!(target_os = "macos") {
+        return Err("knowledge-write-revision-required: Reopen the note and use the revisioned save action".to_owned());
+    }
     let root = notes_vault_metadata_checked_root(&vault)?;
     let relative = safe_vault_relative_markdown_path(&relative_path)
         .map_err(|error| format!("not-markdown-file: {}", error))?;
@@ -7023,6 +7321,9 @@ fn rename_notes_vault_markdown_file(
     relative_path: String,
     new_name: String,
 ) -> Result<NotesVaultMarkdownFile, String> {
+    if cfg!(target_os = "macos") {
+        return Err("knowledge-move-revision-required: Reopen the note and use the protected rename action".to_owned());
+    }
     let root = notes_vault_metadata_checked_root(&vault)?;
     let registry=app.state::<workspace_windows::WorkspaceWindows>();
     let (relative, source) = notes_vault_existing_markdown_target(&root, &relative_path)?;
@@ -7052,6 +7353,7 @@ fn rename_notes_vault_folder(
     relative_path: String,
     new_name: String,
 ) -> Result<NotesVaultFileNode, String> {
+    folder_mutation_guard::require_safe_platform(cfg!(target_os = "macos"))?;
     let root = notes_vault_metadata_checked_root(&vault)?;
     let registry=app.state::<workspace_windows::WorkspaceWindows>();
     let (relative, source) = notes_vault_existing_directory_target(&root, &relative_path)?;
@@ -7081,6 +7383,9 @@ fn move_notes_vault_markdown_file(
     relative_path: String,
     target_parent_relative_path: String,
 ) -> Result<NotesVaultMarkdownFile, String> {
+    if cfg!(target_os = "macos") {
+        return Err("knowledge-move-revision-required: Reopen the note and use the protected move action".to_owned());
+    }
     let root = notes_vault_metadata_checked_root(&vault)?;
     let registry=app.state::<workspace_windows::WorkspaceWindows>();
     let (relative, source) = notes_vault_existing_markdown_target(&root, &relative_path)?;
@@ -7118,6 +7423,7 @@ fn move_notes_vault_folder(
     relative_path: String,
     target_parent_relative_path: String,
 ) -> Result<NotesVaultFileNode, String> {
+    folder_mutation_guard::require_safe_platform(cfg!(target_os = "macos"))?;
     let root = notes_vault_metadata_checked_root(&vault)?;
     let registry=app.state::<workspace_windows::WorkspaceWindows>();
     let (relative, source) = notes_vault_existing_directory_target(&root, &relative_path)?;
@@ -7162,6 +7468,11 @@ fn delete_notes_vault_markdown_file(
     vault: NotesVaultMetadata,
     relative_path: String,
 ) -> Result<NotesVaultDeleteResult, String> {
+    if cfg!(target_os = "macos") {
+        // Mac deletes must use the revisioned, retained Knowledge transaction.
+        // This legacy command lacks both the revision and file-object proof.
+        return Err("knowledge-delete-revision-required: Reopen the note and use the recoverable delete action".to_owned());
+    }
     let root = notes_vault_metadata_checked_root(&vault)?;
     let registry=app.state::<workspace_windows::WorkspaceWindows>();
     let (relative, target) = notes_vault_existing_markdown_target(&root, &relative_path)?;
@@ -7183,6 +7494,7 @@ fn delete_notes_vault_empty_folder(
     vault: NotesVaultMetadata,
     relative_path: String,
 ) -> Result<NotesVaultDeleteResult, String> {
+    folder_mutation_guard::require_safe_platform(cfg!(target_os = "macos"))?;
     let root = notes_vault_metadata_checked_root(&vault)?;
     let registry=app.state::<workspace_windows::WorkspaceWindows>();
     let (relative, target) = notes_vault_existing_directory_target(&root, &relative_path)?;
@@ -7203,6 +7515,153 @@ fn delete_notes_vault_empty_folder(
         deleted: true,
         message: "Deleted one empty folder".to_string(),
     })
+}
+
+#[tauri::command]
+async fn macos_mutate_vault_folder(
+    caller: tauri::Webview,
+    app: tauri::AppHandle,
+    source_epoch: u64,
+    relative_path: String,
+    expected_selection: String,
+    operation: String,
+    new_name: Option<String>,
+    target_parent_relative_path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    require_main_caller(&caller)?;
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(move || {
+        let scope = macos_folder_ui_scope(source_epoch)?;
+        let root = scope.workspace_recovery_record().map_err(knowledge_error)?;
+        let relative = safe_vault_relative_directory_path(&relative_path)?;
+        let registry = app.state::<workspace_windows::WorkspaceWindows>();
+        let _retirement = registry.guard_main_path_retirement(root.root_path(), &relative, true)?;
+        // The UI method holds the active-source lock and verifies the captured
+        // selection. Use the main service so its index is invalidated before
+        // the committed-change event reaches Graph and the companion.
+        let mut result = knowledge_service()?.mutate_folder_from_ui(source_epoch, &relative_path, &expected_selection, &operation,
+            new_name.as_deref(), target_parent_relative_path.as_deref()).map_err(knowledge_error)?;
+        finish_macos_folder_projection(&scope, source_epoch, &mut result);
+        serde_json::to_value(result).map_err(|_| "knowledge-folder-result-encode".into())
+    }).await.map_err(|_| "knowledge-folder-worker-failed: 请检查文件夹恢复记录后继续操作".to_owned())?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, source_epoch, relative_path, expected_selection, operation, new_name, target_parent_relative_path);
+        Err("macos-folder-operation-unavailable".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_folder_ui_scope(source_epoch: u64) -> Result<knowledge::KnowledgeService, String> {
+    let service = knowledge_service()?;
+    let active = service.active_ui_source_identity().map_err(knowledge_error)?;
+    if active.source_epoch != source_epoch {
+        return Err("knowledge-source-inactive: 文件夹操作属于已关闭的资料库视图，请重新打开后重试".into());
+    }
+    service.capture_workspace_scope(&active.vault_id).map_err(knowledge_error)
+}
+
+#[tauri::command]
+async fn macos_prepare_vault_folder(
+    caller: tauri::Webview,
+    source_epoch: u64,
+    relative_path: String,
+) -> Result<String, String> {
+    require_main_caller(&caller)?;
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(move || {
+        macos_folder_ui_scope(source_epoch)?.prepare_folder_from_ui(source_epoch, &relative_path)
+            .map_err(knowledge_error)
+    }).await.map_err(|_| "knowledge-folder-worker-failed".to_owned())?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (source_epoch, relative_path);
+        Err("macos-folder-operation-unavailable".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn finish_macos_folder_projection(
+    scope: &knowledge::KnowledgeService,
+    source_epoch: u64,
+    result: &mut knowledge::macos_folder_mutations::FolderMutationResult,
+) {
+    if result.state != "completed" { return; }
+    let Some(next_path) = result.new_relative_path.as_deref() else { return; };
+    if result.old_relative_path == next_path || result.old_relative_path.starts_with(".luckyray/") { return; }
+    let projection = (|| -> Result<(), String> {
+        let vault_id = scope.current_vault_id().map_err(knowledge_error)?;
+        let _source = scope.lock_active_ui_source(source_epoch, Some(&vault_id)).map_err(knowledge_error)?;
+        let root = scope.workspace_recovery_record().map_err(knowledge_error)?;
+        let catalog = backend_services()?.material_catalog();
+        catalog.project_macos_note_folder_move(&vault_id, root.root_path(), &result.old_relative_path, next_path)
+            .map_err(|failure| failure.message)?;
+        for document in scope.list_documents().map_err(knowledge_error)? {
+            if std::path::Path::new(&document.relative_path).starts_with(next_path) {
+                attachment_coordination::sync_note_attachment_index(scope, &catalog, &document.document_ref)?;
+            }
+        }
+        Ok(())
+    })();
+    if projection.is_err() {
+        // The durable filesystem result remains completed. A derived catalog
+        // failure must not invite a second rename or hide the new live path.
+        result.message = Some("文件夹操作已完成；附件索引尚未更新，请检查附件状态后继续。".into());
+    }
+}
+
+#[tauri::command]
+async fn macos_list_vault_folder_recoveries(
+    caller: tauri::Webview,
+    source_epoch: u64,
+) -> Result<serde_json::Value, String> {
+    require_main_caller(&caller)?;
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(move || {
+        let scope = macos_folder_ui_scope(source_epoch)?;
+        let records = scope.list_folder_recoveries_from_ui(source_epoch).map_err(knowledge_error)?;
+        serde_json::to_value(records).map_err(|_| "knowledge-folder-result-encode".into())
+    }).await.map_err(|_| "knowledge-folder-worker-failed".to_owned())?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = source_epoch;
+        Err("macos-folder-operation-unavailable".into())
+    }
+}
+
+#[tauri::command]
+async fn macos_restore_vault_folder(
+    caller: tauri::Webview,
+    app: tauri::AppHandle,
+    source_epoch: u64,
+    operation_id: String,
+) -> Result<serde_json::Value, String> {
+    require_main_caller(&caller)?;
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(move || {
+        let scope = macos_folder_ui_scope(source_epoch)?;
+        let root = scope.workspace_recovery_record().map_err(knowledge_error)?;
+        let record = scope.list_folder_recoveries_from_ui(source_epoch).map_err(knowledge_error)?
+            .into_iter().find(|record| record.result.operation_id == operation_id)
+            .ok_or("knowledge-folder-recovery-not-found")?;
+        let old_path = safe_vault_relative_directory_path(&record.result.old_relative_path)?;
+        let new_path = record.result.new_relative_path.as_deref()
+            .map(safe_vault_relative_directory_path).transpose()?;
+        let mut paths = vec![(old_path.as_path(), true)];
+        if let Some(path) = new_path.as_deref() { paths.push((path, true)); }
+        let registry = app.state::<workspace_windows::WorkspaceWindows>();
+        // One gate covers both names. Taking the single-path guard twice would
+        // deadlock and would leave a gap for an independent window to bind.
+        let _retirement = registry.guard_main_paths_retirement(root.root_path(), &paths)?;
+        let mut result = knowledge_service()?.restore_folder_from_ui(source_epoch, &operation_id).map_err(knowledge_error)?;
+        finish_macos_folder_projection(&scope, source_epoch, &mut result);
+        serde_json::to_value(result).map_err(|_| "knowledge-folder-result-encode".into())
+    }).await.map_err(|_| "knowledge-folder-worker-failed: 请检查文件夹恢复记录后继续操作".to_owned())?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, source_epoch, operation_id);
+        Err("macos-folder-operation-unavailable".into())
+    }
 }
 
 #[tauri::command]

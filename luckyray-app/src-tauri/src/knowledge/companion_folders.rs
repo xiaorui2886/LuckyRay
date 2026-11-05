@@ -1,6 +1,10 @@
 //! Scoped create-only directory authority for the mobile file-vault outbox.
 use super::*;
+#[cfg(not(target_os = "macos"))]
 use std::fs;
+#[cfg(target_os = "macos")]
+#[path = "macos_companion_folder_create.rs"]
+mod macos_companion_folder_create;
 
 fn folder_name(name: &str) -> Result<&str, KnowledgeError> {
     let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
@@ -29,7 +33,19 @@ impl KnowledgeService {
         let parent_path = safe_existing_directory(&vault.root, &relative_parent)?;
         let parent_guard = filesystem_directory_identity_guard(&parent_path)
             .map_err(map_filesystem_identity_error)?;
+        #[cfg(target_os = "macos")]
+        let parent_directory = parent_guard.macos_directory(&parent_path)
+            .map_err(map_filesystem_identity_error)?;
         // Avoid collisions accepted on Linux but ambiguous on Windows.
+        #[cfg(target_os = "macos")]
+        for entry in parent_directory.entries().map_err(|_| error("knowledge-parent-missing", "Folder unavailable"))? {
+            if entry.to_string_lossy().to_uppercase() == name.to_uppercase() {
+                parent_guard.verify_current_path(&parent_path).map_err(map_filesystem_identity_error)?;
+                self.assert_expected_target_unlocked(&vault, Some(expected), root_guard.as_ref())?;
+                return Err(error("knowledge-name-conflict", "A folder or file with this name exists"));
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
         for entry in fs::read_dir(&parent_path).map_err(|_| error("knowledge-parent-missing", "Folder unavailable"))? {
             let entry = entry.map_err(|_| error("knowledge-parent-missing", "Folder unavailable"))?;
             if entry.file_name().to_string_lossy().to_uppercase() == name.to_uppercase() {
@@ -38,12 +54,26 @@ impl KnowledgeService {
         }
         self.assert_expected_target_unlocked(&vault, Some(expected), root_guard.as_ref())?;
         parent_guard.verify_current_path(&parent_path).map_err(map_filesystem_identity_error)?;
-        let path = parent_path.join(name);
-        fs::create_dir(&path).map_err(|_| error("knowledge-name-conflict", "Folder could not be created without replacement"))?;
+        #[cfg(target_os = "macos")]
+        {
+            let created = macos_companion_folder_create::create(&parent_directory, OsStr::new(name));
+            // A conflict is meaningful only in the same current target too.
+            parent_guard.verify_current_path(&parent_path).map_err(map_filesystem_identity_error)?;
+            self.assert_expected_target_unlocked(&vault, Some(expected), root_guard.as_ref())?;
+            created.map_err(|failure| match failure {
+                macos_companion_folder_create::Failure::Exists => error("knowledge-name-conflict", "A folder or file with this name exists"),
+                macos_companion_folder_create::Failure::Uncertain => error("knowledge-operation-unavailable", "Folder creation outcome needs inspection"),
+            })?;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let path = parent_path.join(name);
+            fs::create_dir(&path).map_err(|_| error("knowledge-name-conflict", "Folder could not be created without replacement"))?;
+        }
         // Do not remove anything on a post-create failure; its ownership may have changed.
         parent_guard.verify_current_path(&parent_path).map_err(map_filesystem_identity_error)?;
         self.assert_expected_target_unlocked(&vault, Some(expected), root_guard.as_ref())?;
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "macos")))]
         File::open(&parent_path).and_then(|f| f.sync_all())
             .map_err(|_| error("knowledge-operation-unavailable", "Folder durability is uncertain"))?;
         Ok(relative_parent.join(name).to_string_lossy().replace('\\', "/"))

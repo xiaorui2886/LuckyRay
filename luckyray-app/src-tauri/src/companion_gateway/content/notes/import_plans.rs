@@ -374,9 +374,29 @@ fn commit(
         .map_err(db_error)?;
         tx.commit().map_err(db_error)?;
     }
+    #[cfg(not(target_os = "macos"))]
     let occupied:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM companion_content_note WHERE vault_key=?1 AND (note_id=?2 OR (path=?3 AND deleted=0)))",params![vault,note_id,path],|r|r.get(0)).map_err(db_error)?;
+    #[cfg(target_os = "macos")]
+    let projected_owned = {
+        let mut statement = db.prepare("SELECT note_id,path,object_id,deleted FROM companion_content_note WHERE vault_key=?1 AND (note_id=?2 OR (path=?3 AND deleted=0))").map_err(db_error)?;
+        let rows = statement.query_map(params![vault,note_id,path], |r| Ok((r.get::<_,String>(0)?,
+            r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,bool>(3)?)))
+            .map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)?;
+        match rows.as_slice() {
+            [] => false,
+            [(id, observed_path, Some(observed_object), false)]
+                if id == note_id && observed_path == &path && stage.is_some()
+                    && Some(observed_object.as_str()) == object.as_deref() => true,
+            _ => return Err((409,"IMPORT_NOTE_ID_CONFLICT")),
+        }
+    };
     let foreign_operation:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM companion_content_operation WHERE vault_key=?1 AND note_id=?2 AND (device_id<>?3 OR op_id<>?4))",params![vault,note_id,device,input.op_id],|r|r.get(0)).map_err(db_error)?;
+    #[cfg(not(target_os = "macos"))]
     if occupied || foreign_operation {
+        return Err((409, "IMPORT_NOTE_ID_CONFLICT"));
+    }
+    #[cfg(target_os = "macos")]
+    if foreign_operation {
         return Err((409, "IMPORT_NOTE_ID_CONFLICT"));
     }
     if stage.is_some() != object.is_some() {
@@ -430,7 +450,16 @@ fn commit(
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(db_error)?;
+    #[cfg(not(target_os = "macos"))]
     tx.execute("INSERT INTO companion_content_note(vault_key,note_id,path,revision,file_revision,object_id,summary,deleted) VALUES(?1,?2,?3,?4,?5,?6,?7,0)",params![vault,note_id,path,rev,doc.revision,object,summary.to_string()]).map_err(db_error)?;
+    #[cfg(target_os = "macos")]
+    if projected_owned {
+        let updated=tx.execute("UPDATE companion_content_note SET revision=?4,file_revision=?5,summary=?7 WHERE vault_key=?1 AND note_id=?2 AND path=?3 AND object_id=?6 AND deleted=0",
+            params![vault,note_id,path,rev,doc.revision,object,summary.to_string()]).map_err(db_error)?;
+        if updated != 1 { return Err((409,"IMPORT_PUBLICATION_UNCERTAIN")); }
+    } else {
+        tx.execute("INSERT INTO companion_content_note(vault_key,note_id,path,revision,file_revision,object_id,summary,deleted) VALUES(?1,?2,?3,?4,?5,?6,?7,0)",params![vault,note_id,path,rev,doc.revision,object,summary.to_string()]).map_err(db_error)?;
+    }
     change(&tx, vault, note_id, rev, false)?;
     tx.execute("UPDATE companion_import_entry SET state='committed',receipt=?3 WHERE plan_id=?1 AND note_id=?2",params![plan_id,note_id,result.to_string()]).map_err(db_error)?;
     finish(&tx, device, &input.op_id, &result)?;

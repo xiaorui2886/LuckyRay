@@ -429,6 +429,10 @@ fn stage_dev_media_engine(manifest_dir: &std::path::Path) -> Option<String> {
 
 #[path = "build/macos_lsh.rs"]
 mod macos_lsh;
+#[path = "build/macos_keychain.rs"]
+mod macos_keychain;
+#[path = "build/macos_folders.rs"]
+mod macos_folders;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LUCKYRAY_EXTENSION_ORIGINS");
@@ -440,6 +444,8 @@ fn main() {
     let manifest_dir =
         std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     macos_lsh::bind(&manifest_dir, &std::env::var("TARGET").unwrap_or_default(), &profile);
+    macos_keychain::compile(&manifest_dir, &std::env::var("TARGET").unwrap_or_default());
+    macos_folders::compile(&manifest_dir, &std::env::var("TARGET").unwrap_or_default());
     let repo_root = manifest_dir
         .parent()
         .expect("derive LuckyRay repository root from Cargo manifest directory");

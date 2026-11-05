@@ -229,6 +229,7 @@ fn attach_material_to_note_with_services(
                             &knowledge::KnowledgeDeleteInput {
                                 document_ref: document_ref.clone(),
                                 expected_revision: revision.clone(),
+                                expected_file_identity: None,
                             },
                         );
                     }
@@ -282,6 +283,7 @@ fn attach_material_to_note_with_services(
                         &knowledge::KnowledgeDeleteInput {
                             document_ref: document_ref.clone(),
                             expected_revision: revision,
+                            expected_file_identity: None,
                         },
                     )
                     .is_ok()

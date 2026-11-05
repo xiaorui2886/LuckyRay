@@ -4,8 +4,38 @@ import { spawnSync } from "node:child_process";
 import { DiagnosticCollector, diagnosticVocabulary, safeDiagnosticSummary, PYTHON_PROBE_IMPORTS } from "../scripts/macos-native-diagnostics.mjs";
 import { publishableReport, PHASES } from "../scripts/check-macos-internal.mjs";
 import { PYTHON_RUNTIME_PROBE } from "../scripts/prepare-macos-runtimes.mjs";
+import { FIXTURE_DIAGNOSTIC_CODES } from "../scripts/check-macos-note-data.mjs";
+import { readFile } from "node:fs/promises";
 const canary = "private_test_value_never_publish";
 const event = value => `MACOS_NATIVE_EVENT ${JSON.stringify(value)}\n`;
+
+test("fixture failures project only fixed codes, never backend messages or paths", async () => {
+  const vocabulary = await diagnosticVocabulary(file => readFile(new URL(`../scripts/${file}`, import.meta.url)));
+  for (const code of FIXTURE_DIAGNOSTIC_CODES) assert(vocabulary.has(code));
+  const collector = new DiagnosticCollector(vocabulary);
+  collector.feed("stderr", event({ event: "start", id: "9:1", stage: "native-note-data-test", command: "cargo" }));
+  collector.feed("stderr", `thread 'fixture' panicked: macos-fixture-backend-media-transfer\n/private/${canary}\n`);
+  const lanCodes = ["macos-lan-fixture-no-private-interface", "macos-lan-interface-changed", "macos-lan-bind-failed",
+    "macos-lan-gateway-start-failed", "macos-lan-tls-connect-failed"];
+  for (const code of lanCodes) collector.feed("stderr", `thread 'fixture' panicked: ${code}\n`);
+  collector.feed("stderr", event({ event: "exit", id: "9:2", startedId: "9:1", stage: "native-note-data-test", command: "cargo", exit: 101 }));
+  const result = safeDiagnosticSummary(collector.summary(), vocabulary);
+  assert(result.issues.some(item => item.code === "macos-fixture-backend-media-transfer" && item.stage === "native-note-data-test"));
+  for (const code of lanCodes) assert(result.issues.some(item => item.code === code && item.stage === "native-note-data-test"));
+  assert(!JSON.stringify(result).includes(canary));
+});
+
+test("Keychain phase and status diagnostics survive projection without private data", async () => {
+  const vocabulary = await diagnosticVocabulary(file => readFile(new URL(`../scripts/${file}`, import.meta.url)));
+  const collector = new DiagnosticCollector(vocabulary);
+  collector.feed("stderr", event({ event: "start", id: "10:1", stage: "native-note-data-test", command: "other" }));
+  collector.feed("stdout", `macos-keychain-search-failed\nmacos-keychain-status-param\n/private/${canary}\n`);
+  collector.feed("stderr", event({ event: "exit", id: "10:2", startedId: "10:1", stage: "native-note-data-test", command: "other", exit: 101 }));
+  const result = safeDiagnosticSummary(collector.summary(), vocabulary);
+  assert(result.issues.some(item => item.code === "macos-keychain-search-failed" && item.stage === "native-note-data-test"));
+  assert(result.issues.some(item => item.code === "macos-keychain-status-param" && item.stage === "native-note-data-test"));
+  assert(!JSON.stringify(result).includes(canary));
+});
 
 test("streamed diagnostics retain command failure and source position without raw sensitive text", () => {
   const files = new Set(["src/main.rs", "src/App.tsx"]);
@@ -51,6 +81,22 @@ test("bounded history retains an outer failure and discloses truncation", async 
   assert.equal(result.truncated, true); assert(result.commands.length <= 16); assert(result.issues.length <= 12);
   assert(result.commands.some(item => item.stage === "tauri-build" && item.exit === 1));
   assert(result.issues.some(item => item.httpStatus === 403)); assert(!result.issues.some(item => item.httpStatus === 200));
+  assert(!JSON.stringify(result).includes(canary));
+});
+
+test("Rust warning locations do not evict a bounded compiler failure", () => {
+  const files = new Set(["src/lib.rs"]);
+  const collector = new DiagnosticCollector(new Set(), files);
+  collector.feed("stderr", event({ event: "start", id: "8:1", stage: "native-note-data-compile", command: "cargo" }));
+  for (let i = 1; i <= 30; i++) collector.feed("stderr", `warning: unused item ${canary}\n --> src/lib.rs:${i}:1\n`);
+  collector.feed("stderr", `error[E0425]: cannot find ${canary}\n --> src/lib.rs:43:7\n`);
+  collector.feed("stderr", `error: future cannot be sent between threads safely ${canary}\n --> src/lib.rs:51:9\n`);
+  for (let i = 60; i <= 90; i++) collector.feed("stderr", `warning: unused item ${canary}\n --> src/lib.rs:${i}:1\n`);
+  collector.feed("stderr", event({ event: "exit", id: "8:2", startedId: "8:1", stage: "native-note-data-compile", command: "cargo", exit: 101 }));
+  const result = safeDiagnosticSummary(collector.summary(), new Set(), files);
+  assert(result.issues.some(item => item.code === "E0425" && item.file === "src/lib.rs" && item.line === 43));
+  assert(result.issues.some(item => item.class === "rust-compiler" && item.line === 51));
+  assert(!result.issues.some(item => item.line && item.line !== 43 && item.line !== 51));
   assert(!JSON.stringify(result).includes(canary));
 });
 

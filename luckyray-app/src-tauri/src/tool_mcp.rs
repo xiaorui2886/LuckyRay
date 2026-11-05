@@ -484,6 +484,7 @@ fn call_failure(code: &str, status: Option<u16>) -> CallToolResult {
             "The requested Vault is not current"
         }
         "knowledge-revision-conflict" => "The Knowledge document revision changed",
+        "knowledge-create-unconfirmed" => "The document may already have been created. Check the original Vault before retrying",
         "request-id-conflict" => "The MCP request id was reused with different arguments",
         "tool-request-capacity" => "The MCP request capacity is exhausted",
         "mcp-request-id-invalid" => "The MCP request id is invalid",
@@ -1575,6 +1576,13 @@ mod tests {
         let wire = serde_json::to_string(&error).unwrap();
         assert!(wire.contains("knowledge-vault-required"));
         assert!(!wire.contains("PRIVATE"));
+    }
+
+    #[test]
+    fn uncertain_note_creation_failure_warns_before_retry() {
+        let wire = serde_json::to_string(&call_failure("knowledge-create-unconfirmed", Some(409))).unwrap();
+        assert!(wire.contains("knowledge-create-unconfirmed"));
+        assert!(wire.contains("Check the original Vault before retrying"));
     }
 
     #[test]

@@ -309,6 +309,7 @@ fn safe_server_message(code: &str) -> &'static str {
             "The requested Vault is not current"
         }
         "knowledge-revision-conflict" => "Knowledge document revision changed",
+        "knowledge-create-unconfirmed" => "The document may already have been created. Check the original Vault before retrying",
         "knowledge-name-conflict" => "Knowledge document already exists",
         "tool-request-capacity" => "Tool request capacity is exhausted",
         _ => "LuckyRay tool request failed",
@@ -333,7 +334,7 @@ fn read_json_response(response: Response) -> Result<Value, ToolClientError> {
 
 #[cfg(test)]
 mod tests {
-    use super::ToolClient;
+    use super::{safe_server_message, ToolClient};
     use crate::knowledge::KnowledgeVaultRegistration;
     use crate::local_transport::native_proof_message;
     use crate::tool_cli::run_with_connector;
@@ -352,6 +353,11 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier, Mutex};
     use std::thread;
+
+    #[test]
+    fn uncertain_note_creation_message_warns_before_retry() {
+        assert!(safe_server_message("knowledge-create-unconfirmed").contains("Check the original Vault before retrying"));
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(label: &str) -> std::path::PathBuf {

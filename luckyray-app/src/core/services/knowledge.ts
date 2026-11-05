@@ -11,6 +11,7 @@ export type KnowledgeDocumentSummary = {
   relativePath: string;
   modifiedAt: string | null;
   size: number;
+  fileIdentity?: string | null;
 };
 
 export type KnowledgeDocumentSnapshot = KnowledgeDocumentSummary & {
@@ -181,8 +182,8 @@ export type KnowledgePreviewAdapter = {
   appendDocument?(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null): Promise<KnowledgeMutationResult>;
   insertDocument?(documentRef: KnowledgeDocumentRef, offset: number, text: string, expectedRevision?: string | null): Promise<KnowledgeMutationResult>;
   replaceDocument?(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null): Promise<KnowledgeMutationResult>;
-  moveDocument?(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null): Promise<KnowledgeDocumentSnapshot>;
-  deleteDocument?(documentRef: KnowledgeDocumentRef, expectedRevision: string): Promise<void>;
+  moveDocument?(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null, expectedFileIdentity?: string | null): Promise<KnowledgeDocumentSnapshot>;
+  deleteDocument?(documentRef: KnowledgeDocumentRef, expectedRevision: string, expectedFileIdentity?: string | null): Promise<void>;
   insertIntoCurrent?(input: { text: string; appendIfNoCursor?: boolean }): Promise<KnowledgeMutationResult>;
   activateUiSource?(vaultId: string): Promise<KnowledgeUiSourceActivation>;
   activateCurrentUiSource?(): Promise<KnowledgeUiSourceActivation>;
@@ -215,8 +216,8 @@ export type KnowledgeClient = {
   appendDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null, sourceEpoch?: number): Promise<KnowledgeMutationResult>;
   insertDocument(documentRef: KnowledgeDocumentRef, offset: number, text: string, expectedRevision?: string | null, sourceEpoch?: number): Promise<KnowledgeMutationResult>;
   replaceDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null, sourceEpoch?: number): Promise<KnowledgeMutationResult>;
-  moveDocument(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null, sourceEpoch?: number): Promise<KnowledgeDocumentSnapshot>;
-  deleteDocument(documentRef: KnowledgeDocumentRef, expectedRevision: string, sourceEpoch?: number): Promise<void>;
+  moveDocument(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null, sourceEpoch?: number, expectedFileIdentity?: string | null): Promise<KnowledgeDocumentSnapshot>;
+  deleteDocument(documentRef: KnowledgeDocumentRef, expectedRevision: string, sourceEpoch?: number, expectedFileIdentity?: string | null): Promise<void>;
   insertIntoCurrent(input: { text: string; appendIfNoCursor?: boolean }, sourceEpoch?: number): Promise<KnowledgeMutationResult>;
   activateUiSource(vaultId: string): Promise<KnowledgeUiSourceActivation>;
   activateCurrentUiSource(): Promise<KnowledgeUiSourceActivation>;
@@ -319,17 +320,28 @@ export function createKnowledgeClient(runtime: KnowledgeRuntime): KnowledgeClien
       }
       return invokeKnowledge(runtime, "knowledge_replace_document", withSourceEpoch({ input: { documentRef, content, expectedRevision } }, sourceEpoch));
     },
-    moveDocument(documentRef, title, expectedRevision, parentRelativePath, sourceEpoch) {
+    moveDocument(documentRef, title, expectedRevision, parentRelativePath, sourceEpoch, expectedFileIdentity) {
       if (!runtime.isTauri()) {
-        return requirePreviewMethod(runtime.preview, "moveDocument").call(runtime.preview, documentRef, title, expectedRevision, parentRelativePath);
+        const move = requirePreviewMethod(runtime.preview, "moveDocument");
+        return expectedFileIdentity == null
+          ? move.call(runtime.preview, documentRef, title, expectedRevision, parentRelativePath)
+          : move.call(runtime.preview, documentRef, title, expectedRevision, parentRelativePath, expectedFileIdentity);
       }
-      return invokeKnowledge(runtime, "knowledge_move_document", withSourceEpoch({ input: { documentRef, title, expectedRevision, parentRelativePath } }, sourceEpoch));
+      return invokeKnowledge(runtime, "knowledge_move_document", withSourceEpoch({ input: {
+        documentRef, title, expectedRevision, parentRelativePath,
+        ...(expectedFileIdentity == null ? {} : { expectedFileIdentity }),
+      } }, sourceEpoch));
     },
-    deleteDocument(documentRef, expectedRevision, sourceEpoch) {
+    deleteDocument(documentRef, expectedRevision, sourceEpoch, expectedFileIdentity) {
       if (!runtime.isTauri()) {
-        return requirePreviewMethod(runtime.preview, "deleteDocument").call(runtime.preview, documentRef, expectedRevision);
+        const remove = requirePreviewMethod(runtime.preview, "deleteDocument");
+        return expectedFileIdentity == null
+          ? remove.call(runtime.preview, documentRef, expectedRevision)
+          : remove.call(runtime.preview, documentRef, expectedRevision, expectedFileIdentity);
       }
-      return invokeKnowledge(runtime, "knowledge_delete_document", withSourceEpoch({ input: { documentRef, expectedRevision } }, sourceEpoch));
+      return invokeKnowledge(runtime, "knowledge_delete_document", withSourceEpoch({ input: {
+        documentRef, expectedRevision, ...(expectedFileIdentity == null ? {} : { expectedFileIdentity }),
+      } }, sourceEpoch));
     },
     insertIntoCurrent(input, sourceEpoch) {
       if (!runtime.isTauri()) return requirePreviewMethod(runtime.preview, "insertIntoCurrent").call(runtime.preview, input);
@@ -695,15 +707,15 @@ export function createActiveKnowledgeUiClient(
       requireLatestActivation(active, documentRef);
       return client.setDocumentTags(documentRef, expectedRevision, tags, active.sourceEpoch);
     },
-    async moveDocument(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null) {
+    async moveDocument(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null, expectedFileIdentity?: string | null) {
       const active = await ensureActive();
       requireLatestActivation(active, documentRef);
-      return client.moveDocument(documentRef, title, expectedRevision, parentRelativePath, active.sourceEpoch);
+      return client.moveDocument(documentRef, title, expectedRevision, parentRelativePath, active.sourceEpoch, expectedFileIdentity);
     },
-    async deleteDocument(documentRef: KnowledgeDocumentRef, expectedRevision: string) {
+    async deleteDocument(documentRef: KnowledgeDocumentRef, expectedRevision: string, expectedFileIdentity?: string | null) {
       const active = await ensureActive();
       requireLatestActivation(active, documentRef);
-      return client.deleteDocument(documentRef, expectedRevision, active.sourceEpoch);
+      return client.deleteDocument(documentRef, expectedRevision, active.sourceEpoch, expectedFileIdentity);
     },
   };
 }

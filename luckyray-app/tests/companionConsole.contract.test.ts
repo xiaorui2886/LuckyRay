@@ -4,6 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 import * as companionAccess from "../src/core/services/companionAccess.ts";
 import * as gatewayService from "../src/core/services/companionGateway.ts";
+import { isMacPlatform } from "../src/app/macosPresentation.ts";
 import { createCompanionPresentationStore, companionGrantKey } from "../src/core/services/companionPresentationStore.ts";
 
 import {
@@ -32,7 +33,7 @@ const presentation: PairingPresentation = {
 // Execute the real panel's hooks and JSX handlers without a browser or screen.
 // Only React scheduling and the IPC transport are replaced; the service,
 // pairing lifetime, reducer and component callbacks are production code.
-function panelHarness(invoke: Parameters<typeof createCompanionGatewayClient>[0]) {
+function panelHarness(invoke: Parameters<typeof createCompanionGatewayClient>[0], platform = "Win32") {
   const slots: any[] = [];
   let cursor = 0;
   let effects: Array<() => void> = [];
@@ -80,14 +81,19 @@ function panelHarness(invoke: Parameters<typeof createCompanionGatewayClient>[0]
   }, authorization);
   const source = readFileSync(new URL("../src/features/settings/CompanionGatewayPanel.tsx", import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  const exports: { default?: () => unknown } = {};
+  const exports: {
+    default?: () => unknown;
+    gatewayErrorMessage?: (error: unknown, translate: typeof t) => string;
+    COMPANION_COPY?: Record<string, Record<string, string>>;
+  } = {};
   new Function("require", "exports", "window", "document", compiled)((name: string) => {
     if (name === "react") return hooks;
+    if (name.endsWith("/macosPresentation")) return { isMacPlatform: () => isMacPlatform(platform) };
     if (name.endsWith("/companionAccess")) return companionAccess;
     if (name.endsWith("/PhoneAccessManager")) return { default: () => null };
     if (name.endsWith("/PhoneAuthorizationChoice")) return authorization;
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
-    if (name.endsWith("/companionGateway")) return gatewayService;
+    if (name.endsWith("/companionGateway")) return { ...gatewayService, canRetryMacIdentity: (status: gatewayService.CompanionGatewayStatus | null) => gatewayService.canRetryMacIdentity(status, platform) };
     if (name.endsWith("/companionPresentationStore")) return { companionGrantKey };
     if (name.endsWith("/CompanionPresentation")) return {
       useCompanionStore: () => store,
@@ -128,10 +134,114 @@ function panelHarness(invoke: Parameters<typeof createCompanionGatewayClient>[0]
     choiceInsideDialog() { const dialog = find((node) => node.props?.["aria-labelledby"] === "companion-pair-title"); return Boolean(dialog && find((node) => node.type === "input" && node.props.type === "radio", dialog)); },
     dialog() { return find((node) => node.props?.["aria-labelledby"] === "companion-pair-title"); },
     recoveryDialog() { return find((node) => node.props?.["aria-labelledby"] === "companion-recover-title"); },
+    contains(key: string) { return Boolean(find((node) => node.props?.children === key)); },
+    errorMessage(error: unknown) { return exports.gatewayErrorMessage!(error, t); },
+    copy(key: string, locale: string) { return exports.COMPANION_COPY![key][locale]; },
     escape() { find((node) => node.props?.["aria-labelledby"] === "companion-pair-title").props.onKeyDown({ key: "Escape", preventDefault() {} }); },
     unmount() { slots.forEach((slot) => slot?.cleanup?.()); store.dispose(); },
   };
 }
+
+test("real panel selects Mac permission copy while preserving Windows copy", async () => {
+  for (const platform of ["MacIntel", "Win32"]) {
+    const mac = platform === "MacIntel";
+    const panel = panelHarness(panelTransport().invoke, platform);
+    await panel.settle();
+    for (const key of ["firewall.title", "firewall.description", "gateway.reachability"]) {
+      assert.equal(panel.contains(`${key}${mac ? "Mac" : ""}`), true);
+      assert.equal(panel.contains(`${key}${mac ? "" : "Mac"}`), false);
+    }
+    for (const code of ["gateway-bind-access-denied", "firewall/manual-permission-required"]) {
+      assert.equal(panel.errorMessage({ code }), mac ? "error.firewallMac" : "error.firewall");
+    }
+    assert.match(panel.copy(mac ? "firewall.titleMac" : "firewall.title", "en-US"), mac ? /macOS/ : /Windows Firewall/);
+    assert.equal(panel.copy("firewall.title", "zh-CN"), "Windows 防火墙由你决定");
+    assert.equal(panel.copy("error.firewall", "zh-CN"), "Windows 拒绝绑定此地址或端口，可能涉及系统保留端口或网络策略；尚不能确定是防火墙。");
+    panel.unmount();
+  }
+});
+
+test("service error text uses the real Mac platform detection and retains Windows text", () => {
+  const previous = Object.getOwnPropertyDescriptor(navigator, "platform");
+  try {
+    for (const [platform, expected] of [
+      ["MacIntel", "macOS 拒绝绑定此地址或端口，可能涉及系统网络策略；尚不能确定是防火墙。"],
+      ["Win32", "Windows 拒绝绑定此地址或端口，可能涉及系统保留端口或网络策略；尚不能确定是防火墙。"],
+    ]) {
+      Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+      for (const code of ["gateway-bind-access-denied", "firewall/manual-permission-required"]) {
+        assert.equal(gatewayService.companionGatewayErrorMessage({ code }), expected);
+      }
+    }
+  } finally {
+    if (previous) Object.defineProperty(navigator, "platform", previous);
+    else Reflect.deleteProperty(navigator, "platform");
+  }
+});
+
+test("Keychain retry eligibility is Mac-only and limited to temporary unavailability", () => {
+  const unavailable: gatewayService.CompanionGatewayStatus = { state: "recovery-required", code: "companion-secret-unavailable" };
+  assert.equal(gatewayService.canRetryMacIdentity(unavailable, "MacIntel"), true);
+  assert.equal(gatewayService.canRetryMacIdentity(unavailable, "MacARM"), true);
+  for (const platform of ["Win32", "Linux aarch64", "iPhone", ""]) {
+    assert.equal(gatewayService.canRetryMacIdentity(unavailable, platform), false);
+  }
+  for (const code of ["companion-secret-recovery-required", "companion-secret-path-invalid", "companion-database-unavailable"]) {
+    assert.equal(gatewayService.canRetryMacIdentity({ state: "recovery-required", code }, "MacIntel"), false);
+  }
+  assert.equal(gatewayService.canRetryMacIdentity(null, "MacIntel"), false);
+  assert.equal(gatewayService.canRetryMacIdentity({ state: "disabled", desktopInstanceId: "same", certificateFingerprint: "same" }, "MacIntel"), false);
+});
+
+test("real Mac panel retries existing Keychain access once and shows the refreshed state", async () => {
+  let status: gatewayService.CompanionGatewayStatus = { state: "recovery-required", code: "companion-secret-unavailable" };
+  let complete!: () => void;
+  const calls: string[] = [];
+  const transport = panelTransport();
+  const panel = panelHarness(async (command, args) => {
+    calls.push(command);
+    if (command === "companion_gateway_status") return structuredClone(status);
+    if (command === "companion_gateway_retry_identity") {
+      await new Promise<void>(resolve => { complete = resolve; });
+      status = { state: "disabled", desktopInstanceId: "unchanged-desktop", certificateFingerprint: "unchanged-fingerprint" };
+      return status;
+    }
+    return transport.invoke(command, args);
+  }, "MacIntel");
+  try {
+    await panel.settle();
+    assert.equal(panel.contains("gateway.retryIdentityHint"), true);
+    const retry = panel.button("gateway.retryIdentity");
+    assert.equal(retry.props.disabled, false);
+    retry.props.onClick();
+    await panel.settle();
+    assert.equal(panel.button("gateway.retryIdentity").props.disabled, true);
+    // Even a stale callback during the in-flight request is coalesced by the real store.
+    retry.props.onClick();
+    assert.equal(calls.filter(command => command === "companion_gateway_retry_identity").length, 1);
+    complete();
+    await panel.settle();
+    assert.equal(panel.button("gateway.retryIdentity"), undefined);
+    assert.equal(panel.contains("gateway.retryIdentityHint"), false);
+    assert.equal(panel.button("gateway.start").props.disabled, false);
+    assert.equal(calls.includes("companion_gateway_start"), false);
+    assert.equal(calls.includes("companion_gateway_restart"), false);
+  } finally { panel.unmount(); }
+});
+
+test("real panel never offers Keychain retry on Windows or for permanent recovery", async () => {
+  for (const [platform, code] of [["Win32", "companion-secret-unavailable"], ["MacIntel", "companion-secret-recovery-required"]]) {
+    const transport = panelTransport();
+    const panel = panelHarness((command, args) => command === "companion_gateway_status"
+      ? Promise.resolve({ state: "recovery-required", code }) : transport.invoke(command, args), platform);
+    try {
+      await panel.settle();
+      assert.equal(panel.button("gateway.retryIdentity"), undefined);
+      assert.equal(panel.contains("gateway.retryIdentityHint"), false);
+      assert.equal(panel.button("gateway.start").props.disabled, true);
+    } finally { panel.unmount(); }
+  }
+});
 
 function panelTransport(cancel: () => unknown = () => true) {
   const cancelled: string[] = [];

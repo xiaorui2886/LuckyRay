@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { APP, TAURI, TARGET, directory, readRegular, writeNew, run, requireNative } from "./macos-build-common.mjs";
+import { APP, TAURI, TARGET, directory, readRegular, writeNew, run, requireNative, isMacosValidationRepository } from "./macos-build-common.mjs";
 import { safeShutdown, knownProofSignal } from "./check-macos-lsh-proof.mjs";
 
 export const SURFACE_TIMEOUT_MS = 20 * 60 * 1000;
@@ -12,7 +12,7 @@ export const SURFACE_CLEANUP_MS = 90 * 1000;
 const UI_FLAGS = ["surfaceAttached", "surfaceHidden", "surfaceReshown", "bindingPreserved", "authenticatedParent", "processImageMatched"];
 const QUIT_FLAGS = ["officialSavedStop", "editorsSaved", "normalHostShutdown", "ownedGroupSettled"];
 const ALL_FLAGS = [...UI_FLAGS, ...QUIT_FLAGS];
-const STAGES = ["choose-mode", "open", "attached", "hidden", "reshown", "normal-quit"];
+const STAGES = ["choose-mode", "mode-shell", "mode-route", "mode-wait", "mode-choices", "mode-dismiss", "open", "attached", "hidden", "reshown", "normal-quit"];
 const BACKEND_STEPS = ["not-started", "client-ready", "child-origin", "node-image", "parent-ping", "binding-retained", "official-saved-stop", "normal-shutdown"];
 const QUIT_BLOCKERS = ["not-run", "none", "other-blocker", "update-lsh-task-active", "update-lsh-schedule-active", "update-lsh-draft-pending",
   "update-lsh-composition-pending", "update-lsh-save-failed", "update-lsh-save-timeout", "update-lsh-client-timeout",
@@ -156,7 +156,7 @@ export async function observeSurfaceFlow(child, { readUi, readQuit, capture, tim
 function environment(home, temp, input) {
   const env = { HOME: home, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C",
     XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"), XDG_CACHE_HOME: join(home, "cache"),
-    GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "xiaorui2886/LuckyRay", GITHUB_SHA: input.GITHUB_SHA, RUNNER_TEMP: temp };
+    GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: input.GITHUB_REPOSITORY, GITHUB_SHA: input.GITHUB_SHA, RUNNER_TEMP: temp };
   for (const name of ["USER", "LOGNAME", "TMPDIR", "__CF_USER_TEXT_ENCODING", "XPC_FLAGS", "XPC_SERVICE_NAME", "SECURITYSESSIONID"])
     if (typeof input[name] === "string") env[name] = input[name];
   return env;
@@ -166,7 +166,7 @@ export async function runLshSurfaceFlow(app, input, evidence) {
   const expected = join(TAURI, "target", TARGET, "release/bundle/macos/LuckyRay.app");
   const temp = await realpath(input.RUNNER_TEMP ?? "/missing-runner-temp");
   if (app !== expected || APP !== join(temp, "luckyray-macos-internal/luckyray-app")
-      || input.GITHUB_ACTIONS !== "true" || input.GITHUB_REPOSITORY !== "xiaorui2886/LuckyRay"
+      || input.GITHUB_ACTIONS !== "true" || !isMacosValidationRepository(input.GITHUB_REPOSITORY)
       || !/^[a-f0-9]{40}$/.test(input.GITHUB_SHA ?? "")
       || evidence !== join(TAURI, ".macos-build/internal-validation-evidence"))
     throw new Error("macos-lsh-surface-flow-context-invalid");

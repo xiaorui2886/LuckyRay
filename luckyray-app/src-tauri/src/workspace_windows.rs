@@ -74,9 +74,12 @@ impl WorkspaceWindows {
         self.guard_main_path_retirement(record.root_path(),&relative,false)
     }
     pub(crate) fn guard_main_path_retirement(&self,root:&std::path::Path,relative:&std::path::Path,directory:bool)->Result<std::sync::MutexGuard<'_,()>,String>{
+        self.guard_main_paths_retirement(root,&[(relative,directory)])
+    }
+    pub(crate) fn guard_main_paths_retirement(&self,root:&std::path::Path,paths:&[(&std::path::Path,bool)])->Result<std::sync::MutexGuard<'_,()>,String>{
         let gate=self.write_gate.lock().map_err(|_|"workspace-lock")?;
         let root=root.canonicalize().map_err(|_|"workspace-source-unavailable")?;
-        let peers={let entries=self.entries.lock().map_err(|_|"workspace-lock")?;entries.iter().flat_map(|(label,window)|window.views.iter().filter(move|entry|entry.open&&entry.view.kind=="note"&&entry.view.resource_id.as_ref().and_then(|path|crate::knowledge::safe_markdown_relative_path(path).ok()).is_some_and(|path|if directory{path.starts_with(relative)}else{path==relative})).map(move|entry|format!("{label}/{}",entry.view.id))).collect::<Vec<_>>()};
+        let peers={let entries=self.entries.lock().map_err(|_|"workspace-lock")?;entries.iter().flat_map(|(label,window)|window.views.iter().filter(move|entry|entry.open&&entry.view.kind=="note"&&entry.view.resource_id.as_ref().and_then(|path|crate::knowledge::safe_markdown_relative_path(path).ok()).is_some_and(|path|paths.iter().any(|(relative,directory)|if *directory{path.starts_with(relative)}else{path==*relative}))).map(move|entry|format!("{label}/{}",entry.view.id))).collect::<Vec<_>>()};
         for key in peers{
             let scope=self.knowledge(&key)?;
             // A stale captured incarnation cannot own a newly recreated root.
@@ -1030,6 +1033,8 @@ mod tests {
         assert!(registry.guard_main_path_retirement(root,std::path::Path::new("folder/a.md"),false).is_err());
         assert!(registry.guard_main_path_retirement(root,std::path::Path::new("folder"),true).is_err());
         assert!(registry.guard_main_path_retirement(root,std::path::Path::new("folder-b"),true).is_ok());
+        assert!(registry.guard_main_paths_retirement(root,&[(std::path::Path::new("renamed"),true),(std::path::Path::new("folder"),true)]).is_err());
+        assert!(registry.guard_main_paths_retirement(root,&[(std::path::Path::new("folder-b"),true),(std::path::Path::new("renamed"),true)]).is_ok());
         let other=temp.path().join("other");std::fs::create_dir_all(&other).unwrap();assert!(registry.guard_main_path_retirement(&other,std::path::Path::new("folder"),true).is_ok());
         registry.entries.lock().unwrap().get_mut("workspace-child").unwrap().views[0].open=false;
         assert!(registry.guard_main_path_retirement(root,std::path::Path::new("folder"),true).is_ok());

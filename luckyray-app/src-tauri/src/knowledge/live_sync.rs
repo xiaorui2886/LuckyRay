@@ -421,6 +421,18 @@ impl KnowledgeService {
     /// The caller persists the chosen path AND staged file object in its existing
     /// operation journal before the no-replace publish. This makes interrupted
     /// recovery identify our file, rather than another same-content note.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn create_unique_document_for_target(
+        &self,
+        expected: &KnowledgeTargetIdentity,
+        input: &KnowledgeCreateInput,
+        mut prepare: impl FnMut(&str, &str) -> Result<(), KnowledgeError>,
+    ) -> Result<KnowledgeMutationResult, KnowledgeError> {
+        self.create_unique_document_for_target_resumable(expected, input, None,
+            |path, object, _stage| prepare(path, object))
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn create_unique_document_for_target(
         &self,
         expected: &KnowledgeTargetIdentity,
@@ -550,6 +562,24 @@ impl KnowledgeService {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_unique_create_uses_a_new_name_and_records_owned_identity() {
+        let (service, root, _vault) = super::super::tests::registered_service("macos-unique-create-supported");
+        let target = service.current_target_identity().unwrap();
+        std::fs::write(root.join("Synthetic.md"), "existing").unwrap();
+        let mut prepared = None;
+        let result = service.create_unique_document_for_target(&target, &KnowledgeCreateInput {
+            title: "Synthetic".into(), content: "draft".into(), parent_relative_path: None,
+        }, |path, object| { prepared = Some((path.to_owned(), object.to_owned())); Ok(()) }).unwrap();
+        assert_eq!(result.document.summary.relative_path, "Synthetic（副本）.md");
+        let (path, object) = prepared.unwrap();
+        assert_eq!(path, "Synthetic（副本）.md");
+        assert!(!object.is_empty());
+        assert_eq!(std::fs::read_to_string(root.join("Synthetic.md")).unwrap(), "existing");
+        assert_eq!(std::fs::read_to_string(root.join(path)).unwrap(), "draft");
+    }
 
     #[test]
     fn dirty_presence_is_per_note_and_mobile_presence_never_vetoes_writes() {

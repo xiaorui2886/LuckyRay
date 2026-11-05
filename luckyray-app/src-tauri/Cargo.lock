@@ -2578,6 +2578,7 @@ version = "1.9.9"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "core-foundation 0.10.1",
  "dom_query",
  "drag",
  "flate2",
@@ -2598,6 +2599,7 @@ dependencies = [
  "rquickjs",
  "rusqlite",
  "rustls",
+ "security-framework",
  "semver",
  "serde",
  "serde_json",

@@ -696,6 +696,7 @@ fn attachment_import_and_note_move_keep_portable_targets() {
                 title: "moved".into(),
                 parent_relative_path: Some(String::new()),
                 expected_revision: document.revision,
+                expected_file_identity: None,
             },
         )
         .unwrap();
@@ -763,6 +764,7 @@ fn attachment_rename_rewrites_all_references_and_delete_note_keeps_shared_bytes(
             &KnowledgeDeleteInput {
                 document_ref,
                 expected_revision: snapshot.revision,
+                expected_file_identity: None,
             },
         )
         .unwrap();

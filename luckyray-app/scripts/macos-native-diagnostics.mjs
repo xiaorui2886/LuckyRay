@@ -60,7 +60,7 @@ function location(line, files) {
   return count(row) && count(column) ? { file: match[1], line: row, column } : {};
 }
 export class DiagnosticCollector {
-  constructor(codes = new Set(), files = new Set(), origin = "process-output") { this.codes = codes; this.files = files; this.origin = ORIGINS.includes(origin) ? origin : "process-output"; this.buffers = { stdout: "", stderr: "" }; this.commands = []; this.issues = []; this.nativeModules = new Map(); this.pythonImports = new Map(); this.lastCheckpoint = null; this.truncated = false; }
+  constructor(codes = new Set(), files = new Set(), origin = "process-output") { this.codes = codes; this.files = files; this.origin = ORIGINS.includes(origin) ? origin : "process-output"; this.buffers = { stdout: "", stderr: "" }; this.commands = []; this.issues = []; this.nativeModules = new Map(); this.pythonImports = new Map(); this.lastCheckpoint = null; this.truncated = false; this.rustDiagnostic = null; }
   feed(stream, chunk) {
     if (!["stdout", "stderr"].includes(stream)) return;
     const text = this.buffers[stream] + chunk.toString();
@@ -119,8 +119,11 @@ export class DiagnosticCollector {
       } catch { /* Malformed untrusted child output is never copied. */ }
       return;
     }
-    const rust = /\berror\[(E\d{4})\]/.exec(line);
-    if (rust) this.add({ class: "rust-compiler", code: rust[1] });
+    const rust = /^\s*error(?:\[(E\d{4})\])?:/.exec(line);
+    if (rust) {
+      this.rustDiagnostic = rust[1] ? { code: rust[1] } : {};
+      if (rust[1]) this.add({ class: "rust-compiler", code: rust[1] });
+    } else if (/^\s*(?:warning|note|help)(?:\[[^\]]+\])?:/.test(line)) this.rustDiagnostic = null;
     const typescript = /\berror (TS\d{4,5})\b/.exec(line);
     if (typescript) this.add({ class: "typescript-compiler", code: typescript[1] });
     for (const errorType of PYTHON_ERRORS) if (line.startsWith(`${errorType}:`)) {
@@ -133,7 +136,13 @@ export class DiagnosticCollector {
     const where = location(line, this.files);
     if (where.file && this.commands.findLast(item => item.status === "started")?.stage === "native-note-data-test"
         && /\bpanicked at\b/.test(line)) this.add({ class: "rust-test-panic", ...where });
-    if (where.file && (/\berror\b|-->/.test(line))) this.add({ class: /\.rs:/.test(line) ? "rust-compiler" : /\.(?:ts|tsx)\(/.test(line) ? "typescript-compiler" : "native-compiler", ...where });
+    if (where.file && /\.rs:/.test(line) && /-->/.test(line)) {
+      // Rust warnings also contain source arrows. They must not evict the
+      // actual error code/location from this deliberately small summary.
+      if (this.rustDiagnostic !== null) this.add({ class: "rust-compiler", ...this.rustDiagnostic, ...where });
+      this.rustDiagnostic = null;
+    } else if (where.file && /\berror\b/.test(line))
+      this.add({ class: /\.rs:/.test(line) ? "rust-compiler" : /\.(?:ts|tsx)\(/.test(line) ? "typescript-compiler" : "native-compiler", ...where });
     for (const code of this.codes) if (line.includes(code)) this.add({ class: "project-error", code });
     for (const code of IO_CODES) if (new RegExp(`\\b${code}\\b`).test(line)) this.add({ class: "io-error", code });
     const categories = [

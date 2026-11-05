@@ -474,6 +474,35 @@ mod tests {
         );
     }
     #[test]
+    fn macos_note_remove_late_replacement_is_preserved_as_unconfirmed() {
+        let (_temp, root, directory) = fixture();
+        let path = root.join("note.md");
+        std::fs::write(&path, b"original").unwrap();
+        let replaced_path = path.clone();
+        let held_original = root.join("outside-retained.md");
+        let held_for_hook = held_original.clone();
+        crate::macos_fs::set_before_rename_call_hook(Some(Box::new(move |from, _| {
+            assert_eq!(from, OsStr::new("note.md"));
+            std::fs::rename(&replaced_path, &held_for_hook).unwrap();
+            std::fs::write(&replaced_path, b"replacement object").unwrap();
+        })));
+        let result = retain(&directory, Path::new("note.md"), &revision(b"original"), false, None, None, || Ok(()));
+        crate::macos_fs::set_before_rename_call_hook(None);
+        assert!(matches!(result, Err(Failure::Io { phase: Phase::PathMoved, .. })));
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(&held_original).unwrap(), b"original");
+        let entries = directory.entries().unwrap();
+        let backup = entries.iter().find(|name| name.to_string_lossy().starts_with(".lrk-remove-")
+            && name.to_string_lossy().ends_with(".backup")).unwrap();
+        assert_eq!(std::fs::read(root.join(backup)).unwrap(), b"replacement object");
+        assert!(entries.iter().any(|name| name.to_string_lossy().starts_with(".lrk-remove-")
+            && name.to_string_lossy().ends_with(".json")));
+        let snapshot = super::super::macos_note_recovery::snapshot(&directory).unwrap();
+        assert!(snapshot.records.iter().any(|item| item.original_path == "note.md"
+            && item.pending && !item.can_restore && item.unavailable_versions > 0));
+        assert_eq!(std::fs::read(root.join(backup)).unwrap(), b"replacement object");
+    }
+    #[test]
     fn macos_note_remove_post_move_failure_remains_unconfirmed_with_both_evidence_objects() {
         let (_temp, root, directory) = fixture();
         std::fs::write(root.join("note.md"), b"original").unwrap();

@@ -779,3 +779,161 @@ impl KnowledgeService {
         Ok(result)
     }
 }
+
+/// Journaled Companion publication for macOS. A successful publication is
+/// recoverable by its bound directory, staging name, target name and object
+/// identity; no temporary or existing object is removed on conflict.
+#[cfg(target_os = "macos")]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MacosCompanionAttachmentPlan {
+    directory: String,
+    stage: String,
+    target: String,
+    object: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_companion_object(metadata: &std::fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    format!("{:x}:{:x}", metadata.dev(), metadata.ino())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_companion_plan_invalid() -> KnowledgeError {
+    error("knowledge-attachment-conflict", "Attachment publication is uncertain; existing files are preserved")
+}
+
+#[cfg(target_os = "macos")]
+fn macos_companion_stage_name(name: &str) -> bool {
+    name.strip_prefix(".lrk-companion-").and_then(|s| s.strip_suffix(".pending"))
+        .is_some_and(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_companion_observe(
+    directory: &crate::macos_fs::Directory, name: &str, object: &str,
+    size: u64, digest: &str,
+) -> Result<Option<std::fs::File>, KnowledgeError> {
+    use std::os::unix::fs::MetadataExt;
+    let Some((bytes, version)) = directory.read_attachment(std::ffi::OsStr::new(name))
+        .map_err(|_| macos_companion_plan_invalid())? else { return Ok(None) };
+    if bytes.len() as u64 != size || version.hash != digest
+        || format!("{:x}:{:x}", version.device, version.inode) != object {
+        return Err(macos_companion_plan_invalid());
+    }
+    let file = directory.open_regular(std::ffi::OsStr::new(name)).map_err(|_| macos_companion_plan_invalid())?;
+    let metadata = file.metadata().map_err(|_| macos_companion_plan_invalid())?;
+    if metadata.nlink() != 1 || macos_companion_object(&metadata) != object || !version.matches_metadata(&metadata) {
+        return Err(macos_companion_plan_invalid());
+    }
+    Ok(Some(file))
+}
+
+#[cfg(target_os = "macos")]
+impl KnowledgeService {
+    pub(crate) fn publish_macos_companion_attachment(
+        &self, expected: &KnowledgeTargetIdentity, document_ref: &KnowledgeDocumentRef,
+        expected_revision: &str, name: &str, bytes: &[u8], digest: &str,
+        previous: Option<&str>, mut journal: impl FnMut(Option<&str>, &str) -> Result<(), KnowledgeError>,
+    ) -> Result<AttachmentPublication, KnowledgeError> {
+        use std::os::unix::fs::MetadataExt;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_ATTACHMENT_BYTES || sha256_hex(bytes) != digest {
+            return Err(error("knowledge-attachment-verification-failed", "Attachment checksum changed"));
+        }
+        let _inventory_mutation=self.attachment_inventory.mutation();
+        let _mutation=self.mutation_lock.lock().map_err(|_|error("knowledge-lock-poisoned","Knowledge mutation lock failed"))?;
+        let vault=self.current_vault_unlocked()?;
+        let root_guard=self.capture_expected_target_unlocked(&vault,Some(expected))?;
+        require_matching_vault(document_ref,&vault.registration)?;
+        let root=root_guard.as_ref().ok_or_else(knowledge_target_not_current)?
+            .macos_directory(&vault.root).map_err(map_filesystem_identity_error)?;
+        let relative=safe_markdown_relative_path(&document_ref.relative_path)?;
+        let note=super::macos_attachment_io::Observation::read_at(&root,&relative,false)
+            .map_err(|_|error("knowledge-revision-conflict","Note changed before attachment insertion"))?;
+        if note.revision()!=expected_revision {return Err(error("knowledge-revision-conflict","Note changed before attachment insertion"));}
+        self.assert_expected_target_unlocked(&vault,Some(expected),root_guard.as_ref())?;
+        let inventory=index::attachment_inventory(&vault.root)?;
+        // Companion completion may be retried after a lost receipt. Reusing an
+        // unjournaled equal-content object here would leave no identity-bound
+        // publication plan, so Companion always journals its own object.
+        let directory=root.child(std::ffi::OsStr::new("attachments"),true).map_err(|_|macos_companion_plan_invalid())?;
+        let dir_meta=directory.identity_file().and_then(|f|f.metadata()).map_err(|_|macos_companion_plan_invalid())?;
+        let directory_object=macos_companion_object(&dir_meta);
+        let mut prior_text=previous.map(str::to_owned);
+        let mut plan=if let Some(prior)=previous {
+            serde_json::from_str::<MacosCompanionAttachmentPlan>(prior).map_err(|_|macos_companion_plan_invalid())?
+        } else {
+            let target=(1..=100_001).map(|n|attachment_copy_name(name,n))
+                .find(|leaf|!inventory.iter().any(|old|old.eq_ignore_ascii_case(&format!("attachments/{leaf}"))))
+                .ok_or_else(macos_companion_plan_invalid)?;
+            let p=MacosCompanionAttachmentPlan{directory:directory_object.clone(),stage:format!(".lrk-companion-{:032x}.pending",rand::random::<u128>()),target,object:None};
+            let serialized=serde_json::to_string(&p).map_err(|_|macos_companion_plan_invalid())?;
+            journal(None,&serialized)?;prior_text=Some(serialized);p
+        };
+        if plan.directory!=directory_object || !macos_companion_stage_name(&plan.stage)
+            || plan.target.is_empty() || plan.target.contains(['/', '\\', '\0'])
+            || plan.target == "." || plan.target == ".." || plan.target.starts_with(".lrk-companion-") {
+            return Err(macos_companion_plan_invalid());
+        }
+        if plan.object.is_none() {
+            // An existing unbound stage is never adopted. Rotate its name in
+            // the durable plan, leaving the unknown object untouched.
+            let mut attempts=0;
+            let file=loop {
+                match directory.create_attachment(std::ffi::OsStr::new(&plan.stage),bytes) {
+                    Ok(file)=>break file,
+                    Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists && attempts<16=>{
+                        attempts+=1;plan.stage=format!(".lrk-companion-{:032x}.pending",rand::random::<u128>());
+                        let next=serde_json::to_string(&plan).map_err(|_|macos_companion_plan_invalid())?;
+                        journal(prior_text.as_deref(),&next)?;prior_text=Some(next);
+                    },
+                    Err(_)=>return Err(macos_companion_plan_invalid()),
+                }
+            };
+            crate::macos_fs::require_empty_acl(&file).map_err(|_|macos_companion_plan_invalid())?;
+            let metadata=file.metadata().map_err(|_|macos_companion_plan_invalid())?;
+            if !metadata.is_file() || metadata.nlink()!=1 || metadata.uid()!=unsafe{libc::geteuid()} || metadata.mode()&0o7777!=0o600 {return Err(macos_companion_plan_invalid());}
+            let object=macos_companion_object(&metadata);
+            let observed=macos_companion_observe(&directory,&plan.stage,&object,bytes.len() as u64,digest)?.ok_or_else(macos_companion_plan_invalid)?;
+            if macos_companion_object(&observed.metadata().map_err(|_|macos_companion_plan_invalid())?)!=object {return Err(macos_companion_plan_invalid());}
+            plan.object=Some(object);
+            let next=serde_json::to_string(&plan).map_err(|_|macos_companion_plan_invalid())?;
+            journal(prior_text.as_deref(),&next)?;prior_text=Some(next);
+        }
+        let object=plan.object.clone().ok_or_else(macos_companion_plan_invalid)?;
+        if let Some(held)=macos_companion_observe(&directory,&plan.stage,&object,bytes.len() as u64,digest)? {
+            let mut ordinal=(1..=100_001).find(|n|attachment_copy_name(name,*n)==plan.target).ok_or_else(macos_companion_plan_invalid)?;
+            loop {
+                note.verify().map_err(|_|error("knowledge-revision-conflict","Note changed during attachment insertion"))?;
+                self.assert_expected_target_unlocked(&vault,Some(expected),root_guard.as_ref())?;
+                let moved=directory.rename_exclusive_checked(std::ffi::OsStr::new(&plan.stage),std::ffi::OsStr::new(&plan.target))
+                    .map_err(|_|macos_companion_plan_invalid())?;
+                if moved {break;}
+                // Only an EEXIST returned by the rename syscall itself means
+                // that no publication occurred. Recheck the retained stage
+                // before recording a new target and trying the next suffix.
+                macos_companion_observe(&directory,&plan.stage,&object,bytes.len() as u64,digest)?.ok_or_else(macos_companion_plan_invalid)?;
+                if macos_companion_object(&held.metadata().map_err(|_|macos_companion_plan_invalid())?)!=object {return Err(macos_companion_plan_invalid());}
+                ordinal+=1;
+                let (next_ordinal,next_target)=(ordinal..=100_001).map(|n|(n,attachment_copy_name(name,n)))
+                    .find(|(_,leaf)|!inventory.iter().any(|old|old.eq_ignore_ascii_case(&format!("attachments/{leaf}"))))
+                    .ok_or_else(macos_companion_plan_invalid)?;
+                ordinal=next_ordinal;plan.target=next_target;
+                let next=serde_json::to_string(&plan).map_err(|_|macos_companion_plan_invalid())?;
+                journal(prior_text.as_deref(),&next)?;prior_text=Some(next);
+            }
+            let published=macos_companion_observe(&directory,&plan.target,&object,bytes.len() as u64,digest)?.ok_or_else(macos_companion_plan_invalid)?;
+            if macos_companion_object(&held.metadata().map_err(|_|macos_companion_plan_invalid())?)!=object
+                || macos_companion_object(&published.metadata().map_err(|_|macos_companion_plan_invalid())?)!=object {return Err(macos_companion_plan_invalid());}
+        } else {
+            // A crash after rename and before receipt may only resume the exact
+            // recorded object at the recorded target, never equal bytes alone.
+            macos_companion_observe(&directory,&plan.target,&object,bytes.len() as u64,digest)?.ok_or_else(macos_companion_plan_invalid)?;
+        }
+        directory.current().map_err(|_|macos_companion_plan_invalid())?;
+        note.verify().map_err(|_|error("knowledge-revision-conflict","Note changed during attachment insertion"))?;
+        self.assert_expected_target_unlocked(&vault,Some(expected),root_guard.as_ref())?;
+        Ok(publication(&document_ref.relative_path,format!("attachments/{}",plan.target),bytes,false))
+    }
+}

@@ -189,6 +189,22 @@ fn inspect(root: &Directory, relative: &str) -> stdio::Result<Inspected> {
     })
 }
 
+// Successful first-time creation now retains its small history record. When
+// no staged copy remains, this record has no old version to offer and must
+// not consume the recovery UI's bounded list. Unreadable or unexpected backup
+// entries remain visible for review; this check never removes either entry.
+fn empty_creation_history(directory: &Directory, name: &str) -> stdio::Result<bool> {
+    if !name.starts_with(".lrm-") || !name.ends_with(".history") {
+        return Ok(false);
+    }
+    let record = super::macos_transactions::inspect_record(directory, name).map_err(|_| conflict())?;
+    if record.before.is_some() || record.before_object.is_some() || record.next_object.is_none() {
+        return Ok(false);
+    }
+    Ok(matches!(directory.entry_info(OsStr::new(&record.backup)),
+        Err(error) if error.kind() == stdio::ErrorKind::NotFound))
+}
+
 pub(super) fn snapshot(root: &Directory) -> stdio::Result<RecoverySnapshot> {
     let mut result = RecoverySnapshot {
         supported: true,
@@ -221,6 +237,9 @@ pub(super) fn snapshot(root: &Directory) -> stdio::Result<RecoverySnapshot> {
                 continue;
             };
             if record_path(value).is_ok() {
+                if empty_creation_history(&directory, leaf).unwrap_or(false) {
+                    continue;
+                }
                 if result.records.len() + result.issues.len() >= 256 {
                     result.scan_incomplete = true;
                     break;
@@ -351,6 +370,59 @@ mod tests {
         let path = temp.path().canonicalize().unwrap();
         let root = Directory::open(&path, false, false).unwrap();
         (temp, path, root)
+    }
+    #[test]
+    fn macos_recovery_omits_empty_creation_history_but_keeps_pending_or_unexpected_objects() {
+        let (_temp, path, root) = fixture();
+        let created = path.join("created.md");
+        super::super::macos_transactions::write(&created, b"created", false, false, None, || Ok(())).unwrap();
+        let first = snapshot(&root).unwrap();
+        assert!(first.records.is_empty());
+        assert!(first.issues.is_empty());
+        assert!(!first.scan_incomplete);
+        assert_eq!(std::fs::read(&created).unwrap(), b"created");
+
+        let created_history = root.entries().unwrap().into_iter()
+            .find(|name| name.to_string_lossy().ends_with(".history")).unwrap();
+        let created_record = super::super::macos_transactions::inspect_record(
+            &root, created_history.to_str().unwrap()).unwrap();
+        // Completed creations must not exhaust the 256-item recovery limit.
+        let metadata = std::fs::metadata(&created).unwrap();
+        for index in 0..260u128 {
+            let nonce = format!("{:032x}", index);
+            let record = serde_json::json!({ "version": 1, "nonce": nonce, "target": "created.md",
+                "before": null, "after": digest(b"created"), "before_object": null,
+                "next_object": [metadata.dev(), metadata.ino()] });
+            let name = format!(".lrm-{nonce}.history");
+            root.create(OsStr::new(&name), &serde_json::to_vec(&record).unwrap()).unwrap();
+        }
+        let many = snapshot(&root).unwrap();
+        assert!(many.records.is_empty());
+        assert!(many.issues.is_empty());
+        assert!(!many.scan_incomplete);
+        let foreign = path.join(&created_record.backup);
+        std::fs::write(&foreign, b"unexpected object").unwrap();
+        let with_foreign = snapshot(&root).unwrap();
+        assert!(with_foreign.records.iter().any(|item| item.record_path == created_history.to_str().unwrap()));
+        assert_eq!(std::fs::read(&foreign).unwrap(), b"unexpected object");
+
+        let pending = path.join("pending.md");
+        assert!(super::super::macos_transactions::write(&pending, b"pending draft", false, true, None, || Ok(())).is_err());
+        let archived = snapshot(&root).unwrap().records.into_iter()
+            .find(|item| item.original_path == "pending.md").unwrap();
+        assert!(!archived.pending);
+        assert!(archived.versions.iter().any(|version| version.slot == "retained"));
+        // Model an interruption before the normal intent archival.
+        let journal = archived.record_path.strip_suffix(".history").unwrap().to_owned() + ".journal";
+        std::fs::rename(path.join(&archived.record_path), path.join(&journal)).unwrap();
+        let before_recovery = snapshot(&root).unwrap();
+        assert!(before_recovery.records.iter().any(|item| item.original_path == "pending.md" && item.pending
+            && item.versions.iter().any(|version| version.slot == "retained")));
+        super::super::macos_transactions::recover_tree(&path).unwrap();
+        let after_recovery = snapshot(&root).unwrap();
+        assert!(after_recovery.records.iter().any(|item| item.original_path == "pending.md" && !item.pending
+            && item.versions.iter().any(|version| version.slot == "retained")));
+        assert_eq!(std::fs::read(&foreign).unwrap(), b"unexpected object");
     }
     #[test]
     fn macos_note_recovery_copies_without_clobbering_then_restores_the_original_inode() {

@@ -51,6 +51,15 @@ fn macos_platform_note_write_conflict_and_recovery() {
         .1;
     assert!(write(&path, b"second", true, true, Some(&version), || Ok(())).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), b"first");
+    // A failed pre-commit write keeps an archived intent and its draft.
+    let pending_record: Journal = dir.entries().unwrap().into_iter()
+        .filter(|name| name.to_string_lossy().ends_with(".history"))
+        .map(|name| serde_json::from_slice(&dir.read_owned(&name).unwrap().unwrap().0).unwrap())
+        .find(|item: &Journal| item.before.as_deref() == Some(digest(b"first").as_str())
+            && item.after == digest(b"second")).unwrap();
+    assert_eq!(std::fs::read(root.join(format!(".lrm-{}.backup", pending_record.nonce))).unwrap(), b"second");
+    recover_tree(&root).unwrap();
+    assert!(root.join(format!(".lrm-{}.history", pending_record.nonce)).is_file());
     std::fs::write(&path, b"external").unwrap();
     assert!(write(&path, b"second", true, false, Some(&version), || Ok(())).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), b"external");
@@ -68,15 +77,17 @@ fn macos_platform_note_write_conflict_and_recovery() {
     held.write_all(b"late external update").unwrap();
     held.set_len(20).unwrap();
     held.sync_all().unwrap();
-    let histories: Vec<_> = dir
+    let histories: Vec<Journal> = dir
         .entries()
         .unwrap()
         .into_iter()
         .filter(|n| n.to_string_lossy().ends_with(".history"))
+        .map(|name| serde_json::from_slice(&dir.read_owned(&name).unwrap().unwrap().0).unwrap())
+        .filter(|item: &Journal| item.before.as_deref() == Some(digest(b"external").as_str())
+            && item.after == digest(b"committed"))
         .collect();
     assert_eq!(histories.len(), 1);
-    let trace: Journal =
-        serde_json::from_slice(&dir.read_owned(&histories[0]).unwrap().unwrap().0).unwrap();
+    let trace = &histories[0];
     let retained = root.join(format!(".lrm-{}.backup", trace.nonce));
     assert_eq!(trace.before_object.unwrap().1, old_inode);
     assert_eq!(std::fs::metadata(&retained).unwrap().ino(), old_inode);
@@ -234,4 +245,126 @@ fn macos_platform_note_write_conflict_and_recovery() {
     assert_eq!(std::fs::read(replaced_root.join(&replaced_backup)).unwrap(),b"original");
     assert!(replaced_root.join("external-original-held").is_file());
     assert!(replaced_root.join(format!(".lrm-{replaced_nonce}.journal")).is_file());
+}
+
+#[test]
+fn macos_late_source_replacement_remains_unconfirmed_with_all_objects_preserved() {
+    let (_temp, root, dir, path) = fixture();
+    std::fs::write(&path, b"original").unwrap();
+    let version = dir.read(OsStr::new("Synthetic note.md")).unwrap().unwrap().1;
+    let held = root.join("original-held.md");
+    let replaced_path = path.clone();
+    let held_for_hook = held.clone();
+    crate::macos_fs::set_before_rename_call_hook(Some(Box::new(move |from, to| {
+        assert!(from.to_string_lossy().ends_with(".backup"));
+        assert_eq!(to, OsStr::new("Synthetic note.md"));
+        std::fs::rename(&replaced_path, &held_for_hook).unwrap();
+        std::fs::write(&replaced_path, b"replacement object").unwrap();
+    })));
+    let result = write(&path, b"unconfirmed draft", true, false, Some(&version), || Ok(()));
+    crate::macos_fs::set_before_rename_call_hook(None);
+
+    assert_eq!(result.unwrap_err().code, "knowledge-revision-conflict");
+    assert_eq!(std::fs::read(&held).unwrap(), b"original");
+    let entries = dir.entries().unwrap();
+    let backup = entries.iter().find(|name| name.to_string_lossy().starts_with(".lrm-")
+        && name.to_string_lossy().ends_with(".backup")).unwrap();
+    assert_eq!(std::fs::read(root.join(backup)).unwrap(), b"replacement object");
+    assert!(entries.iter().any(|name| name.to_string_lossy().ends_with(".journal")));
+    // The exchange can already have installed the draft. It remains private
+    // and unconfirmed; reporting a conflict does not mean no path changed.
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"unconfirmed draft");
+    assert_eq!(std::fs::read(root.join(backup)).unwrap(), b"replacement object");
+}
+
+#[test]
+fn macos_failed_write_retains_objects_without_racing_cleanup_unlink() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let (_temp, root, dir, path) = fixture();
+    std::fs::write(&path, b"original").unwrap();
+    let version = dir.read(OsStr::new("Synthetic note.md")).unwrap().unwrap().1;
+    let foreign = root.join("foreign-synthetic.txt");
+    std::fs::write(&foreign, b"foreign object").unwrap();
+    let fired = Rc::new(Cell::new(false));
+    let seen = Rc::clone(&fired);
+    let hook_root = root.clone();
+    crate::macos_fs::set_after_remove_check_hook(Some(Box::new(move |entry| {
+        seen.set(true);
+        // This hook runs exactly after a version check but before unlinkat.
+        // On the old cleanup path it moves the foreign object into that name.
+        std::fs::rename(hook_root.join(entry), hook_root.join("held-staging")).unwrap();
+        std::fs::rename(hook_root.join("foreign-synthetic.txt"), hook_root.join(entry)).unwrap();
+    })));
+    let result = write(&path, b"uncommitted draft", true, true, Some(&version), || Ok(()));
+    crate::macos_fs::set_after_remove_check_hook(None);
+
+    assert_eq!(result.unwrap_err().code, "knowledge-write-failed");
+    assert!(!fired.get(), "note cleanup must not enter a pathname unlink window");
+    assert_eq!(std::fs::read(&path).unwrap(), b"original");
+    assert_eq!(std::fs::read(&foreign).unwrap(), b"foreign object");
+    let history = dir.entries().unwrap().into_iter()
+        .find(|name| name.to_string_lossy().ends_with(".history")).unwrap();
+    let record: Journal = serde_json::from_slice(&dir.read_owned(&history).unwrap().unwrap().0).unwrap();
+    let backup = root.join(format!(".lrm-{}.backup", record.nonce));
+    assert_eq!(std::fs::read(&backup).unwrap(), b"uncommitted draft");
+    recover_tree(&root).unwrap();
+    assert_eq!(std::fs::read(&backup).unwrap(), b"uncommitted draft");
+    assert!(root.join(format!(".lrm-{}.history", record.nonce)).is_file());
+    write(&path, b"later saved edit", true, false, None, || Ok(())).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"later saved edit");
+    assert_eq!(std::fs::read(&backup).unwrap(), b"uncommitted draft");
+    assert_eq!(std::fs::read(&foreign).unwrap(), b"foreign object");
+}
+
+#[test]
+fn macos_created_note_retains_journal_without_racing_cleanup_unlink() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    // New-file success used to unlink its journal through the same gap.
+    let (_temp2, root2, dir2, path2) = fixture();
+    let foreign2 = root2.join("foreign-synthetic.txt");
+    std::fs::write(&foreign2, b"foreign object").unwrap();
+    let fired2 = Rc::new(Cell::new(false));
+    let seen2 = Rc::clone(&fired2);
+    let hook_root2 = root2.clone();
+    crate::macos_fs::set_after_remove_check_hook(Some(Box::new(move |entry| {
+        seen2.set(true);
+        std::fs::rename(hook_root2.join(entry), hook_root2.join("held-journal")).unwrap();
+        std::fs::rename(hook_root2.join("foreign-synthetic.txt"), hook_root2.join(entry)).unwrap();
+    })));
+    let result2 = write(&path2, b"new note", false, false, None, || Ok(()));
+    crate::macos_fs::set_after_remove_check_hook(None);
+    result2.unwrap();
+    assert!(!fired2.get(), "new-file completion must not unlink its journal by name");
+    assert_eq!(std::fs::read(&path2).unwrap(), b"new note");
+    assert_eq!(std::fs::read(&foreign2).unwrap(), b"foreign object");
+    assert!(dir2.entries().unwrap().iter().any(|name| name.to_string_lossy().ends_with(".history")));
+    assert!(!dir2.entries().unwrap().iter().any(|name| name.to_string_lossy().ends_with(".journal")));
+}
+
+#[test]
+fn macos_write_archive_conflict_reports_recovery_and_preserves_every_object() {
+    let (_temp, root, dir, path) = fixture();
+    let result = write(&path, b"new note", false, false, None, || {
+        let journal = dir.entries().unwrap().into_iter()
+            .find(|name| name.to_string_lossy().ends_with(".journal")).unwrap();
+        let history = journal.to_str().unwrap().strip_suffix(".journal").unwrap().to_owned() + ".history";
+        std::fs::write(root.join(history), b"foreign history").unwrap();
+        Ok(())
+    });
+    assert_eq!(result.unwrap_err().code, "knowledge-recovery-required");
+    assert_eq!(std::fs::read(&path).unwrap(), b"new note");
+    let journal = dir.entries().unwrap().into_iter()
+        .find(|name| name.to_string_lossy().ends_with(".journal")).unwrap();
+    let history = journal.to_str().unwrap().strip_suffix(".journal").unwrap().to_owned() + ".history";
+    assert_eq!(std::fs::read(root.join(&history)).unwrap(), b"foreign history");
+    assert!(recover_tree(&root).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"new note");
+    assert_eq!(std::fs::read(root.join(history)).unwrap(), b"foreign history");
+    assert!(root.join(journal).is_file());
 }

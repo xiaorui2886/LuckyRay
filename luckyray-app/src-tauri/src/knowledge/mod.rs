@@ -19,6 +19,8 @@ mod macos_no_clobber;
 mod macos_path_identity;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos_transactions;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_folder_mutations;
 mod saved_scopes;
 pub(crate) use saved_scopes::SavedKnowledgeScope;
 #[cfg(test)]
@@ -27,6 +29,10 @@ pub(crate) use index::resolve_wiki_target;
 mod live_sync;
 mod companion_folders;
 mod companion_import;
+#[cfg(target_os = "macos")]
+mod macos_companion_import;
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use macos_companion_import::fail_once_after_prepare;
 pub(crate) use companion_import::companion_import_path_key;
 pub(crate) use live_sync::{KnowledgeEditingStatus, KnowledgeEditingLease, KnowledgeCommittedChange, KnowledgeCommittedCheckpoint};
 mod attachment_inventory_cache;
@@ -161,6 +167,8 @@ pub(crate) struct KnowledgeDocumentSummary {
     pub relative_path: String,
     pub modified_at: Option<String>,
     pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_identity: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -199,6 +207,8 @@ pub(crate) struct KnowledgeMoveInput {
     pub expected_revision: String,
     #[serde(default)]
     pub parent_relative_path: Option<String>,
+    #[serde(default)]
+    pub expected_file_identity: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -206,6 +216,8 @@ pub(crate) struct KnowledgeMoveInput {
 pub(crate) struct KnowledgeDeleteInput {
     pub document_ref: KnowledgeDocumentRef,
     pub expected_revision: String,
+    #[serde(default)]
+    pub expected_file_identity: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -908,33 +920,46 @@ impl KnowledgeService {
         {
             hook();
         }
-        if let Err(error) =
+        if let Err(failure) =
             self.assert_expected_target_unlocked(&vault, expected_target, target_guard.as_ref())
         {
-            let rollback_confirmed = std::fs::read(&target)
-                .ok()
-                .is_some_and(|bytes| bytes == input.content.as_bytes())
-                && std::fs::remove_file(&target).is_ok()
-                && !target.exists();
-            if rollback_confirmed {
-                return Err(error);
+            #[cfg(target_os = "macos")]
+            {
+                // A name can refer to another inode even when bytes match, and
+                // a later unlink can race another replacement. Report the
+                // completed write as unconfirmed without deleting anything.
+                return Err(error("knowledge-create-unconfirmed", &format!(
+                    "The document was created before vault verification failed ({}); no automatic removal was attempted. Check the original Vault before retrying",
+                    failure.code
+                )));
             }
-            let document = snapshot_from_committed_bytes(
-                &vault,
-                &relative_path,
-                &target,
-                input.content.as_bytes(),
-            )?;
-            return Ok(KnowledgeMutationResult {
-                document,
-                position: "created".to_string(),
-                index_stale: true,
-                index_warning: Some(KnowledgeMutationWarning {
-                    code: error.code.to_string(),
-                    message: "Document was written, but the active Vault changed before post-write verification"
-                        .to_string(),
-                }),
-            });
+            #[cfg(not(target_os = "macos"))]
+            {
+                let rollback_confirmed = std::fs::read(&target)
+                    .ok()
+                    .is_some_and(|bytes| bytes == input.content.as_bytes())
+                    && std::fs::remove_file(&target).is_ok()
+                    && !target.exists();
+                if rollback_confirmed {
+                    return Err(failure);
+                }
+                let document = snapshot_from_committed_bytes(
+                    &vault,
+                    &relative_path,
+                    &target,
+                    input.content.as_bytes(),
+                )?;
+                return Ok(KnowledgeMutationResult {
+                    document,
+                    position: "created".to_string(),
+                    index_stale: true,
+                    index_warning: Some(KnowledgeMutationWarning {
+                        code: failure.code.to_string(),
+                        message: "Document was written, but the active Vault changed before post-write verification"
+                            .to_string(),
+                    }),
+                });
+            }
         }
         let (document, index_warning) =
             match self.snapshot_from_path(&vault, &relative_path, &target) {
@@ -1757,6 +1782,13 @@ impl KnowledgeService {
         let vault = self.current_vault_unlocked()?;
         let target_guard = self.capture_expected_target_unlocked(&vault, expected_target)?;
         require_matching_vault(&input.document_ref, &vault.registration)?;
+        #[cfg(target_os = "macos")]
+        {
+            reject_macos_ambiguous_mutation_path(&input.document_ref.relative_path)?;
+            if let Some(parent) = input.parent_relative_path.as_deref() {
+                reject_macos_ambiguous_mutation_path(parent)?;
+            }
+        }
         let relative = safe_markdown_relative_path(&input.document_ref.relative_path)?;
         let target = safe_existing_file(&vault.root, &relative)?;
         let file_name = safe_markdown_name(&input.title)?;
@@ -1787,6 +1819,13 @@ impl KnowledgeService {
             let source = macos_attachment_io::Observation::read_at(&root,&relative,false)
                 .map_err(|_|error("knowledge-read-failed","The source note could not be verified"))?;
             if source.revision()!=input.expected_revision {return Err(error("knowledge-revision-conflict","Knowledge document changed since it was opened"));}
+            if let Some(expected_id) = input.expected_file_identity.as_deref() {
+                let object = source.object();
+                let actual_id = format!("{}:{}", object.device, object.inode);
+                if actual_id != expected_id {
+                    return Err(error("knowledge-document-identity-mismatch", "The file object at this path was replaced since it was opened"));
+                }
+            }
             self.assert_expected_target_unlocked(&vault,expected_target,target_guard.as_ref())?;
             if destination_relative==relative {
                 source.verify().map_err(|_|error("knowledge-revision-conflict","The note changed during reading"))?;
@@ -1865,6 +1904,8 @@ impl KnowledgeService {
         let vault = self.current_vault_unlocked()?;
         let target_guard = self.capture_expected_target_unlocked(&vault, expected_target)?;
         require_matching_vault(&input.document_ref, &vault.registration)?;
+        #[cfg(target_os = "macos")]
+        reject_macos_ambiguous_mutation_path(&input.document_ref.relative_path)?;
         let relative = safe_markdown_relative_path(&input.document_ref.relative_path)?;
         #[cfg(target_os = "macos")]
         {
@@ -1874,7 +1915,21 @@ impl KnowledgeService {
                     .and_then(|guard| guard.macos_directory(&vault.root)),
             }.map_err(map_filesystem_identity_error)?;
             self.assert_expected_target_unlocked(&vault, expected_target, target_guard.as_ref())?;
-            macos_note_remove::retain(&directory, &relative, &input.expected_revision, false, None, None, || {
+            // Bind the UI's revision to the same observed file object. The
+            // retained transaction checks this checkpoint again before intent.
+            let checkpoint = if let Some(expected) = input.expected_file_identity.as_deref() {
+                let observed = macos_attachment_io::Observation::read_at(&directory, &relative, false)
+                    .map_err(|_| error("knowledge-read-failed", "The source note could not be verified"))?;
+                if observed.revision() != input.expected_revision {
+                    return Err(error("knowledge-revision-conflict", "Knowledge document changed since it was opened"));
+                }
+                let object = observed.object();
+                if format!("{}:{}", object.device, object.inode) != expected {
+                    return Err(error("knowledge-document-identity-mismatch", "The file object at this path was replaced since it was opened"));
+                }
+                Some(observed.checkpoint())
+            } else { None };
+            macos_note_remove::retain(&directory, &relative, &input.expected_revision, false, None, checkpoint.as_ref(), || {
                 self.assert_expected_target_unlocked(&vault, expected_target, target_guard.as_ref())
                     .map_err(|_| std::io::Error::new(std::io::ErrorKind::Interrupted, "knowledge-target-changed"))
             }).map_err(|failure| match failure {
@@ -1883,7 +1938,10 @@ impl KnowledgeService {
                     error("knowledge-delete-failed", "Document removal did not begin; the source was not removed by this operation"),
                 macos_note_remove::Failure::Io { .. } => error("knowledge-recovery-required", "Removal is unconfirmed; refresh the note list and inspect retained recovery records before retrying"),
             })?;
-            self.index.mark_document_dirty(&input.document_ref)?;
+            self.index.mark_document_dirty(&input.document_ref).map_err(|_| error(
+                "knowledge-delete-projection-incomplete",
+                "The note was retained for recovery, but its index could not be updated. Refresh the vault and inspect recovery before retrying",
+            ))?;
             return Ok(());
         }
         #[cfg(not(target_os = "macos"))]
@@ -3469,6 +3527,17 @@ fn trusted_vault(vault: &KnowledgeVaultRegistration) -> Result<TrustedVault, Kno
     })
 }
 
+// The shared parser supports Windows separators and trims whole paths. A Mac
+// filename can contain a literal backslash or leading space, so mutation
+// paths with those spellings must not be redirected to a different object.
+#[cfg(target_os = "macos")]
+fn reject_macos_ambiguous_mutation_path(value: &str) -> Result<(), KnowledgeError> {
+    if value.contains('\\') || value != value.trim() {
+        return Err(error("knowledge-invalid-document-ref", "The document path cannot be identified safely"));
+    }
+    Ok(())
+}
+
 fn safe_relative_directory(value: Option<&str>) -> Result<PathBuf, KnowledgeError> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some(value) => safe_relative_path(value, false),
@@ -3663,6 +3732,13 @@ fn summary_from_metadata(
         let date_time: chrono::DateTime<chrono::Utc> = time.into();
         date_time.to_rfc3339()
     });
+    #[cfg(target_os = "macos")]
+    let file_identity = {
+        use std::os::unix::fs::MetadataExt;
+        Some(format!("{}:{}", metadata.dev(), metadata.ino()))
+    };
+    #[cfg(not(target_os = "macos"))]
+    let file_identity = None;
     KnowledgeDocumentSummary {
         document_ref: KnowledgeDocumentRef {
             vault_id: vault.registration.id.clone(),
@@ -3672,6 +3748,7 @@ fn summary_from_metadata(
         relative_path,
         modified_at,
         size: metadata.len(),
+        file_identity,
     }
 }
 
@@ -3688,7 +3765,7 @@ fn snapshot_from_committed_bytes(
             "Knowledge documents must use UTF-8",
         )
     })?;
-    let summary = match std::fs::metadata(target) {
+    let mut summary = match std::fs::metadata(target) {
         Ok(metadata) => summary_from_metadata(vault, relative, &metadata),
         Err(_) => {
             let relative_path = relative_path_string(relative);
@@ -3705,9 +3782,13 @@ fn snapshot_from_committed_bytes(
                 relative_path,
                 modified_at: None,
                 size: bytes.len() as u64,
+                file_identity: None,
             }
         }
     };
+    // A post-write metadata fallback is not proof that this object contains
+    // the committed bytes. Do not turn it into move authority on macOS.
+    summary.file_identity = None;
     Ok(KnowledgeDocumentSnapshot {
         summary,
         content,
@@ -4632,6 +4713,7 @@ mod tests {
                     title: "Renamed".to_string(),
                     expected_revision: "stale".to_string(),
                     parent_relative_path: None,
+                    expected_file_identity: None,
                 },
             )
             .unwrap_err();
@@ -4646,6 +4728,7 @@ mod tests {
                     title: "Renamed".to_string(),
                     expected_revision: created.revision,
                     parent_relative_path: None,
+                    expected_file_identity: None,
                 },
             )
             .unwrap();
@@ -4659,6 +4742,7 @@ mod tests {
                 &KnowledgeDeleteInput {
                     document_ref: moved.summary.document_ref,
                     expected_revision: moved.revision,
+                    expected_file_identity: None,
                 },
             )
             .unwrap();
@@ -6516,6 +6600,56 @@ try {
             std::fs::read_to_string(&target).unwrap(),
             "external replacement"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_post_create_vault_change_preserves_created_and_replacement_objects() {
+        use std::os::unix::fs::MetadataExt;
+
+        for replace in [false, true] {
+            let (service, root, vault) = registered_service("macos-create-post-commit-replacement");
+            let target = root.join("Committed.md");
+            let original = root.join("Original held.md");
+            let replacement_root = temp_path("macos-create-replacement-vault");
+            std::fs::create_dir_all(replacement_root.join(".luckyray")).unwrap();
+            let replacement = KnowledgeVaultRegistration {
+                id: "replacement-vault".to_string(), name: "Replacement".to_string(),
+                root_path: replacement_root.to_string_lossy().to_string(), mode: "vault-bound".to_string(),
+                created_at: "2026-07-28T00:00:00Z".to_string(), last_opened_at: "2026-07-28T00:00:00Z".to_string(),
+                schema_version: VAULT_SCHEMA_VERSION, link_update_policy: Default::default(),
+            };
+            let encoded = serde_json::to_vec_pretty(&replacement).unwrap();
+            std::fs::write(replacement_root.join(".luckyray/vault.json"), &encoded).unwrap();
+            let current_vault_path = service.current_vault_path();
+            let target_for_hook = target.clone();
+            let original_for_hook = original.clone();
+            service.set_after_final_validation_hook(move || {
+                if replace {
+                    // The replacement has identical bytes but is a different object.
+                    std::fs::rename(&target_for_hook, &original_for_hook).unwrap();
+                    std::fs::write(&target_for_hook, b"committed bytes").unwrap();
+                }
+                std::fs::write(&current_vault_path, &encoded).unwrap();
+            });
+            let failure = service.create_document_for_expected_vault_with_receipt(
+                &vault.id, &KnowledgeCreateInput {
+                    title: "Committed".to_string(), parent_relative_path: None,
+                    content: "committed bytes".to_string(),
+                },
+            ).unwrap_err();
+            assert_eq!(failure.code, "knowledge-create-unconfirmed");
+            assert!(failure.message.contains("no automatic removal"));
+            assert_eq!(std::fs::read(&target).unwrap(), b"committed bytes");
+            if replace {
+                assert_eq!(std::fs::read(&original).unwrap(), b"committed bytes");
+                let a = std::fs::metadata(&original).unwrap();
+                let b = std::fs::metadata(&target).unwrap();
+                assert_ne!((a.dev(), a.ino()), (b.dev(), b.ino()));
+            } else {
+                assert!(!original.exists());
+            }
+        }
     }
 
     #[test]

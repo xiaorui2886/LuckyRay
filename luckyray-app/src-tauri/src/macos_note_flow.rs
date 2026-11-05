@@ -13,16 +13,21 @@ use tauri::Manager;
 const ID: &str = "synthetic-macos-notes-flow";
 const A: &[u8] = b"# Synthetic\n\nSynthetic note.\n\n![fixture](attachments/note-flow.png)\n";
 const B: &[u8] = b"# Delete\n\nSynthetic delete.\n";
+const FOLDER_NOTE: &[u8] = b"# FolderNote\n\nSynthetic folder child.\n\n![fixture](attachments/folder-flow.png)\n";
+const FOLDER_MARKER: &str = "Unsaved folder draft preserved.";
 const IMAGE: &str = "a4307dbf28c24f349374a7d97bcb4e3856b1cf505f9d8f203c490b60200a976d";
 const MARKER: &str = "Saved by the native note flow.";
-const FILES: [&str; 4] = [
+const FILES: [&str; 6] = [
     "Moved/Synthetic.md",
     "Delete.md",
     "Delete-recovered.md",
     "attachments/note-flow.png",
+    "Destination/Renamed/FolderNote.md",
+    "Destination/Renamed/attachments/folder-flow.png",
 ];
-const STEPS: [&str; 10] = [
-    "setup", "import", "preview", "save", "move", "delete", "conflict", "recover", "reopen", "quit",
+const STEPS: [&str; 16] = [
+    "setup", "import", "preview", "save", "move", "delete", "conflict", "recover",
+    "folder-dirty", "folder-rename", "folder-move", "folder-delete", "folder-restore", "graph", "reopen", "quit",
 ];
 static ACTIVE: OnceLock<Arc<FlowState>> = OnceLock::new();
 fn reject() -> String {
@@ -100,6 +105,218 @@ impl PreviewObservation {
             && self.interaction.as_ref().is_none_or(PreviewInteraction::valid)
     }
 }
+// Fixed synthetic UI classifications; a stage identifies the action being
+// attempted, not proof that the preceding click reached the application.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MoveUiObservation {
+    stage: String,
+    synthetic_row_has_box: bool,
+    move_action_has_box: bool,
+    move_target_has_box: bool,
+    moved_chevron_has_box: bool,
+    moved_chevron_open: bool,
+    original_row_has_box: bool,
+    moved_row_has_box: bool,
+    #[serde(default)]
+    selection_click_called: bool,
+    #[serde(default)]
+    selection_click_returned: bool,
+    #[serde(default)]
+    selection_ready_event: bool,
+    #[serde(default)]
+    destination_row_active: bool,
+    #[serde(default)]
+    destination_host_visible: bool,
+}
+impl MoveUiObservation {
+    fn valid(&self) -> bool {
+        ["context-menu", "move-menu", "destination", "checkpoint", "open-folder", "select-moved", "preview-moved",
+            "rename-menu", "rename-input", "rename-checkpoint", "restore-menu", "restore-input", "restore-checkpoint"]
+            .contains(&self.stage.as_str())
+            && (!self.moved_chevron_open || self.moved_chevron_has_box)
+            && (!self.selection_click_returned || self.selection_click_called)
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MoveNativeObservation {
+    checkpoint_passed: bool,
+    source_missing_verified: bool,
+    destination_read_verified: bool,
+    saved_marker_verified: bool,
+    rewritten_link_verified: bool,
+    attachment_hash_verified: bool,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MoveObservation {
+    ui: MoveUiObservation,
+    native: MoveNativeObservation,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteUiObservation {
+    stage: String,
+    delete_row_has_box: bool,
+    delete_action_has_box: bool,
+    confirm_has_box: bool,
+}
+impl DeleteUiObservation {
+    fn valid(&self) -> bool {
+        ["context-menu", "delete-menu", "confirm", "checkpoint", "tree-update"]
+            .contains(&self.stage.as_str())
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteNativeObservation {
+    checkpoint_passed: bool,
+    source_missing_verified: bool,
+    retained_original_verified: bool,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteObservation {
+    ui: DeleteUiObservation,
+    native: DeleteNativeObservation,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImportUiObservation {
+    stage: String,
+    root_has_box: bool,
+    synthetic_row_has_box: bool,
+    delete_row_has_box: bool,
+    transfer_created: bool,
+    files_added: bool,
+    drop_dispatched: bool,
+    drop_default_prevented: bool,
+}
+impl ImportUiObservation {
+    fn valid(&self) -> bool {
+        ["close-settings", "construct-transfer", "populate-transfer", "dispatch-drop", "wait-tree", "checkpoint"]
+            .contains(&self.stage.as_str())
+            && (!self.files_added || self.transfer_created)
+            && (!self.drop_dispatched || self.files_added)
+            && (!self.drop_default_prevented || self.drop_dispatched)
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImportNativeObservation {
+    checkpoint_passed: bool,
+    synthetic_content_verified: bool,
+    delete_content_verified: bool,
+    attachment_hash_verified: bool,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImportObservation {
+    ui: ImportUiObservation,
+    native: ImportNativeObservation,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveryUiObservation {
+    stage: String,
+    selection_click_called: bool,
+    selection_click_returned: bool,
+    selection_ready_event: bool,
+    recovered_row_has_box: bool,
+    recovered_row_active: bool,
+    recovered_host_visible: bool,
+    source_control_has_box: bool,
+    source_textarea_has_box: bool,
+    recovered_content_verified: bool,
+}
+impl RecoveryUiObservation {
+    fn valid(&self) -> bool {
+        ["destination", "copy", "copy-status", "checkpoint", "close-recovery", "refresh-open", "refresh-action", "refresh-close",
+            "select-recovered", "source-control", "recovered-content", "open-moved", "preview-moved"]
+            .contains(&self.stage.as_str())
+            && (!self.selection_click_returned || self.selection_click_called)
+            && (!self.recovered_row_active || self.recovered_row_has_box)
+            && (!self.recovered_content_verified || self.source_textarea_has_box)
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveryNativeObservation {
+    checkpoint_passed: bool,
+    recovered_copy_verified: bool,
+    foreign_original_verified: bool,
+    retained_original_verified: bool,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveryObservation {
+    ui: RecoveryUiObservation,
+    native: RecoveryNativeObservation,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FolderUiObservation {
+    stage: String,
+    product_stage: String,
+    failure: String,
+    unsaved: bool,
+    save_pending: bool,
+    operation_pending: bool,
+    rename_action_present: bool,
+    rename_input_present: bool,
+    rename_value_correct: bool,
+    source_folder_present: bool,
+    renamed_folder_present: bool,
+    moved_folder_present: bool,
+    source_host_visible: bool,
+    renamed_host_visible: bool,
+    moved_host_visible: bool,
+    renamed_row_active: bool,
+    moved_row_active: bool,
+    draft_marker_visible: bool,
+    preview_decoded: bool,
+    recovery_panel_present: bool,
+    restore_enabled: bool,
+    graph_pane_present: bool,
+    graph_search_new_path: bool,
+}
+impl FolderUiObservation {
+    fn valid(&self) -> bool {
+        ["not-entered", "dirty-open", "dirty-input", "dirty-menu", "dirty-veto", "dirty-checkpoint", "save-request", "save-checkpoint", "save-idle",
+            "rename-menu", "rename-input", "rename-submit", "rename-checkpoint", "rename-open", "rename-host", "rename-source-retired",
+            "move-menu", "move-destination", "move-checkpoint", "move-open", "move-host", "move-source-retired", "attachment-preview",
+            "delete-menu", "delete-confirm", "delete-checkpoint", "delete-tree", "restore-panel", "restore-refresh", "restore-action", "restore-checkpoint", "restore-tree",
+            "graph-open", "graph-canvas", "graph-search", "graph-select", "graph-checkpoint", "return-note", "reopen-note", "reopen-marker", "reopen-folder", "reopen-checkpoint"]
+            .contains(&self.stage.as_str())
+            && ["idle", "preparing", "ready", "running", "completed", "interrupted", "blocked-draft", "unknown"].contains(&self.product_stage.as_str())
+            && ["wait-timeout", "checkpoint-context", "stale-source-host", "stale-moved-host", "draft-not-preserved", "reopen-draft-missing", "graph-stale-path", "other"].contains(&self.failure.as_str())
+            && (!self.rename_value_correct || self.rename_input_present)
+            && (!self.graph_search_new_path || self.graph_pane_present)
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FolderNativeObservation {
+    checkpoint_count: usize,
+    source_directory_original: bool,
+    renamed_directory_original: bool,
+    moved_directory_original: bool,
+    source_note_matches_saved: bool,
+    renamed_note_matches_saved: bool,
+    moved_note_matches_saved: bool,
+    source_image_original: bool,
+    renamed_image_original: bool,
+    moved_image_original: bool,
+    empty_directory_original: bool,
+    empty_directory_missing: bool,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FolderObservation {
+    ui: FolderUiObservation,
+    native: FolderNativeObservation,
+}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Record {
@@ -113,6 +330,16 @@ struct Record {
     files: Vec<Bound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     preview_observation: Option<PreviewObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    move_observation: Option<MoveObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delete_observation: Option<DeleteObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    import_observation: Option<ImportObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery_observation: Option<RecoveryObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    folder_observation: Option<FolderObservation>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -123,8 +350,12 @@ struct Quit {
 #[derive(Default)]
 struct Progress {
     stage: usize,
+    moved_baseline: Option<Bound>,
+    rename_seen: bool,
+    rename_roundtrip: bool,
     original_delete: Option<Bound>,
     foreign_delete: Option<Bound>,
+    folder_note: Option<Bound>,
     passed: bool,
 }
 pub(crate) struct FlowState {
@@ -135,6 +366,10 @@ pub(crate) struct FlowState {
     home: PathBuf,
     phase: String,
     expected: Vec<Bound>,
+    initial_folder_note: Option<Bound>,
+    initial_folder_image: Option<Bound>,
+    initial_folder_identity: Option<(u64, u64)>,
+    empty_folder_identity: (u64, u64),
     progress: Mutex<Progress>,
     recorded: AtomicBool,
     quit: AtomicBool,
@@ -148,6 +383,16 @@ pub(crate) struct Observation {
     ui_flags: Vec<bool>,
     #[serde(default)]
     preview_observation: Option<PreviewObservation>,
+    #[serde(default)]
+    move_observation: Option<MoveUiObservation>,
+    #[serde(default)]
+    delete_observation: Option<DeleteUiObservation>,
+    #[serde(default)]
+    import_observation: Option<ImportUiObservation>,
+    #[serde(default)]
+    recovery_observation: Option<RecoveryUiObservation>,
+    #[serde(default)]
+    folder_observation: Option<FolderUiObservation>,
 }
 
 fn read(directory: &Directory, path: &str) -> Result<(Vec<u8>, Bound), String> {
@@ -179,12 +424,36 @@ fn read(directory: &Directory, path: &str) -> Result<(Vec<u8>, Bound), String> {
     };
     Ok((bytes, bound))
 }
-fn missing(directory: &Directory, name: &str) -> bool {
-    matches!(directory.entry_info(OsStr::new(name)),Err(e) if e.kind()==std::io::ErrorKind::NotFound)
-        && directory.current().is_ok()
+pub(crate) fn missing(directory: &Directory, path: &str) -> bool {
+    let mut parts = path.split('/').collect::<Vec<_>>();
+    let Some(name) = parts.pop() else { return false; };
+    let mut parent = None;
+    for part in parts {
+        parent = match parent.as_ref().unwrap_or(directory).child(OsStr::new(part), false) {
+            Ok(child) => Some(child),
+            Err(_) => return false,
+        };
+    }
+    let parent = parent.as_ref().unwrap_or(directory);
+    matches!(parent.entry_info(OsStr::new(name)),Err(e) if e.kind()==std::io::ErrorKind::NotFound)
+        && parent.current().is_ok() && directory.current().is_ok()
 }
 fn same_object(a: &Bound, b: &Bound) -> bool {
     a.device == b.device && a.inode == b.inode && a.hash == b.hash && a.bytes == b.bytes
+}
+fn folder(directory: &Directory, path: &str) -> Result<Directory, String> {
+    let mut current = directory.try_clone().map_err(|_| reject())?;
+    for part in path.split('/') {
+        current = current.child(OsStr::new(part), false).map_err(|_| reject())?;
+    }
+    current.current().map_err(|_| reject())?;
+    Ok(current)
+}
+fn folder_identity(directory: &Directory, path: &str) -> Result<(u64, u64), String> {
+    let current = folder(directory, path)?;
+    let metadata = current.identity_file().and_then(|file| file.metadata()).map_err(|_| reject())?;
+    current.current().map_err(|_| reject())?;
+    Ok((metadata.dev(), metadata.ino()))
 }
 impl FlowState {
     fn sources(&self) -> Result<(), String> {
@@ -226,7 +495,7 @@ impl FlowState {
         }
         Ok(())
     }
-    fn final_files(&self, progress: &Progress) -> Result<Vec<Bound>, String> {
+    fn note_files(&self, progress: &Progress) -> Result<Vec<Bound>, String> {
         self.sources()?;
         self.moved()?;
         let original = progress.original_delete.as_ref().ok_or_else(reject)?;
@@ -244,8 +513,26 @@ impl FlowState {
         }
         FILES
             .iter()
+            .take(4)
             .map(|name| read(&self.vault, name).map(|(_, bound)| bound))
             .collect()
+    }
+    fn final_files(&self, progress: &Progress) -> Result<Vec<Bound>, String> {
+        let mut files = self.note_files(progress)?;
+        let moved = read(&self.vault, FILES[4])?.1;
+        let image = read(&self.vault, FILES[5])?.1;
+        if !progress.folder_note.as_ref().is_some_and(|base| same_object(base, &moved))
+            || !self.initial_folder_image.as_ref().is_some_and(|base| same_object(base, &image))
+            || self.initial_folder_identity != Some(folder_identity(&self.vault, "Destination/Renamed")?)
+            || !missing(&self.vault, "Folder") || !missing(&self.vault, "Renamed")
+            || folder_identity(&self.vault, "FolderEmpty")? != self.empty_folder_identity
+            || !folder(&self.vault, "FolderEmpty")?.entries().map_err(|_| reject())?.is_empty()
+        {
+            return Err(reject());
+        }
+        files.push(moved);
+        files.push(image);
+        Ok(files)
     }
     fn verify_expected(&self) -> Result<Vec<Bound>, String> {
         self.sources()?;
@@ -260,7 +547,24 @@ impl FlowState {
         if now != self.expected {
             return Err(reject());
         }
+        if !missing(&self.vault, "Folder") || !missing(&self.vault, "Renamed")
+            || !folder(&self.vault, "FolderEmpty")?.entries().map_err(|_| reject())?.is_empty()
+        {
+            return Err(reject());
+        }
         Ok(now)
+    }
+    fn graph_paths(&self) -> Result<(), String> {
+        let snapshot = crate::knowledge_service().map_err(|_| reject())?
+            .refresh_index().map_err(|_| reject())?;
+        if snapshot.vault_id != ID
+            || !snapshot.documents.iter().any(|document| document.relative_path == FILES[4])
+            || snapshot.documents.iter().any(|document| document.relative_path.starts_with("Folder/")
+                || document.relative_path.starts_with("Renamed/"))
+        {
+            return Err(reject());
+        }
+        Ok(())
     }
 }
 fn active_state() -> Result<Option<Arc<FlowState>>, String> {
@@ -336,8 +640,8 @@ fn active_state() -> Result<Option<Arc<FlowState>>, String> {
             || record.mode != "macos-note-flow"
             || record.phase != "exercise"
             || record.status != "passed"
-            || record.step != "recover"
-            || record.ui_flags != [true; 7]
+            || record.step != "graph"
+            || record.ui_flags != [true; 15]
             || !record.backend_verified
             || quit.phase != "exercise"
             || !quit.normal_saved_quit
@@ -357,6 +661,18 @@ fn active_state() -> Result<Option<Arc<FlowState>>, String> {
     {
         return Err(reject());
     }
+    let (initial_folder_note, initial_folder_image, initial_folder_identity) = if phase == "exercise" {
+        let original = read(&vault, "Folder/FolderNote.md")?;
+        let image = read(&vault, "Folder/attachments/folder-flow.png")?.1;
+        if original.0 != FOLDER_NOTE
+            || image.hash != IMAGE
+            || !folder(&vault, "FolderEmpty")?.entries().map_err(|_| reject())?.is_empty()
+        {
+            return Err(reject());
+        }
+        (Some(original.1), Some(image), Some(folder_identity(&vault, "Folder")?))
+    } else { (None, None, None) };
+    let empty_folder_identity = folder_identity(&vault, "FolderEmpty")?;
     let state = Arc::new(FlowState {
         root,
         vault,
@@ -365,6 +681,10 @@ fn active_state() -> Result<Option<Arc<FlowState>>, String> {
         home,
         phase,
         expected,
+        initial_folder_note,
+        initial_folder_image,
+        initial_folder_identity,
+        empty_folder_identity,
         progress: Mutex::new(Progress::default()),
         recorded: AtomicBool::new(false),
         quit: AtomicBool::new(false),
@@ -448,12 +768,31 @@ pub(crate) fn macos_note_flow_checkpoint(
     }
     if state.phase == "reopen" {
         return if stage == "reopened" {
-            Ok(state.verify_expected().is_ok())
+            Ok(state.verify_expected().is_ok() && state.graph_paths().is_ok())
         } else {
             Err(reject())
         };
     }
     let mut progress = state.progress.lock().map_err(|_| reject())?;
+    if stage == "renamed" {
+        if progress.stage != 3 || progress.rename_roundtrip || !missing(&state.vault, FILES[0]) {
+            return Ok(false);
+        }
+        let valid = read(&state.vault, "Moved/Renamed.md").is_ok_and(|(_, bound)|
+            progress.moved_baseline.as_ref().is_some_and(|base| bound.hash == base.hash && bound.bytes == base.bytes))
+            && read(&state.vault, FILES[3]).is_ok_and(|(_, bound)| bound.hash == IMAGE);
+        if valid { progress.rename_seen = true; }
+        return Ok(valid);
+    }
+    if stage == "rename-restored" {
+        if progress.stage != 3 || !progress.rename_seen || !missing(&state.vault, "Moved/Renamed.md") {
+            return Ok(false);
+        }
+        let valid = state.moved().is_ok() && read(&state.vault, FILES[0]).is_ok_and(|(_, bound)|
+            progress.moved_baseline.as_ref().is_some_and(|base| bound.hash == base.hash && bound.bytes == base.bytes));
+        if valid { progress.rename_roundtrip = true; }
+        return Ok(valid);
+    }
     let order = [
         "imported",
         "saved",
@@ -462,6 +801,13 @@ pub(crate) fn macos_note_flow_checkpoint(
         "install-conflict",
         "conflict-observed",
         "recovered",
+        "folder-dirty-blocked",
+        "folder-saved",
+        "folder-renamed",
+        "folder-moved",
+        "folder-deleted",
+        "folder-restored",
+        "graph-ready",
     ];
     let index = order.iter().position(|s| *s == stage).ok_or_else(reject)?;
     if index < progress.stage {
@@ -493,8 +839,12 @@ pub(crate) fn macos_note_flow_checkpoint(
                     return Err(reject());
                 }
             }
-            2 => state.moved()?,
+            2 => {
+                state.moved()?;
+                progress.moved_baseline = Some(read(&state.vault, FILES[0])?.1);
+            }
             3 => {
+                if !progress.rename_roundtrip { return Err(reject()); }
                 if !missing(&state.vault, "Delete.md") {
                     return Err(reject());
                 }
@@ -543,7 +893,56 @@ pub(crate) fn macos_note_flow_checkpoint(
                 }
             }
             6 => {
+                state.note_files(&progress)?;
+            }
+            7 => {
+                if read(&state.vault, "Folder/FolderNote.md")?.1
+                    != *state.initial_folder_note.as_ref().ok_or_else(reject)?
+                    || state.initial_folder_identity != Some(folder_identity(&state.vault, "Folder")?)
+                    || !missing(&state.vault, "Renamed")
+                {
+                    return Err(reject());
+                }
+            }
+            8 => {
+                let (bytes, bound) = read(&state.vault, "Folder/FolderNote.md")?;
+                if !bytes.starts_with(FOLDER_NOTE)
+                    || !std::str::from_utf8(&bytes).map_err(|_| reject())?.contains(FOLDER_MARKER)
+                {
+                    return Err(reject());
+                }
+                progress.folder_note = Some(bound);
+            }
+            9 => {
+                let moved = read(&state.vault, "Renamed/FolderNote.md")?.1;
+                if !missing(&state.vault, "Folder")
+                    || state.initial_folder_identity != Some(folder_identity(&state.vault, "Renamed")?)
+                    || !progress.folder_note.as_ref().is_some_and(|base| same_object(base, &moved))
+                {
+                    return Err(reject());
+                }
+            }
+            10 => {
+                let moved = read(&state.vault, FILES[4])?.1;
+                if !missing(&state.vault, "Renamed")
+                    || state.initial_folder_identity != Some(folder_identity(&state.vault, "Destination/Renamed")?)
+                    || !progress.folder_note.as_ref().is_some_and(|base| same_object(base, &moved))
+                {
+                    return Err(reject());
+                }
+            }
+            11 => {
+                if !missing(&state.vault, "FolderEmpty") { return Err(reject()); }
+            }
+            12 => {
+                if folder_identity(&state.vault, "FolderEmpty")? != state.empty_folder_identity
+                    || !folder(&state.vault, "FolderEmpty")?.entries().map_err(|_| reject())?.is_empty() {
+                    return Err(reject());
+                }
+            }
+            13 => {
                 state.final_files(&progress)?;
+                state.graph_paths()?;
             }
             _ => return Err(reject()),
         }
@@ -568,16 +967,93 @@ pub(crate) fn macos_note_flow_report(
     caller(&window, &state)?;
     if report.phase != state.phase
         || !STEPS.contains(&report.step.as_str())
-        || report.ui_flags.len() != if state.phase == "exercise" { 7 } else { 3 }
+        || report.ui_flags.len() != if state.phase == "exercise" { 15 } else { 6 }
         || report.preview_observation.as_ref().is_some_and(|value| !value.valid())
         || report.preview_observation.is_some() && (report.passed || report.step != "preview")
+        || report.move_observation.as_ref().is_some_and(|value| !value.valid())
+        || report.move_observation.is_some() && (report.passed || report.step != "move" || state.phase != "exercise")
+        || report.delete_observation.as_ref().is_some_and(|value| !value.valid())
+        || report.delete_observation.is_some() && (report.passed || report.step != "delete" || state.phase != "exercise")
+        || report.import_observation.as_ref().is_some_and(|value| !value.valid())
+        || report.import_observation.is_some() && (report.passed || report.step != "import" || state.phase != "exercise")
+        || report.recovery_observation.as_ref().is_some_and(|value| !value.valid())
+        || report.recovery_observation.is_some() && (report.passed || report.step != "recover" || state.phase != "exercise")
+        || report.folder_observation.as_ref().is_some_and(|value| !value.valid())
+        || report.folder_observation.is_some() && (report.passed || !report.step.starts_with("folder-") && !["graph", "reopen"].contains(&report.step.as_str()))
         || state.recorded.swap(true, Ordering::AcqRel)
     {
         return Err(reject());
     }
     let mut progress = state.progress.lock().map_err(|_| reject())?;
+    // Reads are confined to the same fixed fixture and use the existing
+    // no-follow, identity-checked helpers. False means "not verified".
+    let move_observation = report.move_observation.map(|ui| {
+        let destination = read(&state.vault, FILES[0]).ok();
+        let text = destination.as_ref().and_then(|(bytes, _)| std::str::from_utf8(bytes).ok());
+        MoveObservation {
+            ui,
+            native: MoveNativeObservation {
+                checkpoint_passed: progress.stage >= 3,
+                source_missing_verified: missing(&state.vault, "Synthetic.md"),
+                destination_read_verified: destination.is_some(),
+                saved_marker_verified: text.is_some_and(|value| value.contains(MARKER)),
+                rewritten_link_verified: text.is_some_and(|value| value.contains("../attachments/note-flow.png")),
+                attachment_hash_verified: read(&state.vault, FILES[3]).is_ok_and(|(_, bound)| bound.hash == IMAGE),
+            },
+        }
+    });
+    let delete_observation = report.delete_observation.map(|ui| DeleteObservation {
+        ui,
+        native: DeleteNativeObservation {
+            checkpoint_passed: progress.stage >= 4,
+            source_missing_verified: missing(&state.vault, "Delete.md"),
+            retained_original_verified: progress.original_delete.as_ref().is_some_and(|original| state.retained(original).is_ok()),
+        },
+    });
+    let import_observation = report.import_observation.map(|ui| ImportObservation {
+        ui,
+        native: ImportNativeObservation {
+            checkpoint_passed: progress.stage >= 1,
+            synthetic_content_verified: read(&state.vault, "Synthetic.md").is_ok_and(|(bytes, _)|
+                std::str::from_utf8(&bytes).is_ok_and(|value| value.contains("note-flow.png"))),
+            delete_content_verified: read(&state.vault, "Delete.md").is_ok_and(|(bytes, _)| bytes == B),
+            attachment_hash_verified: read(&state.vault, FILES[3]).is_ok_and(|(_, bound)| bound.hash == IMAGE),
+        },
+    });
+    let recovery_observation = report.recovery_observation.map(|ui| RecoveryObservation {
+        ui,
+        native: RecoveryNativeObservation {
+            checkpoint_passed: progress.stage >= 7,
+            recovered_copy_verified: read(&state.vault, FILES[2]).is_ok_and(|(bytes, _)| bytes == B),
+            foreign_original_verified: read(&state.vault, FILES[1]).is_ok_and(|(bytes, bound)|
+                bytes == B && progress.foreign_delete.as_ref().is_some_and(|expected| &bound == expected)),
+            retained_original_verified: progress.original_delete.as_ref().is_some_and(|original| state.retained(original).is_ok()),
+        },
+    });
+    let folder_observation = report.folder_observation.map(|ui| {
+        let original_directory = |path| folder_identity(&state.vault, path).ok()
+            .is_some_and(|identity| Some(identity) == state.initial_folder_identity);
+        let saved_note = |path| read(&state.vault, path).ok().is_some_and(|(_, current)|
+            progress.folder_note.as_ref().or_else(|| state.expected.get(4)).is_some_and(|base| same_object(base, &current)));
+        let original_image = |path| read(&state.vault, path).ok().is_some_and(|(_, current)|
+            state.initial_folder_image.as_ref().or_else(|| state.expected.get(5)).is_some_and(|base| same_object(base, &current)));
+        FolderObservation { ui, native: FolderNativeObservation {
+            checkpoint_count: progress.stage,
+            source_directory_original: original_directory("Folder"),
+            renamed_directory_original: original_directory("Renamed"),
+            moved_directory_original: original_directory("Destination/Renamed"),
+            source_note_matches_saved: saved_note("Folder/FolderNote.md"),
+            renamed_note_matches_saved: saved_note("Renamed/FolderNote.md"),
+            moved_note_matches_saved: saved_note(FILES[4]),
+            source_image_original: original_image("Folder/attachments/folder-flow.png"),
+            renamed_image_original: original_image("Renamed/attachments/folder-flow.png"),
+            moved_image_original: original_image(FILES[5]),
+            empty_directory_original: folder_identity(&state.vault, "FolderEmpty").ok() == Some(state.empty_folder_identity),
+            empty_directory_missing: missing(&state.vault, "FolderEmpty"),
+        } }
+    });
     let files = if state.phase == "exercise" {
-        if progress.stage == 7 {
+        if progress.stage == 14 {
             state.final_files(&progress).ok()
         } else {
             None
@@ -591,7 +1067,7 @@ pub(crate) fn macos_note_flow_report(
         && backend_verified
         && report.step
             == if state.phase == "exercise" {
-                "recover"
+                "graph"
             } else {
                 "reopen"
             };
@@ -605,6 +1081,11 @@ pub(crate) fn macos_note_flow_report(
         backend_verified,
         files: files.unwrap_or_default(),
         preview_observation: report.preview_observation,
+        move_observation,
+        delete_observation,
+        import_observation,
+        recovery_observation,
+        folder_observation,
     };
     let bytes = serde_json::to_vec(&record).map_err(|_| reject())?;
     state

@@ -3,11 +3,28 @@ use crate::knowledge::{
     companion_attachment_links, CompanionLinkSyntax, KnowledgeDocumentRef,
     KnowledgeDocumentSnapshot, KnowledgeTargetIdentity,
 };
+
+#[cfg(all(test, target_os = "macos"))]
+std::thread_local! {
+    static AFTER_UNIQUE_PUBLICATION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+}
 use std::collections::HashSet;
 mod uploads;
 mod replica_manifest;
 mod folders;
 mod import_plans;
+
+/// The Services adapter already owns a durable, verified staging stream. It
+/// may supply those bytes to the same Content upload journal without copying
+/// them into a second staging file. This is not an HTTP route.
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_complete_attachment_from_service(
+    gateway: &CompanionGateway, request: &HttpRequest, job_id: &str, bytes: &[u8],
+) -> ContentResult<Value> {
+    uploads::macos_complete_from_service(gateway, request, job_id, bytes)
+}
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) mod fixture_support;
 use crate::knowledge::{
     companion_note_name, companion_replaced_content, KnowledgeCreateInput, KnowledgeDeleteInput,
     KnowledgeError, KnowledgeMoveInput, KnowledgeWriteInput,
@@ -24,6 +41,13 @@ fn knowledge_error(error: KnowledgeError) -> (u16, &'static str) {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_unique_content_matches(observed: &str, desired: Option<&String>) -> bool {
+    // Knowledge decoding treats an initial UTF-8 BOM as an encoding marker.
+    // Publication still verifies and keeps the exact original file bytes.
+    desired.map(|text| text.strip_prefix('\u{feff}').unwrap_or(text.as_str())) == Some(observed)
+}
+
 #[derive(Default)]
 pub(crate) struct ContentState {
     reconciled: HashMap<String, Instant>,
@@ -32,6 +56,23 @@ pub(crate) struct ContentState {
     /// read answers from the retained projection instead of failing the whole
     /// sync loop; a write still cannot proceed without reading the real file.
     unreadable: HashMap<String, HashSet<String>>,
+    #[cfg(target_os = "macos")]
+    uploads: uploads::UploadState,
+}
+
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn macos_forget_live_uploads_for_test(gateway: &CompanionGateway) {
+    gateway.content_state.lock().expect("content state mutex").uploads = Default::default();
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_cancel_uploads_for_clear(gateway: &CompanionGateway) -> Result<(), &'static str> {
+    uploads::cancel_for_clear(gateway)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_recover_completed_uploads(gateway: &CompanionGateway) -> Result<(), &'static str> {
+    uploads::recover_completed(gateway)
 }
 
 pub(crate) fn apply_schema(db: &Connection) -> rusqlite::Result<()> {
@@ -161,6 +202,9 @@ struct Plan {
     desired_content: Option<String>,
     #[serde(default)]
     created_object: Option<String>,
+    #[cfg(target_os = "macos")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_staging: Option<String>,
 }
 
 fn direct_document(
@@ -339,11 +383,21 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
             old_object,
             desired_content,
             created_object: None,
+            #[cfg(target_os = "macos")]
+            created_staging: None,
         };
         db.execute("INSERT INTO companion_content_operation(device_id,op_id,vault_key,note_id,payload,before_document,stage,created_at) VALUES(?1,?2,?3,?4,?5,?6,'intent',?7)",
             params![device, input.op_id, vault, id, payload, serde_json::to_string(&plan).unwrap(), chrono::Utc::now().to_rfc3339()]).map_err(db_error)?;
         (id, plan, false)
     };
+    #[cfg(target_os = "macos")]
+    if retry && !unique_create && input.kind == "create" {
+        // A legacy create intent is recorded before the write, but has no
+        // identity for the object actually created. Equal bytes cannot prove
+        // who created a file, and an absent path cannot prove it was never
+        // created. Leave the intent and every file untouched for inspection.
+        return Err((409, "KNOWLEDGE_CHANGED"));
+    }
     let knowledge = gateway.knowledge();
     let before_ref = plan
         .before
@@ -361,7 +415,11 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
             "create" | "update" => observed
                 .as_ref()
                 .ok()
-                .filter(|doc| Some(&doc.content) == plan.desired_content.as_ref())
+                .filter(|doc| {
+                    #[cfg(target_os = "macos")]
+                    if unique_create { return macos_unique_content_matches(&doc.content, plan.desired_content.as_ref()); }
+                    Some(&doc.content) == plan.desired_content.as_ref()
+                })
                 .filter(|doc| !unique_create || plan.created_object.is_some()
                     && knowledge.companion_document_identity(&doc.summary.document_ref, &target)
                         .ok().flatten() == plan.created_object)
@@ -388,9 +446,15 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
         && observed
             .as_ref()
             .is_err_and(|e| e.code == "knowledge-not-found");
+    #[cfg(not(target_os = "macos"))]
     if unique_create && retry && plan.created_object.is_some() && recovered.is_none() {
         // A staged publish with no verifiable postcondition is uncertain. Never
         // create another file or claim a third-party file under the same opId.
+        return Err((503, "CONTENT_STORE_UNAVAILABLE"));
+    }
+    #[cfg(target_os = "macos")]
+    if unique_create && retry && recovered.is_none()
+        && (plan.created_object.is_some() != plan.created_staging.is_some()) {
         return Err((503, "CONTENT_STORE_UNAVAILABLE"));
     }
     let document = if let Some(doc) = recovered {
@@ -398,6 +462,7 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
     } else if deleted_recovered {
         None
     } else if unique_create {
+        #[cfg(not(target_os = "macos"))]
         let outcome = knowledge.create_unique_document_for_target(&target, &KnowledgeCreateInput {
             title: input.title.clone().ok_or((400, "NOTE_INPUT_INVALID"))?,
             content: plan.desired_content.clone().unwrap_or_default(),
@@ -410,10 +475,34 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
                 .map_err(|_| KnowledgeError { code: "knowledge-operation-unavailable", message: "Cannot journal unique creation".into() })?;
             Ok(())
         });
+        #[cfg(target_os = "macos")]
+        let outcome = {
+            let prior = plan.created_staging.clone().zip(plan.created_object.clone())
+                .map(|(stage, object)| (plan.planned_path.clone(), object, stage));
+            knowledge.create_unique_document_for_target_resumable(&target, &KnowledgeCreateInput {
+                title: input.title.clone().ok_or((400, "NOTE_INPUT_INVALID"))?,
+                content: plan.desired_content.clone().unwrap_or_default(),
+                parent_relative_path: input.parent_relative_path.clone(),
+            }, prior.as_ref().map(|(path, object, stage)| (path.as_str(), object.as_str(), stage.as_str())),
+            |path, object, stage| {
+                plan.planned_path = path.to_owned();
+                plan.created_object = Some(object.to_owned());
+                plan.created_staging = Some(stage.to_owned());
+                let updated = db.execute("UPDATE companion_content_operation SET before_document=?3 WHERE device_id=?1 AND op_id=?2 AND stage='intent'",
+                    params![device, input.op_id, serde_json::to_string(&plan).unwrap()])
+                    .map_err(|_| KnowledgeError { code: "knowledge-operation-unavailable", message: "Cannot journal unique creation".into() })?;
+                if updated != 1 { return Err(KnowledgeError { code: "knowledge-operation-unavailable", message: "Unique creation journal changed".into() }); }
+                Ok(())
+            })
+        };
         match outcome {
             Ok(result) => Some(result.document),
             Err(failure) => {
                 if failure.code == "knowledge-unique-create-uncertain" {
+                    return Err((503, "CONTENT_STORE_UNAVAILABLE"));
+                }
+                #[cfg(target_os = "macos")]
+                if plan.created_object.is_some() || plan.created_staging.is_some() {
                     return Err((503, "CONTENT_STORE_UNAVAILABLE"));
                 }
                 // Domain failures before a successful publish confirm no file
@@ -462,6 +551,7 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
                             title: input.title.clone().unwrap(),
                             expected_revision: plan.before.as_ref().unwrap().revision.clone(),
                             parent_relative_path: None,
+                            expected_file_identity: None,
                         },
                     )
                     .map(Some),
@@ -471,6 +561,7 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
                         &KnowledgeDeleteInput {
                             document_ref: before_ref.clone(),
                             expected_revision: plan.before.as_ref().unwrap().revision.clone(),
+                            expected_file_identity: None,
                         },
                     )
                     .map(|_| None),
@@ -484,12 +575,23 @@ fn mutate(gateway: &CompanionGateway, request: &HttpRequest, unique_create: bool
         json!({"noteId": id, "vaultId": vault, "deleted": true, "revision": input.expected_revision})
     };
     let rev = value["revision"].as_str().unwrap_or("");
+    #[cfg(all(test, target_os = "macos"))]
+    if unique_create {
+        if let Some(hook) = AFTER_UNIQUE_PUBLICATION.with(|slot| slot.borrow_mut().take()) { hook(); }
+    }
     let object = document
         .as_ref()
         .map(|doc| knowledge.companion_document_identity(&doc.summary.document_ref, &target))
         .transpose()
         .map_err(knowledge_error)?
         .flatten();
+    #[cfg(target_os = "macos")]
+    if unique_create && (plan.created_object.is_none() || object != plan.created_object
+        || !document.as_ref().is_some_and(|doc| macos_unique_content_matches(&doc.content, plan.desired_content.as_ref()))) {
+        // The file could have changed between publication and receipt. Do not
+        // acknowledge another object merely because its path or bytes match.
+        return Err((503, "CONTENT_STORE_UNAVAILABLE"));
+    }
     let transaction = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(db_error)?;
@@ -672,10 +774,28 @@ fn reconcile(
         .filter_map(|(id, text, payload)| {
             serde_json::from_str::<Plan>(&text)
                 .ok()
-                .filter(|p| p.before.is_none() && (!payload.starts_with("unique:") || p.created_object.is_some()))
+                .filter(|p| p.before.is_none()
+                    && (!(payload.starts_with("unique:") || cfg!(target_os = "macos")) || p.created_object.is_some()))
                 .map(|p| (p.planned_path, (id, p.desired_content.unwrap_or_default(), p.created_object)))
         })
         .collect::<HashMap<_, _>>();
+    #[cfg(target_os = "macos")]
+    let pending_imports: HashMap<String, (String, String)> = {
+        let exists: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='companion_import_entry')",
+            [], |row| row.get(0)).map_err(db_error)?;
+        if !exists {
+            HashMap::new()
+        } else {
+            let mut statement = db.prepare(
+                "SELECT relative_path,note_id,stage_object FROM companion_import_entry WHERE vault_key=?1 AND stage_object IS NOT NULL AND receipt IS NULL"
+            ).map_err(db_error)?;
+            let rows = statement.query_map([vault], |row| Ok((row.get::<_, String>(0)?,
+                (row.get::<_, String>(1)?, row.get::<_, String>(2)?))))
+                .map_err(db_error)?.collect::<Result<Vec<_>, _>>().map_err(db_error)?;
+            rows.into_iter().collect()
+        }
+    };
     let paths = snapshot
         .documents
         .iter()
@@ -729,11 +849,19 @@ fn reconcile(
                     && expected_object.as_ref().is_none_or(|expected| Some(expected) == object.as_ref())
             })
             .map(|(id, _, _)| id.clone());
+        #[cfg(target_os = "macos")]
+        let reserved_import = pending_imports.get(&doc.relative_path)
+            .filter(|(_, expected)| Some(expected) == object.as_ref())
+            .map(|(id, _)| id.clone());
+        #[cfg(not(target_os = "macos"))]
         let id = at_path
             .or(renamed)
             .map(|e| e.id.clone())
             .or(reserved)
             .unwrap_or_else(|| format!("kn-{}", random_hex(16)));
+        #[cfg(target_os = "macos")]
+        let id = at_path.or(renamed).map(|e| e.id.clone()).or(reserved)
+            .or(reserved_import).unwrap_or_else(|| format!("kn-{}", random_hex(16)));
         seen.insert(id.clone());
         let value = json!({"noteId": id, "vaultId": vault, "title": doc.title, "relativePath": doc.relative_path,
             "revision": rev, "updatedAt": doc.modified_at, "sizeBytes": doc.size, "tags": doc.tags});
@@ -1148,7 +1276,11 @@ mod tests {
         String,
     ) {
         let root = tempfile::tempdir().unwrap();
-        let vault_root = root.path().join("vault");
+        #[cfg(target_os = "macos")]
+        let fixture_root = crate::companion_gateway::content::notes::fixture_support::root(root.path());
+        #[cfg(not(target_os = "macos"))]
+        let fixture_root = root.path().to_path_buf();
+        let vault_root = fixture_root.join("vault");
         fs::create_dir_all(vault_root.join(".luckyray")).unwrap();
         let registration = KnowledgeVaultRegistration {
             id: "test-vault".into(),
@@ -1165,7 +1297,10 @@ mod tests {
             serde_json::to_vec(&registration).unwrap(),
         )
         .unwrap();
-        let backend = Arc::new(BackendServices::initialize(&root.path().join("app")).unwrap());
+        #[cfg(target_os = "macos")]
+        let backend = Arc::new(crate::companion_gateway::content::notes::fixture_support::backend(&fixture_root.join("app")));
+        #[cfg(not(target_os = "macos"))]
+        let backend = Arc::new(BackendServices::initialize(&fixture_root.join("app")).unwrap());
         backend
             .knowledge()
             .register_current_vault(&registration)
@@ -1250,6 +1385,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn upload_chunks_resume_after_partial_write_and_receipts_replay() {
         let (_root, gateway, registration, vault) = fixture();
@@ -1333,6 +1469,379 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_companion_upload_chunks_and_receipt_replay() {
+        let (_root,gateway,registration,vault)=fixture();
+        let doc=create(&gateway,&vault,"kn-upload-chunks","Chunks");
+        let data:Vec<u8>=(0..300_011).map(|n|(n%251) as u8).collect();
+        let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"手机图片.png","mime":"image/png","sizeBytes":data.len(),"sha256":format!("{:x}",Sha256::digest(&data))});
+        let path="/v1/notes/kn-upload-chunks/attachments/op-chunks";
+        let begin=request("POST",path,manifest);
+        let put=|at:usize,bytes:&[u8]|request("PUT",path,json!({"vaultId":vault,"offset":at,"data":BASE64.encode(bytes),"sha256":format!("{:x}",Sha256::digest(bytes))}));
+        assert_eq!(uploads::route(&gateway,&begin).unwrap()["offset"],0);
+        assert_eq!(uploads::route(&gateway,&put(0,&data[..200_000])).unwrap()["offset"],200_000);
+        assert_eq!(uploads::route(&gateway,&put(200_000,&data[200_000..270_000])).unwrap()["offset"],270_000);
+        assert_eq!(uploads::route(&gateway,&put(199_990,&data[199_990..200_020])).unwrap()["offset"],270_000);
+        // Simulate process restart: old segments are opened read-only, never
+        // appended/truncated; the remaining bytes create a fresh segment.
+        gateway.content_state.lock().unwrap().uploads=Default::default();
+        assert_eq!(uploads::route(&gateway,&put(270_000,&data[270_000..])).unwrap()["offset"],data.len());
+        let finish=request("POST",&format!("{path}/complete"),json!({"vaultId":vault}));
+        let receipt=uploads::route(&gateway,&finish).unwrap();
+        assert_eq!(receipt["complete"],true);
+        assert_eq!(uploads::route(&gateway,&finish).unwrap(),receipt);
+        let relative=receipt["publication"]["relativePath"].as_str().unwrap();
+        assert_eq!(fs::read(Path::new(&registration.root_path).join(relative)).unwrap(),data);
+        assert_eq!(fs::read_to_string(Path::new(&registration.root_path).join("Chunks.md")).unwrap(),"原文\n");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_companion_upload_rejects_invalid_chunks_and_legacy_part() {
+        let (_root,gateway,registration,vault)=fixture();
+        let doc=create(&gateway,&vault,"kn-upload-invalid","Invalid");
+        let path="/v1/notes/kn-upload-invalid/attachments/op-invalid";
+        let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"a.txt","mime":"text/plain","sizeBytes":4,"sha256":format!("{:x}",Sha256::digest(b"data"))});
+        uploads::route(&gateway,&request("POST",path,manifest.clone())).unwrap();
+        let bad_hash=request("PUT",path,json!({"vaultId":vault,"offset":0,"data":BASE64.encode(b"data"),"sha256":"bad"}));
+        assert_eq!(uploads::route(&gateway,&bad_hash).unwrap_err(),(400,"CHUNK_CHECKSUM_MISMATCH"));
+        let bad_offset=request("PUT",path,json!({"vaultId":vault,"offset":1,"data":BASE64.encode(b"a"),"sha256":format!("{:x}",Sha256::digest(b"a"))}));
+        assert_eq!(uploads::route(&gateway,&bad_offset).unwrap_err(),(409,"UPLOAD_OFFSET_MISMATCH"));
+        let chunk=request("PUT",path,json!({"vaultId":vault,"offset":0,"data":BASE64.encode(b"data"),"sha256":format!("{:x}",Sha256::digest(b"data"))}));
+        uploads::route(&gateway,&chunk).unwrap();
+        let db=database(&gateway).unwrap();
+        let name:String=db.query_row("SELECT name FROM macos_companion_upload_segment WHERE op_id='op-invalid'",[],|r|r.get(0)).unwrap();
+        let segment=gateway.backend.app_data_dir().join("media-transfer-staging/macos-companion-content-v1").join(name);
+        fs::write(&segment,b"else").unwrap();
+        let finish=request("POST",&format!("{path}/complete"),json!({"vaultId":vault}));
+        assert_eq!(uploads::route(&gateway,&finish).unwrap_err(),(409,"UPLOAD_STAGING_LOST"));
+        assert_eq!(fs::read(&segment).unwrap(),b"else");
+        assert!(!Path::new(&registration.root_path).join("attachments/a.txt").exists());
+        // A legacy unconfirmed .part remains in the old namespace, and is
+        // neither claimed nor opened, including when it is a symlink.
+        use std::os::unix::fs::symlink;
+        let old_path="/v1/notes/kn-upload-invalid/attachments/op-legacy";
+        let old=request("POST",old_path,manifest.clone());let device=presented_device_id(&old).unwrap();
+        db.execute("INSERT INTO companion_content_upload(device_id,op_id,vault_key,note_id,manifest,committed_bytes) VALUES(?1,'op-legacy',?2,'kn-upload-invalid',?3,0)",params![device,vault,manifest.to_string()]).unwrap();
+        let old_dir=gateway.backend.app_data_dir().join("companion-upload-staging");fs::create_dir_all(&old_dir).unwrap();
+        let foreign=Path::new(&registration.root_path).join("foreign");fs::write(&foreign,b"preserve").unwrap();
+        let key=format!("{:x}",Sha256::digest(format!("{device}:op-legacy")));symlink(&foreign,old_dir.join(format!("{key}.part"))).unwrap();
+        assert_eq!(uploads::route(&gateway,&old).unwrap_err(),(503,"SERVICE_UNAVAILABLE"));assert_eq!(fs::read(foreign).unwrap(),b"preserve");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_companion_upload_recovers_publication_and_preserves_replacements() {
+        let (_root,gateway,registration,vault)=fixture();
+        let doc=create(&gateway,&vault,"kn-upload-recovery","Recovery");
+        let path="/v1/notes/kn-upload-recovery/attachments/op-recover";
+        let payload=b"a safely published attachment";
+        let dir=Path::new(&registration.root_path).join("attachments");
+        fs::create_dir_all(&dir).unwrap();
+        let equal=dir.join("unrelated-equal.txt");fs::write(&equal,payload).unwrap();
+        let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"recovery.txt","mime":"text/plain","sizeBytes":payload.len(),"sha256":format!("{:x}",Sha256::digest(payload))});
+        uploads::route(&gateway,&request("POST",path,manifest)).unwrap();
+        uploads::route(&gateway,&request("PUT",path,json!({"vaultId":vault,"offset":0,"data":BASE64.encode(payload),"sha256":format!("{:x}",Sha256::digest(payload))}))).unwrap();
+        let db=database(&gateway).unwrap();
+        db.execute_batch("CREATE TRIGGER simulate_receipt_failure BEFORE UPDATE OF receipt ON companion_content_upload WHEN NEW.receipt IS NOT NULL BEGIN SELECT RAISE(FAIL,'test only'); END;").unwrap();
+        let finish=request("POST",&format!("{path}/complete"),json!({"vaultId":vault}));
+        assert_eq!(uploads::route(&gateway,&finish).unwrap_err(),(503,"CONTENT_STORE_UNAVAILABLE"));
+        let published=Path::new(&registration.root_path).join("attachments/recovery.txt");assert_eq!(fs::read(&published).unwrap(),payload);
+        db.execute_batch("DROP TRIGGER simulate_receipt_failure").unwrap();
+        gateway.content_state.lock().unwrap().uploads=Default::default();
+        // Equal bytes at the recorded target are not proof of identity.
+        let original=Path::new(&registration.root_path).join("recorded-original");
+        let replacement=Path::new(&registration.root_path).join("unrelated-replacement");
+        fs::rename(&published,&original).unwrap();fs::write(&published,payload).unwrap();
+        assert!(uploads::route(&gateway,&finish).is_err());
+        assert_eq!(fs::read(&published).unwrap(),payload);
+        assert_eq!(fs::read(&equal).unwrap(),payload);
+        fs::rename(&published,&replacement).unwrap();fs::rename(&original,&published).unwrap();
+        let receipt=uploads::route(&gateway,&finish).unwrap();assert_eq!(receipt["complete"],true);
+        assert_eq!(uploads::route(&gateway,&finish).unwrap(),receipt);
+        let other="/v1/notes/kn-upload-recovery/attachments/op-replaced";let body=b"new payload";
+        let other_manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"different.txt","mime":"text/plain","sizeBytes":body.len(),"sha256":format!("{:x}",Sha256::digest(body))});
+        uploads::route(&gateway,&request("POST",other,other_manifest)).unwrap();
+        uploads::route(&gateway,&request("PUT",other,json!({"vaultId":vault,"offset":0,"data":BASE64.encode(body),"sha256":format!("{:x}",Sha256::digest(body))}))).unwrap();
+        let hook_dir=dir.clone();
+        crate::macos_fs::set_before_rename_call_hook(Some(Box::new(move |from,_to|{
+            fs::rename(hook_dir.join(from),hook_dir.join("saved-original")).unwrap();
+            fs::write(hook_dir.join(from),b"replacement").unwrap();
+        })));
+        let result=uploads::route(&gateway,&request("POST",&format!("{other}/complete"),json!({"vaultId":vault})));
+        assert!(result.is_err());
+        assert_eq!(fs::read(dir.join("saved-original")).unwrap(),body);
+        assert_eq!(fs::read(dir.join("different.txt")).unwrap(),b"replacement");
+        let saved:Option<String>=db.query_row("SELECT receipt FROM companion_content_upload WHERE op_id='op-replaced'",[],|r|r.get(0)).unwrap();assert!(saved.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_companion_upload_clear_tombstones_without_losing_plan_or_quota() {
+        let (_root,gateway,_registration,vault)=fixture();
+        let doc=create(&gateway,&vault,"kn-upload-cancel","Cancel");
+        let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"a.txt","mime":"text/plain","sizeBytes":4,"sha256":format!("{:x}",Sha256::digest(b"data"))});
+        for n in 0..16 {
+            let path=format!("/v1/notes/kn-upload-cancel/attachments/old-{n}");
+            uploads::route(&gateway,&request("POST",&path,manifest.clone())).unwrap();
+        }
+        let old="/v1/notes/kn-upload-cancel/attachments/old-0";
+        uploads::route(&gateway,&request("PUT",old,json!({"vaultId":vault,"offset":0,"data":BASE64.encode(b"data"),"sha256":format!("{:x}",Sha256::digest(b"data"))}))).unwrap();
+        let db=database(&gateway).unwrap();
+        db.execute("UPDATE macos_companion_upload_session SET plan='test-pending-plan' WHERE op_id='old-0'",[]).unwrap();
+        let new="/v1/notes/kn-upload-cancel/attachments/new-after-clear";
+        assert_eq!(uploads::route(&gateway,&request("POST",new,manifest.clone())).unwrap_err(),(429,"UPLOAD_LIMIT"));
+        macos_cancel_uploads_for_clear(&gateway).unwrap();
+        let (plan,cancelled):(String,bool)=db.query_row("SELECT plan,cancelled FROM macos_companion_upload_session WHERE op_id='old-0'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(plan,"test-pending-plan");assert!(cancelled);
+        assert_eq!(uploads::route(&gateway,&request("POST",old,manifest.clone())).unwrap_err(),(409,"UPLOAD_CANCELLED"));
+        assert_eq!(uploads::route(&gateway,&request("POST",new,manifest)).unwrap()["offset"],0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_companion_upload_collision_replans_without_replacing_existing() {
+        let (_root,gateway,registration,vault)=fixture();
+        let doc=create(&gateway,&vault,"kn-upload-collision","Collision");
+        let path="/v1/notes/kn-upload-collision/attachments/op-collision";
+        let payload=b"actual upload";
+        let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"collision.txt","mime":"text/plain","sizeBytes":payload.len(),"sha256":format!("{:x}",Sha256::digest(payload))});
+        uploads::route(&gateway,&request("POST",path,manifest)).unwrap();
+        uploads::route(&gateway,&request("PUT",path,json!({"vaultId":vault,"offset":0,"data":BASE64.encode(payload),"sha256":format!("{:x}",Sha256::digest(payload))}))).unwrap();
+        let directory=Path::new(&registration.root_path).join("attachments");
+        let hook_dir=directory.clone();let db_path=gateway.backend.db_path().to_owned();
+        crate::macos_fs::set_before_rename_call_hook(Some(Box::new(move |_from,to|{
+            fs::write(hook_dir.join(to),b"other user's content").unwrap();
+            let db=Connection::open(db_path).unwrap();
+            db.execute_batch("CREATE TRIGGER fail_replan BEFORE UPDATE OF plan ON macos_companion_upload_session WHEN NEW.plan LIKE '% (2)%' BEGIN SELECT RAISE(FAIL,'test only'); END").unwrap();
+        })));
+        let finish=request("POST",&format!("{path}/complete"),json!({"vaultId":vault}));
+        assert!(uploads::route(&gateway,&finish).is_err());
+        assert_eq!(fs::read(directory.join("collision.txt")).unwrap(),b"other user's content");
+        assert!(!directory.join("collision (2).txt").exists());
+        let db=database(&gateway).unwrap();db.execute_batch("DROP TRIGGER fail_replan").unwrap();
+        let receipt=uploads::route(&gateway,&finish).unwrap();
+        assert_eq!(receipt["publication"]["relativePath"],"attachments/collision (2).txt");
+        assert_eq!(fs::read(directory.join("collision.txt")).unwrap(),b"other user's content");
+        assert_eq!(fs::read(directory.join("collision (2).txt")).unwrap(),payload);
+        assert_eq!(uploads::route(&gateway,&finish).unwrap(),receipt);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_clear_retires_old_upload_ids_without_claiming_legacy_part() {
+        use std::os::unix::fs::symlink;
+        let (_root,gateway,registration,vault)=fixture();
+        let doc=create(&gateway,&vault,"kn-old-quota","LegacyQuota");
+        let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"a.txt",
+            "mime":"text/plain","sizeBytes":4,"sha256":format!("{:x}",Sha256::digest(b"data"))});
+        let old_path="/v1/notes/kn-old-quota/attachments/old-0";
+        let req=request("POST",old_path,manifest.clone());
+        let device=presented_device_id(&req).unwrap();
+        let db=database(&gateway).unwrap();
+        for n in 0..16 {
+            db.execute("INSERT INTO companion_content_upload(device_id,op_id,vault_key,note_id,manifest,committed_bytes) VALUES(?1,?2,?3,'kn-old-quota',?4,0)",
+                params![device,format!("old-{n}"),vault,manifest.to_string()]).unwrap();
+        }
+        let stored_receipt=json!({"opId":"old-completed","offset":4,"complete":true});
+        db.execute("INSERT INTO companion_content_upload(device_id,op_id,vault_key,note_id,manifest,committed_bytes,receipt) VALUES(?1,'old-completed',?2,'kn-old-quota',?3,4,?4)",
+            params![device,vault,manifest.to_string(),stored_receipt.to_string()]).unwrap();
+        let staging=gateway.backend.app_data_dir().join("companion-upload-staging");fs::create_dir_all(&staging).unwrap();
+        let foreign=Path::new(&registration.root_path).join("foreign-legacy");fs::write(&foreign,b"leave intact").unwrap();
+        let key=format!("{:x}",Sha256::digest(format!("{device}:old-0")));
+        let part=staging.join(format!("{key}.part"));symlink(&foreign,&part).unwrap();
+        let new_path="/v1/notes/kn-old-quota/attachments/new-after-legacy-clear";
+        assert_eq!(uploads::route(&gateway,&request("POST",new_path,manifest.clone())).unwrap_err(),(429,"UPLOAD_LIMIT"));
+        assert_eq!(uploads::route(&gateway,&req).unwrap_err(),(503,"SERVICE_UNAVAILABLE"));
+        macos_cancel_uploads_for_clear(&gateway).unwrap();
+        assert_eq!(uploads::route(&gateway,&req).unwrap_err(),(409,"UPLOAD_CANCELLED"));
+        assert_eq!(uploads::route(&gateway,&request("POST",new_path,manifest.clone())).unwrap()["offset"],0);
+        let complete_path="/v1/notes/kn-old-quota/attachments/old-completed";
+        assert_eq!(uploads::route(&gateway,&request("POST",complete_path,manifest)).unwrap(),stored_receipt);
+        assert!(fs::symlink_metadata(part).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(foreign).unwrap(),b"leave intact");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_service_content_publication_uses_existing_journal_without_duplicate_staging() {
+        let (_root,gateway,registration,vault)=fixture();
+        let doc=create(&gateway,&vault,"kn-service-one-stage","Service");
+        let job="job-single-stage";
+        let path=format!("/v1/notes/kn-service-one-stage/attachments/sv-{job}-file");
+        let body=b"durable service bytes";
+        let directory=Path::new(&registration.root_path).join("attachments");
+        fs::create_dir_all(&directory).unwrap();
+        let unrelated=directory.join("unrelated.bin");fs::write(&unrelated,body).unwrap();
+        let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"service.bin",
+            "mime":"application/octet-stream","sizeBytes":body.len(),"sha256":format!("{:x}",Sha256::digest(body))});
+        uploads::route(&gateway,&request("POST",&path,manifest.clone())).unwrap();
+        let finish=request("POST",&format!("{path}/complete"),json!({"vaultId":vault}));
+        let device=presented_device_id(&finish).unwrap();
+        let instance=gateway.identity().unwrap().instance_id.clone();
+        let db=database(&gateway).unwrap();
+        let service=json!({"target":{"domain":"knowledge","vaultId":vault},"sizeBytes":body.len(),
+            "sha256":format!("{:x}",Sha256::digest(body))});
+        let hash=format!("{:x}",Sha256::digest(serde_json::to_vec(&service).unwrap()));
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='companion_macos_service_session'",
+            [],|r|r.get::<_,u64>(0)).unwrap(),1,"startup recovery prepares the production ownership schema");
+        db.execute("INSERT INTO companion_service_upload(job_id,instance_id,device_id,op_id,manifest,committed_bytes,stage,updated_at) VALUES(?1,?2,?3,'service-op',?4,?5,'committing','now')",
+            params![job,instance,device,service.to_string(),body.len()]).unwrap();
+        db.execute("INSERT INTO companion_macos_service_session(job_id,instance_id,device_id,manifest_hash) VALUES(?1,?2,?3,?4)",params![job,instance,device,hash]).unwrap();
+        db.execute("UPDATE companion_content_operation SET op_id=?1 WHERE device_id=?2 AND note_id='kn-service-one-stage' AND stage='completed'",
+            params![format!("sv-{job}-create"),device]).unwrap();
+        assert_eq!(uploads::route(&gateway,&finish).unwrap_err(),(409,"UPLOAD_INCOMPLETE"));
+        assert_eq!(macos_complete_attachment_from_service(&gateway,&finish,"other-job",body).unwrap_err(),(409,"OP_ID_REUSED"));
+        assert_eq!(macos_complete_attachment_from_service(&gateway,&finish,job,b"bad").unwrap_err(),(409,"UPLOAD_STAGING_LOST"));
+        db.execute("UPDATE companion_macos_service_session SET instance_id='other' WHERE job_id=?1",[job]).unwrap();
+        assert_eq!(macos_complete_attachment_from_service(&gateway,&finish,job,body).unwrap_err(),(503,"CONTENT_STORE_UNAVAILABLE"));
+        db.execute("UPDATE companion_macos_service_session SET instance_id=?1 WHERE job_id=?2",params![instance,job]).unwrap();
+        let receipt=macos_complete_attachment_from_service(&gateway,&finish,job,body).unwrap();
+        assert_eq!(receipt["offset"],body.len());assert_eq!(receipt["complete"],true);
+        assert_eq!(receipt["publication"]["reused"],false);
+        let path_on_disk=Path::new(&registration.root_path).join(receipt["publication"]["relativePath"].as_str().unwrap());
+        assert_ne!(path_on_disk,unrelated);assert_eq!(fs::read(path_on_disk).unwrap(),body);
+        assert_eq!(fs::read(unrelated).unwrap(),body);
+        let count:u64=db.query_row("SELECT COUNT(*) FROM macos_companion_upload_segment WHERE op_id=?1",
+            [format!("sv-{job}-file")],|row|row.get(0)).unwrap();
+        assert_eq!(count,0);
+        assert_eq!(uploads::route(&gateway,&request("POST",&path,manifest)).unwrap(),receipt);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_companion_legacy_partial_content_upload_migrates_before_last_byte() {
+        for initial in [0usize, 3] {
+            let (_root,gateway,registration,vault)=fixture();
+            let doc=create(&gateway,&vault,"kn-legacy-partial","Legacy partial");
+            let path="/v1/notes/kn-legacy-partial/attachments/legacy-partial";
+            let body=b"partially staged attachment";
+            let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"partial.bin",
+                "mime":"application/octet-stream","sizeBytes":body.len(),"sha256":format!("{:x}",Sha256::digest(body))});
+            uploads::route(&gateway,&request("POST",path,manifest.clone())).unwrap();
+            if initial>0 {
+                let prefix=&body[..initial];
+                uploads::route(&gateway,&request("PUT",path,json!({"vaultId":vault,"offset":0,
+                    "data":BASE64.encode(prefix),"sha256":format!("{:x}",Sha256::digest(prefix))}))).unwrap();
+            }
+            let db=database(&gateway).unwrap();
+            db.execute("DELETE FROM macos_companion_upload_journaled WHERE op_id='legacy-partial'",[]).unwrap();
+            gateway.content_state.lock().unwrap().uploads=Default::default();
+            assert_eq!(uploads::route(&gateway,&request("POST",path,manifest)).unwrap()["offset"],initial);
+            let marked:u64=db.query_row("SELECT COUNT(*) FROM macos_companion_upload_journaled WHERE op_id='legacy-partial'",[],|r|r.get(0)).unwrap();
+            assert_eq!(marked,1);
+            let rest=&body[initial..];
+            uploads::route(&gateway,&request("PUT",path,json!({"vaultId":vault,"offset":initial,
+                "data":BASE64.encode(rest),"sha256":format!("{:x}",Sha256::digest(rest))}))).unwrap();
+            let finish=request("POST",&format!("{path}/complete"),json!({"vaultId":vault}));
+            let receipt=uploads::route(&gateway,&finish).unwrap();
+            assert_eq!(receipt["offset"],body.len());
+            assert_eq!(receipt["publication"]["reused"],false);
+            assert_eq!(uploads::route(&gateway,&finish).unwrap(),receipt);
+            assert_eq!(fs::read(Path::new(&registration.root_path).join("attachments/partial.bin")).unwrap(),body);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_legacy_service_upload_without_plan_stays_uncertain_at_partial_offsets() {
+        for initial in [0usize, 3] {
+            let (_root,gateway,registration,vault)=fixture();
+            let doc=create(&gateway,&vault,"kn-old-service","Old service");
+            let job="old-single-stage";
+            let op=format!("sv-{job}-file");
+            let path=format!("/v1/notes/kn-old-service/attachments/{op}");
+            let body=b"existing service attachment";
+            let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"new.bin",
+                "mime":"application/octet-stream","sizeBytes":body.len(),"sha256":format!("{:x}",Sha256::digest(body))});
+            uploads::route(&gateway,&request("POST",&path,manifest.clone())).unwrap();
+            if initial>0 {
+                let prefix=&body[..initial];
+                uploads::route(&gateway,&request("PUT",&path,json!({"vaultId":vault,"offset":0,
+                    "data":BASE64.encode(prefix),"sha256":format!("{:x}",Sha256::digest(prefix))}))).unwrap();
+            }
+            let finish=request("POST",&format!("{path}/complete"),json!({"vaultId":vault}));
+            let device=presented_device_id(&finish).unwrap();
+            let instance=gateway.identity().unwrap().instance_id.clone();
+            let db=database(&gateway).unwrap();
+            let service=json!({"target":{"domain":"knowledge","vaultId":vault},"sizeBytes":body.len(),
+                "sha256":format!("{:x}",Sha256::digest(body))});
+            let hash=format!("{:x}",Sha256::digest(serde_json::to_vec(&service).unwrap()));
+            assert_eq!(db.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='companion_macos_service_session'",
+                [],|r|r.get::<_,u64>(0)).unwrap(),1,"startup recovery prepares the production ownership schema");
+            db.execute("INSERT INTO companion_service_upload(job_id,instance_id,device_id,op_id,manifest,committed_bytes,stage,updated_at) VALUES(?1,?2,?3,'old-service-op',?4,?5,'committing','now')",
+                params![job,instance,device,service.to_string(),body.len()]).unwrap();
+            db.execute("INSERT INTO companion_macos_service_session(job_id,instance_id,device_id,manifest_hash) VALUES(?1,?2,?3,?4)",params![job,instance,device,hash]).unwrap();
+            db.execute("UPDATE companion_content_operation SET op_id=?1 WHERE device_id=?2 AND note_id='kn-old-service' AND stage='completed'",
+                params![format!("sv-{job}-create"),device]).unwrap();
+            db.execute("DELETE FROM macos_companion_upload_journaled WHERE op_id=?1",[&op]).unwrap();
+            let directory=Path::new(&registration.root_path).join("attachments");fs::create_dir_all(&directory).unwrap();
+            let existing=directory.join("existing.bin");fs::write(&existing,body).unwrap();
+            // The old single-stage implementation could already have reused
+            // this object while Content still recorded offset zero or partial.
+            assert_eq!(uploads::route(&gateway,&request("POST",&path,manifest)).unwrap()["offset"],initial);
+            assert_eq!(macos_complete_attachment_from_service(&gateway,&finish,job,body).unwrap_err(),(409,"UPLOAD_PUBLICATION_UNCERTAIN"));
+            let marked:u64=db.query_row("SELECT COUNT(*) FROM macos_companion_upload_journaled WHERE op_id=?1",[&op],|r|r.get(0)).unwrap();
+            assert_eq!(marked,0);
+            assert_eq!(fs::read(existing).unwrap(),body);
+            assert!(!directory.join("new.bin").exists());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_companion_legacy_full_upload_without_plan_stays_uncertain() {
+        let (_root,gateway,registration,vault)=fixture();
+        let doc=create(&gateway,&vault,"kn-legacy-full","Legacy");
+        let path="/v1/notes/kn-legacy-full/attachments/legacy-full";
+        let body=b"same as a pre-existing attachment";
+        let manifest=json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"new.bin",
+            "mime":"application/octet-stream","sizeBytes":body.len(),"sha256":format!("{:x}",Sha256::digest(body))});
+        uploads::route(&gateway,&request("POST",path,manifest)).unwrap();
+        uploads::route(&gateway,&request("PUT",path,json!({"vaultId":vault,"offset":0,"data":BASE64.encode(body),"sha256":format!("{:x}",Sha256::digest(body))}))).unwrap();
+        let db=database(&gateway).unwrap();
+        // Represents an old full session whose completion may have reused an
+        // existing object before receipt loss; no new-protocol marker exists.
+        db.execute("DELETE FROM macos_companion_upload_journaled WHERE op_id='legacy-full'",[]).unwrap();
+        let directory=Path::new(&registration.root_path).join("attachments");fs::create_dir_all(&directory).unwrap();
+        let existing=directory.join("existing.bin");fs::write(&existing,body).unwrap();
+        let finish=request("POST",&format!("{path}/complete"),json!({"vaultId":vault}));
+        assert_eq!(uploads::route(&gateway,&finish).unwrap_err(),(409,"UPLOAD_PUBLICATION_UNCERTAIN"));
+        assert_eq!(fs::read(existing).unwrap(),body);
+        assert!(!directory.join("new.bin").exists());
+        let receipt:Option<String>=db.query_row("SELECT receipt FROM companion_content_upload WHERE op_id='legacy-full'",[],|r|r.get(0)).unwrap();
+        assert!(receipt.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_companion_upload_refuses_unowned_staging_but_replays_a_receipt() {
+        use std::os::unix::fs::symlink;
+        let (_root, gateway, registration, vault) = fixture();
+        let doc = create(&gateway, &vault, "kn-upload-safe", "Upload");
+        let manifest = json!({"vaultId":vault,"expectedRevision":doc["revision"],"name":"a.txt",
+            "mime":"text/plain","sizeBytes":4,"sha256":format!("{:x}",Sha256::digest(b"data"))});
+        let path = "/v1/notes/kn-upload-safe/attachments/op-pending";
+        let begin = request("POST", path, manifest.clone());
+        let db = database(&gateway).unwrap();
+        let device = presented_device_id(&begin).unwrap();
+        db.execute("INSERT INTO companion_content_upload(device_id,op_id,vault_key,note_id,manifest,committed_bytes) VALUES(?1,'op-pending',?2,'kn-upload-safe',?3,0)",
+            params![device,vault,manifest.to_string()]).unwrap();
+        let staging = gateway.backend.app_data_dir().join("companion-upload-staging");
+        fs::create_dir_all(&staging).unwrap();
+        let key = format!("{:x}",Sha256::digest(format!("{device}:op-pending")));
+        let unrelated = Path::new(&registration.root_path).join("unrelated");
+        fs::write(&unrelated, "preserve me").unwrap();
+        symlink(&unrelated, staging.join(format!("{key}.part"))).unwrap();
+        assert_eq!(uploads::route(&gateway, &begin).unwrap_err(), (503,"SERVICE_UNAVAILABLE"));
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "preserve me");
+        let receipt = json!({"opId":"op-pending","offset":4,"complete":true});
+        db.execute("UPDATE companion_content_upload SET receipt=?1 WHERE op_id='op-pending'", [receipt.to_string()]).unwrap();
+        assert_eq!(uploads::route(&gateway, &begin).unwrap(), receipt);
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "preserve me");
+    }
+
     #[test]
     fn note_operation_response_loss_replay_and_payload_reuse_guard() {
         let (_root, gateway, registration, vault) = fixture();
@@ -1359,8 +1868,38 @@ mod tests {
                 [],
             )
             .unwrap();
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(mutate_route(&gateway, &req).unwrap(), result);
+        #[cfg(target_os = "macos")]
+        assert_eq!(mutate_route(&gateway, &req).unwrap_err(), (409, "KNOWLEDGE_CHANGED"));
         assert_eq!(list(&gateway, &vault)["items"].as_array().unwrap().len(), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_unconfirmed_legacy_create_never_adopts_or_recreates_an_unidentified_object() {
+        let (_root, gateway, registration, vault) = fixture();
+        let payload = json!({"opId":"legacy-uncertain","noteId":"kn-intended","vaultId":vault,
+            "kind":"create","title":"Unconfirmed","content":"same bytes"});
+        let req = request("POST", "/v1/notes", payload);
+        let input: Mutation = serde_json::from_slice(&req.body).unwrap();
+        let device = presented_device_id(&req).unwrap();
+        let plan = Plan { before:None, planned_path:"Unconfirmed.md".into(), old_object:None,
+            desired_content:Some("same bytes".into()), created_object:None, created_staging:None };
+        database(&gateway).unwrap().execute(
+            "INSERT INTO companion_content_operation(device_id,op_id,vault_key,note_id,payload,before_document,stage,created_at)
+             VALUES(?1,?2,?3,?4,?5,?6,'intent','2026-09-30T00:00:00Z')",
+            params![device,input.op_id,vault,"kn-intended",serde_json::to_string(&input).unwrap(),serde_json::to_string(&plan).unwrap()]).unwrap();
+        let path = Path::new(&registration.root_path).join("Unconfirmed.md");
+        fs::write(&path, "same bytes").unwrap();
+        let external = list(&gateway, &vault)["items"][0]["noteId"].clone();
+        assert_ne!(external, "kn-intended", "a matching file must not inherit an unproven operation identity");
+        assert_eq!(mutate_route(&gateway, &req).unwrap_err(), (409, "KNOWLEDGE_CHANGED"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "same bytes");
+        fs::rename(&path, path.with_extension("saved")).unwrap();
+        assert_eq!(mutate_route(&gateway, &req).unwrap_err(), (409, "KNOWLEDGE_CHANGED"));
+        assert!(!path.exists(), "an absent path does not prove the earlier write never happened");
+        assert_eq!(fs::read_to_string(path.with_extension("saved")).unwrap(), "same bytes");
     }
 
     #[test]
@@ -1407,6 +1946,67 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "same bytes");
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_unique_route_resumes_a_durably_recorded_stage_after_interruption() {
+        let (_root, gateway, registration, vault) = fixture();
+        let req = request("POST", "/v1/notes", json!({"opId":"unique-stage-replay","noteId":"kn-stage-replay",
+            "vaultId":vault,"kind":"create","expectedRevision":"","title":"Resume","content":"owned body\n"}));
+        crate::knowledge::fail_once_after_prepare();
+        assert_eq!(mutate_unique_route(&gateway, &req).unwrap_err(), (503, "CONTENT_STORE_UNAVAILABLE"));
+        let stored: String = database(&gateway).unwrap().query_row(
+            "SELECT before_document FROM companion_content_operation WHERE op_id='unique-stage-replay'", [], |r| r.get(0)).unwrap();
+        let pending: Plan = serde_json::from_str(&stored).unwrap();
+        let stage = pending.created_staging.as_ref().unwrap();
+        assert!(pending.created_object.is_some());
+        assert_eq!(fs::read_to_string(Path::new(&registration.root_path).join(stage)).unwrap(), "owned body\n");
+        assert!(!Path::new(&registration.root_path).join("Resume.md").exists());
+        let recovered = mutate_unique_route(&gateway, &req).unwrap();
+        assert_eq!(recovered["document"]["noteId"], "kn-stage-replay");
+        assert_eq!(recovered["document"]["content"], "owned body\n");
+        assert_eq!(fs::read_to_string(Path::new(&registration.root_path).join("Resume.md")).unwrap(), "owned body\n");
+        assert_eq!(mutate_unique_route(&gateway, &req).unwrap(), recovered);
+        assert_eq!(list(&gateway, &vault)["items"].as_array().unwrap().len(), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_unique_route_refuses_a_replacement_before_receipt() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, gateway, registration, vault) = fixture();
+        let req = request("POST", "/v1/notes", json!({"opId":"unique-late-replacement","noteId":"kn-late-replacement",
+            "vaultId":vault,"kind":"create","expectedRevision":"","title":"Late","content":"same body"}));
+        let root = PathBuf::from(&registration.root_path);
+        AFTER_UNIQUE_PUBLICATION.with(|slot| *slot.borrow_mut() = Some(Box::new(move || {
+            fs::rename(root.join("Late.md"), root.join("saved-original")).unwrap();
+            fs::write(root.join("Late.md"), "same body").unwrap();
+            fs::set_permissions(root.join("Late.md"), fs::Permissions::from_mode(0o600)).unwrap();
+        })));
+        assert_eq!(mutate_unique_route(&gateway, &req).unwrap_err(), (503,"CONTENT_STORE_UNAVAILABLE"));
+        assert_eq!(fs::read_to_string(Path::new(&registration.root_path).join("Late.md")).unwrap(), "same body");
+        assert_eq!(fs::read_to_string(Path::new(&registration.root_path).join("saved-original")).unwrap(), "same body");
+        let count: u64 = database(&gateway).unwrap().query_row(
+            "SELECT COUNT(*) FROM companion_content_note WHERE note_id='kn-late-replacement'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(mutate_unique_route(&gateway, &req).unwrap_err(), (503,"CONTENT_STORE_UNAVAILABLE"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_unique_route_replays_bom_document_without_changing_file_bytes() {
+        let (_root, gateway, registration, vault) = fixture();
+        let req = request("POST", "/v1/notes", json!({"opId":"unique-bom","noteId":"kn-bom",
+            "vaultId":vault,"kind":"create","expectedRevision":"","title":"BOM","content":"\u{feff}正文\n"}));
+        let result = mutate_unique_route(&gateway, &req).unwrap();
+        assert_eq!(result["document"]["content"], "正文\n");
+        let path = Path::new(&registration.root_path).join("BOM.md");
+        assert_eq!(fs::read(&path).unwrap(), "\u{feff}正文\n".as_bytes());
+        database(&gateway).unwrap().execute(
+            "UPDATE companion_content_operation SET stage='intent',result=NULL WHERE op_id='unique-bom'", []).unwrap();
+        assert_eq!(mutate_unique_route(&gateway, &req).unwrap(), result);
+        assert_eq!(fs::read(&path).unwrap(), "\u{feff}正文\n".as_bytes());
+    }
+
     #[test]
     fn unique_unpublished_intent_does_not_reserve_an_external_notes_identity() {
         let (_root, gateway, registration, vault) = fixture();
@@ -1416,7 +2016,9 @@ mod tests {
         let input: Mutation = serde_json::from_slice(&request.body).unwrap();
         let device = presented_device_id(&request).unwrap();
         let plan = Plan { before:None, planned_path:"Intent.md".into(), old_object:None,
-            desired_content:Some("same bytes".into()), created_object:None };
+            desired_content:Some("same bytes".into()), created_object:None,
+            #[cfg(target_os = "macos")]
+            created_staging:None };
         database(&gateway).unwrap().execute(
             "INSERT INTO companion_content_operation(device_id,op_id,vault_key,note_id,payload,before_document,stage,created_at)
              VALUES(?1,?2,?3,?4,?5,?6,'intent','2026-09-30T00:00:00Z')",
@@ -1827,6 +2429,56 @@ mod tests {
         assert_eq!(markdown,1,"commit must not silently create a suffixed copy");
         let count:u64=database(&gateway).unwrap().query_row("SELECT COUNT(*) FROM companion_content_note WHERE note_id='kn-foreign'",[],|r|r.get(0)).unwrap();
         assert_eq!(count,0,"a foreign equal-content file is not our published note");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_import_receipt_loss_survives_a_scan_and_replays_the_owned_note() {
+        let (_root, gateway, registration, vault) = fixture();
+        let plan = unified_prepare(&gateway, &vault, "op-prepare-replay", json!([
+            {"sourceNoteId":"source-a","noteId":"kn-pending-import","title":"Pending"}
+        ]));
+        let request = unified_commit_request(&vault, &plan, "kn-pending-import", "op-pending-import", "owned body\n");
+        let original = mutate_route(&gateway, &request).unwrap();
+        let db = database(&gateway).unwrap();
+        db.execute("DELETE FROM companion_content_note WHERE vault_key=?1 AND note_id='kn-pending-import'", [&vault]).unwrap();
+        db.execute("UPDATE companion_import_entry SET state='staged',receipt=NULL WHERE note_id='kn-pending-import'", []).unwrap();
+        db.execute("UPDATE companion_content_operation SET stage='intent',result=NULL WHERE op_id='op-pending-import'", []).unwrap();
+        let scanned = list(&gateway, &vault);
+        assert_eq!(scanned["items"].as_array().unwrap().len(), 1);
+        assert_eq!(scanned["items"][0]["noteId"], "kn-pending-import");
+        let replayed = mutate_route(&gateway, &request).unwrap();
+        assert_eq!(replayed["document"]["noteId"], original["document"]["noteId"]);
+        assert_eq!(replayed["document"]["content"], "owned body\n");
+        assert_eq!(fs::read_to_string(Path::new(&registration.root_path).join("Pending.md")).unwrap(), "owned body\n");
+        assert_eq!(list(&gateway, &vault)["items"].as_array().unwrap().len(), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_import_scan_never_claims_same_content_replacement_for_pending_receipt() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, gateway, registration, vault) = fixture();
+        let plan = unified_prepare(&gateway, &vault, "op-prepare-swap", json!([
+            {"sourceNoteId":"source-a","noteId":"kn-swapped-import","title":"Pending"}
+        ]));
+        let request = unified_commit_request(&vault, &plan, "kn-swapped-import", "op-swapped-import", "same body\n");
+        mutate_route(&gateway, &request).unwrap();
+        let db = database(&gateway).unwrap();
+        db.execute("DELETE FROM companion_content_note WHERE vault_key=?1 AND note_id='kn-swapped-import'", [&vault]).unwrap();
+        db.execute("UPDATE companion_import_entry SET state='staged',receipt=NULL WHERE note_id='kn-swapped-import'", []).unwrap();
+        db.execute("UPDATE companion_content_operation SET stage='intent',result=NULL WHERE op_id='op-swapped-import'", []).unwrap();
+        let path = Path::new(&registration.root_path).join("Pending.md");
+        let saved = Path::new(&registration.root_path).join("saved-original");
+        fs::rename(&path, &saved).unwrap();
+        fs::write(&path, "same body\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let scanned = list(&gateway, &vault);
+        assert_eq!(scanned["items"].as_array().unwrap().len(), 1);
+        assert_ne!(scanned["items"][0]["noteId"], "kn-swapped-import");
+        assert_eq!(mutate_route(&gateway, &request).unwrap_err(), (409, "IMPORT_NOTE_ID_CONFLICT"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "same body\n");
+        assert_eq!(fs::read_to_string(&saved).unwrap(), "same body\n");
     }
 
     #[test]

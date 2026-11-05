@@ -2,9 +2,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // This short-lived worker never initializes Tauri, the real profile, or a
+    // listener. The parent supplies one bounded folder request over stdin.
+    if std::env::args().nth(1).as_deref() == Some("--macos-folder-helper") {
+        if std::env::args().len() != 2 { std::process::exit(2); }
+        #[cfg(target_os = "macos")]
+        std::process::exit(luckyray_app_lib::run_macos_folder_helper());
+        #[cfg(not(target_os = "macos"))]
+        {
+            eprintln!("macos-folder-helper-unavailable");
+            std::process::exit(2);
+        }
+    }
     #[cfg(all(target_os = "macos", not(feature = "macos-lsh-surface-flow")))]
     if std::env::args().nth(1).as_deref() == Some("--macos-lsh-surface-flow") {
         eprintln!("macos-lsh-surface-flow-unavailable");
+        std::process::exit(2);
+    }
+    #[cfg(all(target_os = "macos", not(feature = "macos-note-flow")))]
+    if std::env::args().nth(1).as_deref() == Some("--macos-note-flow") {
+        eprintln!("macos-note-flow-unavailable");
         std::process::exit(2);
     }
     #[cfg(all(target_os = "macos", feature = "macos-lsh-proof"))]

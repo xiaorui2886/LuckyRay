@@ -31,10 +31,14 @@ export function freezeNotesNativeView(composing:{live:boolean;source:boolean},fr
 export function assertNotesNativeBaseline(binding:NotesNativeViewBinding,saved:{revision:string;content:string}|null,content:string,baseline:NoteViewBaseline){
   if(binding.vaultId!==baseline.authority.vaultId||binding.documentId!==baseline.authority.documentId||!binding.workspaceSourceId||binding.workspaceSourceId!==baseline.authority.sourceId||content!==baseline.content||saved?.content!==baseline.content||saved.revision!==baseline.revision)throw new Error('Main document does not match the authorized saved revision and actual read source');
 }
-export function advanceNotesSavedReadProof<T extends {generation:number;source:object;workspaceSourceId:string;content:string;revision:string}>(proof:T|undefined,saved:{content:string;revision:string},origin:{source:object|null;generation:number}):T|undefined{
+export function advanceNotesSavedReadProof<T extends {generation:number;source:object;workspaceSourceId:string;content:string;revision:string;fileIdentity?:string}>(proof:T|undefined,saved:{content:string;revision:string;fileIdentity?:string},origin:{source:object|null;generation:number}):T|undefined{
   if(!proof)return undefined;
   if(!origin.source||proof.source!==origin.source||proof.generation!==origin.generation||!saved.revision)throw new Error('Saved note belongs to a changed source session');
-  return {...proof,content:saved.content,revision:saved.revision};
+  const advanced={...proof,content:saved.content,revision:saved.revision};
+  // Windows proofs never carried this property. On Mac an absent new identity
+  // must still clear any prior identity rather than retain stale authority.
+  return saved.fileIdentity===undefined&&!('fileIdentity' in proof)
+    ? advanced : {...advanced,fileIdentity:saved.fileIdentity};
 }
 /** Document identity is not view identity. Main tabs are document-keyed inside
  * each pane, so an incoming independent view always gets its own new pane. */

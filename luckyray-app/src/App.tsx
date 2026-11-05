@@ -1,4 +1,7 @@
 import { createMaterialProvenanceStore } from "./core/canvas/materialProvenanceStore";
+import { isMacPlatform } from "./app/macosPresentation";
+import { readActiveKnowledgeWriteSource } from "./core/services/knowledgeSource";
+import { createMacLegacyNote } from "./core/services/macLegacyNoteCreate";
 import { normalizeMaterialGenerationProvenance } from "./core/canvas/materialProvenance";
 import { prepareCanvasVideoBridgeReferences } from "./core/canvas/videoGenerationAdapter";
 import { canvasGenerationFailure } from "./core/canvas/generationErrors";
@@ -19,6 +22,7 @@ import { createDefaultKnowledgeLegacyBridgeAdapter, knowledgeFolderIdentity, kno
 import {
   KnowledgeServiceError,
   createKnowledgeDocument,
+  ensureActiveKnowledgeUiSource,
   knowledgeDocumentNoteId,
   knowledgeTagCanonicalKey,
   parseKnowledgeDocumentNoteId,
@@ -755,13 +759,18 @@ async function getNotesVaultMarkdownIndex(vault: BridgeVaultMetadata): Promise<B
   return await invoke<BridgeNotesVaultMarkdownIndex>("get_notes_vault_markdown_index", { vault });
 }
 
-async function createNotesVaultFolder(input: { vault: BridgeVaultMetadata; parentRelativePath: string; name: string }): Promise<BridgeNotesVaultFileNode> {
+async function createNotesVaultFolder(input: { vault: BridgeVaultMetadata; parentRelativePath: string; name: string; sourceEpoch?: number }): Promise<BridgeNotesVaultFileNode> {
   if (!isTauri()) throw new Error("当前环境不支持创建真实 Vault 文件夹");
   return await invoke<BridgeNotesVaultFileNode>("create_notes_vault_folder", input);
 }
 
 async function createNotesVaultMarkdownFile(input: { vault: BridgeVaultMetadata; parentRelativePath: string; name: string }): Promise<BridgeNotesVaultMarkdownFile> {
   if (!isTauri()) throw new Error("当前环境不支持创建真实 Vault Markdown 文件");
+  if (isMacPlatform()) return createMacLegacyNote(input, {
+    readSource: readActiveKnowledgeWriteSource,
+    ensureSource: ensureActiveKnowledgeUiSource,
+    invoke: args => invoke<BridgeNotesVaultMarkdownFile>("create_notes_vault_markdown_file", args),
+  });
   return await invoke<BridgeNotesVaultMarkdownFile>("create_notes_vault_markdown_file", input);
 }
 

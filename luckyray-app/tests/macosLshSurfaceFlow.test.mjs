@@ -7,7 +7,8 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import { safeSurfaceRecord, safeSurfaceExecution, observeSurfaceFlow } from "../scripts/check-macos-lsh-surface-flow.mjs";
 import { PHASES, publishableReport, summarizeBuildResult } from "../scripts/check-macos-internal.mjs";
-import { NOTE_DATA_CASES } from "../scripts/check-macos-note-data.mjs";
+import { INTEGRATION_NATIVE_CASES } from "../scripts/check-macos-note-data.mjs";
+import { INTEGRATION_FRONTEND_TEST_FILES } from "../scripts/macos-frontend-test-reporter.mjs";
 import { emptyNoteFlow } from "../scripts/check-macos-note-flow.mjs";
 
 const canary = "private-surface-canary-never-publish";
@@ -33,31 +34,87 @@ function child(t, source) {
   return value;
 }
 
-test("the fixed DOM driver uses actual routes in order and stops when native hide rejects", async () => {
+async function driveSurface({ mode = "prompt", savedValue = "managed", rejectHide = false, broken = null } = {}) {
   const source = await readFile(new URL("../src-tauri/src/dsh_host/macos_surface_flow_driver.js", import.meta.url), "utf8");
-  for (const rejectHide of [false, true]) {
-    let choosing = true, route = "materials";
-    const clicks = [], reports = [], closed = [];
-    const document = { querySelector(selector) {
-      if (selector === ".material-import-mode-modal") return choosing ? {
-        querySelectorAll: () => [{ click() { choosing = false; } }, {}, {}],
-      } : null;
+  let choosing = mode === "prompt", saved = mode === "saved", route = mode === "needs-route" ? "notes" : "materials";
+  const clicks = [], reports = [], closed = [];
+  const box = () => [{}];
+  const choose = { getClientRects: box, click() { if (broken !== "not-saved") saved = true; if (broken !== "dismiss") choosing = false; } };
+  const dialog = { getClientRects: box, querySelectorAll: () => broken === "choices" ? [choose] : [choose, {}, {}] };
+  const document = {
+    querySelector(selector) {
       if (selector === '.dsh-native-surface-layout[data-lsh-attached="true"]') return route === "ai" ? {} : null;
-      const item = /^\[data-control-id="(ai|materials)"\]$/.exec(selector)?.[1];
-      if (item) return { click() { clicks.push(item); route = item; } };
       throw new Error("unexpected selector");
-    } };
-    const window = { __TAURI_INTERNALS__: { invoke: async (command, args) => {
+    },
+    querySelectorAll(selector) {
+      if (selector === ".material-import-mode-modal") return choosing ? [dialog] : [];
+      const item = /^\[data-control-id="(ai|materials)"\]$/.exec(selector)?.[1];
+      if (item) return broken === "shell" ? [] : [{ getClientRects: box, click() {
+        if (item === "materials" && broken === "route") throw new Error(canary);
+        clicks.push(item); route = item;
+        if (item === "materials" && mode === "needs-route" && !saved && broken !== "wait") choosing = true;
+      } }];
+      throw new Error("unexpected selector");
+    },
+  };
+  const window = { localStorage: { getItem: () => JSON.stringify(saved
+    ? { "materials.importModePromptSeen": true, "materials.importMode": savedValue } : {}) },
+    __TAURI_INTERNALS__: { invoke: async (command, args) => {
       if (command === "close_window") { closed.push(route); return; }
       assert.equal(command, "macos_lsh_surface_flow_report"); reports.push(args.report);
       if (rejectHide && args.report.step === "hidden" && !args.report.failed) throw new Error(canary);
     } } };
-    await runInNewContext(source, { window, document, setTimeout: callback => queueMicrotask(callback) });
+  await runInNewContext(source, { window, document, setTimeout: callback => queueMicrotask(callback) });
+  return { clicks, reports, closed };
+}
+
+test("the fixed DOM driver uses actual routes in order and stops when native hide rejects", async () => {
+  for (const rejectHide of [false, true]) {
+    const { clicks, reports, closed } = await driveSurface({ rejectHide });
     assert.deepEqual(clicks, rejectHide ? ["ai", "materials"] : ["ai", "materials", "ai"]);
     assert.deepEqual(reports.map(r => [r.step, r.failed]), rejectHide
       ? [["attached", false], ["hidden", false], ["hidden", true]]
       : [["attached", false], ["hidden", false], ["reshown", false]]);
     assert.deepEqual(closed, rejectHide ? [] : ["ai"]);
+  }
+});
+
+test("LSH accepts a saved material mode or reaches a fresh chooser from another startup route", async () => {
+  for (const [mode, savedValue, expected] of [
+    ...["managed", "linked", "source"].map(value => ["saved", value, ["ai", "materials", "ai"]]),
+    ["needs-route", "managed", ["materials", "ai", "materials", "ai"]],
+  ]) {
+    const { clicks, reports, closed } = await driveSurface({ mode, savedValue });
+    assert.deepEqual(clicks, expected);
+    assert.deepEqual(reports.map(r => [r.step, r.failed]), [["attached", false], ["hidden", false], ["reshown", false]]);
+    assert.deepEqual(closed, ["ai"]);
+  }
+});
+
+test("mode failures retain their exact substage and cannot reach the LSH lifecycle", async () => {
+  for (const [broken, stage, mode] of [["shell", "mode-shell", "prompt"], ["route", "mode-route", "needs-route"],
+    ["wait", "mode-wait", "needs-route"], ["choices", "mode-choices", "prompt"], ["dismiss", "mode-dismiss", "prompt"],
+    ["not-saved", "mode-dismiss", "prompt"]]) {
+    const { reports, closed } = await driveSurface({ broken, mode });
+    assert.deepEqual(reports.map(r => [r.step, r.failed]), [[stage, true]]);
+    assert.deepEqual(closed, []);
+    const failed = { ...record(), status: "failed", stage };
+    assert.equal(safeSurfaceRecord(failed).stage, stage);
+    assert.throws(() => safeSurfaceRecord({ ...failed, status: "passed" }), /result-invalid/);
+  }
+  const invalid = await driveSurface({ mode: "saved", savedValue: "unexpected" });
+  assert.deepEqual(invalid.reports.map(r => [r.step, r.failed]), [["mode-wait", true]]);
+  assert.deepEqual(invalid.closed, []);
+});
+
+test("native report admission accepts the same fixed mode substages as the projection", async () => {
+  const native = await readFile(new URL("../src-tauri/src/dsh_host/macos_surface_flow.rs", import.meta.url), "utf8");
+  const start = native.indexOf('if !["choose-mode"'), end = native.indexOf(".contains(&report.step.as_str())", start);
+  assert(start >= 0 && end > start);
+  const admission = native.slice(start, end);
+  for (const stage of ["mode-shell", "mode-route", "mode-wait", "mode-choices", "mode-dismiss"]) {
+    assert(admission.includes(`"${stage}"`), stage);
+    assert.equal(safeSurfaceRecord({ ...record(), status: "failed", stage }).stage, stage);
   }
 });
 
@@ -85,17 +142,18 @@ test("surface and saved-quit projection require every actual assertion and disca
 
 test("saved and re-published internal reports require the new visible lifecycle", () => {
   const notesUi = emptyNoteFlow();notesUi.status = "passed";notesUi.sourceUnchanged = true;
-  for (const phase of ["exercise", "reopen"]) Object.assign(notesUi[phase], { status: "passed", step: phase === "exercise" ? "recover" : "reopen",
+  for (const phase of ["exercise", "reopen"]) Object.assign(notesUi[phase], { status: "passed", step: phase === "exercise" ? "graph" : "reopen",
     flags: notesUi[phase].flags.map(() => true), backendVerified: true, filesVerified: true, normalSavedQuit: true,
     screenshotCaptured: phase === "reopen", exitCode: 0 });
-  const noteData = { status: "passed", compiled: true, failure: "none", cases: NOTE_DATA_CASES.map(({ id }) => ({ id, status: "passed", exit: 0 })) };
+  const noteData = { status: "passed", compiled: true, failure: "none", cases: INTEGRATION_NATIVE_CASES.map(({ id }) => ({ id, status: "passed", exit: 0 })) };
   const build = summarizeBuildResult({ version: "1.9.9", target: "aarch64-apple-darwin",
     sidecars: ["luckyray-native-host", "luckyray-cli", "luckyray-mcp"], mediaFiles: 96, dshFiles: 35556,
     distribution: { sourceInputsSha256: "a".repeat(64), readyToPackage: false, providedSourceInputs: 26,
       providedSourceBytes: 100, missingRequirements: [{ id: "missing-source", raw: canary }] } });
   const input = { schemaVersion: 1, mode: "internal-native-validation", binaryExport: false, status: "passed", workerExit: 0,
     workerSignal: null, source: { repository: "xiaorui2886/LuckyRay", commit: "a".repeat(40), tree: "b".repeat(40), path: canary },
-    phases: PHASES.map(phase => ({ phase, status: "passed" })), build, noteData, notesUi, lsh: { ...execution(), env: canary }, distributionReady: false };
+    phases: PHASES.map(phase => ({ phase, status: "passed" })), build, noteData, notesUi, lsh: { ...execution(), env: canary }, distributionReady: false,
+    frontendChecks: { status: "passed", cases: INTEGRATION_FRONTEND_TEST_FILES.map(file => ({ file, line: 1, column: 1, status: "passed", errorCode: null })) } };
   const saved = publishableReport(input);
   assert.deepEqual(publishableReport(JSON.parse(JSON.stringify(saved))), saved);
   assert(!JSON.stringify(saved).includes(canary));

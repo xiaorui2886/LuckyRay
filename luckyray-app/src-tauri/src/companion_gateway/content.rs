@@ -433,6 +433,17 @@ pub(super) fn serve(
     stream: &mut impl Write,
     stop: &AtomicBool,
 ) -> io::Result<()> {
+    // Upload status can open the same staging authority as mutations. Hold the
+    // admission for the full request, including the reply, so a user data
+    // clear cannot remove staging while this request is still operating on it.
+    #[cfg(target_os = "macos")]
+    let _upload_guard = if request.path.starts_with("/v1/notes/")
+        && request.path.split('?').next().unwrap_or("").contains("/attachments/") {
+        match super::macos_upload_guard() {
+            Ok(guard) => Some(guard),
+            Err(()) => return write_json(stream, 503, &json!({"code":"CONTENT_UNAVAILABLE"})),
+        }
+    } else { None };
     diagnostics::stage(diagnostics::Stage::Scope);
     let scoped = match gateway.scope_for_request(request) {
         Ok(scoped) => scoped,

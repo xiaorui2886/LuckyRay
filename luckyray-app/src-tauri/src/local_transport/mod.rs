@@ -1794,6 +1794,7 @@ fn safe_adapter_failure_code(body: &str) -> Option<&'static str> {
         "knowledge-vault-required" => Some("knowledge-vault-required"),
         "knowledge-not-found" => Some("knowledge-not-found"),
         "knowledge-revision-conflict" => Some("knowledge-revision-conflict"),
+        "knowledge-create-unconfirmed" => Some("knowledge-create-unconfirmed"),
         "knowledge-offset-conflict" => Some("knowledge-offset-conflict"),
         "knowledge-current-context-required" => Some("knowledge-current-context-required"),
         "knowledge-current-context-conflict" => Some("knowledge-current-context-conflict"),
@@ -2394,6 +2395,13 @@ mod tests {
     use crate::{backend::BackendServices, LegacyLocalTransportAdapter};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Barrier, Condvar};
+
+    #[test]
+    fn uncertain_note_creation_keeps_only_the_safe_code() {
+        let body = serde_json::json!({"code":"knowledge-create-unconfirmed", "message":"private fixture path"}).to_string();
+        assert_eq!(safe_adapter_failure_code(&body), Some("knowledge-create-unconfirmed"));
+        assert_eq!(safe_adapter_failure_details(&body), None);
+    }
 
     #[test]
     fn media_transfer_routes_are_method_scoped_and_require_the_expected_capability_tier() {

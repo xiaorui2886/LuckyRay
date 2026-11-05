@@ -11,6 +11,35 @@ struct Manifest {
     sha256: String,
 }
 
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "macos")]
+pub(crate) use macos::UploadState;
+
+#[cfg(target_os = "macos")]
+pub(super) fn cancel_for_clear(gateway: &CompanionGateway) -> Result<(), &'static str> {
+    macos::cancel_for_clear(gateway)
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn recover_completed(gateway: &CompanionGateway) -> Result<(), &'static str> {
+    macos::recover_completed(gateway)
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn route(gateway: &CompanionGateway, request: &HttpRequest) -> ContentResult<Value> {
+    macos::route(gateway, request)
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn macos_complete_from_service(
+    gateway: &CompanionGateway, request: &HttpRequest, job_id: &str, bytes: &[u8],
+) -> ContentResult<Value> {
+    macos::complete_from_service(gateway, request, job_id, bytes)
+}
+
+#[cfg(not(target_os = "macos"))]
 pub(super) fn route(gateway: &CompanionGateway, request: &HttpRequest) -> ContentResult<Value> {
     let path = request.path.split('?').next().unwrap_or("");
     let (note, rest) = path
@@ -48,6 +77,13 @@ pub(super) fn route(gateway: &CompanionGateway, request: &HttpRequest) -> Conten
         .map_err(|_| (503, "CONTENT_UNAVAILABLE"))?;
     let db = database(gateway)?;
     let stored:Option<(String,String,String,u64,Option<String>)>=db.query_row("SELECT vault_key,note_id,manifest,committed_bytes,receipt FROM companion_content_upload WHERE device_id=?1 AND op_id=?2",params![device,op],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(db_error)?;
+    #[cfg(target_os = "macos")]
+    if stored.as_ref().is_none_or(|(_, _, _, _, receipt)| receipt.is_none()) {
+        // Mac publication is not yet implemented, and the existing pathname
+        // staging can truncate or unlink a replaced object. Preserve pending
+        // uploads until a descriptor-bound implementation is available.
+        return Err((503, "SERVICE_UNAVAILABLE"));
+    }
     let (manifest, offset, receipt) = if let Some((
         stored_vault,
         stored_note,

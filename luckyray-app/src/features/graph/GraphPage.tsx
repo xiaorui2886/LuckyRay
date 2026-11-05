@@ -2645,7 +2645,8 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       navigateFromGraph("#notes", "note", knowledgeDocumentNoteId({ vaultId: refreshed.vault!.id, relativePath }));
     } catch (error) {
       console.warn("[graph] create missing wiki document failed", error);
-      showNotice(t("editor.graph.status.createDocumentFailed"));
+      showNotice(isMacPlatform() && String(error).includes("knowledge-create-unconfirmed")
+        ? t("editor.notes.status.markdownCreateUnconfirmed") : t("editor.graph.status.createDocumentFailed"));
     } finally {
       missingDocumentCreationRef.current.delete(creationKey);
     }

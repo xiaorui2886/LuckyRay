@@ -259,7 +259,7 @@ pub(crate) async fn macos_lsh_surface_flow_report(
 ) -> Result<(), String> {
     crate::require_main_caller(&caller)?;
     let state = ACTIVE.get().cloned().ok_or(REJECT)?;
-    if !["choose-mode", "open", "attached", "hidden", "reshown"].contains(&report.step.as_str()) {
+    if !["choose-mode", "mode-shell", "mode-route", "mode-wait", "mode-choices", "mode-dismiss", "open", "attached", "hidden", "reshown"].contains(&report.step.as_str()) {
         return Err(REJECT.into());
     }
     tauri::async_runtime::spawn_blocking(move || -> Result<(), &'static str> {

@@ -7,6 +7,10 @@
 
 mod scopes;
 mod diagnostics;
+#[cfg(target_os = "macos")]
+mod macos_lan;
+#[cfg(target_os = "macos")]
+mod macos_identity;
 pub(crate) mod endpoint_recovery;
 pub(crate) use endpoint_recovery::BindFailure;
 #[cfg(test)]
@@ -591,21 +595,87 @@ fn deserialize_identity(bytes: &[u8]) -> Result<IdentityMaterial, GatewayError> 
     })
 }
 
+#[cfg(target_os = "macos")]
+fn macos_database_has_identity_history(db_path: &Path) -> Result<bool, GatewayError> {
+    let db = open_connection(db_path)?;
+    // Older profiles predate the durable marker. Any device (even revoked),
+    // security history, or saved listener is evidence against fresh enrollment.
+    // Missing optional tables are allowed only for old/minimal schemas.
+    for (table, query) in [
+        ("companion_device", "SELECT EXISTS(SELECT 1 FROM companion_device)"),
+        ("companion_security_audit", "SELECT EXISTS(SELECT 1 FROM companion_security_audit)"),
+        ("settings", "SELECT EXISTS(SELECT 1 FROM settings WHERE key='companion.gateway.listener.v1')"),
+    ] {
+        let exists: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            [table], |row| row.get(0),
+        ).map_err(|_| GatewayError::new("companion-database-unavailable", "Companion identity history is unavailable"))?;
+        if exists && db.query_row(query, [], |row| row.get::<_, bool>(0))
+            .map_err(|_| GatewayError::new("companion-database-unavailable", "Companion identity history is unavailable"))?
+        { return Ok(true); }
+    }
+    Ok(false)
+}
+
 fn load_or_create_identity(
     db_path: &Path,
     store: &dyn ProtectedIdentityStore,
 ) -> Result<IdentityMaterial, GatewayError> {
     let metadata = read_identity_metadata(db_path)?;
-    let protected = store.load()?;
+    #[cfg(target_os = "macos")]
+    let history = macos_identity::IdentityHistory::open(db_path)?;
+    #[cfg(target_os = "macos")]
+    if metadata.is_some() || macos_database_has_identity_history(db_path)? {
+        history.remember_existing()?;
+    }
+    let protected = match store.load() {
+        Ok(protected) => protected,
+        Err(error) => {
+            #[cfg(target_os = "macos")]
+            if error.code == "companion-secret-recovery-required" { history.remember_existing()?; }
+            return Err(error);
+        }
+    };
+    #[cfg(target_os = "macos")]
+    if protected.is_some() { history.remember_existing()?; }
     match (metadata, protected) {
         (None, None) => {
+            #[cfg(target_os = "macos")]
+            {
+                if history.exists()? {
+                    return Err(GatewayError::new(
+                        "companion-secret-recovery-required",
+                        "Companion identity is missing from an initialized profile; existing pairing data were retained",
+                    ));
+                }
+            }
             let identity = generate_identity()?;
             let serialized = serialize_identity(&identity)?;
             store.store(&serialized)?;
             if let Err(error) = install_identity_metadata(db_path, &identity) {
+                #[cfg(not(target_os = "macos"))]
                 let _ = store.remove();
+                #[cfg(target_os = "macos")]
+                {
+                    // The new Keychain item may be the only evidence of this
+                    // identity; the Mac store does not delete it by account.
+                    // Keep any history we can persist without masking the
+                    // original incomplete-install state.
+                    let _ = history.remember_existing();
+                    let _ = error;
+                    return Err(GatewayError::new(
+                        "companion-secret-recovery-required",
+                        "Companion identity installation is incomplete; the existing identity was retained",
+                    ));
+                }
+                #[cfg(not(target_os = "macos"))]
                 return Err(error);
             }
+            #[cfg(target_os = "macos")]
+            // Record confirmed identity material after the metadata install.
+            // A rejected first Keychain write leaves no history marker; a
+            // marker failure cannot prevent installing matching metadata.
+            history.remember_existing()?;
             Ok(identity)
         }
         (Some(metadata), Some(protected)) => {
@@ -626,6 +696,35 @@ fn load_or_create_identity(
             "Companion protected identity and metadata are incomplete",
         )),
     }
+}
+
+// An explicit retry after Keychain was unavailable may only recover an
+// existing, matching identity. Unlike startup, it must never install one.
+#[cfg(target_os = "macos")]
+fn load_existing_identity(
+    db_path: &Path,
+    store: &dyn ProtectedIdentityStore,
+) -> Result<IdentityMaterial, GatewayError> {
+    let metadata = read_identity_metadata(db_path)?;
+    let protected = store.load()?;
+    let (metadata, protected) = match (metadata, protected) {
+        (Some(metadata), Some(protected)) => (metadata, protected),
+        _ => return Err(GatewayError::new(
+            "companion-secret-recovery-required",
+            "Companion protected identity and metadata are incomplete",
+        )),
+    };
+    let identity = deserialize_identity(&protected)?;
+    if identity.instance_id != metadata.instance_id
+        || identity.certificate_der != metadata.certificate_der
+        || identity.fingerprint != metadata.fingerprint
+    {
+        return Err(GatewayError::new(
+            "companion-secret-recovery-required",
+            "Companion protected identity does not match paired-device metadata",
+        ));
+    }
+    Ok(identity)
 }
 
 #[derive(Clone)]
@@ -657,6 +756,8 @@ struct GatewayPolicy {
     services_after_auth_gate: Option<Arc<TestOneShotGate>>,
     #[cfg(test)]
     services_before_material_commit_gate: Option<Arc<TestOneShotGate>>,
+    #[cfg(all(test, target_os = "macos"))]
+    services_before_knowledge_attachment_commit_gate: Option<Arc<TestOneShotGate>>,
     #[cfg(test)]
     relay_body_budget_limit: usize,
 }
@@ -691,6 +792,8 @@ impl Default for GatewayPolicy {
             services_after_auth_gate: None,
             #[cfg(test)]
             services_before_material_commit_gate: None,
+            #[cfg(all(test, target_os = "macos"))]
+            services_before_knowledge_attachment_commit_gate: None,
             #[cfg(test)]
             relay_body_budget_limit: REMOTE_RELAY_BODY_BUDGET,
         }
@@ -1240,7 +1343,10 @@ pub(crate) struct CompanionGateway {
     request_knowledge: Option<crate::knowledge::KnowledgeService>,
     request_material_scope: Option<String>,
     request_vault_scope: Option<String>,
+    #[cfg(not(target_os = "macos"))]
     identity: Result<Arc<IdentityMaterial>, GatewayError>,
+    #[cfg(target_os = "macos")]
+    identity: Arc<Mutex<Result<Arc<IdentityMaterial>, GatewayError>>>,
     transition: Arc<Mutex<()>>,
     pending_controls: Arc<AtomicUsize>,
     pairing: Arc<Mutex<PairingBook>>,
@@ -1264,6 +1370,46 @@ pub(crate) struct CompanionGateway {
     lsh_remote_target_override: Arc<Mutex<Option<u16>>>,
 }
 
+// A user-requested data clear or database restore must not interleave with a
+// Companion upload that may still be holding staged bytes. This is distinct
+// from `transition`: Services releases that gate between individual chunks.
+#[cfg(target_os = "macos")]
+static MACOS_UPLOAD_DATA_GATE: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_upload_guard() -> Result<std::sync::RwLockReadGuard<'static, ()>, ()> {
+    MACOS_UPLOAD_DATA_GATE.try_read().map_err(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_clear_data_guard() -> Result<std::sync::RwLockWriteGuard<'static, ()>, ()> {
+    MACOS_UPLOAD_DATA_GATE.try_write().map_err(|_| ())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_upload_data_gate_tests {
+    use super::{macos_clear_data_guard, macos_upload_guard};
+
+    #[test]
+    fn macos_clear_and_restore_cannot_interleave_with_uploads() {
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _upload = macos_upload_guard().unwrap();
+            held_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        held_rx.recv().unwrap();
+        assert!(macos_clear_data_guard().is_err());
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        let clear = macos_clear_data_guard().unwrap();
+        assert!(std::thread::spawn(|| macos_upload_guard().is_err()).join().unwrap());
+        drop(clear);
+        assert!(macos_upload_guard().is_ok());
+    }
+}
+
 impl CompanionGateway {
     fn material_catalog(&self) -> crate::materials::MaterialCatalog {
         self.request_material_catalog.clone().unwrap_or_else(|| self.backend.material_catalog())
@@ -1278,7 +1424,10 @@ impl CompanionGateway {
     }
 
     pub(crate) fn initialize(backend: Arc<BackendServices>) -> Arc<Self> {
+        #[cfg(not(target_os = "macos"))]
         let store = DpapiIdentityStore::new(backend.app_data_dir());
+        #[cfg(target_os = "macos")]
+        let store = macos_identity::MacIdentityStore::new(backend.app_data_dir());
         Self::initialize_with_store(backend, Arc::new(store), GatewayPolicy::default())
     }
 
@@ -1288,6 +1437,8 @@ impl CompanionGateway {
         policy: GatewayPolicy,
     ) -> Arc<Self> {
         let identity = load_or_create_identity(backend.db_path(), store.as_ref()).map(Arc::new);
+        #[cfg(target_os = "macos")]
+        let identity = Arc::new(Mutex::new(identity));
         let gateway = Arc::new(Self {
             backend,
             request_material_catalog: None,
@@ -1312,13 +1463,22 @@ impl CompanionGateway {
             #[cfg(test)]
             lsh_remote_target_override: Arc::new(Mutex::new(None)),
         });
+        #[cfg(target_os = "macos")]
+        {
+            // A persisted success remains a success even if reclaiming its
+            // owned staging bytes needs another attempt. Recover before any
+            // saved listener can accept new requests; pending ownership stays
+            // recorded whenever this best-effort pass cannot finish.
+            let _ = content::notes::macos_recover_completed_uploads(&gateway);
+            let _ = services::macos_recover_completed_uploads(&gateway);
+        }
         gateway.restore_enabled_listener();
         gateway
     }
 
     fn restore_enabled_listener(self: &Arc<Self>) {
         // A missing or damaged protected identity never creates a new listener.
-        if self.identity.is_err() {
+        if self.identity().is_err() {
             return;
         }
         let result = load_listener_config(self.backend.db_path()).and_then(|config| {
@@ -1340,7 +1500,63 @@ impl CompanionGateway {
     }
 
     fn identity(&self) -> Result<Arc<IdentityMaterial>, GatewayError> {
-        self.identity.clone()
+        #[cfg(not(target_os = "macos"))]
+        { self.identity.clone() }
+        #[cfg(target_os = "macos")]
+        { self.identity.lock().map_err(|_| GatewayError::new(
+            "companion-secret-unavailable", "Companion identity cache is unavailable",
+        ))?.clone() }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn retry_macos_identity(self: &Arc<Self>) -> Result<GatewayStatus, GatewayError> {
+        // SecKeychain::default() may itself have failed during startup; create a
+        // new store only for this user-requested operation.
+        let store = macos_identity::MacIdentityStore::new(self.backend.app_data_dir());
+        self.retry_macos_identity_with_store(&store)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn retry_macos_identity_with_store(
+        self: &Arc<Self>,
+        store: &dyn ProtectedIdentityStore,
+    ) -> Result<GatewayStatus, GatewayError> {
+        let _transition = self.try_transition()?;
+        match self.identity() {
+            Ok(_) => return Ok(self.status()),
+            Err(error) if error.code == "companion-secret-unavailable" => (),
+            Err(error) => return Err(error),
+        }
+        let identity = match load_existing_identity(self.backend.db_path(), store) {
+            Ok(identity) => Arc::new(identity),
+            Err(error) => {
+                // A damaged or mismatching identity is not a temporary lock.
+                if error.code == "companion-secret-recovery-required" {
+                    *self.identity.lock().map_err(|_| GatewayError::new(
+                        "companion-secret-unavailable", "Companion identity cache is unavailable",
+                    ))? = Err(error.clone());
+                }
+                return Err(error);
+            }
+        };
+        *self.identity.lock().map_err(|_| GatewayError::new(
+            "companion-secret-unavailable", "Companion identity cache is unavailable",
+        ))? = Ok(identity);
+
+        // Initialization could not read the persisted endpoint while the
+        // identity was unavailable. Resume only the original address and port.
+        let config = match load_listener_config(self.backend.db_path()) {
+            Ok(config) => config,
+            Err(error) => {
+                self.lifecycle.lock().expect("companion lifecycle mutex").resume_error = Some(error.clone());
+                return Err(error);
+            }
+        };
+        self.lifecycle.lock().expect("companion lifecycle mutex").resume_config = config.clone();
+        match config {
+            Some(config) => self.start_recording_failure(&config.bind_address, Some(config.port)),
+            None => Ok(self.status()),
+        }
     }
 
     pub(crate) fn status(&self) -> GatewayStatus {
@@ -3716,7 +3932,12 @@ fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {
+    macos_lan::enumerate()
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn list_lan_ipv4_interfaces() -> Result<Vec<LanIpv4Interface>, GatewayError> {
     Ok(Vec::new())
 }
@@ -3791,10 +4012,13 @@ fn classify_bind_error(error: io::Error) -> GatewayError {
             "gateway-bind-conflict",
             "The selected Companion address and port are already in use",
         ),
-        ErrorKind::PermissionDenied => GatewayError::new(
-            "gateway-bind-access-denied",
-            "Windows denied binding this address/port; excluded ports or system policy may apply. This does not establish a firewall cause",
-        ),
+        ErrorKind::PermissionDenied => {
+            #[cfg(target_os = "macos")]
+            let message = "macOS denied binding this address/port; system policy may apply. This does not establish a firewall cause";
+            #[cfg(not(target_os = "macos"))]
+            let message = "Windows denied binding this address/port; excluded ports or system policy may apply. This does not establish a firewall cause";
+            GatewayError::new("gateway-bind-access-denied", message)
+        },
         ErrorKind::AddrNotAvailable => GatewayError::new(
             "gateway-bind-address-unavailable",
             "The selected interface address is no longer available",
@@ -3923,14 +4147,34 @@ pub(crate) fn companion_gateway_status(
 }
 
 #[tauri::command]
+pub(crate) fn companion_gateway_retry_identity(
+    caller: tauri::Webview,
+    gateway: tauri::State<'_, Arc<CompanionGateway>>,
+) -> Result<GatewayStatus, GatewayError> {
+    require_main_caller(&caller)?;
+    #[cfg(target_os = "macos")]
+    { gateway.inner().retry_macos_identity() }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = gateway;
+        Err(GatewayError::new("companion-secret-retry-unsupported", "Identity retry is not available on this platform"))
+    }
+}
+
+#[tauri::command]
 pub(crate) fn companion_gateway_start(
     caller: tauri::Webview,
     bind_address: String,
     gateway: tauri::State<'_, Arc<CompanionGateway>>,
 ) -> Result<GatewayStatus, GatewayError> {
     require_main_caller(&caller)?;
-    let interfaces = list_lan_ipv4_interfaces()?;
-    let bind_address = validate_management_bind_address(&bind_address, &interfaces)?;
+    #[cfg(target_os = "macos")]
+    let bind_address = macos_lan::management_address(&bind_address)?;
+    #[cfg(not(target_os = "macos"))]
+    let bind_address = {
+        let interfaces = list_lan_ipv4_interfaces()?;
+        validate_management_bind_address(&bind_address, &interfaces)?
+    };
     gateway.inner().start(&bind_address, None)
 }
 
@@ -3950,8 +4194,13 @@ pub(crate) fn companion_gateway_restart(
     gateway: tauri::State<'_, Arc<CompanionGateway>>,
 ) -> Result<GatewayStatus, GatewayError> {
     require_main_caller(&caller)?;
-    let interfaces = list_lan_ipv4_interfaces()?;
-    let bind_address = validate_management_bind_address(&bind_address, &interfaces)?;
+    #[cfg(target_os = "macos")]
+    let bind_address = macos_lan::management_address(&bind_address)?;
+    #[cfg(not(target_os = "macos"))]
+    let bind_address = {
+        let interfaces = list_lan_ipv4_interfaces()?;
+        validate_management_bind_address(&bind_address, &interfaces)?
+    };
     gateway.inner().restart(&bind_address, None)
 }
 
@@ -4149,6 +4398,8 @@ fn require_main_caller(caller: &tauri::Webview) -> Result<(), GatewayError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    mod macos_services_ingest_tests;
     use rustls::pki_types::ServerName;
     use rustls::{ClientConfig, ClientConnection, RootCertStore};
     use std::io::{BufRead, Cursor};
@@ -4217,6 +4468,142 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    struct UnavailableIdentityStore;
+
+    #[cfg(target_os = "macos")]
+    impl ProtectedIdentityStore for UnavailableIdentityStore {
+        fn load(&self) -> Result<Option<Zeroizing<Vec<u8>>>, GatewayError> {
+            Err(GatewayError::new("companion-secret-unavailable", "Keychain temporarily unavailable"))
+        }
+        fn store(&self, _: &[u8]) -> Result<(), GatewayError> { panic!("retry must not store an identity") }
+        fn remove(&self) -> Result<(), GatewayError> { panic!("retry must not remove an identity") }
+    }
+
+    #[cfg(target_os = "macos")]
+    struct RetryIdentityStore {
+        value: Option<Vec<u8>>,
+        reads: AtomicUsize,
+        entered: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+        release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl RetryIdentityStore {
+        fn new(value: Option<Vec<u8>>) -> Self {
+            Self { value, reads: AtomicUsize::new(0), entered: Mutex::new(None), release: Mutex::new(None) }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl ProtectedIdentityStore for RetryIdentityStore {
+        fn load(&self) -> Result<Option<Zeroizing<Vec<u8>>>, GatewayError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            if let Some(entered) = self.entered.lock().unwrap().take() { entered.send(()).unwrap(); }
+            if let Some(release) = self.release.lock().unwrap().take() { release.recv_timeout(Duration::from_secs(5)).unwrap(); }
+            Ok(self.value.clone().map(Zeroizing::new))
+        }
+        fn store(&self, _: &[u8]) -> Result<(), GatewayError> { panic!("retry must not store an identity") }
+        fn remove(&self) -> Result<(), GatewayError> { panic!("retry must not remove an identity") }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn unavailable_gateway(backend: Arc<BackendServices>) -> Arc<CompanionGateway> {
+        CompanionGateway::initialize_with_store(backend, Arc::new(UnavailableIdentityStore), GatewayPolicy::default())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_identity_retry_recovers_exact_existing_identity_without_mutation() {
+        let (_root, backend, original, first) = gateway_fixture("identity-retry", GatewayPolicy::default());
+        let first_identity = first.identity().unwrap();
+        let bytes = original.value.lock().unwrap().clone();
+        let locked = unavailable_gateway(backend);
+        let observer = (*locked).clone();
+        assert_eq!(locked.status(), GatewayStatus::RecoveryRequired { code: "companion-secret-unavailable" });
+        let retry = RetryIdentityStore::new(bytes.clone());
+        assert!(matches!(locked.retry_macos_identity_with_store(&retry).unwrap(), GatewayStatus::Disabled { .. }));
+        let restored = observer.identity().unwrap();
+        assert_eq!(restored.instance_id, first_identity.instance_id);
+        assert_eq!(restored.fingerprint, first_identity.fingerprint);
+        assert_eq!(restored.certificate_der, first_identity.certificate_der);
+        assert_eq!(restored.private_key_der.as_slice(), first_identity.private_key_der.as_slice());
+        assert_eq!(restored.verifier_key.as_slice(), first_identity.verifier_key.as_slice());
+        assert_eq!(*original.value.lock().unwrap(), bytes);
+        assert_eq!(retry.reads.load(Ordering::SeqCst), 1);
+        locked.retry_macos_identity_with_store(&retry).unwrap();
+        assert_eq!(retry.reads.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_identity_retry_retains_missing_or_mismatched_evidence_without_creation() {
+        let (_root, backend, original, _first) = gateway_fixture("identity-retry-missing", GatewayPolicy::default());
+        let bytes = original.value.lock().unwrap().clone();
+        let missing = unavailable_gateway(Arc::clone(&backend));
+        assert_eq!(missing.retry_macos_identity_with_store(&RetryIdentityStore::new(None)).unwrap_err().code, "companion-secret-recovery-required");
+        assert_eq!(missing.retry_macos_identity_with_store(&RetryIdentityStore::new(bytes.clone())).unwrap_err().code, "companion-secret-recovery-required");
+        let mismatch = unavailable_gateway(Arc::clone(&backend));
+        let other = serialize_identity(&generate_identity().unwrap()).unwrap();
+        assert_eq!(mismatch.retry_macos_identity_with_store(&RetryIdentityStore::new(Some(other.to_vec()))).unwrap_err().code, "companion-secret-recovery-required");
+        assert_eq!(*original.value.lock().unwrap(), bytes);
+        let fresh = fixture_root("identity-retry-no-metadata");
+        let fresh_path = content::notes::fixture_support::root(fresh.path());
+        let fresh_backend = Arc::new(content::notes::fixture_support::backend(&fresh_path));
+        let no_metadata = unavailable_gateway(fresh_backend);
+        assert_eq!(no_metadata.retry_macos_identity_with_store(&RetryIdentityStore::new(None)).unwrap_err().code, "companion-secret-recovery-required");
+        assert!(read_identity_metadata(no_metadata.backend.db_path()).unwrap().is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_identity_retry_preserves_saved_listener_through_bind_conflict() {
+        let (_root, backend, original, first) = gateway_fixture("identity-retry-endpoint", GatewayPolicy::default());
+        let identity = first.identity().unwrap();
+        let occupied = loop {
+            let candidate = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            if !(LOCAL_TRANSPORT_PORT_START..=LOCAL_TRANSPORT_PORT_END).contains(&candidate.local_addr().unwrap().port()) { break candidate; }
+        };
+        let port = occupied.local_addr().unwrap().port();
+        store_listener_config(backend.db_path(), Some(&ListenerConfig { bind_address: "127.0.0.1".into(), port })).unwrap();
+        let locked = unavailable_gateway(backend);
+        let retry = RetryIdentityStore::new(original.value.lock().unwrap().clone());
+        assert_eq!(locked.retry_macos_identity_with_store(&retry).unwrap_err().code, "gateway-bind-conflict");
+        match locked.status() {
+            GatewayStatus::ResumeFailed { bind_address, port: saved, .. } => {
+                assert_eq!(bind_address.as_deref(), Some("127.0.0.1"));
+                assert_eq!(saved, Some(port));
+            }
+            status => panic!("expected saved endpoint failure, got {status:?}"),
+        }
+        assert_eq!(load_listener_config(locked.backend.db_path()).unwrap().unwrap().port, port);
+        drop(occupied);
+        assert!(matches!(locked.start("127.0.0.1", None).unwrap(), GatewayStatus::Running { port: restored, .. } if restored == port));
+        assert_eq!(locked.identity().unwrap().fingerprint, identity.fingerprint);
+        assert_eq!(locked.identity().unwrap().verifier_key.as_slice(), identity.verifier_key.as_slice());
+        assert!(locked.shutdown());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_identity_retry_serializes_concurrent_attempts() {
+        let (_root, backend, original, _first) = gateway_fixture("identity-retry-concurrent", GatewayPolicy::default());
+        let locked = unavailable_gateway(backend);
+        let retry = Arc::new(RetryIdentityStore::new(original.value.lock().unwrap().clone()));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *retry.entered.lock().unwrap() = Some(entered_tx);
+        *retry.release.lock().unwrap() = Some(release_rx);
+        let worker_gateway = Arc::clone(&locked);
+        let worker_store = Arc::clone(&retry);
+        let worker = thread::spawn(move || worker_gateway.retry_macos_identity_with_store(worker_store.as_ref()));
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(locked.retry_macos_identity_with_store(retry.as_ref()).unwrap_err().code, "gateway-transition-in-progress");
+        release_tx.send(()).unwrap();
+        assert!(matches!(worker.join().unwrap().unwrap(), GatewayStatus::Disabled { .. }));
+        assert_eq!(retry.reads.load(Ordering::SeqCst), 1);
+    }
+
     fn fixture_root(label: &str) -> tempfile::TempDir {
         let base = std::env::var_os("LUCKYRAY_TEST_TEMP_ROOT")
             .map(PathBuf::from)
@@ -4238,6 +4625,13 @@ mod tests {
         Arc<CompanionGateway>,
     ) {
         let root = fixture_root(label);
+        // Resolve only the test-owned temporary path: macOS commonly exposes
+        // it through /var, while product storage correctly rejects symlinks.
+        #[cfg(target_os = "macos")]
+        let backend = Arc::new(content::notes::fixture_support::backend(
+            &content::notes::fixture_support::root(root.path()),
+        ));
+        #[cfg(not(target_os = "macos"))]
         let backend = Arc::new(BackendServices::initialize(root.path()).unwrap());
         let store = Arc::new(MemoryIdentityStore::default());
         let gateway =

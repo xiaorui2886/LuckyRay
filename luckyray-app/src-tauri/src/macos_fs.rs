@@ -10,6 +10,30 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
+// Test-only interleavings at pathname mutation boundaries. Production builds
+// contain no hook and receive no additional filesystem authority.
+#[cfg(test)]
+std::thread_local! {
+    static AFTER_REMOVE_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce(&OsStr)>>> =
+        std::cell::RefCell::new(None);
+    static BEFORE_RENAME_CALL: std::cell::RefCell<Option<Box<dyn FnOnce(&OsStr, &OsStr)>>> =
+        std::cell::RefCell::new(None);
+    static BEFORE_STAGING_RECLAIM: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+#[cfg(test)]
+pub(crate) fn set_after_remove_check_hook(hook: Option<Box<dyn FnOnce(&OsStr)>>) {
+    AFTER_REMOVE_CHECK.with(|slot| *slot.borrow_mut() = hook);
+}
+#[cfg(test)]
+pub(crate) fn set_before_rename_call_hook(hook: Option<Box<dyn FnOnce(&OsStr, &OsStr)>>) {
+    BEFORE_RENAME_CALL.with(|slot| *slot.borrow_mut() = hook);
+}
+#[cfg(test)]
+pub(crate) fn set_before_staging_reclaim_hook(hook: Option<Box<dyn FnOnce()>>) {
+    BEFORE_STAGING_RECLAIM.with(|slot| *slot.borrow_mut() = hook);
+}
+
 pub(crate) const MAX_RECORD: u64 = 32 * 1024 * 1024;
 // Attachments have a separate product limit. Credentials and journals retain
 // MAX_RECORD; accepting a larger blob never changes their read/write policy.
@@ -376,6 +400,10 @@ impl Directory {
 
     pub(crate) fn rename(&self, from: &OsStr, to: &OsStr, exchange: bool) -> io::Result<()> {
         self.current()?;
+        #[cfg(test)]
+        if let Some(hook) = BEFORE_RENAME_CALL.with(|slot| slot.borrow_mut().take()) {
+            hook(from, to);
+        }
         let (from, to) = (name(from)?, name(to)?);
         const RENAME_NOFOLLOW_ANY: u32 = 0x10;
         let flags = (if exchange {
@@ -399,10 +427,45 @@ impl Directory {
         self.current()
     }
 
+    /// Rename without replacement. `Ok(false)` means the kernel rejected an
+    /// occupied destination before performing the rename; an error after a
+    /// successful rename remains uncertain and must never be retried as a
+    /// mere name conflict.
+    pub(crate) fn rename_exclusive_checked(&self, from: &OsStr, to: &OsStr) -> io::Result<bool> {
+        self.current()?;
+        #[cfg(test)]
+        if let Some(hook) = BEFORE_RENAME_CALL.with(|slot| slot.borrow_mut().take()) {
+            hook(from, to);
+        }
+        let (from, to) = (name(from)?, name(to)?);
+        const RENAME_NOFOLLOW_ANY: u32 = 0x10;
+        let result = unsafe {
+            libc::renameatx_np(
+                self.file.as_raw_fd(), from.as_ptr(), self.file.as_raw_fd(), to.as_ptr(),
+                libc::RENAME_EXCL | RENAME_NOFOLLOW_ANY,
+            )
+        };
+        if result != 0 {
+            let failure = io::Error::last_os_error();
+            return if failure.raw_os_error() == Some(libc::EEXIST) {
+                Ok(false)
+            } else {
+                Err(failure)
+            };
+        }
+        self.file.sync_all()?;
+        self.current()?;
+        Ok(true)
+    }
+
     pub(crate) fn remove(&self, entry: &OsStr, expected: &Version) -> io::Result<()> {
         let current = self.read(entry)?.ok_or_else(invalid)?;
         if &current.1 != expected {
             return Err(invalid());
+        }
+        #[cfg(test)]
+        if let Some(hook) = AFTER_REMOVE_CHECK.with(|slot| slot.borrow_mut().take()) {
+            hook(entry);
         }
         let entry = name(entry)?;
         // unlinkat never follows a last-component symlink. Revision/identity
@@ -511,6 +574,33 @@ fn changed(a: &Metadata, b: &Metadata) -> bool {
         b.ctime_nsec(),
     )
 }
+
+/// Release the data of a completed upload's already-opened staging inode.
+/// The caller must match its persisted ownership and verify all recorded bytes
+/// before passing the final read snapshot. No pathname is removed or reopened;
+/// replacing the staging name cannot redirect this operation to another file.
+/// An empty recorded inode is only synced, so a crash after truncation can be
+/// completed without modifying it again. Keep ownership until this succeeds.
+pub(crate) fn reclaim_owned_staging(file: &File, expected: &Metadata) -> io::Result<()> {
+    require_empty_acl(file)?;
+    let current = file.metadata()?;
+    if !current.is_file() || current.uid() != unsafe { libc::geteuid() }
+        || current.nlink() != 1 || current.mode() & 0o7777 != 0o600
+        || changed(expected, &current) || expected.mode() != current.mode()
+        || expected.uid() != current.uid() || expected.nlink() != current.nlink()
+    {
+        return Err(invalid());
+    }
+    if expected.len() != 0 {
+        #[cfg(test)]
+        if let Some(hook) = BEFORE_STAGING_RECLAIM.with(|slot| slot.borrow_mut().take()) {
+            hook();
+        }
+        file.set_len(0)?;
+    }
+    file.sync_all()
+}
+
 fn validate_file(file: &File, private: bool) -> io::Result<()> {
     let meta = file.metadata()?;
     if !meta.is_file() {
@@ -677,6 +767,78 @@ fn check_acl(file: &File, allow_deny_entries: bool) -> io::Result<()> {
 #[cfg(test)]
 mod registration_policy_tests {
     use super::*;
+
+    #[test]
+    fn macos_staging_reclaim_releases_only_the_opened_recorded_inode() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let directory = Directory::open(&root, false, true).unwrap();
+        let original = directory.create(OsStr::new("staging"), &[7; 4096]).unwrap();
+        let expected = original.metadata().unwrap();
+        let hook_root = root.clone();
+        set_before_staging_reclaim_hook(Some(Box::new(move || {
+            std::fs::rename(hook_root.join("staging"), hook_root.join("retained-original")).unwrap();
+            std::fs::write(hook_root.join("staging"), b"unrelated replacement").unwrap();
+        })));
+        reclaim_owned_staging(&original, &expected).unwrap();
+        assert_eq!(original.metadata().unwrap().len(), 0);
+        assert_eq!(std::fs::metadata(root.join("retained-original")).unwrap().len(), 0);
+        assert_eq!(std::fs::read(root.join("staging")).unwrap(), b"unrelated replacement");
+    }
+
+    #[test]
+    fn macos_staging_reclaim_rejects_changed_shared_or_nonprivate_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let directory = Directory::open(&root, false, true).unwrap();
+        let mut file = directory.create(OsStr::new("staging"), b"recorded").unwrap();
+        let before = file.metadata().unwrap();
+        file.write_all(b"new tail").unwrap();
+        file.sync_all().unwrap();
+        assert!(reclaim_owned_staging(&file, &before).is_err());
+        assert_eq!(std::fs::read(root.join("staging")).unwrap(), b"recordednew tail");
+        std::fs::hard_link(root.join("staging"), root.join("shared")).unwrap();
+        assert!(reclaim_owned_staging(&file, &file.metadata().unwrap()).is_err());
+        assert_eq!(std::fs::read(root.join("shared")).unwrap(), b"recordednew tail");
+        let nonprivate = directory.create(OsStr::new("nonprivate"), b"must retain").unwrap();
+        nonprivate.set_permissions(std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(reclaim_owned_staging(&nonprivate, &nonprivate.metadata().unwrap()).is_err());
+        assert_eq!(std::fs::read(root.join("nonprivate")).unwrap(), b"must retain");
+    }
+
+    #[test]
+    fn macos_staging_reclaim_resumes_an_already_empty_record_without_rewriting() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let directory = Directory::open(&root, false, true).unwrap();
+        let file = directory.create(OsStr::new("staging"), b"committed bytes").unwrap();
+        reclaim_owned_staging(&file, &file.metadata().unwrap()).unwrap();
+        let empty = file.metadata().unwrap();
+        reclaim_owned_staging(&file, &empty).unwrap();
+        assert_eq!(file.metadata().unwrap().len(), 0);
+        assert!(!changed(&empty, &file.metadata().unwrap()));
+        assert!(root.join("staging").is_file());
+    }
+
+    #[test]
+    fn macos_checked_exclusive_rename_reports_collision_without_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let directory = Directory::open(&root, false, false).unwrap();
+        directory.create(OsStr::new("source"), b"our bytes").unwrap();
+        let destination = root.join("destination");
+        set_before_rename_call_hook(Some(Box::new(move |_, _| {
+            std::fs::write(&destination, b"other bytes").unwrap();
+        })));
+        assert!(!directory.rename_exclusive_checked(OsStr::new("source"), OsStr::new("destination")).unwrap());
+        assert_eq!(std::fs::read(root.join("source")).unwrap(), b"our bytes");
+        assert_eq!(std::fs::read(root.join("destination")).unwrap(), b"other bytes");
+        assert!(directory.rename_exclusive_checked(OsStr::new("source"), OsStr::new("available")).unwrap());
+        assert_eq!(std::fs::read(root.join("available")).unwrap(), b"our bytes");
+    }
 
     #[test]
     fn macos_manifest_registration_system_applications_identity() {

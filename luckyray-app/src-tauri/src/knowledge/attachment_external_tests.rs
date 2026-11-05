@@ -585,7 +585,7 @@ fn moving_note_preserves_external_relative_targets_without_granting_access() {
     let active=service.activate_ui_source(&registration.id).unwrap();
     let note=KnowledgeDocumentRef{vault_id:registration.id.clone(),relative_path:"n.md".into()};
     let document=service.read_document(&note).unwrap();
-    let moved=service.move_document_from_ui(active.source_epoch,&KnowledgeMoveInput{document_ref:note,title:"moved".into(),parent_relative_path:Some("nested".into()),expected_revision:document.revision}).unwrap();
+    let moved=service.move_document_from_ui(active.source_epoch,&KnowledgeMoveInput{document_ref:note,title:"moved".into(),parent_relative_path:Some("nested".into()),expected_revision:document.revision,expected_file_identity:None}).unwrap();
     assert!(moved.content.contains("#fragment \"width=300\""));
     let links=attachment_links(&moved.content);
     assert_eq!(links.len(),2);

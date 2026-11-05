@@ -32,6 +32,7 @@ import { resolveAttachmentBatchProgressive, mergeAttachmentBatch, attachmentReso
 import { resolveNoteMediaSources } from './media/noteMediaGeometry';
 import { useVaultAttachmentResolution } from './useVaultAttachmentResolution';
 import { useApplicationModalSurface } from "../../app/applicationModalIsolation";
+import { reconcileMovedNoteContent } from "./reconcileMovedNote";
 import { useI18n } from "../../core/i18n/index";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, SetStateAction } from "react";
 import { flushSync } from "react-dom";
@@ -70,7 +71,10 @@ import { clipboardDataUrlToImageFile, extractClipboardImageSource, isClipboardDa
 import type { LiveEditorTokenContext } from "./editor/types";
 import { findSameNoteAnchorRange, getWikiAnchorCompletions, parseWikiAnchorQuery, sameNoteAnchorSearchQuery } from "./editor/sameNoteAnchors";
 import { isPlainMarkdownCompletionAllowedAt } from "./editor/wikiCompletion";
-import { acceptWorkspaceSourceProof, createRealVaultDocumentSource } from "./documentSource";
+import { acceptWorkspaceSourceProof, createRealVaultDocumentSource, KnowledgeFolderOperationError } from "./documentSource";
+import { folderContainsPath, remapFolderPath, remapFolderRecord } from "./macFolderRuntime";
+import type { MacFolderOperation, MacFolderRecovery, MacFolderMutationResult } from "../../core/services/macFolderMutations";
+import "./macFolderRecovery.css";
 import type { KnowledgeDocument } from "./documentSource";
 import type { KnowledgeSourceMode, KnowledgeTreeNode } from "../../core/bridge/knowledgeTypes";
 import { NoteDocumentReadCoordinator } from "./noteDocumentReadCoordinator";
@@ -1623,11 +1627,18 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   const selectedNoteIdRef = useRef<string | null>(null);
   const selectedNoteRef = useRef<Note | null>(null);
   const realVaultSavedContentRef = useRef<Map<string, string>>(new Map());
-  const realVaultReadProofRef=useRef(new Map<string,{generation:number;source:NonNullable<ReturnType<typeof readActiveKnowledgeWriteSource>>;workspaceSourceId:string;revision:string;content:string}>());
+  const realVaultReadProofRef=useRef(new Map<string,{generation:number;source:NonNullable<ReturnType<typeof readActiveKnowledgeWriteSource>>;workspaceSourceId:string;revision:string;fileIdentity?:string;content:string}>());
   const realVaultLatestContentRef = useRef<Map<string, string>>(new Map());
   const realVaultDocumentReadsRef = useRef(new NoteDocumentReadCoordinator());
   const realVaultUserDirtyRef = useRef<Set<string>>(new NotesNativeDraftSet());
   const realVaultSaveInFlightRef = useRef<Set<string>>(new NotesNativeSaveSet());
+  const realVaultMoveInFlightRef = useRef(new Map<string, { source: ReturnType<typeof readActiveKnowledgeWriteSource>; generation: number }>());
+  const realVaultFolderInFlightRef = useRef<{ source: ReturnType<typeof readActiveKnowledgeWriteSource>; generation: number; relativePath: string; uiPathsReady: boolean } | null>(null);
+  const realVaultFolderBlockedNotesRef = useRef(new Set<string>());
+  const [macFolderBusy, setMacFolderBusy] = useState(false);
+  const [macFolderStage, setMacFolderStage] = useState<"idle" | "preparing" | "ready" | "blocked-draft" | "running" | "completed" | "interrupted">("idle");
+  const [macFolderRecoveries, setMacFolderRecoveries] = useState<MacFolderRecovery[]>([]);
+  const [macFolderRecoveryMessage, setMacFolderRecoveryMessage] = useState("");
   const realVaultSaveCompletionRef = useRef(new Map<string, Promise<void>>());
   const realVaultSaveEpochRef = useRef(new Map<string, number>());
   const notesInlineCommittedContentRef = useRef<{ noteId: string; content: string; revision: string } | null>(null);
@@ -1646,6 +1657,11 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   const lastExpandedNotesIndexWidthRef = useRef(notesIndexWidth);
   const realVaultLastExternalCheckAtRef = useRef(0);
   const realVaultKeepEditingAfterConflictRef = useRef<Set<string>>(new Set());
+  const shouldRetainBlockedFolderDraft = useCallback((noteId: string) => realVaultFolderBlockedNotesRef.current.has(noteId)
+    && (realVaultUserDirtyRef.current.has(noteId) || realVaultSaveInFlightRef.current.has(noteId)
+      || (pendingPatchNoteIdRef.current === noteId && Object.keys(pendingPatchRef.current).length > 0)
+      || (realVaultLatestContentRef.current.has(noteId)
+        && realVaultLatestContentRef.current.get(noteId) !== realVaultSavedContentRef.current.get(noteId))), []);
   const realVaultStoreVersionRef = useRef<{ vaultId: string | null; snapshotVersion: number; indexVersion: number }>({
     vaultId: null,
     snapshotVersion: 0,
@@ -1658,9 +1674,9 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
 
   useEffect(() => () => realVaultDocumentReadsRef.current.cancelPending(), [currentVault?.id, currentVault?.rootPath]);
 
-  const acknowledgeSavedReadProof=useCallback((noteId:string,content:string,revision:string,origin:{source:ReturnType<typeof readActiveKnowledgeWriteSource>;generation:number})=>{
+  const acknowledgeSavedReadProof=useCallback((noteId:string,content:string,revision:string,origin:{source:ReturnType<typeof readActiveKnowledgeWriteSource>;generation:number},fileIdentity?:string)=>{
     if(readActiveKnowledgeWriteSource()!==origin.source||!vaultSessionRef.current.isCurrent(origin.generation))throw new Error('Saved note source session changed');
-    const previous=realVaultReadProofRef.current.get(noteId),next=advanceNotesSavedReadProof(previous,{content,revision},origin);
+    const previous=realVaultReadProofRef.current.get(noteId),next=advanceNotesSavedReadProof(previous,{content,revision,fileIdentity},origin);
     if(next){realVaultReadProofRef.current.set(noteId,next);if(previous?.content!==next.content||previous.revision!==next.revision)notesNativeViews.notifyViews();}
   },[]);
   const realVaultDocumentSource = useMemo(() => {
@@ -1670,7 +1686,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       const saved=await adapter.saveDocument(documentRef,content);
       acknowledgeNoteSave(realVaultSavedContentRef.current, realVaultNoteId(saved.relativePath || saved.id), content, saved,
         () => readActiveKnowledgeWriteSource() === origin.source && vaultSessionRef.current.isCurrent(origin.generation),
-        () => acknowledgeSavedReadProof(realVaultNoteId(saved.relativePath || saved.id), saved.contentText, saved.revision!, origin));
+        () => acknowledgeSavedReadProof(realVaultNoteId(saved.relativePath || saved.id), saved.contentText, saved.revision!, origin, saved.fileIdentity));
       return saved;
     },openDocument:async(path:string)=>{
       const generation=vaultSessionRef.current.latest(),source=readActiveKnowledgeWriteSource(),finishRead=notesNativeViews.beginRead();
@@ -1685,7 +1701,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
           const candidates=[...notesViewRefsRef.current.values()].filter(refs=>refs.noteId===noteId&&refs.provenance?.generation===generation&&refs.provenance.source===source);
           for(const refs of candidates)acceptWorkspaceSourceProof(refs.provenance!.workspaceSourceId,workspaceSourceId);
           const acquired=previous!==workspaceSourceId||candidates.some(refs=>refs.provenance!.workspaceSourceId!==workspaceSourceId);
-          realVaultReadProofRef.current.set(noteId,{generation,source,workspaceSourceId,revision:document.revision||'',content:document.contentText});
+          realVaultReadProofRef.current.set(noteId,{generation,source,workspaceSourceId,revision:document.revision||'',...(document.fileIdentity?{fileIdentity:document.fileIdentity}:{}),content:document.contentText});
           for(const refs of candidates)refs.provenance!.workspaceSourceId=workspaceSourceId;
           if(acquired)notesNativeViews.notifyViews();
         }
@@ -2158,7 +2174,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     }
   }, [bridge, currentVault]);
 
-  const applyRealVaultStoreSnapshot = useCallback((tree: KnowledgeTreeNode[], index: BridgeNotesVaultMarkdownIndex | null, vaultId: string) => {
+  const applyRealVaultStoreSnapshot = useCallback((tree: KnowledgeTreeNode[], index: BridgeNotesVaultMarkdownIndex | null, vaultId: string, acceptFolderResult = false) => {
     const uiTree = buildRealVaultUiTree(tree, locale, t("editor.notes.untitled"));
     const realFolderIds = new Set<string>();
     const collectFolderIds = (items: Folder[]) => {
@@ -2170,12 +2186,19 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     collectFolderIds(uiTree.folders);
     const noteIds = new Set(uiTree.notes.map((note) => note.id));
     const currentId = selectedNoteIdRef.current;
-    const hasCurrent = Boolean(currentId && noteIds.has(currentId));
+    const hasCurrent = Boolean(currentId && (noteIds.has(currentId) || shouldRetainBlockedFolderDraft(currentId)));
+    // Native commit events can arrive before the transaction reply. Keep the
+    // retained views until their path migration has been published atomically;
+    // a later stale tree must not remove the newly mapped active document.
+    const folderOperation = realVaultFolderInFlightRef.current;
+    if (folderOperation && folderOperation.source === readActiveKnowledgeWriteSource()
+      && vaultSessionRef.current.isCurrent(folderOperation.generation, vaultId)
+      && !acceptFolderResult && (!folderOperation.uiPathsReady || (currentId && !hasCurrent))) return;
     // Rename replies remap the active document before the background index catches
     // up. An older tree must not turn that retained editor into an empty tab.
     if (renamingNoteRef.current && currentId && !hasCurrent) return { noteIds, index, uiTree };
     const restoredTabs = filterSavedNoteTabs(readSavedNoteTabsState(vaultId), noteIds);
-    const memoryTabs = openTabsRef.current.filter((tab) => isEmptyNoteTab(tab) || noteIds.has(tab.id));
+    const memoryTabs = openTabsRef.current.filter((tab) => isEmptyNoteTab(tab) || noteIds.has(tab.id) || shouldRetainBlockedFolderDraft(tab.id));
     const baseTabs = memoryTabs.length ? memoryTabs : restoredTabs?.tabs || [];
     const existingEmpty = baseTabs.find(isEmptyNoteTab);
     const fallbackEmpty = existingEmpty || createEmptyNoteTab();
@@ -2185,7 +2208,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     const shouldOpenRestoredNote = !hasCurrent && activeTab?.kind !== "empty" && activeTab?.id && noteIds.has(activeTab.id);
     setRealVaultTree(tree);
     setRealVaultMarkdownIndex(index);
-    setNotes(uiTree.notes);
+    setNotes(current => [...uiTree.notes, ...current.filter(note => !noteIds.has(note.id) && shouldRetainBlockedFolderDraft(note.id))]);
     setSelectedFolderId((current) => {
       if (!current || current === "__uncategorized__") return current;
       return realFolderIds.has(current) ? current : null;
@@ -2212,10 +2235,12 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     openTabsRef.current = normalizedTabs;
     setOpenTabs(normalizedTabs);
     return { noteIds, index, uiTree };
-  }, [locale, t]);
+  }, [locale, shouldRetainBlockedFolderDraft, t]);
 
-  const loadRealVaultTree = useCallback(async (options?: { silent?: boolean; cachedOnly?: boolean; fresh?: boolean }) => {
+  const loadRealVaultTree = useCallback(async (options?: { silent?: boolean; cachedOnly?: boolean; fresh?: boolean; isCurrent?: () => boolean; acceptFolderResult?: boolean }) => {
     if (!currentVault) return;
+    const isCurrent = () => !options?.isCurrent || options.isCurrent();
+    if (!isCurrent()) return;
     const cached = knowledgeStore.getSnapshot();
     let cachedResult: ReturnType<typeof applyRealVaultStoreSnapshot> | undefined;
     if (!options?.fresh && cached.loaded && cached.mode === "real-vault" && cached.vault?.id === currentVault.id) {
@@ -2225,13 +2250,15 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     if (!options?.silent && !cachedResult) setLoading(true);
     try {
       const snapshot = await knowledgeStore.revalidate({ reason: "notes-tree", force: options?.fresh });
+      if (!isCurrent()) return;
       if (snapshot.mode !== "real-vault" || snapshot.vault?.id !== currentVault.id) return cachedResult;
-      return applyRealVaultStoreSnapshot(snapshot.tree, snapshot.markdownIndex, snapshot.vault.id);
+      return applyRealVaultStoreSnapshot(snapshot.tree, snapshot.markdownIndex, snapshot.vault.id, options?.acceptFolderResult);
     } catch (error) {
+      if (!isCurrent()) return;
       console.warn("[NotesPage] list real vault files failed", error);
       setStatus(error instanceof Error ? error.message : t("editor.notes.status.vaultLoadFailed"));
     } finally {
-      if (!options?.silent) setLoading(false);
+      if (isCurrent() && !options?.silent) setLoading(false);
     }
   }, [applyRealVaultStoreSnapshot, currentVault, t]);
 
@@ -2441,11 +2468,17 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   }, [realVaultDocumentSource, recheckAttachments, syncNotesPaneDocumentAcrossPanes, t]);
 
   const selectNote = useCallback(async (noteId: string, options?: NoteSelectOptions) => {
+    if (realVaultFolderInFlightRef.current) return;
+    if (realVaultFolderBlockedNotesRef.current.has(noteId) && (realVaultUserDirtyRef.current.has(noteId)
+      || (pendingPatchNoteIdRef.current === noteId && Object.keys(pendingPatchRef.current).length))) {
+      setStatus("文件夹位置待确认；请先保留当前草稿，再从目录重新打开笔记。旧路径不会被写入。");
+      return;
+    }
     if(notesNativeViews.hasFrozenViews()&&options?.tabMode!=='open'&&selectedNoteIdRef.current!==noteId)return;
     if (knowledgeStorageMode === "real-vault" || isRealVaultNoteId(noteId)) {
       const relativePath = realVaultRelativePathFromNoteId(noteId);
       const realNoteId = realVaultNoteId(relativePath);
-      const isChangingNote = realNoteId !== selectedNoteId;
+      const isChangingNote = realNoteId !== (isMacPlatform() ? selectedNoteIdRef.current : selectedNoteId);
       if (isChangingNote) {
         setStatus(current => current === t("editor.notes.status.diskChanged") ? "" : current);
         const viewport = liveEditorRef.current?.getVisibleLines();
@@ -2539,6 +2572,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
         setSourceContentDraft(null);
         setAutocomplete(null);
         hydrationApplied = true;
+        realVaultFolderBlockedNotesRef.current.delete(realNoteId);
         // The authoritative editor sync is annotated and never calls onChange.
         // Once the document is published, all subsequent input is a user draft.
         finishHydration();
@@ -2726,6 +2760,8 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   }, [notes, t]);
 
   const loadNotesPaneDocument = useCallback(async (paneId: string, tab: NotesOpenTab): Promise<boolean> => {
+    if (realVaultFolderInFlightRef.current || (realVaultFolderBlockedNotesRef.current.has(tab.id)
+      && (realVaultUserDirtyRef.current.has(tab.id) || (pendingPatchNoteIdRef.current === tab.id && Object.keys(pendingPatchRef.current).length)))) return false;
     if (tab.kind === "empty") {
       const empty = { title: t("editor.notes.newTab"), contentText: "", loaded: true };
       setNotesPaneDocument(paneId, tab.id, empty);
@@ -2745,6 +2781,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       const document = await realVaultDocumentSource.openDocument(realVaultRelativePathFromNoteId(tab.id));
       if (!vaultSessionRef.current.isCurrent(paneSession)) return false;
       if (notesPaneLoadRequestRef.current.get(paneId) !== requestId) return false;
+      realVaultFolderBlockedNotesRef.current.delete(tab.id);
       const note = noteFromKnowledgeDocument(document, t("editor.notes.untitled"));
       const snapshot = { title: noteTitle(note), contentText: note.contentText || "", loaded: true };
       setNotes((current) => current.some((item) => item.id === note.id)
@@ -3154,6 +3191,9 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     }
 
     if (!result.noteIds.has(currentId)) {
+      if (shouldRetainBlockedFolderDraft(currentId)) {
+        setStatus("原文件夹位置已变化；未保存内容已保留，请先保留草稿再从目录重新打开。"); return;
+      }
       realVaultSavedContentRef.current.delete(currentId);
       realVaultLatestContentRef.current.delete(currentId);
       realVaultUserDirtyRef.current.delete(currentId);
@@ -3177,7 +3217,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     if (reloaded) {
       setStatus(diskChanged ? t("editor.notes.status.diskReloaded") : t("editor.notes.status.vaultRefreshed"));
     }
-  }, [knowledgeStorageMode, loadNotes, loadRealVaultTree, reloadCurrentRealVaultDocumentFromDisk, t]);
+  }, [knowledgeStorageMode, loadNotes, loadRealVaultTree, reloadCurrentRealVaultDocumentFromDisk, shouldRetainBlockedFolderDraft, t]);
 
   const checkCurrentRealVaultExternalChange = useCallback(async (options?: { force?: boolean; silent?: boolean }) => {
     if (knowledgeStorageMode !== "real-vault") return;
@@ -3187,7 +3227,12 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     const now = Date.now();
     if (!options?.force && now - realVaultLastExternalCheckAtRef.current < 3000) return;
     realVaultLastExternalCheckAtRef.current = now;
-    const isCurrent = () => source === readActiveKnowledgeWriteSource() && selectedNoteIdRef.current === noteId;
+    const isCurrent = () => {
+      const folderOperation = realVaultFolderInFlightRef.current;
+      return source === readActiveKnowledgeWriteSource() && selectedNoteIdRef.current === noteId
+        && !realVaultFolderBlockedNotesRef.current.has(noteId)
+        && !(folderOperation?.source === source && folderContainsPath(folderOperation.relativePath, realVaultRelativePathFromNoteId(noteId)));
+    };
     return realVaultDocumentReadsRef.current.requestExternalCheck(async () => {
       if (!isCurrent() || realVaultSavedContentRef.current.get(noteId) === undefined) return;
       // A read during our own commit can see either side of the write. Wait for
@@ -3267,6 +3312,9 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     const syncFromStore = () => {
       const snapshot = knowledgeStore.getSnapshot();
       if (snapshot.status !== "ready") return;
+      const folderOperation = realVaultFolderInFlightRef.current;
+      if (folderOperation && !folderOperation.uiPathsReady && folderOperation.source === readActiveKnowledgeWriteSource()
+        && vaultSessionRef.current.isCurrent(folderOperation.generation, snapshot.vault?.id)) return;
       if (
         snapshot.mode !== "real-vault"
         || !snapshot.vault
@@ -3306,6 +3354,9 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       applyRealVaultStoreSnapshot(snapshot.tree, snapshot.markdownIndex, snapshot.vault.id);
       if (!currentId) return;
       if (decision === "removed") {
+        if (shouldRetainBlockedFolderDraft(currentId)) {
+          setStatus("原文件夹位置已变化；未保存内容已保留，请先保留草稿再从目录重新打开。"); return;
+        }
         realVaultSavedContentRef.current.delete(currentId);
         realVaultLatestContentRef.current.delete(currentId);
         realVaultUserDirtyRef.current.delete(currentId);
@@ -3324,7 +3375,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     return () => {
       unsubscribe();
     };
-  }, [applyRealVaultStoreSnapshot, checkCurrentRealVaultExternalChange, currentVault?.id, knowledgeStorageMode, t]);
+  }, [applyRealVaultStoreSnapshot, checkCurrentRealVaultExternalChange, currentVault?.id, knowledgeStorageMode, shouldRetainBlockedFolderDraft, t]);
 
   const reloadRealVaultConflictFromDisk = useCallback(() => {
     const noteId = realVaultExternalConflict?.noteId;
@@ -3414,6 +3465,10 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     }
     const relativePath = document.relativePath || document.id;
     const noteId = realVaultNoteId(relativePath);
+    if (realVaultFolderBlockedNotesRef.current.has(noteId)) {
+      setStatus("文件夹已变化；草稿已保留，请从目录重新打开笔记后再编辑。旧路径不会被写入。");
+      return null;
+    }
     let writeDocument: { id: string; relativePath?: string; revision?: string } = document;
     if (reason !== "create-missing-link") {
       try {
@@ -3456,6 +3511,19 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     }
   }, [realVaultDocumentSource, t]);
 
+  const retireAcknowledgedPendingSave = useCallback((noteId: string, contentText: string, title?: string) => {
+    const pending = pendingPatchRef.current;
+    if (pendingPatchNoteIdRef.current !== noteId || pending.contentText !== contentText
+      || (pending.title !== undefined && pending.title !== title)) return;
+    // Cmd+S can acknowledge the same bytes before their debounce fires. Retire
+    // only that exact queued patch; another note, newer input, or an unhandled
+    // title still owns its pending save and must continue to block file actions.
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
+    pendingPatchRef.current = {};
+    pendingPatchNoteIdRef.current = null;
+  }, []);
+
   const savePatch = useCallback(async (patch: { title?: string; contentText?: string }, noteIdOverride?: string | null, reason: RealVaultWriteReason = "user-edit-autosave") => {
     const noteId = noteIdOverride || selectedNoteIdRef.current;
     if (!noteId) return;
@@ -3469,6 +3537,12 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     let completeRealVaultSave: (() => void) | undefined;
     let completion: Promise<void> | undefined;
     const source = readActiveKnowledgeWriteSource();
+    const folderOperation = realVaultFolderInFlightRef.current;
+    if ((folderOperation && folderOperation.source === source && isRealVaultNoteId(noteId)
+      && folderContainsPath(folderOperation.relativePath, realVaultRelativePathFromNoteId(noteId)))
+      || realVaultFolderBlockedNotesRef.current.has(noteId)) return;
+    const moving = realVaultMoveInFlightRef.current.get(noteId);
+    if (moving && moving.source === source && vaultSessionRef.current.isCurrent(moving.generation)) return;
     setSaving(true);
     try {
       if (isRealVaultNoteId(noteId)) {
@@ -3508,6 +3582,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
           // Ctrl+S can mark an already acknowledged document dirty. There is
           // no write to await here; publish the real clean transition without
           // clearing a newer queued draft or another document's dirty state.
+          if (isMacPlatform()) retireAcknowledgedPendingSave(noteId, contentText, patch.title);
           realVaultUserDirtyRef.current.delete(noteId);
           if (patch.title !== undefined) {
             updateNoteLocal(noteId, { title: patch.title });
@@ -3540,6 +3615,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
           queueLatestRealVaultAutosave(latestContent);
           return;
         }
+        if (isMacPlatform()) retireAcknowledgedPendingSave(noteId, contentText, patch.title);
         realVaultLatestContentRef.current.set(noteId, contentText);
         realVaultUserDirtyRef.current.delete(noteId);
         realVaultKeepEditingAfterConflictRef.current.delete(noteId);
@@ -3590,7 +3666,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       }
       if (saveRequestRef.current === requestId) setSaving(false);
     }
-  }, [bridge, editContent, loadNoteRelations, refreshRealVaultMarkdownIndex, selectedNote, selectedNoteId, updateNoteLocal, writeRealVaultDocumentIfAllowed, realVaultExternalConflict, t]);
+  }, [bridge, editContent, loadNoteRelations, refreshRealVaultMarkdownIndex, retireAcknowledgedPendingSave, selectedNote, selectedNoteId, updateNoteLocal, writeRealVaultDocumentIfAllowed, realVaultExternalConflict, t]);
 
   const attachmentPathsAreDirty = useCallback((paths: string[]) => paths.some(path => {
     const id = realVaultNoteId(path);
@@ -4800,7 +4876,9 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       setNamingNoteId(id);
     } catch (error) {
       console.warn("[NotesPage] create real vault markdown failed", error);
-      setStatus(error instanceof Error ? error.message : t("editor.notes.status.markdownCreateFailed"));
+      setStatus((error as { code?: string })?.code === "knowledge-create-unconfirmed"
+        ? t("editor.notes.status.markdownCreateUnconfirmed")
+        : error instanceof Error ? error.message : t("editor.notes.status.markdownCreateFailed"));
     }
   }, [loadRealVaultTree, selectNote, selectedFolderId, t]);
 
@@ -5471,9 +5549,18 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
     setRealVaultExternalConflict((current) => current?.noteId === oldNoteId ? { ...current, noteId: newNoteId } : current);
   }, []);
 
-  const applyRealVaultDocumentPathChange = useCallback((oldNoteId: string, document: KnowledgeDocument) => {
+  const applyRealVaultDocumentPathChange = useCallback((
+    oldNoteId: string,
+    document: KnowledgeDocument,
+    beforeRelativePath?: string,
+    savedBaseline?: string
+  ) => {
     const nextNote = noteFromKnowledgeDocument(document, t("editor.notes.untitled"));
     const newNoteId = nextNote.id;
+    const oldPath = beforeRelativePath || (isRealVaultNoteId(oldNoteId) ? realVaultRelativePathFromNoteId(oldNoteId) : oldNoteId);
+    const newPath = document.relativePath || (isRealVaultNoteId(newNoteId) ? realVaultRelativePathFromNoteId(newNoteId) : newNoteId);
+    const movedContent = document.contentText || "";
+
     moveRealVaultRuntimeEntry(oldNoteId, newNoteId);
     liveEditorRef.current?.renameDocument(oldNoteId, newNoteId);
     for (const refs of notesViewRefsRef.current.values()) refs.live.current?.renameDocument(oldNoteId, newNoteId);
@@ -5484,18 +5571,78 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       const filtered = current.filter((note) => note.id !== oldNoteId && note.id !== newNoteId);
       return [...filtered, nextNote];
     });
-    if (selectedNoteIdRef.current === oldNoteId) {
-      selectedNoteIdRef.current = newNoteId;
-      selectedNoteRef.current = nextNote;
-      noteLoadRequestRef.current += 1;
-      setSelectedNoteId(newNoteId);
-      setSelectedNote(nextNote);
-      setEditTitle(nextNote.title || "");
-      setEditContent(nextNote.contentText || "");
-      setSourceContentDraft(null);
-      realVaultSavedContentRef.current.set(newNoteId, nextNote.contentText || "");
-      realVaultLatestContentRef.current.set(newNoteId, nextNote.contentText || "");
+
+    if (!isMacPlatform()) {
+      // Keep the released Windows path unchanged by the Mac move work.
+      if (selectedNoteIdRef.current === oldNoteId) {
+        selectedNoteIdRef.current = newNoteId;
+        selectedNoteRef.current = nextNote;
+        noteLoadRequestRef.current += 1;
+        setSelectedNoteId(newNoteId);
+        setSelectedNote(nextNote);
+        setEditTitle(nextNote.title || "");
+        setEditContent(nextNote.contentText || "");
+        setSourceContentDraft(null);
+        realVaultSavedContentRef.current.set(newNoteId, nextNote.contentText || "");
+        realVaultLatestContentRef.current.set(newNoteId, nextNote.contentText || "");
+        realVaultUserDirtyRef.current.delete(newNoteId);
+      }
+      return newNoteId;
+    }
+
+    // A completed protected move/rename returns the new file identity. Move
+    // its read proof only when the original source session and vault authority
+    // still match; never leave an old-path proof authorizing a replacement.
+    const oldProof = realVaultReadProofRef.current.get(oldNoteId);
+    realVaultReadProofRef.current.delete(oldNoteId);
+    realVaultReadProofRef.current.delete(newNoteId);
+    if (oldProof && oldProof.source === readActiveKnowledgeWriteSource()
+        && vaultSessionRef.current.isCurrent(oldProof.generation)
+        && oldProof.workspaceSourceId === document.workspaceSourceId
+        && document.revision && document.fileIdentity) {
+      realVaultReadProofRef.current.set(newNoteId, { ...oldProof, revision: document.revision,
+        fileIdentity: document.fileIdentity, content: movedContent });
+    }
+    notesNativeViews.notifyViews();
+
+    const isDirty = realVaultUserDirtyRef.current.has(newNoteId) || realVaultUserDirtyRef.current.has(oldNoteId);
+    if (isDirty) {
+      const draftContent = realVaultLatestContentRef.current.get(newNoteId)
+        ?? realVaultLatestContentRef.current.get(oldNoteId)
+        ?? movedContent;
+      const baseline = savedBaseline ?? realVaultSavedContentRef.current.get(oldNoteId) ?? "";
+      const reconciled = reconcileMovedNoteContent(oldPath, newPath, baseline, movedContent, draftContent, "macos");
+
+      realVaultSavedContentRef.current.set(newNoteId, movedContent);
+      realVaultLatestContentRef.current.set(newNoteId, reconciled);
+      realVaultUserDirtyRef.current.add(newNoteId);
+      nextNote.contentText = reconciled;
+
+      if (selectedNoteIdRef.current === oldNoteId || selectedNoteIdRef.current === newNoteId) {
+        selectedNoteIdRef.current = newNoteId;
+        selectedNoteRef.current = nextNote;
+        noteLoadRequestRef.current += 1;
+        setSelectedNoteId(newNoteId);
+        setSelectedNote(nextNote);
+        setEditTitle(nextNote.title || "");
+        setEditContent(reconciled);
+        setSourceContentDraft(null);
+      }
+    } else {
+      realVaultSavedContentRef.current.set(newNoteId, movedContent);
+      realVaultLatestContentRef.current.set(newNoteId, movedContent);
       realVaultUserDirtyRef.current.delete(newNoteId);
+
+      if (selectedNoteIdRef.current === oldNoteId || selectedNoteIdRef.current === newNoteId) {
+        selectedNoteIdRef.current = newNoteId;
+        selectedNoteRef.current = nextNote;
+        noteLoadRequestRef.current += 1;
+        setSelectedNoteId(newNoteId);
+        setSelectedNote(nextNote);
+        setEditTitle(nextNote.title || "");
+        setEditContent(movedContent);
+        setSourceContentDraft(null);
+      }
     }
     return newNoteId;
   }, [moveRealVaultRuntimeEntry, t]);
@@ -5541,6 +5688,65 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       return { ...current, id: nextSelectedId, folderId: realVaultParentPath(relativePath) };
     });
     return nextSelectedId;
+  }, [moveRealVaultRuntimeEntry]);
+
+  const rewriteMacFolderRuntimePaths = useCallback((before: string, after: string, knownIds: string[]) => {
+    const rename = (id: string) => isRealVaultNoteId(id)
+      ? realVaultNoteId(remapFolderPath(realVaultRelativePathFromNoteId(id), before, after)) : id;
+    const moved = knownIds.filter(id => rename(id) !== id);
+    const remapCache = <T,>(cache: Map<string, T>, key: (id: string) => string = rename) => {
+      for (const [id, value] of [...cache]) {
+        const next = key(id);
+        if (next !== id) { cache.delete(id); cache.set(next, value); }
+      }
+    };
+    for (const oldId of moved) {
+      const newId = rename(oldId);
+      moveRealVaultRuntimeEntry(oldId, newId);
+      realVaultReadProofRef.current.delete(oldId);
+      realVaultReadProofRef.current.delete(newId);
+      realVaultFolderBlockedNotesRef.current.delete(oldId);
+      liveEditorRef.current?.renameDocument(oldId, newId);
+      for (const refs of notesViewRefsRef.current.values()) {
+        refs.live.current?.renameDocument(oldId, newId);
+        if (refs.noteId === oldId) refs.noteId = newId;
+      }
+      notesPaneViewsRef.current.renameDocument(oldId, newId);
+    }
+    remapCache(notesPaneDocumentCacheRef.current);
+    remapCache(mediaViewportLinesRef.current);
+    const paneKey = (key: string) => {
+      const separator = key.indexOf(":");
+      return separator < 0 ? key : `${key.slice(0, separator + 1)}${rename(key.slice(separator + 1))}`;
+    };
+    remapCache(notesPaneEditorSessionsRef.current, paneKey);
+    remapCache(notesPaneScrollPositionsRef.current, paneKey);
+    notesPaneScrollRestoreKeyRef.current = null;
+    const renameTabs = (tabs: NotesOpenTab[]) => tabs.map(tab => ({ ...tab, id: rename(tab.id) }));
+    setOpenTabs(current => {
+      const next = renameTabs(current); openTabsRef.current = next; return next;
+    });
+    setNotesPaneTabs(current => current && Object.fromEntries(Object.entries(current).map(([paneId, tabs]) => [paneId, renameTabs(tabs)])));
+    setNotesPaneActiveTabs(current => current && Object.fromEntries(Object.entries(current).map(([paneId, id]) => [paneId, rename(id)])));
+    setNotesPaneDocuments(current => Object.fromEntries(Object.entries(current).map(([paneId, entries]) => [paneId, remapFolderRecord(entries, rename)])));
+    setNotesPaneAiStates(current => Object.fromEntries(Object.entries(current).map(([paneId, entries]) => [paneId, remapFolderRecord(entries, rename)])));
+    const renameNote = (note: Note): Note => {
+      const id = rename(note.id);
+      return id === note.id ? note : { ...note, id, folderId: realVaultParentPath(realVaultRelativePathFromNoteId(id)) };
+    };
+    setNotes(current => current.map(renameNote));
+    if (selectedNoteRef.current) selectedNoteRef.current = renameNote(selectedNoteRef.current);
+    if (selectedNoteIdRef.current) {
+      selectedNoteIdRef.current = rename(selectedNoteIdRef.current);
+      setSelectedNoteId(selectedNoteIdRef.current);
+    }
+    setSelectedNote(current => current && renameNote(current));
+    setNamingNoteId(current => current && rename(current));
+    setSelectedFolderId(current => current && remapFolderPath(current, before, after));
+    setRealVaultForceOpenFolderIds(current => current.map(path => remapFolderPath(path, before, after)));
+    setFolderDocumentReveal(current => current && ({ ...current, documentId: rename(current.documentId) }));
+    notesNativeViews.notifyViews();
+    return moved.map(rename);
   }, [moveRealVaultRuntimeEntry]);
 
   const vaultAbsolutePath = useCallback((relativePath: string | null | undefined) => {
@@ -5636,14 +5842,65 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
 
   const deleteNote = useCallback(async (note: Note) => {
     if (isRealVaultNoteId(note.id)) {
+      const macDelete = isMacPlatform();
+      const wasSelected = selectedNoteIdRef.current === note.id;
+      if (macDelete && wasSelected) commitCurrentEditorDraftRef.current();
       if (blockRealVaultDocumentOperationIfDirty(note.id)) {
         setConfirmDelete(null);
         return;
       }
-      const wasSelected = selectedNoteIdRef.current === note.id;
+      const originVaultId = currentVault?.id;
+      const originGeneration = vaultSessionRef.current.latest();
+      const originSource = readActiveKnowledgeWriteSource();
+      const isSessionCurrent = () => !macDelete || (Boolean(originVaultId)
+        && vaultSessionRef.current.isCurrent(originGeneration, originVaultId)
+        && readActiveKnowledgeWriteSource() === originSource);
+      const moving = realVaultMoveInFlightRef.current.get(note.id);
+      if (macDelete && (realVaultSaveInFlightRef.current.has(note.id)
+        || (moving?.source === originSource && vaultSessionRef.current.isCurrent(moving.generation)))) {
+        setConfirmDelete(null);
+        setStatus(t("editor.notes.status.saveBeforeFileAction"));
+        return;
+      }
+      const frozenViews: NotesNativeViewAdapter[] = [];
       try {
-        await realVaultDocumentSource.deleteDocument(realVaultRelativePathFromNoteId(note.id));
+        const relativePath = realVaultRelativePathFromNoteId(note.id);
+        if (macDelete) {
+          // Retain every mounted view of this note while the protected delete
+          // runs, so new editor input cannot be discarded after the await.
+          const bindings = notesNativeViews.list().filter(binding => binding.vaultId === originVaultId
+            && binding.relativePath === relativePath && binding.generation === originGeneration);
+          if (wasSelected && bindings.length === 0) {
+            setConfirmDelete(null);
+            setStatus(t("editor.notes.status.reopenBeforeDelete"));
+            return;
+          }
+          for (const binding of bindings) {
+            const view = notesNativeViews.get(binding.viewId);
+            if (view.isFrozen() || view.isDirty()) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+            view.freeze();
+            frozenViews.push(view);
+            if (view.isDirty()) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+          }
+          if (blockRealVaultDocumentOperationIfDirty(note.id)) {
+            setConfirmDelete(null);
+            return;
+          }
+        }
+        const observed = realVaultReadProofRef.current.get(note.id);
+        const proof = observed?.generation === originGeneration && observed.source === originSource ? observed : undefined;
+        if (macDelete && wasSelected && (!proof?.revision || !proof.fileIdentity)) {
+          setConfirmDelete(null);
+          setStatus(t("editor.notes.status.reopenBeforeDelete"));
+          return;
+        }
+        if (!isSessionCurrent()) return;
+        await realVaultDocumentSource.deleteDocument(macDelete
+          ? { relativePath, vaultId: originVaultId, revision: proof?.revision, fileIdentity: proof?.fileIdentity }
+          : relativePath);
+        if (!isSessionCurrent()) return;
         realVaultSavedContentRef.current.delete(note.id);
+        if (macDelete) realVaultReadProofRef.current.delete(note.id);
         realVaultLatestContentRef.current.delete(note.id);
         realVaultUserDirtyRef.current.delete(note.id);
         realVaultKeepEditingAfterConflictRef.current.delete(note.id);
@@ -5654,12 +5911,19 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
           const next = current.filter((tab) => tab.id !== note.id);
           return next.length ? next : [createEmptyNoteTab()];
         });
-        await loadRealVaultTree();
-        if (wasSelected) showEmptyTab(undefined, { ensureOpen: true });
+        await loadRealVaultTree(macDelete ? { silent: true, fresh: true, isCurrent: isSessionCurrent } : undefined);
+        if (!isSessionCurrent()) return;
+        if (wasSelected && (!macDelete || selectedNoteIdRef.current === note.id)) showEmptyTab(undefined, { ensureOpen: true });
         setStatus(t("editor.notes.status.markdownDeleted"));
       } catch (error) {
+        if (!isSessionCurrent()) return;
+        if (macDelete) setConfirmDelete(null);
         console.warn("[NotesPage] delete real vault markdown failed", error);
         setStatus(error instanceof Error ? error.message : t("editor.notes.status.markdownDeleteFailed"));
+      } finally {
+        for (const view of frozenViews.reverse()) {
+          try { await view.abort(); } catch { /* Never adopt a changed view. */ }
+        }
       }
       return;
     }
@@ -5700,23 +5964,123 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       setStatus(t("editor.notes.status.deleteFailed"));
       void loadNotes();
     }
-  }, [blockRealVaultDocumentOperationIfDirty, bridge, loadNotes, loadRealVaultTree, notes, realVaultDocumentSource, selectNote, selectedNoteId, showEmptyTab, t]);
+  }, [blockRealVaultDocumentOperationIfDirty, bridge, currentVault?.id, loadNotes, loadRealVaultTree, notes, realVaultDocumentSource, selectNote, selectedNoteId, showEmptyTab, t]);
 
   const moveNote = useCallback(async (noteId: string, folderId: string | null) => {
     if (isRealVaultNoteId(noteId)) {
+      if (!isMacPlatform()) {
+        if (blockRealVaultDocumentOperationIfDirty(noteId)) return;
+        setMoveModal(null);
+        try {
+          const document = await realVaultDocumentSource.moveDocument(realVaultRelativePathFromNoteId(noteId), folderId || "");
+          const newNoteId = applyRealVaultDocumentPathChange(noteId, document);
+          await loadRealVaultTree();
+          if (selectedNoteIdRef.current === newNoteId || selectedNoteIdRef.current === noteId) {
+            await selectNote(newNoteId, { scrollList: true });
+          }
+          setStatus(t("editor.notes.status.markdownMoved"));
+        } catch (error) {
+          console.warn("[NotesPage] move real vault markdown failed", error);
+          setStatus(error instanceof Error ? error.message : t("editor.notes.status.markdownMoveFailed"));
+        }
+        return;
+      }
+      if (selectedNoteIdRef.current === noteId) {
+        if (typeof commitCurrentEditorDraftRef !== "undefined" && commitCurrentEditorDraftRef.current) {
+          commitCurrentEditorDraftRef.current();
+        }
+        if (typeof flushPendingSaveRef !== "undefined" && flushPendingSaveRef.current) {
+          flushPendingSaveRef.current();
+        }
+      }
       if (blockRealVaultDocumentOperationIfDirty(noteId)) return;
+      const macMove = isMacPlatform();
+      const existingMove = realVaultMoveInFlightRef.current.get(noteId);
+      if (macMove && (realVaultSaveInFlightRef.current.has(noteId)
+        || (existingMove?.source === readActiveKnowledgeWriteSource()
+          && vaultSessionRef.current.isCurrent(existingMove.generation)))) {
+        setStatus(t("editor.notes.status.saveBeforeFileAction"));
+        return;
+      }
       setMoveModal(null);
+      const originVaultId = currentVault?.id;
+      const originGeneration = vaultSessionRef.current.latest();
+      const originSource = readActiveKnowledgeWriteSource();
+      const beforeRelativePath = realVaultRelativePathFromNoteId(noteId);
+      const savedBaseline = realVaultSavedContentRef.current.get(noteId) ?? "";
+      const isSessionCurrent = () => (
+        Boolean(originVaultId) &&
+        currentVault?.id === originVaultId &&
+        vaultSessionRef.current.isCurrent(originGeneration, originVaultId) &&
+        readActiveKnowledgeWriteSource() === originSource
+      );
+      const moveToken = { source: originSource, generation: originGeneration };
+      if (macMove) realVaultMoveInFlightRef.current.set(noteId, moveToken);
+      let movedNoteId: string | null = null;
       try {
-        const document = await realVaultDocumentSource.moveDocument(realVaultRelativePathFromNoteId(noteId), folderId || "");
-        const newNoteId = applyRealVaultDocumentPathChange(noteId, document);
-        await loadRealVaultTree();
+        const observed = realVaultReadProofRef.current.get(noteId);
+        const readProof = observed?.generation === originGeneration && observed.source === originSource ? observed : undefined;
+        if (selectedNoteIdRef.current === noteId && (!readProof?.revision || !readProof.fileIdentity))
+          throw new Error(t("editor.notes.status.reopenBeforeMove"));
+        const docRef = {
+          id: beforeRelativePath,
+          relativePath: beforeRelativePath,
+          revision: readProof?.revision,
+          fileIdentity: readProof?.fileIdentity,
+          vaultId: originVaultId,
+        };
+        const document = await realVaultDocumentSource.moveDocument(docRef, folderId || "");
+        if (!isSessionCurrent()) {
+          console.warn("[NotesPage] Discarding late-arriving move result: vault session changed during move", {
+            originVaultId,
+            currentVaultId: currentVault?.id,
+          });
+          return;
+        }
+        // Flush the actual editor while its identity still names the source.
+        // Autosave is held until the move establishes the destination.
+        if (macMove && selectedNoteIdRef.current === noteId) commitCurrentEditorDraftRef.current();
+        const newNoteId = applyRealVaultDocumentPathChange(noteId, document, beforeRelativePath, savedBaseline);
+        movedNoteId = newNoteId;
+        await loadRealVaultTree(macMove ? { silent: true, fresh: true, isCurrent: isSessionCurrent } : undefined);
+        if (!isSessionCurrent()) {
+          console.warn("[NotesPage] Discarding post-tree-load updates: vault session changed during tree load", {
+            originVaultId,
+            currentVaultId: currentVault?.id,
+          });
+          return;
+        }
         if (selectedNoteIdRef.current === newNoteId || selectedNoteIdRef.current === noteId) {
           await selectNote(newNoteId, { scrollList: true });
         }
+        if (!isSessionCurrent()) return;
         setStatus(t("editor.notes.status.markdownMoved"));
       } catch (error) {
+        if (!isSessionCurrent()) {
+          console.warn("[NotesPage] Suppressing move error: vault session changed during move operation", error);
+          return;
+        }
         console.warn("[NotesPage] move real vault markdown failed", error);
         setStatus(error instanceof Error ? error.message : t("editor.notes.status.markdownMoveFailed"));
+      } finally {
+        if (macMove && realVaultMoveInFlightRef.current.get(noteId) === moveToken) {
+          realVaultMoveInFlightRef.current.delete(noteId);
+          if (isSessionCurrent()) {
+            const pendingId = pendingPatchNoteIdRef.current;
+            if (pendingId === noteId || (movedNoteId !== null && pendingId === movedNoteId)) {
+              if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+              saveTimerRef.current = null;
+              pendingPatchRef.current = {};
+              pendingPatchNoteIdRef.current = null;
+            }
+            // A failed move can have a partial outcome: retain the draft and let
+            // the user inspect the error rather than writing to an uncertain path.
+            if (movedNoteId && realVaultUserDirtyRef.current.has(movedNoteId)) {
+              const draft = realVaultLatestContentRef.current.get(movedNoteId);
+              if (draft !== undefined) void savePatch({ contentText: draft }, movedNoteId);
+            }
+          }
+        }
       }
       return;
     }
@@ -5731,7 +6095,67 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       console.warn("[NotesPage] moveNoteToFolder failed", error);
       setStatus(t("editor.notes.status.moveFailed"));
     }
-  }, [applyRealVaultDocumentPathChange, blockRealVaultDocumentOperationIfDirty, bridge, loadNotes, loadRealVaultTree, realVaultDocumentSource, selectNote, updateNoteLocal, t]);
+  }, [applyRealVaultDocumentPathChange, blockRealVaultDocumentOperationIfDirty, bridge, loadNotes, loadRealVaultTree, realVaultDocumentSource, savePatch, selectNote, updateNoteLocal, t]);
+
+  const renameMacNote = useCallback(async (noteId: string, name: string, selectAfter: boolean) => {
+    if (selectedNoteIdRef.current === noteId) {
+      commitCurrentEditorDraftRef.current();
+      flushPendingSaveRef.current();
+    }
+    if (blockRealVaultDocumentOperationIfDirty(noteId)) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+    const originVaultId = currentVault?.id;
+    const originGeneration = vaultSessionRef.current.latest();
+    const originSource = readActiveKnowledgeWriteSource();
+    if (!originVaultId || originSource?.vaultId !== originVaultId) throw new Error(t("editor.notes.status.sourceChangedRetry"));
+    const existingMove = realVaultMoveInFlightRef.current.get(noteId);
+    if (realVaultSaveInFlightRef.current.has(noteId)
+        || (existingMove?.source === originSource && vaultSessionRef.current.isCurrent(existingMove.generation)))
+      throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+    const isSessionCurrent = () => currentVault?.id === originVaultId
+      && vaultSessionRef.current.isCurrent(originGeneration, originVaultId)
+      && readActiveKnowledgeWriteSource() === originSource;
+    const beforeRelativePath = realVaultRelativePathFromNoteId(noteId);
+    const savedBaseline = realVaultSavedContentRef.current.get(noteId) ?? "";
+    const moveToken = { source: originSource, generation: originGeneration };
+    realVaultMoveInFlightRef.current.set(noteId, moveToken);
+    let movedNoteId: string | null = null;
+    try {
+      const observed = realVaultReadProofRef.current.get(noteId);
+      const proof = observed?.generation === originGeneration && observed.source === originSource ? observed : undefined;
+      if (selectedNoteIdRef.current === noteId && (!proof?.revision || !proof.fileIdentity))
+        throw new Error(t("editor.notes.status.reopenBeforeMove"));
+      const document = await realVaultDocumentSource.renameDocument({ id: beforeRelativePath, relativePath: beforeRelativePath,
+        revision: proof?.revision, fileIdentity: proof?.fileIdentity, vaultId: originVaultId }, name);
+      if (!isSessionCurrent()) throw new Error(t("editor.notes.status.sourceChangedRetry"));
+      if (selectedNoteIdRef.current === noteId) commitCurrentEditorDraftRef.current();
+      const newNoteId = applyRealVaultDocumentPathChange(noteId, document, beforeRelativePath, savedBaseline);
+      movedNoteId = newNoteId;
+      await loadRealVaultTree({ silent: true, fresh: true, isCurrent: isSessionCurrent });
+      if (!isSessionCurrent()) throw new Error(t("editor.notes.status.sourceChangedRetry"));
+      if (selectAfter && (selectedNoteIdRef.current === newNoteId || selectedNoteIdRef.current === noteId)) {
+        await selectNote(newNoteId, { scrollList: true });
+        if (!isSessionCurrent()) throw new Error(t("editor.notes.status.sourceChangedRetry"));
+      }
+      return newNoteId;
+    } finally {
+      if (realVaultMoveInFlightRef.current.get(noteId) === moveToken) {
+        realVaultMoveInFlightRef.current.delete(noteId);
+        if (isSessionCurrent()) {
+          const pendingId = pendingPatchNoteIdRef.current;
+          if (pendingId === noteId || (movedNoteId !== null && pendingId === movedNoteId)) {
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
+            pendingPatchRef.current = {};
+            pendingPatchNoteIdRef.current = null;
+          }
+          if (movedNoteId && realVaultUserDirtyRef.current.has(movedNoteId)) {
+            const draft = realVaultLatestContentRef.current.get(movedNoteId);
+            if (draft !== undefined) void savePatch({ contentText: draft }, movedNoteId);
+          }
+        }
+      }
+    }
+  }, [applyRealVaultDocumentPathChange, blockRealVaultDocumentOperationIfDirty, currentVault?.id, loadRealVaultTree, realVaultDocumentSource, savePatch, selectNote, t]);
 
   const commitFilename = useCallback(async (documentId: string, name: string) => {
     if (!isRealVaultNoteId(documentId)) throw new Error(t("editor.notes.status.legacyRenameUnavailable"));
@@ -5744,6 +6168,11 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       await saveAffectedAttachmentNotes([realVaultRelativePathFromNoteId(documentId)]);
       if (source !== readActiveKnowledgeWriteSource()) throw new Error(t("editor.notes.status.sourceChangedRetry"));
       if (blockRealVaultDocumentOperationIfDirty(documentId)) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+      if (isMacPlatform()) {
+        const newNoteId = await renameMacNote(documentId, name, false);
+        setRenamingNoteId(newNoteId);
+        return newNoteId;
+      }
       const document = await realVaultDocumentSource.renameDocument(realVaultRelativePathFromNoteId(documentId), name);
       if (source !== readActiveKnowledgeWriteSource()) return;
       const newNoteId = applyRealVaultDocumentPathChange(documentId, document);
@@ -5751,14 +6180,20 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       await loadRealVaultTree({ silent: true, fresh: true });
       return newNoteId;
     } finally { renamingNoteRef.current = null; setRenamingNoteId(null); }
-  }, [flushPendingSave, saveAffectedAttachmentNotes, blockRealVaultDocumentOperationIfDirty, realVaultDocumentSource, applyRealVaultDocumentPathChange, loadRealVaultTree, t]);
+  }, [flushPendingSave, saveAffectedAttachmentNotes, blockRealVaultDocumentOperationIfDirty, realVaultDocumentSource, applyRealVaultDocumentPathChange, loadRealVaultTree, renameMacNote, t]);
 
   const renameDocumentFromTree = useCallback(async (documentId: string, name: string) => {
     const nextName = name.trim();
     if (!nextName) return;
     if (isRealVaultNoteId(documentId)) {
       if (blockRealVaultDocumentOperationIfDirty(documentId)) return;
+      const source = isMacPlatform() ? readActiveKnowledgeWriteSource() : null;
       try {
+        if (isMacPlatform()) {
+          await renameMacNote(documentId, nextName, true);
+          if (source === readActiveKnowledgeWriteSource()) setStatus(t("editor.notes.status.markdownRenamed"));
+          return;
+        }
         const document = await realVaultDocumentSource.renameDocument(realVaultRelativePathFromNoteId(documentId), nextName);
         const newNoteId = applyRealVaultDocumentPathChange(documentId, document);
         await loadRealVaultTree();
@@ -5767,15 +6202,202 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
         }
         setStatus(t("editor.notes.status.markdownRenamed"));
       } catch (error) {
+        if (isMacPlatform() && source !== readActiveKnowledgeWriteSource()) return;
         console.warn("[NotesPage] rename real vault markdown failed", error);
         setStatus(error instanceof Error ? error.message : t("editor.notes.status.markdownRenameFailed"));
       }
       return;
     }
     setStatus(t("editor.notes.status.legacyRenameUnavailable"));
-  }, [applyRealVaultDocumentPathChange, blockRealVaultDocumentOperationIfDirty, loadRealVaultTree, realVaultDocumentSource, selectNote, t]);
+  }, [applyRealVaultDocumentPathChange, blockRealVaultDocumentOperationIfDirty, loadRealVaultTree, realVaultDocumentSource, renameMacNote, selectNote, t]);
+
+  const prepareMacFolderMutation = useCallback(async (folderId: string) => {
+    setMacFolderStage("preparing");
+    const contains = (id: string) => isRealVaultNoteId(id) && folderContainsPath(folderId, realVaultRelativePathFromNoteId(id));
+    if (selectedNoteIdRef.current && contains(selectedNoteIdRef.current)) commitCurrentEditorDraftRef.current();
+    const known = new Set([...realVaultUserDirtyRef.current, ...realVaultSaveInFlightRef.current, ...realVaultLatestContentRef.current.keys(),
+      ...(pendingPatchNoteIdRef.current ? [pendingPatchNoteIdRef.current] : [])]);
+    const dirty = [...known].some(id => contains(id) && (realVaultHasUnsavedChanges(id) || realVaultSaveInFlightRef.current.has(id)))
+      || notesNativeViews.list().some(binding => binding.vaultId === currentVault?.id
+        && folderContainsPath(folderId, binding.relativePath) && notesNativeViews.get(binding.viewId).isDirty());
+    if (dirty) {
+      const message = t("editor.notes.status.saveBeforeFileAction");
+      setMacFolderStage("blocked-draft"); setStatus(message); throw new Error(message);
+    }
+    if (realVaultFolderInFlightRef.current || notesNativeViews.hasFrozenViews()) {
+      setMacFolderStage("interrupted"); throw new Error("文件夹或笔记正在处理，请稍后重试。");
+    }
+    try {
+      if (!realVaultDocumentSource.prepareFolderMutation) throw new Error("文件夹操作服务尚未就绪。");
+      await realVaultDocumentSource.prepareFolderMutation(folderId);
+      setMacFolderStage("ready");
+    } catch (error) { setMacFolderStage("interrupted"); throw error; }
+  }, [currentVault?.id, realVaultDocumentSource, realVaultHasUnsavedChanges, t]);
+
+  const refreshMacFolderRecoveries = useCallback(async () => {
+    if (!isMacPlatform() || !currentVault || !realVaultDocumentSource.listFolderRecoveries) return;
+    const source = readActiveKnowledgeWriteSource(), generation = vaultSessionRef.current.latest();
+    try {
+      const records = await realVaultDocumentSource.listFolderRecoveries();
+      if (readActiveKnowledgeWriteSource() === source && vaultSessionRef.current.isCurrent(generation, currentVault.id))
+        setMacFolderRecoveries(records);
+    } catch (error) {
+      if (readActiveKnowledgeWriteSource() === source && vaultSessionRef.current.isCurrent(generation, currentVault.id))
+        setMacFolderRecoveryMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, [currentVault, realVaultDocumentSource]);
+
+  useEffect(() => {
+    setMacFolderRecoveries([]);
+    setMacFolderRecoveryMessage("");
+    setMacFolderStage("idle");
+    realVaultFolderBlockedNotesRef.current.clear();
+  }, [currentVault?.id, currentVault?.rootPath]);
+  useEffect(() => {
+    if (isMacPlatform() && vaultBootstrapReady && currentVault) void refreshMacFolderRecoveries();
+  }, [currentVault, vaultBootstrapReady, refreshMacFolderRecoveries]);
+
+  const runMacFolderOperation = useCallback(async (folderId: string, operation: MacFolderOperation, argument?: string) => {
+    const source = readActiveKnowledgeWriteSource(), generation = vaultSessionRef.current.latest(), vaultId = currentVault?.id;
+    if (!vaultId || source?.vaultId !== vaultId || !vaultSessionRef.current.isCurrent(generation, vaultId)) {
+      setStatus(t("editor.notes.status.sourceChangedRetry")); return;
+    }
+    if (realVaultFolderInFlightRef.current || notesNativeViews.hasFrozenViews()) {
+      setStatus("文件夹或笔记正在处理，请稍后重试。"); return;
+    }
+    const containsId = (id: string) => isRealVaultNoteId(id) && folderContainsPath(folderId, realVaultRelativePathFromNoteId(id));
+    if (selectedNoteIdRef.current && containsId(selectedNoteIdRef.current)) commitCurrentEditorDraftRef.current();
+    const bindings = notesNativeViews.list().filter(binding => binding.vaultId === vaultId && binding.generation === generation
+      && folderContainsPath(folderId, binding.relativePath));
+    const openIds = [...new Set([...openTabsRef.current.map(tab => tab.id),
+      ...Object.values(notesPaneTabs || {}).flatMap(tabs => tabs.map(tab => tab.id)),
+      ...bindings.map(binding => realVaultNoteId(binding.relativePath))])].filter(containsId);
+    const knownIds = [...new Set([...openIds, ...notes.map(note => note.id), ...realVaultReadProofRef.current.keys(),
+      ...realVaultSavedContentRef.current.keys(), ...realVaultLatestContentRef.current.keys(), ...realVaultUserDirtyRef.current])].filter(containsId);
+    const isCurrent = () => readActiveKnowledgeWriteSource() === source && vaultSessionRef.current.isCurrent(generation, vaultId);
+    const hasPendingContent = () => knownIds.some(id => realVaultHasUnsavedChanges(id) || realVaultSaveInFlightRef.current.has(id)
+      || (realVaultMoveInFlightRef.current.get(id)?.source === source));
+    const proofBefore = new Map(knownIds.map(id => [id, realVaultReadProofRef.current.get(id)]));
+    const frozen: NotesNativeViewAdapter[] = [];
+    const token = { source, generation, relativePath: folderId, uiPathsReady: false };
+    let dispatched = false, completed = false, treeRefreshAttempted = false, movedIds: string[] = [], completionMessage: string | null = null;
+    realVaultFolderInFlightRef.current = token;
+    setMacFolderBusy(true);
+    setMacFolderStage("running");
+    setMacFolderRecoveryMessage("");
+    try {
+      if (hasPendingContent()) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+      if (operation === "delete" && openIds.length) throw new Error("请先关闭此文件夹中的笔记标签，再删除空文件夹。");
+      for (const binding of bindings) {
+        const id = realVaultNoteId(binding.relativePath), proof = proofBefore.get(id);
+        if (!proof?.fileIdentity || proof.source !== source || proof.generation !== generation)
+          throw new Error(t("editor.notes.status.reopenBeforeMove"));
+        const view = notesNativeViews.get(binding.viewId);
+        if (view.isDirty() || view.isFrozen()) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+        view.freeze(); frozen.push(view);
+        if (view.isDirty()) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+      }
+      if (hasPendingContent() || !isCurrent()) throw new Error(t("editor.notes.status.saveBeforeFileAction"));
+      // Retire pending old-path hydration before native dispatch. A new read
+      // after success must establish authority at the new path.
+      noteLoadRequestRef.current += 1;
+      for (const [paneId, request] of notesPaneLoadRequestRef.current) notesPaneLoadRequestRef.current.set(paneId, request + 1);
+      for (const id of knownIds) realVaultReadProofRef.current.delete(id);
+      dispatched = true;
+      if (operation === "rename" || operation === "move" || operation === "restore") {
+        if (operation === "restore" && (!realVaultDocumentSource.restoreFolder || !argument)) throw new Error("文件夹恢复服务尚未就绪。");
+        const restored = operation === "restore" ? await realVaultDocumentSource.restoreFolder!(argument!) : null;
+        const folder = restored ? { id: restored.newRelativePath || folderId, relativePath: restored.newRelativePath || folderId, folderOperation: restored }
+          : operation === "rename" ? await realVaultDocumentSource.renameFolder(folderId, argument || "")
+            : await realVaultDocumentSource.moveFolder(folderId, argument || "");
+        if (!isCurrent()) return;
+        completed = true;
+        completionMessage = folder.folderOperation?.message || null;
+        const nextPath = folder.relativePath || folder.id;
+        // Publish all path-bearing state in one React commit while the exact
+        // mounted views are still frozen, keeping their editor/undo identity.
+        movedIds = knownIds.map(id => realVaultNoteId(remapFolderPath(realVaultRelativePathFromNoteId(id), folderId, nextPath)));
+        flushSync(() => { rewriteMacFolderRuntimePaths(folderId, nextPath, knownIds); });
+        token.uiPathsReady = true;
+        for (const oldId of openIds) {
+          const newPath = remapFolderPath(realVaultRelativePathFromNoteId(oldId), folderId, nextPath), newId = realVaultNoteId(newPath);
+          const document = await realVaultDocumentSource.openDocument(newPath);
+          if (!isCurrent()) return;
+          const expected = proofBefore.get(oldId);
+          if (expected?.fileIdentity && (document.fileIdentity !== expected.fileIdentity || document.workspaceSourceId !== expected.workspaceSourceId)) {
+            realVaultReadProofRef.current.delete(newId);
+            throw new Error("目录已移动，但其中一篇笔记的对象已变化。请从新位置重新打开，旧内容不会写入替代文件。");
+          }
+          const note = noteFromKnowledgeDocument(document, t("editor.notes.untitled"));
+          realVaultSavedContentRef.current.set(newId, note.contentText || "");
+          realVaultLatestContentRef.current.set(newId, note.contentText || "");
+          realVaultFolderBlockedNotesRef.current.delete(newId);
+          updateNoteLocal(newId, note);
+          const snapshot = { title: noteTitle(note), contentText: note.contentText || "", loaded: true };
+          notesPaneDocumentCacheRef.current.set(newId, snapshot);
+          syncNotesPaneDocumentAcrossPanes(newId, snapshot);
+          if (selectedNoteIdRef.current === newId) {
+            selectedNoteRef.current = note; setSelectedNote(note); setEditTitle(note.title || ""); setEditContent(note.contentText || ""); setSourceContentDraft(null);
+          }
+        }
+        setRealVaultForceOpenFolderIds([nextPath]);
+      } else if (operation === "delete") {
+        const deleted = await realVaultDocumentSource.deleteFolder(folderId);
+        if (!isCurrent()) return;
+        completed = true;
+        token.uiPathsReady = true;
+        completionMessage = (deleted.raw as MacFolderMutationResult | undefined)?.message || null;
+        setSelectedFolderId(current => current && folderContainsPath(folderId, current) ? null : current);
+      }
+      treeRefreshAttempted = true;
+      await loadRealVaultTree({ silent: true, fresh: true, isCurrent, acceptFolderResult: true });
+      if (!isCurrent()) return;
+      recheckAttachments();
+      setMacFolderStage("completed");
+      const success = operation === "rename" ? t("editor.notes.status.folderRenamed") : operation === "move" ? t("editor.notes.status.folderMoved")
+        : operation === "delete" ? "空文件夹已移至恢复区，可在“文件夹恢复”中还原。" : "文件夹已恢复到原位置。";
+      setStatus(completionMessage ? `${success} ${completionMessage}` : success);
+    } catch (error) {
+      if (!isCurrent()) return;
+      if (dispatched) {
+        for (const id of new Set([...knownIds, ...movedIds])) {
+          realVaultReadProofRef.current.delete(id);
+          realVaultFolderBlockedNotesRef.current.add(id);
+        }
+      }
+      if (completed && !treeRefreshAttempted) {
+        // A changed child file does not undo an already committed directory
+        // move. Publish the actual tree so the user can reopen its new path.
+        try { await loadRealVaultTree({ silent: true, fresh: true, isCurrent, acceptFolderResult: true }); } catch { /* Recovery feedback below remains authoritative. */ }
+        if (!isCurrent()) return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const feedback = completed ? `文件夹操作已完成，界面更新未完成：${message} 请从目录重新打开受影响的笔记。`
+        : message;
+      setStatus(feedback);
+      setMacFolderStage(hasPendingContent() && !dispatched ? "blocked-draft" : "interrupted");
+      if (dispatched || error instanceof KnowledgeFolderOperationError) setMacFolderRecoveryMessage(feedback);
+    } finally {
+      for (const view of frozen.reverse()) { try { await view.abort(); } catch { /* A replaced view cannot receive old presentation state. */ } }
+      notesNativeViews.notifyViews();
+      if (realVaultFolderInFlightRef.current === token) {
+        realVaultFolderInFlightRef.current = null; setMacFolderBusy(false);
+        if (!isCurrent()) setMacFolderStage("idle");
+      }
+      if (isCurrent() && dispatched && !completed) {
+        // A rejected/interrupted transaction must release any deferred store
+        // projection as well. The native result may have been lost before a
+        // committed event, so read the current tree once instead of trusting
+        // an old cache. Retained blocked drafts cannot be discarded by it.
+        await loadRealVaultTree({ silent: true, fresh: true, isCurrent, acceptFolderResult: true });
+      }
+      if (isCurrent() && dispatched) await refreshMacFolderRecoveries();
+    }
+  }, [currentVault?.id, loadRealVaultTree, notes, notesPaneTabs, realVaultDocumentSource, realVaultHasUnsavedChanges,
+    recheckAttachments, refreshMacFolderRecoveries, rewriteMacFolderRuntimePaths, syncNotesPaneDocumentAcrossPanes, updateNoteLocal, t]);
 
   const renameFolderFromTree = useCallback(async (folderId: string, name: string) => {
+    if (isMacPlatform()) { await runMacFolderOperation(folderId, "rename", name.trim()); return; }
     const nextName = name.trim();
     if (!nextName) return;
     try {
@@ -5790,9 +6412,10 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       console.warn("[NotesPage] rename real vault folder failed", error);
       setStatus(error instanceof Error ? error.message : t("editor.notes.status.folderRenameFailed"));
     }
-  }, [loadRealVaultTree, realVaultDocumentSource, rewriteRealVaultFolderRuntimePaths, selectNote, t]);
+  }, [loadRealVaultTree, realVaultDocumentSource, rewriteRealVaultFolderRuntimePaths, runMacFolderOperation, selectNote, t]);
 
   const moveFolderFromTree = useCallback(async (folderId: string, targetFolderId: string | null) => {
+    if (isMacPlatform()) { await runMacFolderOperation(folderId, "move", targetFolderId || ""); return; }
     try {
       const folder = await realVaultDocumentSource.moveFolder(folderId, targetFolderId || "");
       const nextPath = normalizeVaultRelativePath(folder.relativePath || folder.id);
@@ -5805,9 +6428,10 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       console.warn("[NotesPage] move real vault folder failed", error);
       setStatus(error instanceof Error ? error.message : t("editor.notes.status.folderMoveFailed"));
     }
-  }, [loadRealVaultTree, realVaultDocumentSource, rewriteRealVaultFolderRuntimePaths, selectNote, t]);
+  }, [loadRealVaultTree, realVaultDocumentSource, rewriteRealVaultFolderRuntimePaths, runMacFolderOperation, selectNote, t]);
 
   const deleteFolderFromTree = useCallback(async (folderId: string) => {
+    if (isMacPlatform()) { await runMacFolderOperation(folderId, "delete"); return; }
     try {
       await realVaultDocumentSource.deleteFolder(folderId);
       setSelectedFolderId((current) => current === folderId ? null : current);
@@ -5817,7 +6441,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
       console.warn("[NotesPage] delete real vault folder failed", error);
       setStatus(error instanceof Error ? error.message : t("editor.notes.status.folderDeleteFailed"));
     }
-  }, [loadRealVaultTree, realVaultDocumentSource, t]);
+  }, [loadRealVaultTree, realVaultDocumentSource, runMacFolderOperation, t]);
 
   const saveRealVaultTagNames = useCallback(async (
     noteId: string,
@@ -6844,7 +7468,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   }, []);
 
   const enterRealVaultMode = useCallback(() => {
-    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
+    if(notesNativeViews.hasFrozenViews() || realVaultFolderInFlightRef.current){setStatus(t("editor.notes.status.safeMovePending"));return;}
     if (!currentVault) {
       setStatus(t("editor.notes.status.setupOrOpenVault"));
       return;
@@ -6862,7 +7486,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   }, [currentVault, loadRealVaultTree, resetActiveDocumentForSource, t]);
 
   const activateRealVault = useCallback((vault: BridgeVaultMetadata, message: string) => {
-    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
+    if(notesNativeViews.hasFrozenViews() || realVaultFolderInFlightRef.current){setStatus(t("editor.notes.status.safeMovePending"));return;}
     // Flush any dirty old-vault draft while the OLD write source is still
     // active: the reset's savePatch captures the write source at entry, and
     // flipping to the new vault first would route an old note's content into
@@ -6897,7 +7521,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   }, [resetActiveDocumentForSource]);
 
   const switchKnownVault = useCallback(async (candidate: BridgeVaultMetadata) => {
-    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
+    if(notesNativeViews.hasFrozenViews() || realVaultFolderInFlightRef.current){setStatus(t("editor.notes.status.safeMovePending"));return;}
     if (candidate.id === currentVault?.id || vaultSwitchInFlightRef.current || !bridge?.openNotesVault) return;
     vaultSwitchInFlightRef.current = candidate.id;
     setSwitchingVaultId(candidate.id);
@@ -6931,7 +7555,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   );
 
   const createVaultFromPicker = useCallback(async () => {
-    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
+    if(notesNativeViews.hasFrozenViews() || realVaultFolderInFlightRef.current){setStatus(t("editor.notes.status.safeMovePending"));return;}
     if (!bridge?.selectVaultDirectory || !bridge?.createNotesVault) {
       setStatus(t("editor.notes.status.createVaultUnsupported"));
       return;
@@ -6949,7 +7573,7 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
   }, [activateRealVault, bridge, t]);
 
   const openVaultFromPicker = useCallback(async () => {
-    if(notesNativeViews.hasFrozenViews()){setStatus(t("editor.notes.status.safeMovePending"));return;}
+    if(notesNativeViews.hasFrozenViews() || realVaultFolderInFlightRef.current){setStatus(t("editor.notes.status.safeMovePending"));return;}
     if (!bridge?.selectVaultDirectory || !bridge?.openNotesVault) {
       setStatus(t("editor.notes.status.openVaultUnsupported"));
       return;
@@ -7418,6 +8042,22 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
 
     return (
       <div className="notes-index-tab notes-index-folder-section">
+        {isMacPlatform() && currentVault ? <details className="notes-folder-recovery" data-folder-recovery-panel="true" open={macFolderRecoveryMessage ? true : undefined}>
+          <summary>文件夹恢复{macFolderRecoveries.some(record => record.canRestore || record.state === "recovery-required") ? " · 有保留记录" : ""}</summary>
+          <p>空文件夹删除后可在这里恢复。中断或知识库切换后的操作，请先检查记录再重试。</p>
+          <button type="button" data-folder-recovery-refresh="true" disabled={macFolderBusy} onClick={() => void refreshMacFolderRecoveries()}>检查恢复记录</button>
+          {macFolderRecoveryMessage && <p role="status">{macFolderRecoveryMessage}</p>}
+          {!macFolderRecoveries.length && <p>当前知识库没有文件夹恢复记录。</p>}
+          {macFolderRecoveries.slice(-20).map(record => <div className="notes-folder-recovery-entry" key={record.operationId}
+            data-folder-recovery-id={record.operationId} data-folder-recovery-path={record.operation === "restore" ? record.newRelativePath || "" : record.oldRelativePath} data-folder-recovery-state={record.state}>
+            <strong>{record.operation === "restore" ? record.newRelativePath || "恢复中的文件夹" : record.oldRelativePath}</strong>
+            <span>{record.operation === "restore" ? record.state === "completed" ? "已恢复" : "恢复结果待确认"
+              : record.newRelativePath ? `→ ${record.newRelativePath}` : record.canRestore ? "已保留，可恢复" : "当前记录不可直接恢复"}</span>
+            <span>{record.state === "completed" ? "已完成" : record.state === "unchanged" ? "未改变" : "需要检查"}{record.message ? `：${record.message}` : ""}</span>
+            {record.canRestore && <button type="button" data-folder-restore={record.operationId} disabled={macFolderBusy}
+              onClick={() => void runMacFolderOperation(record.newRelativePath || record.oldRelativePath, "restore", record.operationId)}>恢复文件夹</button>}
+          </div>)}
+        </details> : null}
         <FolderTree
           key={`${currentVault?.id || ""}:${currentVault?.rootPath || ""}`}
           folders={treeFolders}
@@ -7441,6 +8081,10 @@ ${requestContent.slice(0, 4000) || "（空文档）"}
           onRename={renameFolderFromTree}
           onDelete={deleteFolderFromTree}
           onMove={moveFolderFromTree}
+          onPrepareMutation={isMacPlatform() ? prepareMacFolderMutation : undefined}
+          interactionDisabled={macFolderBusy}
+          hideDeleteSkipConfirm={isMacPlatform() || undefined}
+          deleteDescription={isMacPlatform() ? folder => `将空文件夹“${folder.name}”移至恢复区？删除后可在“文件夹恢复”中还原。` : undefined}
           onMoveDocument={notesIndexDocumentMove}
           onDropRejected={notesIndexDropRejected}
           nativeExternalDropEnabled={false}
@@ -8618,7 +9262,11 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
   return (
     <NoteRouteVisibilityContext.Provider value={visible}>
     <NoteFilenameContext.Provider value={{ rename: commitFilename, namingId: namingNoteId, busyId: renamingNoteId, finish: id => setNamingNoteId(current => current === id ? null : current), focusBody: () => { requestAnimationFrame(focusActiveEditor); } }}>
-    <div id="page-notes" className="page" {...vaultFileDrop} style={{ "--notes-index-width": `${visibleNotesIndexWidth}px` } as CSSProperties}>
+    <div id="page-notes" className="page" data-folder-operation-pending={macFolderBusy ? "true" : undefined}
+      data-folder-operation-stage={isMacPlatform() ? macFolderStage : undefined}
+      data-folder-unsaved={isMacPlatform() && realVaultUserDirtyRef.current.size > 0 ? "true" : undefined}
+      data-folder-save-pending={isMacPlatform() && realVaultSaveInFlightRef.current.size > 0 ? "true" : undefined}
+      {...vaultFileDrop} style={{ "--notes-index-width": `${visibleNotesIndexWidth}px` } as CSSProperties}>
       <div className="notes-layout">
         <div className="editor-pane active-pane">
           <div ref={editorRowRef} className={`editor-row${notesPaneLayout ? " notes-split-open" : ""}${panelOpen ? " index-open" : ""}${attachmentSidebarOpen ? " attachments-open" : ""}`}
@@ -8950,6 +9598,7 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
           <div className="note-ctx-sep-react" />
           <div
             className="note-ctx-item-react"
+            data-note-action="rename"
             onClick={() => {
               setRenameDocumentRequest({ documentId: noteCtx.note.id, nonce: Date.now() });
               setNoteCtx(null);

@@ -1,0 +1,77 @@
+name: macOS product candidate internal validation
+
+# Review proposal for this public candidate branch only. The full internal
+# scope builds the app with its existing test features and exercises the
+# existing native-data, Notes/Graph and LSH automation. It does not validate
+# production-only feature startup, native menu Quit or Cmd+Q. Ad-hoc signing
+# is not Developer ID signing, notarization, installation or distribution.
+# Only the typed summary is printed; generated reports, screenshots, app
+# bundles and dependencies stay on the runner. Raw validation output is discarded.
+on:
+  push:
+    branches: [codex/mac-product-candidate-20261105]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-product-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-internal-validation:
+    if: >-
+      github.repository == 'xiaorui2886/LuckyRay' &&
+      github.event.repository.private == false &&
+      github.ref == 'refs/heads/codex/mac-product-candidate-20261105'
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: '2'
+      MACOS_VALIDATION_SCOPE: full
+    defaults:
+      run:
+        shell: bash
+        working-directory: luckyray-app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Record and require the native Apple Silicon runner
+        run: |
+          echo "ImageOS=${ImageOS:-unknown} ImageVersion=${ImageVersion:-unknown}"
+          sw_vers
+          uname -m
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          node --version
+          npm --version
+      - name: Create a disposable worktree of the exact reviewed source
+        working-directory: ${{ github.workspace }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git worktree add --detach "$RUNNER_TEMP/luckyray-macos-internal" "$GITHUB_SHA"
+      - name: Set the pinned Rust toolchain and target
+        working-directory: ${{ runner.temp }}/luckyray-macos-internal/luckyray-app
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin
+          rustup override set 1.95.0
+          rustc -vV
+      - name: Stage the pinned official FFmpeg source for this worktree
+        working-directory: ${{ runner.temp }}/luckyray-macos-internal/luckyray-app
+        run: node scripts/fetch-macos-app-source.mjs
+      - name: Build the real app and validate the full internal scope
+        working-directory: ${{ runner.temp }}/luckyray-macos-internal/luckyray-app
+        # Re-project the stored report after discarding bootstrap and raw child
+        # output. A failed validation keeps its real exit status even when the
+        # restricted summary is successfully printed. Source gates are intact.
+        run: |
+          macos_validation_exit=0
+          npm exec --yes --package=pnpm@11.25.0 -- node scripts/check-macos-internal.mjs > /dev/null 2>&1 || macos_validation_exit=$?
+          macos_summary_exit=0
+          node scripts/check-macos-internal.mjs --print-summary || macos_summary_exit=$?
+          if [ "$macos_validation_exit" -ne 0 ]; then
+            exit "$macos_validation_exit"
+          fi
+          exit "$macos_summary_exit"

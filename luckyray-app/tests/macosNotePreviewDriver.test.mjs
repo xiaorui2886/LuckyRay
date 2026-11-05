@@ -6,7 +6,7 @@ import vm from "node:vm";
 import { FIXTURE } from "../scripts/check-macos-material-flow.mjs";
 import { noteScenarioRecord, safeNotePhase, emptyNoteFlow } from "../scripts/check-macos-note-flow.mjs";
 import { PHASES, publishableReport, summarizeBuildResult } from "../scripts/check-macos-internal.mjs";
-import { NOTE_DATA_CASES } from "../scripts/check-macos-note-data.mjs";
+import { INTEGRATION_NATIVE_CASES } from "../scripts/check-macos-note-data.mjs";
 
 const source = await readFile(new URL("../src-tauri/src/macos_note_flow_driver.js", import.meta.url), "utf8");
 const pageSource = await readFile(new URL("../src/features/notes/NotesPage.tsx", import.meta.url), "utf8");
@@ -231,7 +231,7 @@ test("only bounded failure observations survive both report projections", async 
   assert.equal(phase.previewObservation.mediaState, "loading");assert(!JSON.stringify(phase).includes(canary));
   const build = summarizeBuildResult({ version: "1.9.9", target: "aarch64-apple-darwin", sidecars: ["luckyray-native-host", "luckyray-cli", "luckyray-mcp"],
     mediaFiles: 1, dshFiles: 1, distribution: { readyToPackage: false, sourceInputsSha256: "a".repeat(64), providedSourceInputs: 1, providedSourceBytes: 1, missingRequirements: [{ id: "missing-source" }] } });
-  const data = { status: "passed", compiled: true, failure: "none", cases: NOTE_DATA_CASES.map(({ id }) => ({ id, status: "passed", exit: 0 })) };
+  const data = { status: "passed", compiled: true, failure: "none", cases: INTEGRATION_NATIVE_CASES.map(({ id }) => ({ id, status: "passed", exit: 0 })) };
   const internal = { schemaVersion: 1, mode: "internal-native-validation", status: "failed", binaryExport: false, workerExit: 1, workerSignal: null,
     source: { repository: "xiaorui2886/LuckyRay", commit: "a".repeat(40), tree: "b".repeat(40) }, build, noteData: data, lsh: null,
     notesUi: { ...emptyNoteFlow(), status: "failed", sourceUnchanged: true, exercise: phase }, distributionReady: false, diagnostics: {},

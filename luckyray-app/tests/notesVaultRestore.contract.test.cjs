@@ -93,6 +93,26 @@ test('production cached and revalidated loaders pass snapshot identity', async (
   assert.deepEqual(plain(h.state.OpenTabs).map(tab => tab.id), [shared]);
 });
 
+test('a stale move-triggered tree load cannot apply or report into another vault', async () => {
+  const h = harness();
+  h.context.currentVault = { id: 'A' };
+  let finish;
+  let current = true;
+  h.context.knowledgeStore = {
+    getSnapshot: () => ({ loaded: false }),
+    revalidate: () => new Promise(resolve => { finish = resolve; }),
+  };
+  vm.runInContext(ts.transpileModule(`${extract('loadRealVaultTree')} this.load = loadRealVaultTree;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, h.context);
+  const pending = h.context.load({ silent: true, fresh: true, isCurrent: () => current });
+  current = false;
+  h.state.Notes = [{ id: 'vault-B-note' }];
+  h.state.Status = 'vault B status';
+  finish({ loaded: true, mode: 'real-vault', vault: { id: 'A' }, tree, markdownIndex: {} });
+  await pending;
+  assert.deepEqual(h.state.Notes, [{ id: 'vault-B-note' }]);
+  assert.equal(h.state.Status, 'vault B status');
+});
+
 test('production knowledge-store subscription restores the emitted vault snapshot', () => {
   const h = harness();
   h.save('A', [shared]); h.save('B', [second]);

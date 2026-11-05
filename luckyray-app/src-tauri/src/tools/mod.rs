@@ -1042,6 +1042,7 @@ impl ToolError {
                 "Knowledge operation no longer targets the current Vault"
             }
             "knowledge-revision-conflict" => "Knowledge document revision changed",
+            "knowledge-create-unconfirmed" => "The document may already have been created. Check the original Vault before retrying",
             "knowledge-name-conflict" => "Knowledge document already exists",
             "knowledge-parent-missing" => "Knowledge document parent folder does not exist",
             "knowledge-not-found" | "knowledge-document-not-found" => {
@@ -1071,6 +1072,7 @@ impl ToolError {
             "tool-risk-denied" | "capability-disabled" => 403,
             "request-id-conflict"
             | "knowledge-revision-conflict"
+            | "knowledge-create-unconfirmed"
             | "knowledge-name-conflict"
             | "knowledge-vault-not-current" => 409,
             "tool-input-too-large" | "tool-output-too-large" => 413,
@@ -5606,6 +5608,17 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn uncertain_note_creation_keeps_the_code_and_retry_guidance() {
+        let failure = ToolError::from_knowledge(crate::knowledge::KnowledgeError {
+            code: "knowledge-create-unconfirmed", message: "private fixture path".into(),
+        });
+        assert_eq!(failure.code, "knowledge-create-unconfirmed");
+        assert_eq!(failure.status(), 409);
+        assert!(failure.message.contains("Check the original Vault before retrying"));
+        assert!(!failure.message.contains("private fixture"));
+    }
 
     static SEQUENCE: AtomicUsize = AtomicUsize::new(1);
 

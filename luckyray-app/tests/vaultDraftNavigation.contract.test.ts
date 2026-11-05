@@ -15,7 +15,7 @@ const changeStart = source.indexOf('    setEditContent(value);', source.indexOf(
 const changeEnd = source.indexOf('  }, [scheduleActiveNoteContext', changeStart);
 const changeContent = new Function('context', `with(context) { ${source.slice(changeStart, changeEnd)} }`);
 
-function fixture() {
+function fixture(mac = false) {
   const vaultSession=createVaultSessionAuthority();vaultSession.begin('fixture-vault');
   const state: Record<string, any> = {
     liveEditorRef:{current:null}, mediaViewportLinesRef:{current:new Map()},
@@ -40,7 +40,7 @@ function fixture() {
     notes: [{id:'A', title:'A', contentText:'unsaved draft'}],
     realVaultDocumentSource: { openDocument: async () => ({id:'A',title:'A',contentText:'baseline'}) },
     realVaultRelativePathFromNoteId: (id: string) => id,
-    realVaultNoteId: (id: string) => id, isRealVaultNoteId: () => true,
+    realVaultNoteId: (id: string) => id, isRealVaultNoteId: () => true, isMacPlatform: () => mac,
     noteFromKnowledgeDocument: (doc: unknown) => ({...(doc as object)}), noteTitle: () => 'A',
     nextOpenTabsForNote: () => [], createEmptyNoteTab: () => ({ id: 'empty' }), isEmptyNoteTab: () => false,
     window: { requestAnimationFrame: () => {}, setTimeout: () => {}, dispatchEvent: () => {} },
@@ -58,6 +58,18 @@ function fixture() {
   }});
   return { state, run: () => navigate(proxy), type: (value: string) => { state.value = value; changeContent(proxy); } };
 }
+
+test('Mac navigation uses the current selection ref when the rendered selection is stale', async () => {
+  const {state, run} = fixture(true);
+  let commits = 0;
+  state.selectedNoteId = 'A';
+  state.selectedNoteIdRef.current = 'B';
+  state.commitCurrentEditorDraftRef.current = () => { commits++; };
+  await run();
+  assert.equal(commits, 1);
+  assert.equal(state.displayed, 'unsaved draft');
+  assert.equal(state.realVaultUserDirtyRef.current.has('A'), true);
+});
 
 test('cold navigation after failed save preserves existing draft and dirty authority', async () => {
   const {state, run} = fixture();

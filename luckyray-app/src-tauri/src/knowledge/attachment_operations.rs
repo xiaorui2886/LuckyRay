@@ -517,6 +517,13 @@ impl KnowledgeService {
         &self, vault: &TrustedVault, input: &KnowledgeMoveInput,
         destination: &str, original: &[u8],
     ) -> Result<Vec<u8>, KnowledgeError> {
+        // Renaming within a directory does not change the base of a relative
+        // attachment link. Preserve its exact bytes, including link syntaxes
+        // that cannot be rewritten safely for a move to another directory.
+        #[cfg(target_os = "macos")]
+        if Path::new(&input.document_ref.relative_path).parent() == Path::new(destination).parent() {
+            return Ok(original.to_vec());
+        }
         let decoded = decode_document(original)?;
         let mut patches = Vec::new();
         for link in attachment_links(&decoded.content) {

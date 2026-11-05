@@ -5,13 +5,14 @@ import ts from "typescript";
 import * as access from "../src/core/services/companionAccess.ts";
 import * as gateway from "../src/core/services/companionGateway.ts";
 import * as presentation from "../src/core/services/companionPresentationStore.ts";
+import { isMacPlatform } from "../src/app/macosPresentation.ts";
 const drain = () => new Promise<void>(resolve => setImmediate(resolve));
 const nodes = (value: any): any[] => !value || typeof value !== "object" ? [] : Array.isArray(value) ? value.flatMap(nodes) : [value, ...nodes(value.props?.children)];
 
 // Execute real component functions/handlers against the real store. Only React
 // scheduling, the native transport and modal/locale seams are mocked. This is
 // UI-prop evidence, not a browser paint/focus or Windows cursor measurement.
-function component(store: presentation.CompanionPresentationStore, file: string, internal?: string) {
+function component(store: presentation.CompanionPresentationStore, file: string, internal?: string, platform = "Win32") {
   const slots: any[] = []; let cursor = 0;
   const hooks = {
     useState(initial: any) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === "function" ? initial() : initial; return [slots[i], (value: any) => { slots[i] = typeof value === "function" ? value(slots[i]) : value; }]; },
@@ -26,8 +27,9 @@ function component(store: presentation.CompanionPresentationStore, file: string,
     if (id === "react") return hooks;
     if (id === "react-dom") return { createPortal: (child: any) => child };
     if (id === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    if (id.endsWith("macosPresentation")) return { isMacPlatform: () => isMacPlatform(platform) };
     if (id.endsWith("companionAccess")) return access;
-    if (id.endsWith("companionGateway")) return gateway;
+    if (id.endsWith("companionGateway")) return { ...gateway, canRetryMacIdentity: (status: gateway.CompanionGatewayStatus | null) => gateway.canRetryMacIdentity(status, platform) };
     if (id.endsWith("companionPresentationStore")) return presentation;
     if (id.endsWith("CompanionGatewayPanel")) return { COMPANION_COPY: {}, gatewayErrorMessage: () => "error" };
     if (id.endsWith("PhoneAccessManager")) return { default: () => null };
@@ -40,6 +42,72 @@ function component(store: presentation.CompanionPresentationStore, file: string,
   }, exports, { body: {}, visibilityState: "visible", querySelector: () => null });
   return () => { cursor = 0; return nodes((internal ? exports.testComponent : exports.default)({ store, deviceId: "a" })); };
 }
+
+test("real quick connection view selects Mac or Windows reachability guidance", async () => {
+  const f = fixture(); const close = f.store.open(Symbol("quick")); await drain();
+  for (const platform of ["MacIntel", "Win32"]) {
+    const quick = component(f.store, "PhoneConnectionDialog.tsx", "PhoneConnectionContents", platform);
+    const text = quick().filter(node => node.type === "p").map(node => node.props.children);
+    assert.equal(text.includes(platform === "MacIntel" ? "gateway.reachabilityMac" : "gateway.reachability"), true);
+    assert.equal(text.includes(platform === "MacIntel" ? "gateway.reachability" : "gateway.reachabilityMac"), false);
+  }
+  close(); f.store.dispose();
+});
+
+test("real Mac quick connection preserves a failed unlock retry and refreshes after success", async () => {
+  let status: gateway.CompanionGatewayStatus = { state: "recovery-required", code: "companion-secret-unavailable" };
+  let attempts = 0;
+  let complete!: () => void;
+  const client = gateway.createCompanionGatewayClient(async command => {
+    if (command === "companion_gateway_status") return structuredClone(status);
+    if (["companion_gateway_list_devices", "companion_gateway_list_interfaces", "companion_gateway_list_audit"].includes(command)) return [];
+    if (command === "companion_gateway_retry_identity") {
+      attempts++;
+      if (attempts === 1) throw { code: "companion-secret-unavailable" };
+      await new Promise<void>(resolve => { complete = resolve; });
+      status = { state: "disabled", desktopInstanceId: "unchanged-desktop", certificateFingerprint: "unchanged-fingerprint" };
+      return status;
+    }
+    throw Error(`unexpected mutation ${command}`);
+  });
+  const store = presentation.createCompanionPresentationStore(client);
+  const close = store.open(Symbol("quick-retry"));
+  const quick = component(store, "PhoneConnectionDialog.tsx", "PhoneConnectionContents", "MacIntel");
+  const retry = () => quick().find(node => node.type === "button" && node.props.children === "gateway.retryIdentity");
+  try {
+    await drain();
+    assert.equal(retry().props.disabled, false);
+    retry().props.onClick(); await drain(); await drain();
+    assert.equal(attempts, 1);
+    assert.equal((store.getSnapshot().error as { code: string }).code, "companion-secret-unavailable");
+    assert.equal(retry().props.disabled, false);
+    retry().props.onClick();
+    assert.equal(retry().props.disabled, true);
+    complete(); await drain(); await drain();
+    assert.equal(attempts, 2);
+    assert.equal(retry(), undefined);
+    assert.equal(store.getSnapshot().status?.state, "disabled");
+    assert.equal(store.getSnapshot().error, null);
+  } finally { close(); store.dispose(); }
+});
+
+test("real quick connection hides retry for Windows and incomplete identity recovery", async () => {
+  for (const [platform, code] of [["Win32", "companion-secret-unavailable"], ["MacIntel", "companion-secret-recovery-required"]]) {
+    const client = gateway.createCompanionGatewayClient(async command => {
+      if (command === "companion_gateway_status") return { state: "recovery-required", code };
+      if (["companion_gateway_list_devices", "companion_gateway_list_interfaces", "companion_gateway_list_audit"].includes(command)) return [];
+      throw Error(command);
+    });
+    const store = presentation.createCompanionPresentationStore(client);
+    const close = store.open(Symbol("quick-recovery"));
+    try {
+      await drain();
+      const quick = component(store, "PhoneConnectionDialog.tsx", "PhoneConnectionContents", platform);
+      assert.equal(quick().some(node => node.type === "button" && node.props.children === "gateway.retryIdentity"), false);
+      assert.equal(quick().find(node => node.type === "button" && node.props.children === "gateway.start").props.disabled, true);
+    } finally { close(); store.dispose(); }
+  }
+});
 
 function fixture() {
   const status = { state: "running", desktopInstanceId: "fixture-desktop", certificateFingerprint: "f".repeat(64), generation: 1, bindAddress: "192.168.1.20", port: 40000 };

@@ -144,6 +144,8 @@ windows = { version = "=0.61.3", optional = true, features = [
 libc = "=0.2.186"
 drag = "=2.1.1"
 image = { version = "=0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+core-foundation = "=0.10.1"
+security-framework = "=3.7.0"
 
 [dev-dependencies]
 rmcp = { version = "=2.0.0", default-features = false, features = ["client", "transport-child-process"] }

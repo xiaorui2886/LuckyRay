@@ -60,6 +60,8 @@ test("one bounded official request stages verified bytes for the unchanged impor
       assert.equal(args[0], "-q");
       for (const flag of ["--fail", "--no-insecure", "--no-proxy-insecure", "--connect-timeout", "--max-time", "--max-filesize", "--proto", "--max-redirs"])
         assert(args.includes(flag));
+      assert.equal(args[args.indexOf("--connect-timeout") + 1], "45");
+      assert.equal(args[args.indexOf("--max-time") + 1], "120");
       assert.equal(args[args.indexOf("--max-filesize") + 1], String(payload.length));
       assert.equal(args[args.indexOf("--proto") + 1], "=https");
       assert.equal(args[args.indexOf("--max-redirs") + 1], "0");

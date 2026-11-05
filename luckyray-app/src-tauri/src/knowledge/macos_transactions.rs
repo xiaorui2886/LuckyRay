@@ -181,13 +181,15 @@ pub(super) fn write_at(
     let journal_file = dir
         .create(OsStr::new(&journal), &journal_bytes)
         .map_err(|_| failed())?;
-    let staged_version = created_version(&dir, &backup, &staged_file, &record.after)?;
+    created_version(&dir, &backup, &staged_file, &record.after)?;
     let journal_version = created_version(&dir, &journal, &journal_file, &digest(&journal_bytes))?;
     let checked = dir.read(OsStr::new(name)).map_err(|_| failed())?;
     if fail_before_commit || checked.as_ref().map(|(_, v)| v) != before.as_ref().map(|(_, v)| v) {
-        if cleanup(&dir, &backup, &staged_version) {
-            cleanup(&dir, &journal, &journal_version);
-        }
+        // A path can be replaced after an identity check and before unlinkat.
+        // Keep the staged bytes and archive their intent. The recovery view
+        // can offer the draft without leaving an ordinary conflict pending.
+        // Never delete a name which may now refer to another writer's object.
+        archive(&dir, &record, &journal_version)?;
         return Err(if fail_before_commit {
             error(
                 "knowledge-write-failed",
@@ -267,13 +269,14 @@ pub(super) fn write_at(
     {
         return Err(conflict());
     }
-    if before.is_some() {
-        // Keep the displaced inode reachable: another editor may still write
-        // through an already-open descriptor after this commit returns.
-        let _ = archive(&dir, &record, &journal_version);
-    } else {
-        cleanup(&dir, &journal, &journal_version);
-    }
+    // Keep the displaced inode reachable: another editor may still write
+    // through an already-open descriptor after this commit returns. A create
+    // has no displaced inode, but its journal is retained rather than unlinked
+    // through a name that could have been replaced concurrently.
+    // If the journal cannot be bound after the name change, the data write may
+    // already have happened. Preserve every object and report recovery rather
+    // than claiming an unambiguous completion.
+    archive(&dir, &record, &journal_version)?;
     let checkpoint=super::macos_attachment_io::checkpoint_held(dir,OsStr::new(name),&staged_file,false).map_err(|_|conflict())?;
     require_empty_acl(&staged_file).map_err(|_|failed())?;
     let final_meta=staged_file.metadata().map_err(|_|failed())?;
@@ -366,9 +369,6 @@ fn created_version(
         return Err(conflict());
     }
     Ok(version)
-}
-fn cleanup(dir: &Directory, name: &str, expected: &Version) -> bool {
-    dir.remove(OsStr::new(name), expected).is_ok()
 }
 pub(super) fn recover_directory(dir: &Directory) -> Result<(), KnowledgeError> {
     for entry in dir.entries().map_err(|_| failed())? {

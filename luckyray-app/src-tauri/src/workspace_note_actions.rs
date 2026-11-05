@@ -39,7 +39,7 @@ pub(crate) fn rename_note(scope: &KnowledgeService, view: &ViewGrant, correlatio
     let (reference, identity, document) = validate_note(scope, view, correlation, content)?;
     validate_title(title)?;
     if document.summary.title == title.trim() { return Ok(document); }
-    let renamed = scope.move_document_for_target(&identity, &KnowledgeMoveInput { document_ref: reference.clone(), title: title.into(), expected_revision: correlation.revision.clone(), parent_relative_path: None }).map_err(crate::knowledge_error)?;
+    let renamed = scope.move_document_for_target(&identity, &KnowledgeMoveInput { document_ref: reference.clone(), title: title.into(), expected_revision: correlation.revision.clone(), parent_relative_path: None, expected_file_identity: None }).map_err(crate::knowledge_error)?;
     if renamed.summary.document_ref == reference && renamed.revision != correlation.revision { return Err("knowledge-revision-conflict".into()); }
     Ok(renamed)
 }

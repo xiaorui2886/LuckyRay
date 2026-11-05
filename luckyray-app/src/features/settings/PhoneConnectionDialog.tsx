@@ -1,10 +1,11 @@
 import PhoneAuthorizationChoice, { PHONE_AUTHORIZATION_COPY } from "./PhoneAuthorizationChoice";
-import type { CompanionAuthorizationMode } from "../../core/services/companionGateway";
+import { canRetryMacIdentity, type CompanionAuthorizationMode } from "../../core/services/companionGateway";
 import PhoneAccessManager from "./PhoneAccessManager";
 import { companionInterfaceHint, orderedCompanionInterfaces, selectedCompanionAddress } from "../../core/services/companionAccess";
 import { useState } from "react";
 import { defineMessages, useMessages } from "../../core/i18n/index";
 import { useApplicationModalSurface } from "../../app/applicationModalIsolation";
+import { isMacPlatform } from "../../app/macosPresentation";
 import { companionDeviceDisplayLabel, companionGrantKey, companionOnlineCount, type CompanionPresentationStore } from "../../core/services/companionPresentationStore";
 import type { CompanionServiceGrantState, PairedCompanionDevice } from "../../core/services/companionGateway";
 import { COMPANION_COPY, gatewayErrorMessage } from "./CompanionGatewayPanel";
@@ -83,6 +84,7 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
   const interfaces = orderedCompanionInterfaces(state.interfaces);
   const selectedAddress = selectedCompanionAddress(address, interfaces, state.status);
   const resumeFailed = state.status?.state === "resume-failed";
+  const retryIdentity = canRetryMacIdentity(state.status);
   const [revoke, setRevoke] = useState<PairedCompanionDevice | null>(null);
   const revokeModal = useApplicationModalSurface<HTMLDivElement>(Boolean(revoke), () => setRevoke(null));
   const running = state.status?.state === "running", pairing = state.pairingOwner === owner ? state.pairing : null;
@@ -117,7 +119,7 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
         {presentationError ? <p className="phone-error" role="alert">{localError(presentationError)}</p> : null}
         <div className="phone-pairing-area">
           {running && state.status?.state === "running" && <p className="phone-listening-address">{t("gateway.listen")}: {state.status.bindAddress}:{state.status.port}</p>}
-          {running && <p>{t("gateway.reachability")}</p>}
+          {running && <p>{isMacPlatform() ? t("gateway.reachabilityMac") : t("gateway.reachability")}</p>}
           {running ? <>
             {pairing || preparing ? <><div className="phone-qr-frame" aria-busy={preparing}>{pairing ? <svg viewBox={`-4 -4 ${pairing.qrSize + 8} ${pairing.qrSize + 8}`}
               role="img" aria-label={t("pair.qr")} shapeRendering="crispEdges">
@@ -140,8 +142,10 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
               {!interfaces.length && !resumeFailed && <option value="">{t("gateway.noInterface")}</option>}
               {resumeFailed && selectedAddress && !interfaces.some(item => item.address === selectedAddress) && <option value={selectedAddress}>{selectedAddress}</option>}
               {interfaces.map(item => <option key={item.interfaceId} value={item.address}>{item.name} · {item.address}{companionInterfaceHint(item) === "virtual" ? ` · ${t("gateway.virtual")}` : ""}</option>)}</select></label>
-            <button type="button" className="primary" disabled={Boolean(state.busy) || !state.status || !selectedAddress || !(state.status.state === "disabled" || resumeFailed)}
-              onClick={() => void store.run("start", client => client.start(selectedAddress))}>{t(resumeFailed ? "gateway.retry" : "gateway.start")}</button>
+            {retryIdentity ? <><p>{t("gateway.retryIdentityHint")}</p><button type="button" className="primary" disabled={Boolean(state.busy)}
+              onClick={() => void store.run("retry-identity", client => client.retryIdentity())}>{t("gateway.retryIdentity")}</button></> :
+              <button type="button" className="primary" disabled={Boolean(state.busy) || !state.status || !selectedAddress || !(state.status.state === "disabled" || resumeFailed)}
+                onClick={() => void store.run("start", client => client.start(selectedAddress))}>{t(resumeFailed ? "gateway.retry" : "gateway.start")}</button>}
             {resumeFailed && <button type="button" disabled={Boolean(state.busy)} onClick={() => void store.run("stop", client => client.stop())}>{t("gateway.stop")}</button>}
             <p>{t("gateway.interfaceHint")}</p>
             <p>{t("quick.networkHint")}</p></>}

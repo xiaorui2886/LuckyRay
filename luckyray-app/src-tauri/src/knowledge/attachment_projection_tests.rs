@@ -505,6 +505,7 @@ fn projection_note_move_keeps_real_targets_and_moves_index_rows() {
             title: "moved".into(),
             expected_revision: revision,
             parent_relative_path: Some("nested".into()),
+            expected_file_identity: None,
         },
         epoch,
     )
@@ -574,6 +575,7 @@ fn projection_note_move_retains_missing_attachment_relationship() {
             title: "moved".into(),
             expected_revision: revision,
             parent_relative_path: Some("nested".into()),
+            expected_file_identity: None,
         },
         epoch,
     )

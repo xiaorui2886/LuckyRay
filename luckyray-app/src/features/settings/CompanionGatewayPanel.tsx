@@ -4,11 +4,13 @@ import PhoneAccessManager from "./PhoneAccessManager";
 import { companionInterfaceHint, orderedCompanionInterfaces, selectedCompanionAddress } from "../../core/services/companionAccess";
 import { useEffect, useRef, useState } from "react";
 import { useApplicationModalSurface } from "../../app/applicationModalIsolation";
+import { isMacPlatform } from "../../app/macosPresentation";
 import { useCompanionStore, useCompanionView } from "./CompanionPresentation";
 import { companionDeviceDisplayLabel, companionGrantKey, type CompanionPresentationStore } from "../../core/services/companionPresentationStore";
 
 import {
   assertCanonicalPairingEnvelope,
+  canRetryMacIdentity,
   type CompanionServiceGrantState,
   type EndpointRecoveryPresentation,
 
@@ -43,6 +45,7 @@ export const COMPANION_COPY = defineMessages({
   "gateway.virtual": { "zh-CN": "疑似虚拟/VPN", "en-US": "Possible virtual/VPN" },
   "gateway.interfaceHint": { "zh-CN": "优先选择与手机同网的以太网或 Wi-Fi。虚拟机、VPN 等地址可能只在电脑内部可用；名称仅作提示。", "en-US": "Choose Ethernet or Wi-Fi on the phone's network first. VM and VPN addresses may be local to this computer; names are only hints." },
   "gateway.reachability": { "zh-CN": "服务已在此地址监听。手机可达性仍取决于同网、路由和专用网络防火墙权限；列表中的地址不代表都能连接。", "en-US": "Listening on this address. Phone reachability still depends on the shared network, routing and Private-network firewall access; listed addresses are not guaranteed reachable." },
+  "gateway.reachabilityMac": { "zh-CN": "服务已在此地址监听。手机可达性仍取决于同网、路由及 macOS 防火墙或局域网权限；列表中的地址不代表都能连接。", "en-US": "Listening on this address. Phone reachability still depends on the shared network, routing and macOS firewall or local network access; listed addresses are not guaranteed reachable." },
   "gateway.interface": { "zh-CN": "局域网接口", "en-US": "Local network interface" },
   "gateway.noInterface": { "zh-CN": "没有安全的局域网 IPv4 接口", "en-US": "No safe local IPv4 interface" },
   "gateway.listen": { "zh-CN": "监听地址", "en-US": "Listening address" },
@@ -50,12 +53,16 @@ export const COMPANION_COPY = defineMessages({
   "gateway.fingerprint": { "zh-CN": "证书指纹", "en-US": "Certificate fingerprint" },
   "gateway.start": { "zh-CN": "启动连接服务", "en-US": "Start connection service" },
   "gateway.retry": { "zh-CN": "重试原地址", "en-US": "Retry saved address" },
+  "gateway.retryIdentity": { "zh-CN": "重试读取钥匙串", "en-US": "Retry Keychain access" },
+  "gateway.retryIdentityHint": { "zh-CN": "无法读取 Mac 钥匙串。请解锁钥匙串或允许 LuckyRay 访问后重试，原有配对信息会保留。", "en-US": "The Mac Keychain could not be read. Unlock it or allow LuckyRay access, then retry; existing pairings will be retained." },
   "gateway.resumeFailed": { "zh-CN": "未能恢复原连接地址。可以重试，或停止后重新选择接口。", "en-US": "The saved connection address could not resume. Retry, or Stop before choosing another interface." },
   "gateway.pair": { "zh-CN": "连接新手机", "en-US": "Connect a new phone" },
   "gateway.restart": { "zh-CN": "重启", "en-US": "Restart" },
   "gateway.stop": { "zh-CN": "停止", "en-US": "Stop" },
   "firewall.title": { "zh-CN": "Windows 防火墙由你决定", "en-US": "You control Windows Firewall access" },
   "firewall.description": { "zh-CN": "若系统询问网络访问，仅允许“专用网络”。LuckyRay 不会自动创建或修改防火墙规则。", "en-US": "If Windows asks, allow Private networks only. LuckyRay never creates or changes firewall rules automatically." },
+  "firewall.titleMac": { "zh-CN": "macOS 网络权限", "en-US": "macOS network access" },
+  "firewall.descriptionMac": { "zh-CN": "若 macOS 询问局域网或传入连接权限，请按需允许。LuckyRay 不会自动修改防火墙设置。", "en-US": "If macOS asks for local network or incoming connection access, allow it if needed. LuckyRay does not change firewall settings automatically." },
   "devices.title": { "zh-CN": "已配对设备", "en-US": "Paired devices" },
   "devices.empty": { "zh-CN": "还没有已配对设备。启动服务后生成一次性配对码。", "en-US": "No paired devices yet. Start the service to generate a one-time pairing code." },
   "devices.revoked": { "zh-CN": "已撤销", "en-US": "Revoked" },
@@ -110,6 +117,7 @@ export const COMPANION_COPY = defineMessages({
   "recovery.copied": { "zh-CN": "已复制", "en-US": "Copied" },
   "recovery.copyFailed": { "zh-CN": "复制失败，请重试", "en-US": "Copy failed; retry" },
   "error.firewall": { "zh-CN": "Windows 拒绝绑定此地址或端口，可能涉及系统保留端口或网络策略；尚不能确定是防火墙。", "en-US": "Windows denied binding this address or port. An excluded port or network policy may be involved; a firewall cause has not been established." },
+  "error.firewallMac": { "zh-CN": "macOS 拒绝绑定此地址或端口，可能涉及系统网络策略；尚不能确定是防火墙。", "en-US": "macOS denied binding this address or port. A system network policy may be involved; a firewall cause has not been established." },
   "error.rateLimited": { "zh-CN": "配对码生成过于频繁，请稍后再试。", "en-US": "Pairing codes were requested too quickly. Try again later." },
   "error.transition": { "zh-CN": "连接服务正在切换状态，请稍后再试。", "en-US": "The connection service is changing state. Try again shortly." },
   "error.listenerConfig": { "zh-CN": "无法读取或保存监听配置。请停止服务后重新启动；若仍失败，请检查本地数据访问权限。", "en-US": "The listener configuration could not be read or saved. Stop and start again; if it still fails, check access to local app data." },
@@ -160,7 +168,7 @@ export function gatewayErrorMessage(error: unknown, t: ReturnType<typeof useMess
     return t("error.interfaceInvalid");
   }
   if (code === "gateway-bind-conflict") return t("error.bindConflict");
-  if (code === "gateway-bind-access-denied" || code === "firewall/manual-permission-required") return t("error.firewall");
+  if (code === "gateway-bind-access-denied" || code === "firewall/manual-permission-required") return isMacPlatform() ? t("error.firewallMac") : t("error.firewall");
   if (code === "pairing-rate-limited") return t("error.rateLimited");
   if (code === "gateway-transition-in-progress") return t("error.transition");
   if (code === "gateway-listener-config-unavailable") return t("error.listenerConfig");
@@ -250,6 +258,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
               : t("state.loading");
   const isRunning = status?.state === "running";
   const resumeFailed = status?.state === "resume-failed";
+  const retryIdentity = canRetryMacIdentity(status);
 
   return (
     <section className="settings-panel active companion-panel" aria-labelledby="companion-title">
@@ -295,7 +304,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
           </label>
 
           <p className="settings-panel-sub">{t("gateway.interfaceHint")}</p>
-          {status?.state === "running" && <p className="settings-panel-sub">{t("gateway.reachability")}</p>}
+          {status?.state === "running" && <p className="settings-panel-sub">{isMacPlatform() ? t("gateway.reachabilityMac") : t("gateway.reachability")}</p>}
           {status?.state === "running" && (
             <dl className="companion-endpoint-facts">
               <div><dt>{t("gateway.listen")}</dt><dd>{status.bindAddress}:{status.port}</dd></div>
@@ -308,7 +317,9 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
           )}
 
           <div className="companion-actions">
-            {!isRunning ? (
+            {retryIdentity ? (
+              <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy)} onClick={() => void store.run("retry-identity", client => client.retryIdentity())}>{t("gateway.retryIdentity")}</button>
+            ) : !isRunning ? (
               <button className="settings-btn settings-btn-primary" type="button" disabled={Boolean(busy) || !selectedAddress || status?.state === "recovery-required" || status?.state === "stopping"} onClick={startGateway}>{resumeFailed ? t("gateway.retry") : t("gateway.start")}</button>
             ) : (
               <>
@@ -321,10 +332,11 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
             {resumeFailed && status.bindAddress && status.port && ["gateway-bind-conflict", "gateway-bind-access-denied", "firewall/manual-permission-required", "gateway-local-transport-port-reserved"].includes(status.code) && <button className="settings-btn" type="button" disabled={Boolean(busy) || !interfaces.some(item => item.address === status.bindAddress)} onClick={() => setRecoveryTarget({ address: status.bindAddress!, port: status.port! })}>{t("recovery.select")}</button>}
             {isRunning && devices.some(device => !device.revokedAt) && <button className="settings-btn" type="button" disabled={Boolean(busy)} onClick={shareRecovery}>{t("recovery.share")}</button>}
           </div>
+          {retryIdentity && <p className="settings-panel-sub">{t("gateway.retryIdentityHint")}</p>}
 
           <div className="companion-firewall-note">
             <span aria-hidden="true">!</span>
-            <div><b>{t("firewall.title")}</b><small>{t("firewall.description")}</small></div>
+            <div><b>{isMacPlatform() ? t("firewall.titleMac") : t("firewall.title")}</b><small>{isMacPlatform() ? t("firewall.descriptionMac") : t("firewall.description")}</small></div>
           </div>
         </article>
 

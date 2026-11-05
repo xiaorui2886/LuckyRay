@@ -24,6 +24,7 @@ export type FolderTreeProps = {
   onCreate: (parentId: string | null) => void;
   /** Extra className for the tree root. */
   className?: string;
+  interactionDisabled?: boolean;
   /** Optional label for the all item. */
   allLabel?: string;
   /** Optional domain root controls, independent of folder selection. */
@@ -43,6 +44,8 @@ export type FolderTreeProps = {
   onRename?: (folderId: string, name: string) => void | Promise<void>;
   onDelete?: (folderId: string) => void | Promise<void>;
   onMove?: (folderId: string, targetId: string | null) => void | Promise<void>;
+  /** Capture the selected folder object before a confirmation or drag gesture. */
+  onPrepareMutation?: (folderId: string) => Promise<void>;
   onImport?: (folderId: string | null) => void | Promise<void>;
   onExport?: (folderId: string | null) => void | Promise<void>;
   onExportOriginals?: (folderId: string | null) => void | Promise<void>;
@@ -73,7 +76,7 @@ export type FolderTreeProps = {
 type InlineRenameState =
   | { kind: "folder"; id: string; name: string; originalName: string }
   | { kind: "document"; id: string; name: string; originalName: string };
-type InlineRenameInputProps = React.InputHTMLAttributes<HTMLInputElement> & { ref: React.Ref<HTMLInputElement> };
+type InlineRenameInputProps = React.InputHTMLAttributes<HTMLInputElement> & { ref: React.Ref<HTMLInputElement>; "data-folder-rename-id"?: string };
 type FolderDeleteImpact = { folderCount: number; documentCount: number };
 type FolderTreeDragKind = "folder" | "document";
 type FolderPathActions = {
@@ -144,6 +147,8 @@ export const FolderTree = memo(function FolderTree({
   scope = "materials",
   onRename,
   onDelete,
+  onPrepareMutation,
+  interactionDisabled,
   onMove,
   onImport,
   onExport,
@@ -265,8 +270,11 @@ export const FolderTree = memo(function FolderTree({
     onExternalDropRef.current = onExternalDrop;
   }, [onExternalDrop]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     inlineRenameRef.current = inlineRename;
+  }, [inlineRename]);
+
+  useEffect(() => {
     if (!inlineRename) return;
     requestAnimationFrame(() => {
       inlineInputRef.current?.focus();
@@ -454,6 +462,14 @@ export const FolderTree = memo(function FolderTree({
     void action();
   };
 
+  const runPreparedFolderAction = async (id: string, action: () => void | Promise<void>) => {
+    if (onPrepareMutation) {
+      try { await onPrepareMutation(id); }
+      catch (error) { onDropRejected?.(error instanceof Error ? error.message : String(error)); return; }
+    }
+    await action();
+  };
+
   const handleSubmenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
     const itemEl = event.currentTarget;
     const subEl = itemEl.querySelector<HTMLElement>(".folder-ctx-sub-react");
@@ -534,9 +550,16 @@ export const FolderTree = memo(function FolderTree({
 
   const renameInputProps = (state: InlineRenameState): InlineRenameInputProps => ({
     ref: inlineInputRef,
+    "data-folder-rename-id": state.kind === "folder" ? state.id : undefined,
     className: "folder-inline-rename-input",
     value: state.name,
-    onChange: (event) => setInlineRename({ ...state, name: event.currentTarget.value }),
+    onChange: (event) => {
+      const next = { ...state, name: event.currentTarget.value };
+      // Enter/blur can follow the input before React commits another render.
+      // Confirm the actual typed name, never the previous effect's snapshot.
+      inlineRenameRef.current = next;
+      setInlineRename(next);
+    },
     onClick: (event) => event.stopPropagation(),
     onMouseDown: (event) => event.stopPropagation(),
     onPointerDown: (event) => event.stopPropagation(),
@@ -724,6 +747,9 @@ export const FolderTree = memo(function FolderTree({
       ? ".folder-action-btn-react, input, textarea, a"
       : ".folder-chevron, .folder-action-btn-react, button, input, textarea, a";
     if (target?.closest(blockedSelector)) return;
+    const prepared = kind === "folder" && onPrepareMutation ? onPrepareMutation(id).then(() => true, error => {
+      onDropRejected?.(error instanceof Error ? error.message : String(error)); return false;
+    }) : null;
 
     pointerDragRef.current = {
       kind,
@@ -770,7 +796,8 @@ export const FolderTree = memo(function FolderTree({
         setDropTarget(null);
         if (targetId !== undefined) {
           if (drag.kind === "folder" && canMoveFolderTo(drag.id, targetId)) {
-            void onMove?.(drag.id, targetId);
+            if (prepared) void prepared.then(ready => { if (ready) return onMove?.(drag.id, targetId); });
+            else void onMove?.(drag.id, targetId);
           } else if (drag.kind === "document" && onMoveDocument) {
             if (drag.sourceFolderId === targetId) {
               onDropRejected?.(t("error.sameFolder"));
@@ -815,7 +842,7 @@ export const FolderTree = memo(function FolderTree({
 
   const requestDeleteFolder = (folder: Folder) => {
     const impact = getFolderDeleteImpact(folder, allDocumentsByFolderId || documentsByFolderId);
-    if (scope === "notes" && readBooleanPreference(folderDeleteSkipKey(impact))) {
+    if (scope === "notes" && !hideDeleteSkipConfirm && readBooleanPreference(folderDeleteSkipKey(impact))) {
       void onDelete?.(folder.id);
       return;
     }
@@ -830,7 +857,7 @@ export const FolderTree = memo(function FolderTree({
   const deleteDisabledReason = deleteDialog && deleteImpact ? getDeleteDisabledReason?.(deleteDialog, deleteImpact) || null : null;
 
   return (
-    <div ref={treeRef} className={`folder-sidebar-react${className ? ` ${className}` : ""}`}>
+    <div ref={treeRef} className={`folder-sidebar-react${className ? ` ${className}` : ""}`} inert={interactionDisabled || undefined}>
       {!hideHeader && (
         <div className="folder-sidebar-header-react">
           <span className="folder-sidebar-title-react">{t("header")}</span>
@@ -1028,8 +1055,8 @@ export const FolderTree = memo(function FolderTree({
               <FolderCtxItem icon={<IconNote />} label={t("action.newNote")} onClick={() => runCtx(() => onCreateNote?.(ctx.folder.id))} />
               <FolderCtxItem icon={<IconFolderPlus />} label={t("action.newSubfolder")} onClick={() => runCtx(() => onCreate(ctx.folder.id))} />
               <div className="folder-ctx-sep-react" />
-              <FolderCtxItem icon={<IconEdit />} label={t("action.renameFolder")} onClick={() => runCtx(() => beginFolderRename(ctx.folder))} />
-              <FolderCtxItem icon={<IconMove />} label={t("action.moveFolder")} onClick={() => runCtx(() => { setMoveDialog({ folder: ctx.folder }); setMoveQuery(""); })} />
+              <FolderCtxItem action="rename" icon={<IconEdit />} label={t("action.renameFolder")} onClick={() => runCtx(() => runPreparedFolderAction(ctx.folder.id, () => beginFolderRename(ctx.folder)))} />
+              <FolderCtxItem action="move" icon={<IconMove />} label={t("action.moveFolder")} onClick={() => runCtx(() => runPreparedFolderAction(ctx.folder.id, () => { setMoveDialog({ folder: ctx.folder }); setMoveQuery(""); }))} />
             </>
           ) : (
             <>
@@ -1071,7 +1098,7 @@ export const FolderTree = memo(function FolderTree({
             </>
           )}
           <div className="folder-ctx-sep-react" />
-          <FolderCtxItem icon={<IconTrash />} label={t("action.deleteFolder")} danger onClick={() => runCtx(() => requestDeleteFolder(ctx.folder))} />
+          <FolderCtxItem action="delete" icon={<IconTrash />} label={t("action.deleteFolder")} danger onClick={() => runCtx(() => runPreparedFolderAction(ctx.folder.id, () => requestDeleteFolder(ctx.folder)))} />
         </div>
       )}
       {moveDialog && (
@@ -1089,12 +1116,12 @@ export const FolderTree = memo(function FolderTree({
               }}
             />
             <div className="folder-move-target-list">
-              <button type="button" onClick={() => { const id = moveDialog.folder.id; setMoveDialog(null); void onMove?.(id, null); }}>
+              <button type="button" data-folder-move-target="" onClick={() => { const id = moveDialog.folder.id; setMoveDialog(null); void onMove?.(id, null); }}>
                 <span>{t("root")}</span>
                 <small>{t("move.rootCopy")}</small>
               </button>
               {filteredDialogMoveTargets.map((target) => (
-                <button type="button" className="folder-move-path-target" key={target.id} onClick={() => { const id = moveDialog.folder.id; setMoveDialog(null); void onMove?.(id, target.id); }}>
+                <button type="button" data-folder-move-target={target.id} className="folder-move-path-target" key={target.id} onClick={() => { const id = moveDialog.folder.id; setMoveDialog(null); void onMove?.(id, target.id); }}>
                   <span>{target.name}</span>
                   <small>{t("move.here")}</small>
                 </button>
@@ -1159,6 +1186,7 @@ export const FolderTree = memo(function FolderTree({
               <button
                 type="button"
                 className="danger"
+                data-folder-delete-confirm={deleteDialog.id}
                 disabled={!!deleteDisabledReason}
                 title={deleteDisabledReason || undefined}
                 onClick={() => {
@@ -1530,6 +1558,7 @@ function FolderCtxItem({
   disabled,
   title,
   onClick,
+  action,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -1537,10 +1566,12 @@ function FolderCtxItem({
   disabled?: boolean;
   title?: string;
   onClick: () => void;
+  action?: string;
 }) {
   return (
     <button
       type="button" role="menuitem"
+      data-folder-action={action}
       className={`folder-ctx-item-react${danger ? " danger" : ""}`}
       disabled={disabled}
       title={title}

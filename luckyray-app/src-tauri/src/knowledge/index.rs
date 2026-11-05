@@ -110,6 +110,7 @@ impl KnowledgeIndexDocument {
             relative_path: self.relative_path.clone(),
             modified_at: self.modified_at.clone(),
             size: self.size,
+            file_identity: None,
         }
     }
 }

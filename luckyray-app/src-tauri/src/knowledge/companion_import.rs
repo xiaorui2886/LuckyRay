@@ -183,6 +183,7 @@ impl KnowledgeService {
     /// The prepare callback durably records staging basename and file object.
     /// A retry may only recover those exact owned bytes. Private staging evidence
     /// is intentionally retained on uncertainty; no suffix retry or body adoption.
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn companion_import_publish(
         &self,
         expected: &KnowledgeTargetIdentity,

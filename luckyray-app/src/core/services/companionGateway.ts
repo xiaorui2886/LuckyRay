@@ -1,4 +1,5 @@
 import type { CompanionGrantChange } from "./companionAccess";
+import { isMacPlatform } from "../../app/macosPresentation";
 export type CompanionGatewayStatus =
   | {
       state: "disabled";
@@ -94,6 +95,10 @@ export type CompanionServiceGrantState = {
 
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
+export function canRetryMacIdentity(status: CompanionGatewayStatus | null, platform = globalThis.navigator?.platform ?? "") {
+  return isMacPlatform(platform) && status?.state === "recovery-required" && status.code === "companion-secret-unavailable";
+}
+
 const QR_KEYS = ["v", "name", "instance", "ip", "port", "secret", "fp"] as const;
 const PRESENTATION_KEYS = new Set<string>([...QR_KEYS, "pairingId", "expiresAt", "qrSize", "qrPath"]);
 
@@ -162,6 +167,7 @@ export function pairingSecondsRemaining(presentation: PairingPresentation, now =
 export function createCompanionGatewayClient(invoke: Invoke) {
   return {
     status: () => invoke("companion_gateway_status") as Promise<CompanionGatewayStatus>,
+    retryIdentity: () => invoke("companion_gateway_retry_identity") as Promise<CompanionGatewayStatus>,
     start: (bindAddress: string) => invoke("companion_gateway_start", { bindAddress }) as Promise<CompanionGatewayStatus>,
     recoverEndpoint: (expectedAddress: string, expectedPort: number) => invoke("companion_gateway_recover_endpoint", { expectedAddress, expectedPort, confirmed: true }) as Promise<CompanionGatewayStatus>,
     endpointRecoveryPresentation: () => invoke("companion_gateway_endpoint_recovery_presentation") as Promise<EndpointRecoveryPresentation>,
@@ -237,7 +243,9 @@ export function companionGatewayErrorMessage(error: unknown) {
     return "只能选择当前可用的本机局域网 IPv4 接口。";
   }
   if (code === "gateway-bind-conflict") return "该局域网接口暂时无法监听，请稍后重试。";
-  if (code === "gateway-bind-access-denied" || code === "firewall/manual-permission-required") return "Windows 拒绝绑定此地址或端口，可能涉及系统保留端口或网络策略；尚不能确定是防火墙。";
+  if (code === "gateway-bind-access-denied" || code === "firewall/manual-permission-required") return isMacPlatform()
+    ? "macOS 拒绝绑定此地址或端口，可能涉及系统网络策略；尚不能确定是防火墙。"
+    : "Windows 拒绝绑定此地址或端口，可能涉及系统保留端口或网络策略；尚不能确定是防火墙。";
   if (code === "pairing-rate-limited") return "配对码生成过于频繁，请稍后再试。";
   if (code === "gateway-transition-in-progress") return "连接服务正在切换状态，请稍后再试。";
   if (typeof source.message === "string" && source.message.length <= 160) return source.message;

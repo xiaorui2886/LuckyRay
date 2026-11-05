@@ -1207,6 +1207,7 @@ impl DshResourceBroker {
             title: required_string(args, "title", 256)?.to_owned(),
             expected_revision: revision,
             parent_relative_path: optional_string(args, "parentRelativePath", 8 * 1024)?,
+            expected_file_identity: None,
         };
         let document = self
             .knowledge
@@ -1273,6 +1274,7 @@ impl DshResourceBroker {
                 &KnowledgeDeleteInput {
                     document_ref,
                     expected_revision: revision,
+                    expected_file_identity: None,
                 },
             )
             .map_err(knowledge_error)?;
