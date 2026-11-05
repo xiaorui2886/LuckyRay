@@ -347,3 +347,19 @@ build.rs must refuse. Locally checked: the unchanged build.rs accepted
 Python-written records over synthetic ELF stubs and refused the tampered one.
 Windows `prepare-native-host.ps1`, build.rs and sidecar code are untouched.
 Not yet: packaging (S4), LSH resources (S3).
+
+## 15. T52 S3 — Sealed LSH package resources
+
+- `scripts/linux/stage-lsh-package.mjs <runtime>` reuses `stageLinuxLsh` (closure, record and
+  host pins) and moves the verified closure to `src-tauri/dsh`, which the shared base config
+  already bundles as `lr-lsh/199-1/deepseek-harness`. It refuses an existing `src-tauri/dsh`.
+- `src-tauri/dsh-host` (tracked) is bundled as `lr-lsh/199-1/dsh-host`. The Linux gate checks its
+  raw bytes against the `dsh_host.rs` pins.
+- `tauri.linux.conf.json` bundles the four pinned records from `dsh-host/linux-x64` at
+  `licenses/lsh-linux/` in deb and AppImage, as the redistribution materials.
+- `prepare-tauri-build.mjs` calls `scripts/linux/check-lsh-package.mjs` and prints its problems as
+  `- LSH: …`. Preparation still refuses for the remaining unresolved items (S4 and later).
+- Legal review of the redistribution materials (including libvips LGPL-3.0-or-later) stays a
+  release-time item.
+- CI step `linux-lsh-package` stages the genuine runtime and requires the gate to pass. It then
+  appends one byte to `src-tauri/dsh/node/node`, requires a refusal, and removes `src-tauri/dsh`.
