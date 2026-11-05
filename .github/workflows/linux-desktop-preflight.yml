@@ -586,6 +586,8 @@ jobs:
           if command -v getfattr >/dev/null; then getfattr -d -m - "$host"; fi
           ls -l -Z "$host" 2>/dev/null || ls -l "$host"
           ls -ld "${TMPDIR:-/tmp}" "${TMPDIR:-/tmp}/LuckyRay" "${TMPDIR:-/tmp}/LuckyRay/AgentBrowser" "${TMPDIR:-/tmp}/LuckyRay/AgentBrowser/v1" 2>/dev/null || true
+          # Drive the exact staged sidecar once, the way AgentHost does, to see the real refusal.
+          python3 "$GITHUB_WORKSPACE/luckyray-app/tests/linux-agent-host-probe.py" "$host" "$LUCKYRAY_AGENT_BROWSER_TEST_SHELL"
           # Each name runs with --exact: a renamed or missing test shrinks the count.
           timeout 900 rustup run 1.95.0 cargo test --locked --lib \
             --features browser-host-poc-fixture \

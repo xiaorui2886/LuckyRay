@@ -2322,6 +2322,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             '"$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/debug/deps/luckyray-browser-host"',
             "if command -v getfattr",
             "stat -c 'host mode=%a uid=%u size=%s'",
+            'python3 "$GITHUB_WORKSPACE/luckyray-app/tests/linux-agent-host-probe.py"', 
             "cargo test --locked --lib",
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
