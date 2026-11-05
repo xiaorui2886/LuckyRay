@@ -1,0 +1,17 @@
+# LuckyRay Agent Browser engine (T55). Shipped only in the deb.
+#
+# Ubuntu 23.10+ sets kernel.apparmor_restrict_unprivileged_userns=1, which
+# stops chrome-headless-shell from creating the user namespace its renderer
+# sandbox needs. This profile grants exactly that, for exactly the
+# root-owned, package-managed engine path. It confines nothing else and does
+# not change the sysctl. LuckyRay never starts the engine with --no-sandbox;
+# without this profile the engine refuses with
+# agent-browser-sandbox-unavailable.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile luckyray-agent-browser /usr/lib/LuckyRay/agent-browser/chrome-headless-shell-linux64/chrome-headless-shell flags=(unconfined) {
+  userns,
+
+  include if exists <local/luckyray-agent-browser>
+}

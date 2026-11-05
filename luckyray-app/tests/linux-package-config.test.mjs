@@ -10,7 +10,8 @@ const linux = JSON.parse(readFileSync(new URL('../src-tauri/tauri.linux.conf.jso
 test('Linux packaging selects deb and AppImage without replacing shared release resources', () => {
   assert.deepEqual(linux.bundle.targets, ['deb', 'appimage']);
   assert.equal(linux.bundle.linux.appimage.bundleMediaFramework, true);
-  assert.equal(Object.hasOwn(linux.bundle, 'resources'), false);
+  // T55: the only Linux-specific resource is the verified Agent Browser engine.
+  assert.deepEqual(linux.bundle.resources, { 'agent-browser/': 'agent-browser/' });
   assert.equal(Object.hasOwn(linux.bundle, 'externalBin'), false);
   assert.deepEqual(Object.keys(base.bundle.resources).sort(), ['../third-party-notices/', 'dsh-host/', 'dsh/', 'media-engine/']);
   assert.deepEqual(base.bundle.externalBin, [
@@ -25,7 +26,8 @@ test('Linux build preparation refuses unresolved release inputs', () => {
   assert.throws(() => execFileSync(process.execPath, [script], { stdio: 'pipe' }), error => {
     assert.equal(error.status, 1);
     assert.match(error.stderr.toString(), /separately sealed Linux LSH resources/);
-    assert.match(error.stderr.toString(), /browser-host request mediation/);
+    assert.match(error.stderr.toString(), /browser-host native messaging revocation/);
+    assert.match(error.stderr.toString(), /Agent Browser: agent-browser bundle missing/);
     return true;
   });
 });

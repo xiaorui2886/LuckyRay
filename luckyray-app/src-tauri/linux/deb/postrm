@@ -1,0 +1,15 @@
+#!/bin/sh
+# LuckyRay deb: unload and remove the Agent Browser AppArmor profile (T55).
+set -e
+profile=luckyray-agent-browser
+case "$1" in
+    remove|purge)
+        if [ -e "/etc/apparmor.d/$profile" ]; then
+            if command -v apparmor_parser >/dev/null 2>&1 && [ -d /sys/kernel/security/apparmor ]; then
+                apparmor_parser -R "/etc/apparmor.d/$profile" || true
+            fi
+            rm -f "/etc/apparmor.d/$profile"
+        fi
+        ;;
+esac
+exit 0

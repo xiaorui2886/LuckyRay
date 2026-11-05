@@ -4,7 +4,17 @@
   },
   "bundle": {
     "targets": ["deb", "appimage"],
+    "resources": {
+      "agent-browser/": "agent-browser/"
+    },
     "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/luckyray/apparmor/luckyray-agent-browser": "linux/apparmor/luckyray-agent-browser"
+        },
+        "postInstallScript": "linux/deb/postinst",
+        "postRemoveScript": "linux/deb/postrm"
+      },
       "appimage": {
         "bundleMediaFramework": true
       }
