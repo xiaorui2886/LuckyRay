@@ -37,7 +37,7 @@ EXCLUDED = {name: "NOT_RUN" for name in ("chromiumConsent", "nativeMessaging", "
 STEPS = ("CHECKOUT", "INIT", "NODE", "OFFLINE", "FRONTEND", "LAYOUT", "DEPENDENCIES", "RUST", "BUILD",
          "NATIVE_MESSAGING", "DRIVER", "RUNTIME", "RESOURCES", "NOTES", "SECRET_SERVICE", "COMPANION_KEYRING",
          "COMPANION_PAIRING", "MEDIA_PREVIEW", "MEDIA_RESOLVER",
-         "MEDIA_PLAYER", "MEDIA_LGPL_BUNDLE", "PORT_FIXTURES", "AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE")
+         "MEDIA_PLAYER", "MEDIA_LGPL_BUNDLE", "PORT_FIXTURES", "AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE", "AGENT_BROWSER_RUNTIME")
 EXPORTS = ("source.json", "build.json", "resources.json", "notes.json", "nativeMessaging.json", "result.json")
 runtime.SCOPE, runtime.EXCLUDED = SCOPE, EXCLUDED
 PHASES = frozenset(("synthetic-setup", "desktop-association", "driver-start", "main-start", "drop-import", "edit-save", "copy-absolute-path",

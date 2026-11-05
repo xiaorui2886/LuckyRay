@@ -2180,7 +2180,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "/usr/lib/x86_64-linux-gnu/libmpv", "--include-ignored"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_LGPL_BUNDLE: ${{ steps.media-lgpl-bundle.outcome }}", text)
-        self.assertEqual(ci.STEPS[-4], "MEDIA_LGPL_BUNDLE")
+        self.assertEqual(ci.STEPS[-5], "MEDIA_LGPL_BUNDLE")
         deps = (root / "luckyray-app/tools/linux-media-bundle/ci-build-deps.txt").read_text()
         for line in deps.splitlines():
             if line and not line.startswith("#"):
@@ -2237,7 +2237,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}", text)
-        self.assertEqual(ci.STEPS[-3], "PORT_FIXTURES")
+        self.assertEqual(ci.STEPS[-4], "PORT_FIXTURES")
 
     def test_agent_browser_engine_steps_pin_the_shell_and_run_exactly_six_synthetic_tests(self):
         # T55 slice 2: pinned chrome-headless-shell (sha256, cached), pipe-only,
@@ -2288,7 +2288,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             self.assertNotIn(forbidden, step + shell_step, forbidden)
         self.assertIn("CI_AGENT_BROWSER_SHELL: ${{ steps.agent-browser-shell.outcome }}", text)
         self.assertIn("CI_AGENT_BROWSER_ENGINE: ${{ steps.agent-browser-engine.outcome }}", text)
-        self.assertEqual(ci.STEPS[-2:], ("AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE"))
+        self.assertEqual(ci.STEPS[-3:], ("AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE", "AGENT_BROWSER_RUNTIME"))
         pin = json.loads((root / "luckyray-app/tools/linux-agent-browser/pin.json").read_text())
         self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(pin["executableSha256"], r"^[0-9a-f]{64}$")
@@ -2299,6 +2299,39 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         for switch in ('"--no-sandbox"', '"--remote-debugging-port"', '"--single-process"', '"--no-zygote"'):
             self.assertEqual(production.count(switch), 1, switch)  # only in FORBIDDEN_SWITCHES
         self.assertIn("renderer_sandbox_check", production)
+
+    def test_agent_browser_runtime_builds_the_real_sidecar_and_runs_exactly_four_tests(self):
+        # T55 slice 3: DSH broker -> runtime -> gateway -> sidecar -> pinned engine.
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        start = text.index("        id: agent-browser-runtime")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        step = text[start:finish]
+        names = (
+            "dsh_resource_broker::tests::dsh_search_drives_the_isolated_agent_browser_and_generation_cleanup",
+            "agent_browser::runtime::tests::linux_agent_host_refuses_a_host_that_is_not_an_executable_sidecar",
+            "agent_browser::runtime::tests::linux_agent_host_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway",
+            "agent_browser::runtime::tests::linux_agent_host_death_takes_the_engine_down_and_fails_closed",
+        )
+        for required in (
+            "timeout-minutes: 30", "timeout 900", "set -euo pipefail",
+            "cargo build --locked --bin luckyray-browser-host",
+            "--features browser-host-poc-fixture",
+            "cargo test --locked --lib",
+            "--target x86_64-unknown-linux-gnu",
+            "--manifest-path luckyray-app/src-tauri/Cargo.toml",
+            "-- --exact --test-threads=1 \\",
+            'grep -qx "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured;',
+            "steps.agent-browser-shell.outcome == 'success'",
+            "LUCKYRAY_AGENT_BROWSER_TEST_SHELL: ${{ runner.temp }}/luckyray-linux-runtime-work/agent-browser-shell/chrome-headless-shell-linux64/chrome-headless-shell",
+            *("            " + name + " \\" for name in names),
+        ):
+            self.assertIn(required, step, required)
+        self.assertEqual(step.count("::tests::"), 4)
+        for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt", "curl", "secrets."):
+            self.assertNotIn(forbidden, step, forbidden)
+        self.assertIn("CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}", text)
+        self.assertEqual(ci.STEPS[-1], "AGENT_BROWSER_RUNTIME")
 
     def test_media_player_step_runs_the_exact_linux_mpv_suite_with_the_live_test(self):
         # T48 V3: the Linux libmpv loader/license gate runs on synthetic cc-built
@@ -2334,7 +2367,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d  "
                       "/usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0\" | sha256sum -c -", deps)
         self.assertIn("CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}", text)
-        self.assertEqual(ci.STEPS[-5], "MEDIA_PLAYER")
+        self.assertEqual(ci.STEPS[-6], "MEDIA_PLAYER")
         source = (root / "luckyray-app/src-tauri/src/material_native_video/linux_mpv.rs").read_text()
         self.assertIn('if !self.property("mpv-configuration").contains("-Dgpl=false")', source)
         self.assertIn('"20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d"', source)
@@ -2385,7 +2418,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "--ignored", "set -x", "pkill", "echo", "apt", "src-tauri/media-engine"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}", text)
-        self.assertEqual(ci.STEPS[-7:-5], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
+        self.assertEqual(ci.STEPS[-8:-6], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
         source = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
         both = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
         for item in ("impl MediaResolver for ExternalMediaResolver", "fn write_site_cookie_file(",

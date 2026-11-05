@@ -561,6 +561,34 @@ jobs:
             | tee "$WORK_ROOT/private/t55-agent-browser-engine.log"
           grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t55-agent-browser-engine.log"
+      - name: Linux Agent Browser runtime through the real sidecar and DSH broker (synthetic loopback)
+        id: agent-browser-runtime
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.agent-browser-shell.outcome == 'success' }}
+        timeout-minutes: 30
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target
+          TAURI_CONFIG: '{"identifier":"com.luckyray.desktop.dev","build":{"devUrl":null,"frontendDist":"../dist"},"bundle":{"active":false,"externalBin":null,"resources":null}}'
+          LUCKYRAY_AGENT_BROWSER_TEST_SHELL: ${{ runner.temp }}/luckyray-linux-runtime-work/agent-browser-shell/chrome-headless-shell-linux64/chrome-headless-shell
+        run: |
+          set -euo pipefail
+          timeout 900 rustup run 1.95.0 cargo build --locked --bin luckyray-browser-host \
+            --features browser-host-poc-fixture \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml
+          # Each name runs with --exact: a renamed or missing test shrinks the count.
+          timeout 900 rustup run 1.95.0 cargo test --locked --lib \
+            --features browser-host-poc-fixture \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path luckyray-app/src-tauri/Cargo.toml \
+            -- --exact --test-threads=1 \
+            dsh_resource_broker::tests::dsh_search_drives_the_isolated_agent_browser_and_generation_cleanup \
+            agent_browser::runtime::tests::linux_agent_host_refuses_a_host_that_is_not_an_executable_sidecar \
+            agent_browser::runtime::tests::linux_agent_host_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway \
+            agent_browser::runtime::tests::linux_agent_host_death_takes_the_engine_down_and_fails_closed \
+            | tee "$WORK_ROOT/private/t55-agent-browser-runtime.log"
+          grep -qx "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+            "$WORK_ROOT/private/t55-agent-browser-runtime.log"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -589,6 +617,7 @@ jobs:
           CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}
           CI_AGENT_BROWSER_SHELL: ${{ steps.agent-browser-shell.outcome }}
           CI_AGENT_BROWSER_ENGINE: ${{ steps.agent-browser-engine.outcome }}
+          CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
