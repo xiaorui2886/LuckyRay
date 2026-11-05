@@ -560,8 +560,13 @@ jobs:
             agent_browser::linux_host_policy::engine::tests::linux_engine_refuses_a_shell_or_profile_that_does_not_match \
             agent_browser::linux_host_policy::engine::tests::linux_engine_sandbox_check_refuses_unsandboxed_or_missing_renderers \
             agent_browser::linux_host_policy::engine::tests::linux_engine_start_failure_under_restricted_userns_is_a_sandbox_refusal \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_attack_refuses_a_swapped_linked_writable_or_attributed_engine \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_attack_profile_path_escapes_are_refused \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_attack_switch_injection_is_refused_and_absent_from_the_running_tree \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_attack_gateway_bypass_rebinding_workers_downloads_and_permissions_are_blocked \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_attack_oversized_or_malformed_cdp_input_fails_closed \
             | tee "$WORK_ROOT/private/t55-agent-browser-engine.log"
-          grep -qx "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+          grep -qx "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t55-agent-browser-engine.log"
       - name: Linux Agent Browser runtime through the real sidecar and DSH broker (synthetic loopback)
         id: agent-browser-runtime
@@ -596,9 +601,10 @@ jobs:
             agent_browser::runtime::tests::linux_agent_host_refuses_a_host_that_is_not_an_executable_sidecar \
             agent_browser::runtime::tests::linux_agent_host_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway \
             agent_browser::runtime::tests::linux_agent_host_death_takes_the_engine_down_and_fails_closed \
+            agent_browser::runtime::tests::linux_agent_host_attack_refuses_a_linked_writable_attributed_or_swapped_host \
             agent_browser::runtime::tests::linux_agent_launch_refusal_reports_only_the_sandbox_code \
             | tee "$WORK_ROOT/private/t55-agent-browser-runtime.log"
-          grep -qx "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+          grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t55-agent-browser-runtime.log"
       - name: Gate the deb and AppImage Agent Browser resources on the pinned bundle digest
         id: agent-browser-bundle

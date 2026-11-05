@@ -2270,20 +2270,26 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "linux_engine_refuses_a_shell_or_profile_that_does_not_match",
             "linux_engine_sandbox_check_refuses_unsandboxed_or_missing_renderers",
             "linux_engine_start_failure_under_restricted_userns_is_a_sandbox_refusal",
+            # T55 slice 5: attack suite.
+            "linux_engine_attack_refuses_a_swapped_linked_writable_or_attributed_engine",
+            "linux_engine_attack_profile_path_escapes_are_refused",
+            "linux_engine_attack_switch_injection_is_refused_and_absent_from_the_running_tree",
+            "linux_engine_attack_gateway_bypass_rebinding_workers_downloads_and_permissions_are_blocked",
+            "linux_engine_attack_oversized_or_malformed_cdp_input_fails_closed",
         )
         for required in (
             "timeout-minutes: 30", "timeout 900", "set -euo pipefail",
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
             "-- --exact --test-threads=1 \\",
-            'grep -qx "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured;',
+            'grep -qx "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured;',
             "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
             "steps.agent-browser-shell.outcome == 'success'",
             "LUCKYRAY_AGENT_BROWSER_TEST_SHELL: ${{ runner.temp }}/luckyray-linux-runtime-work/agent-browser-shell/chrome-headless-shell-linux64/chrome-headless-shell",
             *("            agent_browser::linux_host_policy::engine::tests::" + name for name in names),
         ):
             self.assertIn(required, step, required)
-        self.assertEqual(step.count("::engine::tests::"), 7)
+        self.assertEqual(step.count("::engine::tests::"), 12)
         for forbidden in ("--include-ignored", "--ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl",
                           "secrets.", "--no-sandbox", "remote-debugging-port"):
             self.assertNotIn(forbidden, step + shell_step, forbidden)
@@ -2301,7 +2307,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             self.assertEqual(production.count(switch), 1, switch)  # only in FORBIDDEN_SWITCHES
         self.assertIn("renderer_sandbox_check", production)
 
-    def test_agent_browser_runtime_builds_the_real_sidecar_and_runs_exactly_five_tests(self):
+    def test_agent_browser_runtime_builds_the_real_sidecar_and_runs_exactly_six_tests(self):
         # T55 slice 3: DSH broker -> runtime -> gateway -> sidecar -> pinned engine.
         root = Path(__file__).resolve().parents[2]
         text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
@@ -2313,6 +2319,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "agent_browser::runtime::tests::linux_agent_host_refuses_a_host_that_is_not_an_executable_sidecar",
             "agent_browser::runtime::tests::linux_agent_host_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway",
             "agent_browser::runtime::tests::linux_agent_host_death_takes_the_engine_down_and_fails_closed",
+            "agent_browser::runtime::tests::linux_agent_host_attack_refuses_a_linked_writable_attributed_or_swapped_host",
             "agent_browser::runtime::tests::linux_agent_launch_refusal_reports_only_the_sandbox_code",
         )
         for required in (
@@ -2326,13 +2333,13 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
             "-- --exact --test-threads=1 \\",
-            'grep -qx "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured;',
+            'grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured;',
             "steps.agent-browser-shell.outcome == 'success'",
             "LUCKYRAY_AGENT_BROWSER_TEST_SHELL: ${{ runner.temp }}/luckyray-linux-runtime-work/agent-browser-shell/chrome-headless-shell-linux64/chrome-headless-shell",
             *("            " + name + " \\" for name in names),
         ):
             self.assertIn(required, step, required)
-        self.assertEqual(step.count("::tests::"), 5)
+        self.assertEqual(step.count("::tests::"), 6)
         for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}", text)
