@@ -1,4 +1,4 @@
-// Measure only the twelve unpinned public inputs in the frozen public manifest.
+// Recheck the twelve reviewed recipe inputs in the frozen public manifest.
 // No archive is saved, unpacked or executed, and no production manifest is edited.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -7,8 +7,7 @@ import { pathToFileURL } from "node:url";
 
 export const PUBLIC_REPOSITORY = "xiaorui2886/LuckyRay";
 export const PUBLIC_BRANCH = "codex/mac-source-evidence-20261105";
-export const MANIFEST_BLOB = "566e57ab5dc15b786c692fc71632ac9af6541d04";
-const MANIFEST_PUBLIC_COMMIT = "8014bd04e3b0214aa90ea6663c8975b0bfa470c2";
+export const MANIFEST_BLOB = "cc84a3e1a03999afa7d5678e866b5ec272780a72";
 const INPUT_IDS = [145, 147, 155, 177, 223, 278, 302, 310, 325, 334, 364, 376]
   .map(line => `libvips-input-${line}`);
 const OFFICIAL_CHECKSUMS = {
@@ -24,6 +23,14 @@ const OFFICIAL_CHECKSUMS = {
     sha256: "852b18e1a00b8605528825a27dc7748bff2a5dd254028f59dc22a34ea57e81b6",
     sourceUrl: "https://download.gnome.org/sources/librsvg/2.63/librsvg-2.63.2.sha256sum",
   },
+  "libvips-input-310": {
+    sha256: "1c767308174337a74694da0f3ec069c271452163a1ef4540964c50c301f157d4",
+    sourceUrl: "https://www.cairographics.org/news/cairo-1.18.6/",
+  },
+  "libvips-input-325": {
+    sha256: "342385b6ca3b7c73455d7c80a13b7dbe4489e00bc3bd4c5bd6ed4dce421e374a",
+    sourceUrl: "https://download.gnome.org/sources/pango/1.58/pango-1.58.2.sha256sum",
+  },
 };
 const LIMITS = { maxBytes: 64 * 1024 * 1024, timeoutMs: 60_000, maxRedirects: 4 };
 
@@ -32,17 +39,22 @@ export async function readPublicInputs() {
   const blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
   if (blob !== MANIFEST_BLOB) throw new Error("public-manifest-blob-mismatch");
   const manifest = JSON.parse(bytes);
-  const missing = manifest.sourceInputs.filter(input => input.sha256 === null);
-  if (missing.length !== INPUT_IDS.length || missing.some((input, index) =>
-    input.id !== INPUT_IDS[index] || input.bytes !== null || input.required !== true ||
+  const selected = manifest.sourceInputs.filter(input => INPUT_IDS.includes(input.id));
+  if (selected.length !== INPUT_IDS.length || selected.some((input, index) =>
+    input.id !== INPUT_IDS[index] || !/^[a-f0-9]{64}$/.test(input.sha256) ||
+    !Number.isSafeInteger(input.bytes) || input.bytes <= 0 || input.required !== true ||
     !["source-archive", "patch"].includes(input.kind) || !input.url.startsWith("https://"))) {
     throw new Error("public-input-set-mismatch");
   }
   return {
-    inputs: missing.map(({ id, recipeLine, url, kind }) => ({
-      id, recipeLine, url, kind, officialChecksum: OFFICIAL_CHECKSUMS[id] ?? null,
+    inputs: selected.map(({ id, recipeLine, url, kind, sha256, bytes }) => ({
+      id, recipeLine, url, kind, reviewedPin: { sha256, bytes }, officialChecksum: OFFICIAL_CHECKSUMS[id] ?? null,
     })),
-    unresolvedClosures: manifest.additionalUnresolvedRequirements.map(({ id }) => id),
+    unresolvedRequirementIds: [
+      ...manifest.sourceInputs.filter(input => input.required && input.sha256 === null).map(({ id }) => id),
+      ...manifest.additionalUnresolvedRequirements.filter(input => input.required).map(({ id }) => id),
+    ],
+    unresolvedClosures: manifest.additionalUnresolvedRequirements.filter(input => input.required).map(({ id }) => id),
   };
 }
 
@@ -55,6 +67,7 @@ export async function collectSource(input, { request = fetch, signal, ...limits 
     officialChecksum: input.officialChecksum ? {
       ...input.officialChecksum, sourceRetrievedInThisRun: false, comparison: "not-performed",
     } : null,
+    reviewedPin: input.reviewedPin ? { ...input.reviewedPin, comparison: "not-performed" } : null,
     sourceQualification: "not-performed", failure: null,
   };
   const controller = new AbortController();
@@ -102,6 +115,11 @@ export async function collectSource(input, { request = fetch, signal, ...limits 
     if (expectedBytes !== null && result.observedBytes !== expectedBytes) fail("content-length-mismatch");
     result.bytes = result.observedBytes;
     result.sha256 = hash.digest("hex");
+    if (result.reviewedPin) {
+      const matched = result.sha256 === result.reviewedPin.sha256 && result.bytes === result.reviewedPin.bytes;
+      result.reviewedPin.comparison = matched ? "match" : "mismatch";
+      if (!matched) fail("reviewed-source-pin-mismatch");
+    }
     if (result.officialChecksum) {
       const matched = result.sha256 === result.officialChecksum.sha256;
       result.officialChecksum.comparison = matched ? "match" : "mismatch";
@@ -126,20 +144,20 @@ async function main() {
     !/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA ?? "")) {
     throw new Error("fixed-public-branch-actions-context-required");
   }
-  const { inputs, unresolvedClosures } = await readPublicInputs();
+  const { inputs, unresolvedClosures, unresolvedRequirementIds } = await readPublicInputs();
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   const report = {
-    schemaVersion: 1, scope: "public-upstream-source-evidence-only",
+    schemaVersion: 2, scope: "public-upstream-source-evidence-only",
     repository: PUBLIC_REPOSITORY, ref: `refs/heads/${PUBLIC_BRANCH}`,
     checkoutCommit: process.env.GITHUB_SHA, nodeVersion: process.version,
-    manifestPublicCommit: MANIFEST_PUBLIC_COMMIT, manifestBlob: MANIFEST_BLOB,
+    manifestSource: "exact checkoutCommit", manifestBlob: MANIFEST_BLOB,
     startedAt: new Date().toISOString(), limits: LIMITS,
     status: "not-completed", applicationBuild: "not-run", binaryExport: false,
     productionManifestModified: false, sourceQualification: "not-performed", distributionReady: false,
-    unresolvedRequirementIds: [...inputs.map(input => input.id), ...unresolvedClosures],
+    reviewedInputIds: inputs.map(input => input.id), unresolvedRequirementIds,
     unresolvedClosures, results: [],
   };
   try {

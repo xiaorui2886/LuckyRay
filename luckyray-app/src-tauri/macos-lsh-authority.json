@@ -29,10 +29,10 @@
   },
   "closure": {
     "format": "luckyray-macos-lsh-tree-v1",
-    "sha256": "989db56c3bfde1992a9137fd79b3dd86067e0fa4164452de2aad1eee5b754783",
-    "fileCount": 35556,
+    "sha256": "11fc0cf5ede3ec98ca28e5906c647b2f537f95f484e13a1057fded0302dbc79b",
+    "fileCount": 35629,
     "directoryCount": 3954,
-    "byteCount": 1415033584
+    "byteCount": 1566529098
   },
   "criticalFiles": [
     {
@@ -68,7 +68,7 @@
     "path": "macos-build.json",
     "authority": "separately pinned into the compiled app after native preparation; never a source of launch authority"
   },
-  "sourceMaterialIndexSha256": "9891732c9e71182a81d2228f22eb324d87b3f43402526b1ce656dff0cd282b98",
+  "sourceMaterialIndexSha256": "b6747550dbb66c2ca17d874352ac8327f49d2693ab0190e86af86a7181b18a71",
   "provenance": "Read-only data projection of frozen public npm inputs and the exact official Darwin arm64 Node archive. No native execution is asserted. File and directory names, file bytes and execute bits use the stated canonical tree digest; all actual objects are rechecked at launch/use boundaries.",
   "nodeCodeDirectoryHashes": [
     "348bf6d84161a4342654c4cbbe669e0d927806d5"

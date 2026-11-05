@@ -6,11 +6,13 @@ import { once } from "node:events";
 import test from "node:test";
 import { collectSource, readPublicInputs } from "./collect-macos-source-evidence.mjs";
 
-test("frozen manifest selects only its twelve null-digest public inputs", async () => {
-  const { inputs, unresolvedClosures } = await readPublicInputs();
+test("reviewed manifest retains all twelve exact recipe inputs and separate unresolved closures", async () => {
+  const { inputs, unresolvedClosures, unresolvedRequirementIds } = await readPublicInputs();
   assert.equal(inputs.length, 12);
-  assert.equal(inputs.filter(input => input.officialChecksum).length, 3);
+  assert.equal(inputs.filter(input => input.officialChecksum).length, 5);
+  assert.equal(inputs.filter(input => input.reviewedPin).length, 12);
   assert.equal(unresolvedClosures.length, 4);
+  assert.deepEqual(unresolvedRequirementIds, unresolvedClosures);
 });
 
 test("HTTP evidence keeps exact bytes, errors, interruption and official mismatch distinct", async t => {
@@ -57,6 +59,15 @@ test("HTTP evidence keeps exact bytes, errors, interruption and official mismatc
   assert.equal(mismatch.bytes, bytes.length);
   assert.equal(mismatch.sha256, digest);
   assert.equal(mismatch.officialChecksum.comparison, "mismatch");
+
+  const pinned = { ...source("/complete"), reviewedPin: { sha256: digest, bytes: bytes.length } };
+  assert.equal((await collectSource(pinned, { request })).reviewedPin.comparison, "match");
+  for (const reviewedPin of [{ sha256: digest, bytes: bytes.length + 1 }, { sha256: "0".repeat(64), bytes: bytes.length }]) {
+    const changed = await collectSource({ ...pinned, reviewedPin }, { request });
+    assert.equal(changed.status, "failed");
+    assert.equal(changed.failure, "reviewed-source-pin-mismatch");
+    assert.equal(changed.reviewedPin.comparison, "mismatch");
+  }
 
   for (const [path, failure, options] of [
     ["/error", "http-status-not-200", {}],
