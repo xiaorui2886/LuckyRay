@@ -173,9 +173,6 @@ struct AgentHost {
 
 impl AgentBrowserRuntime {
     pub(crate) fn initialize() -> Result<Self, AgentBrowserError> {
-        #[cfg(target_os = "linux")]
-        return Err(AgentBrowserError::new("agent-browser-unavailable"));
-
         let host_path = crate::browser_broker::exact_browser_host_path()
             .map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
         Ok(Self {
@@ -733,9 +730,6 @@ impl AgentHost {
         gateway_mode: GatewayMode,
         surface: Option<&AgentBrowserSurface>,
     ) -> Result<Self, AgentBrowserError> {
-        #[cfg(target_os = "linux")]
-        return Err(AgentBrowserError::new("agent-browser-unavailable"));
-
         if !host_path.is_absolute() || !host_path.is_file() {
             return Err(AgentBrowserError::new("agent-browser-unavailable"));
         }
@@ -764,6 +758,12 @@ impl AgentHost {
         }
         environment.push(("TEMP".into(), child_temp.as_os_str().to_owned()));
         environment.push(("TMP".into(), child_temp.as_os_str().to_owned()));
+        // Test builds only: the pinned engine unpacked by CI, since the child
+        // environment is otherwise cleared. Honoured by fixture hosts alone.
+        #[cfg(all(test, target_os = "linux"))]
+        if let Some(shell) = std::env::var_os("LUCKYRAY_AGENT_BROWSER_TEST_SHELL") {
+            environment.push(("LUCKYRAY_AGENT_BROWSER_TEST_SHELL".into(), shell));
+        }
         let launch_args = {
             let value = vec![OsString::from("--agent-readonly")];
             #[cfg(test)]
@@ -970,9 +970,20 @@ fn create_profile_root() -> Result<PathBuf, AgentBrowserError> {
     let base = base
         .canonicalize()
         .map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
+    #[cfg(target_os = "linux")]
+    restrict_linux_profile_base(&base)?;
     cleanup_stale_profiles(&base);
     let profile = base.join(format!("session-{}", random_token(32)));
+    #[cfg(not(target_os = "linux"))]
     fs::create_dir(&profile).map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&profile)
+            .map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
+    }
     let metadata = fs::symlink_metadata(&profile)
         .map_err(|_| AgentBrowserError::new("agent-browser-unavailable"))?;
     if metadata.file_type().is_symlink()
@@ -984,6 +995,28 @@ fn create_profile_root() -> Result<PathBuf, AgentBrowserError> {
         return Err(AgentBrowserError::new("agent-browser-unavailable"));
     }
     Ok(profile)
+}
+
+/// The shared temp directory is world-writable: the LuckyRay/AgentBrowser/v1
+/// chain must be ours and closed to others before a profile goes inside it.
+#[cfg(target_os = "linux")]
+fn restrict_linux_profile_base(base: &Path) -> Result<(), AgentBrowserError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let unavailable = || AgentBrowserError::new("agent-browser-unavailable");
+    let euid = unsafe { libc::geteuid() };
+    let mut directory = base.to_path_buf();
+    for _ in 0..3 {
+        let metadata = fs::symlink_metadata(&directory).map_err(|_| unavailable())?;
+        if !metadata.file_type().is_dir() || metadata.uid() != euid {
+            return Err(unavailable());
+        }
+        if metadata.mode() & 0o077 != 0 {
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .map_err(|_| unavailable())?;
+        }
+        directory = directory.parent().ok_or_else(unavailable)?.to_path_buf();
+    }
+    Ok(())
 }
 
 fn cleanup_stale_profiles(base: &Path) {
@@ -1092,15 +1125,208 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn production_agent_host_is_rejected_before_profile_or_gateway() {
+    fn linux_agent_host_refuses_a_host_that_is_not_an_executable_sidecar() {
         let root = tempfile::tempdir().unwrap();
         let host = root.path().join("synthetic-host");
         fs::write(&host, b"synthetic").unwrap();
-        assert!(AgentBrowserRuntime::initialize().is_err());
         let result = AgentHost::spawn(&host, GatewayMode::Production, None);
-        assert!(result.is_err());
+        assert_eq!(result.err().map(|error| error.code), Some("agent-browser-unavailable"));
+        assert!(AgentHost::spawn(Path::new("relative-host"), GatewayMode::Production, None).is_err());
+        assert!(AgentHost::spawn(root.path(), GatewayMode::Production, None).is_err());
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
         assert_eq!(fs::read(host).unwrap(), b"synthetic");
+    }
+
+    #[cfg(target_os = "linux")]
+    const LINUX_SYNTHETIC_PAGE: &str = "<!doctype html><html><head><title>Synthetic Linux Agent Page</title></head><body><main><h1>Synthetic Linux heading</h1><p>synthetic rendered body for the Linux agent browser</p><a href=\"/next\">Synthetic next page</a></main></body></html>";
+
+    /// Serves one synthetic page on loopback; everything else is 404.
+    #[cfg(target_os = "linux")]
+    fn serve_linux_synthetic_page() -> SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 2048];
+                while !request.windows(4).any(|value| value == b"\r\n\r\n") && request.len() < 16384 {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => request.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                let response = if request.starts_with(b"GET /article ") {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{LINUX_SYNTHETIC_PAGE}",
+                        LINUX_SYNTHETIC_PAGE.len()
+                    )
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                };
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        address
+    }
+
+    /// (pid, state, ppid, pgrp) for every process visible in /proc.
+    #[cfg(target_os = "linux")]
+    fn linux_processes() -> Vec<(i32, char, i32, i32)> {
+        let mut processes = Vec::new();
+        for entry in fs::read_dir("/proc").unwrap().flatten() {
+            let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
+                continue;
+            };
+            let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
+                continue;
+            };
+            let Some(rest) = stat.rfind(')').map(|index| &stat[index + 1..]) else {
+                continue;
+            };
+            let fields: Vec<&str> = rest.split_whitespace().collect();
+            if fields.len() < 3 {
+                continue;
+            }
+            let state = fields[0].chars().next().unwrap_or('?');
+            let (Ok(ppid), Ok(pgrp)) = (fields[1].parse(), fields[2].parse()) else {
+                continue;
+            };
+            processes.push((pid, state, ppid, pgrp));
+        }
+        processes
+    }
+
+    /// The engine is the sidecar's child that leads its own process group.
+    #[cfg(target_os = "linux")]
+    fn linux_engine_group(sidecar: u32) -> Option<i32> {
+        linux_processes()
+            .into_iter()
+            .find(|(pid, state, ppid, pgrp)| *ppid == sidecar as i32 && pid == pgrp && *state != 'Z')
+            .map(|(pid, ..)| pid)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_live_in_group(group: i32) -> usize {
+        linux_processes()
+            .into_iter()
+            .filter(|(_, state, _, pgrp)| *pgrp == group && *state != 'Z')
+            .count()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_wait_until(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        done()
+    }
+
+    /// Opens the synthetic page through the real sidecar, gateway and engine.
+    #[cfg(target_os = "linux")]
+    fn linux_open_synthetic(
+        runtime: &AgentBrowserRuntime,
+        scope: [u8; 32],
+        address: SocketAddr,
+    ) -> (String, u32, PathBuf, i32) {
+        assert!(
+            std::env::var_os("LUCKYRAY_AGENT_BROWSER_TEST_SHELL").is_some(),
+            "LUCKYRAY_AGENT_BROWSER_TEST_SHELL must name the pinned engine"
+        );
+        let navigation = runtime
+            .remember_navigation(scope, &format!("http://{address}/article"))
+            .unwrap();
+        let opened = runtime.open(scope, &navigation).expect("the Linux agent host opens");
+        assert_eq!(opened["state"], "ready");
+        assert_eq!(opened["sourceKind"], "browser");
+        assert_eq!(opened["host"], "127.0.0.1");
+        let browser_ref = opened["browserRef"].as_str().unwrap().to_owned();
+        let (sidecar, profile) = {
+            let state = runtime.inner.state.lock().unwrap();
+            let host = state.scopes.get(&scope).unwrap().host.clone().unwrap();
+            let host = host.lock().unwrap();
+            (host.process.process_id(), host.profile.clone())
+        };
+        let group = linux_engine_group(sidecar).expect("the engine runs under the sidecar");
+        (browser_ref, sidecar, profile, group)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_agent_host_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway() {
+        use std::os::unix::fs::PermissionsExt;
+        let address = serve_linux_synthetic_page();
+        let runtime = AgentBrowserRuntime::exact_loopback_for_test(address).unwrap();
+        let scope = [0x51u8; 32];
+        let _lease = runtime
+            .bind_scope(scope, Instant::now() + Duration::from_secs(120))
+            .unwrap();
+        let (browser_ref, _sidecar, profile, group) = linux_open_synthetic(&runtime, scope, address);
+        assert_eq!(
+            fs::metadata(&profile).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let base = profile.parent().unwrap();
+        assert_eq!(fs::metadata(base).unwrap().permissions().mode() & 0o077, 0);
+
+        let read = runtime.read(scope, &browser_ref).unwrap();
+        assert_eq!(read["kind"], "read");
+        assert_eq!(read["title"], "Synthetic Linux Agent Page");
+        assert!(read["visibleText"]
+            .as_str()
+            .unwrap()
+            .contains("synthetic rendered body for the Linux agent browser"));
+        let headings = runtime.extract(scope, &browser_ref, "headings", None).unwrap();
+        assert_eq!(headings["kind"], "headings");
+        assert!(headings.to_string().contains("Synthetic Linux heading"));
+        let links = runtime.extract(scope, &browser_ref, "links", None).unwrap();
+        let items = links["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].get("url").is_none());
+        assert!(items[0]["navigationRef"].as_str().unwrap().starts_with("nav-"));
+        assert_eq!(
+            runtime.extract(scope, &browser_ref, "table", Some(16)).unwrap_err().code,
+            "agent-browser-input-invalid"
+        );
+        assert_eq!(
+            runtime
+                .read(scope, &format!("browser-{}", "R".repeat(48)))
+                .unwrap_err()
+                .code,
+            "agent-browser-reference-invalid"
+        );
+
+        runtime.cancel_scope(scope);
+        assert!(linux_wait_until(Duration::from_secs(10), || linux_live_in_group(group) == 0));
+        assert!(linux_wait_until(Duration::from_secs(5), || !profile.exists()));
+        assert!(!runtime.scope_ready(scope));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_agent_host_death_takes_the_engine_down_and_fails_closed() {
+        let address = serve_linux_synthetic_page();
+        let runtime = AgentBrowserRuntime::exact_loopback_for_test(address).unwrap();
+        let scope = [0x52u8; 32];
+        let _lease = runtime
+            .bind_scope(scope, Instant::now() + Duration::from_secs(120))
+            .unwrap();
+        let (browser_ref, sidecar, profile, group) = linux_open_synthetic(&runtime, scope, address);
+        assert!(linux_live_in_group(group) >= 2, "engine browser and its helpers");
+        // Only the sidecar dies: the engine must follow through its
+        // parent-death signal, not through any cleanup in this process.
+        assert_eq!(unsafe { libc::kill(sidecar as i32, libc::SIGKILL) }, 0);
+        assert!(linux_wait_until(Duration::from_secs(10), || linux_live_in_group(group) == 0));
+        assert!(runtime.read(scope, &browser_ref).is_err());
+        runtime.cancel_scope(scope);
+        assert!(linux_wait_until(Duration::from_secs(5), || !profile.exists()));
     }
 
     #[test]
