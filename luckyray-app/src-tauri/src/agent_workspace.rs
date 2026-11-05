@@ -3811,21 +3811,9 @@ fn workspace_file_identity(file: &File, _path: &Path) -> Result<String, Workspac
 /// filesystem that does not report btime this stays (dev, ino) only.
 #[cfg(target_os = "linux")]
 fn workspace_file_identity(file: &File, _path: &Path) -> Result<String, WorkspaceError> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = file.metadata().map_err(|_| workspace_read_error())?;
-    match metadata
-        .created()
-        .ok()
-        .and_then(|born| born.duration_since(std::time::UNIX_EPOCH).ok())
-    {
-        Some(born) => Ok(format!(
-            "linux-v2-{}-{}-{}",
-            metadata.dev(),
-            metadata.ino(),
-            born.as_nanos()
-        )),
-        None => Ok(format!("unix-v1-{}-{}", metadata.dev(), metadata.ino())),
-    }
+    // One definition shared with the Linux attachment store, which compares
+    // its Vault root identity against this guard's.
+    crate::linux_fs::object_identity(file).map_err(|_| workspace_read_error())
 }
 
 #[cfg(not(any(windows, unix)))]

@@ -500,3 +500,24 @@ pub(crate) fn sync_directory(directory: &Path) -> io::Result<()> {
         .open(directory)?;
     handle.sync_all()
 }
+
+/// The Linux object identity every guard compares: (dev, ino) plus birth time
+/// (statx btime, ns) so an inode-reusing replacement is detected; `unix-v1`
+/// (dev, ino) only where the filesystem reports no btime.
+pub(crate) fn object_identity(file: &File) -> io::Result<String> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata()?;
+    match metadata
+        .created()
+        .ok()
+        .and_then(|born| born.duration_since(std::time::UNIX_EPOCH).ok())
+    {
+        Some(born) => Ok(format!(
+            "linux-v2-{}-{}-{}",
+            metadata.dev(),
+            metadata.ino(),
+            born.as_nanos()
+        )),
+        None => Ok(format!("unix-v1-{}-{}", metadata.dev(), metadata.ino())),
+    }
+}

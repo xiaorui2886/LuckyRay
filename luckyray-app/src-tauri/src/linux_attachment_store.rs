@@ -444,8 +444,9 @@ impl ImportStore {
     }
     pub(crate) fn root_identity(&self) -> io::Result<String> {
         self.verify()?;
-        let m = self.root.file.metadata()?;
-        Ok(format!("unix-v1-{}-{}", m.dev(), m.ino()))
+        // Must equal `filesystem_directory_identity_guard(...).identity()`;
+        // both use the one Linux identity definition.
+        crate::linux_fs::object_identity(&self.root.file)
     }
     pub(crate) fn verify(&self) -> io::Result<()> {
         self.root.verify()?;

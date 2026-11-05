@@ -1259,3 +1259,59 @@ fn conversion_three_images_preserves_existing_reference_and_old_files() {
     assert_eq!(std::fs::read(source.join("portrait.png")).unwrap(), b"portrait bytes");
     assert_eq!(std::fs::read(source.join("three-view.png")).unwrap(), b"three view bytes");
 }
+
+/// Regression (a3f7d07): the Linux directory guard moved to the
+/// `linux-v2-dev-ino-btime` identity while the attachment store still reported
+/// `unix-v1-dev-ino`, so every Linux import failed `knowledge-target-not-current`
+/// before writing anything. Mirrors the desktop drop of two notes plus a PNG:
+/// both notes must land in the Vault and every source file must stay intact.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_drop_import_of_two_notes_lands_in_vault_and_keeps_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    crate::test_support::make_private(base);
+    let root = base.join("vault");
+    std::fs::create_dir_all(root.join(".luckyray")).unwrap();
+    let registration = KnowledgeVaultRegistration {
+        id: "vault-linux-drop".into(),
+        name: "linux-drop".into(),
+        root_path: root.to_string_lossy().into_owned(),
+        mode: "vault-bound".into(),
+        created_at: "2026-09-07T00:00:00Z".into(),
+        last_opened_at: "2026-09-07T00:00:00Z".into(),
+        schema_version: VAULT_SCHEMA_VERSION,
+        link_update_policy: Default::default(),
+    };
+    std::fs::write(root.join(".luckyray/vault.json"), serde_json::to_vec(&registration).unwrap()).unwrap();
+    crate::test_support::make_private(&base.join("app"));
+    let service = KnowledgeService::initialize(&base.join("app")).unwrap();
+    service.register_current_vault(&registration).unwrap();
+    let root = root.canonicalize().unwrap();
+
+    let source = base.join("dropped");
+    std::fs::create_dir_all(&source).unwrap();
+    let first = "# Note\n![[shot.png]]\n";
+    let second = "# other\nplain\n";
+    std::fs::write(source.join("Note.md"), first).unwrap();
+    std::fs::write(source.join("other.md"), second).unwrap();
+    std::fs::write(source.join("shot.png"), b"synthetic png").unwrap();
+    let active = service.activate_ui_source(&registration.id).unwrap();
+    let plan = service
+        .preview_attachment_import(&registration.id, &source, &["Note.md".into(), "other.md".into()], "")
+        .unwrap();
+    assert_eq!(plan.document_count, 2);
+    let outcome = service.execute_attachment_operation(active.source_epoch, &plan).unwrap();
+    assert_eq!(outcome.status, "complete");
+    assert_eq!(outcome.completed_files, outcome.total_files);
+    assert!(root.join("Note.md").is_file());
+    assert_eq!(std::fs::read_to_string(root.join("other.md")).unwrap(), second);
+    // Sources are only read: same bytes, still present.
+    assert_eq!(std::fs::read_to_string(source.join("Note.md")).unwrap(), first);
+    assert_eq!(std::fs::read_to_string(source.join("other.md")).unwrap(), second);
+    assert_eq!(std::fs::read(source.join("shot.png")).unwrap(), b"synthetic png");
+    let mut names: Vec<_> = std::fs::read_dir(&source).unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap()).collect();
+    names.sort();
+    assert_eq!(names, ["Note.md", "other.md", "shot.png"]);
+}

@@ -2202,7 +2202,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "--target x86_64-unknown-linux-gnu",
             "--manifest-path luckyray-app/src-tauri/Cargo.toml",
             "-- --exact --test-threads=1 \\",
-            'grep -qx "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured;',
+            'grep -qx "test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured;',
             "CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/target",
             "if: ${{ !cancelled() && steps.build.outcome == 'success' }}",
             "            agent_runs::tests::retention_caps_terminal_metadata_without_deleting_active_runs_or_messages",
@@ -2215,6 +2215,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "            backend::tests::schema_v11_to_v12_adds_terminal_recovery_facts_and_restart_is_noop",
             "            backend::tests::schema_v8_to_v9_is_additive_default_off_and_restart_noop",
             "            backend::tests::schema_v9_to_v10_adds_structured_message_action_truth_without_rewriting_legacy_content",
+            "            knowledge::attachment_tests::linux_drop_import_of_two_notes_lands_in_vault_and_keeps_sources",
             "            dsh_host::tests::native_surface_state_is_an_exact_sibling_and_never_nested_in_legacy_state",
             "            linux_file_store::tests::linux_commit_preserves_backup_and_rejects_stale_revision",
             "            linux_file_store::tests::linux_modified_older_displaced_is_kept",
@@ -2230,7 +2231,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             "            tools::tests::memory_list_is_bounded_safe_and_cross_conversation_with_current_vault_isolation",
         ):
             self.assertIn(required, step, required)
-        self.assertEqual(step.count("::tests::") + step.count("material_change_tests::"), 23)
+        self.assertEqual(step.count("::tests::") + step.count("material_change_tests::") + step.count("::attachment_tests::"), 24)
         for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}", text)
