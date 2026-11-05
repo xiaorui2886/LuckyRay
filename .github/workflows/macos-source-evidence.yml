@@ -1,0 +1,32 @@
+name: macOS public dependency source evidence
+
+# Candidate for the specifically approved public branch only. This job measures
+# public dependency bytes; it does not build the app or qualify distribution.
+on:
+  push:
+    branches: [codex/mac-source-evidence-20261105]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-public-source-evidence
+  cancel-in-progress: false
+
+jobs:
+  collect-source-evidence:
+    if: >-
+      github.repository == 'xiaorui2886/LuckyRay' &&
+      github.event.repository.private == false &&
+      github.ref == 'refs/heads/codex/mac-source-evidence-20261105'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check evidence reporting with local synthetic HTTP responses
+        run: node --test luckyray-app/scripts/collect-macos-source-evidence.test.mjs
+      - name: Measure the twelve public source inputs and print JSON evidence
+        run: node luckyray-app/scripts/collect-macos-source-evidence.mjs
