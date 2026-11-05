@@ -14,8 +14,8 @@
 //! - the engine refuses to run unless its renderers are sandboxed (seccomp-bpf
 //!   in a separate PID namespace), and never passes a sandbox-off switch.
 //!
-//! Not yet wired to the sidecar or runtime (slice 3): `runtime.rs` still
-//! reports the Agent Browser unavailable on Linux.
+//! Wired (slice 3) into the `luckyray-browser-host --agent-readonly` sidecar,
+//! which owns the engine from a dedicated long-lived thread.
 
 use super::{
     agent_browser_arguments, agent_extract_script, bounded_title, browser_document_token,
@@ -920,6 +920,11 @@ impl LinuxAgentEngine {
                 Err(_) => std::thread::sleep(Duration::from_millis(50)),
             }
         }
+    }
+
+    /// False once the engine's CDP pipe has closed (the engine exited).
+    pub(crate) fn is_alive(&self) -> bool {
+        self.child.is_some() && self.shared.cdp.alive.load(Ordering::Acquire)
     }
 
     pub(crate) fn browser_pid(&self) -> u32 {

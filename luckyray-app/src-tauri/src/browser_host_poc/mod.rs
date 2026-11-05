@@ -1259,10 +1259,10 @@ fn open_production_webview(
     )
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(all(target_os = "linux", not(test)))))]
 struct ActiveProduction;
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(all(target_os = "linux", not(test)))))]
 impl ActiveProduction {
     fn snapshot(&self) -> ProductionState {
         ProductionState::default()
@@ -1284,7 +1284,7 @@ impl ActiveProduction {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(all(target_os = "linux", not(test)))))]
 fn open_production_webview(
     _hidden: bool,
     _test_fixture_port: Option<u16>,
@@ -1298,6 +1298,270 @@ fn open_production_webview(
         "browser-host-platform-unsupported",
         "platform",
     ))
+}
+
+// Linux: only the read-only Agent Browser has a session, backed by the pinned
+// engine (T55). The Personal Browser stays unsupported here, exactly as the
+// stub above reports it. The engine tests live in the app library, so this
+// binary's own test harness keeps the stub.
+#[cfg(all(target_os = "linux", not(test)))]
+#[path = "../agent_browser/linux_host_policy.rs"]
+#[allow(dead_code, unused_imports)]
+mod linux_agent_policy;
+
+#[cfg(all(target_os = "linux", not(test)))]
+type ActiveProduction = linux_agent_session::LinuxAgentSession;
+
+#[cfg(all(target_os = "linux", not(test)))]
+fn open_production_webview(
+    _hidden: bool,
+    test_fixture_port: Option<u16>,
+    test_fixture_id: Option<&str>,
+    embed_parent_window: Option<i64>,
+    embed_viewport: Option<ProductionViewport>,
+    embed_profile_id: Option<&str>,
+    agent_config: Option<AgentReadonlyConfig>,
+) -> Result<ActiveProduction, HostFailure> {
+    let Some(agent_config) = agent_config else {
+        return Err(HostFailure::new(
+            "browser-host-platform-unsupported",
+            "platform",
+        ));
+    };
+    if embed_parent_window.is_some() || embed_viewport.is_some() || embed_profile_id.is_some() {
+        return Err(HostFailure::new(
+            "browser-host-platform-unsupported",
+            "platform",
+        ));
+    }
+    linux_agent_session::LinuxAgentSession::open(agent_config, test_fixture_port, test_fixture_id)
+}
+
+#[cfg(all(target_os = "linux", not(test)))]
+mod linux_agent_session {
+    use super::linux_agent_policy::engine::{EngineConfig, LinuxAgentEngine};
+    use super::linux_agent_policy::{AgentExtractKind as EngineExtractKind, HostFailure as EngineFailure};
+    use super::{
+        fixture_runtime_enabled, AgentExtractKind, AgentReadonlyConfig, HostFailure,
+        ProductionRequest, ProductionState,
+    };
+    use serde_json::Value;
+    use std::path::PathBuf;
+    use std::sync::{mpsc, Arc};
+    use std::thread::JoinHandle;
+
+    /// The pinned engine, verified by sha256 before every start.
+    const PIN: &str = include_str!("../../../tools/linux-agent-browser/pin.json");
+    /// Installed next to this host; never looked up on PATH.
+    const ENGINE_RELATIVE: &str = "agent-browser/chrome-headless-shell-linux64/chrome-headless-shell";
+    /// Fixture builds only (debug + `browser-host-poc-fixture`, test mode).
+    const TEST_SHELL_ENV: &str = "LUCKYRAY_AGENT_BROWSER_TEST_SHELL";
+
+    fn convert(failure: EngineFailure) -> HostFailure {
+        HostFailure::new(failure.code, failure.phase)
+    }
+
+    fn unavailable(phase: &'static str) -> HostFailure {
+        HostFailure::new("agent-browser-engine-unavailable", phase)
+    }
+
+    fn pinned_sha256() -> Result<String, HostFailure> {
+        let pin: Value = serde_json::from_str(PIN).map_err(|_| unavailable("engine-pin"))?;
+        pin.get("executableSha256")
+            .and_then(Value::as_str)
+            .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .map(str::to_ascii_lowercase)
+            .ok_or_else(|| unavailable("engine-pin"))
+    }
+
+    fn engine_path(test_mode: bool) -> Result<PathBuf, HostFailure> {
+        if test_mode && fixture_runtime_enabled() {
+            if let Some(path) = std::env::var_os(TEST_SHELL_ENV) {
+                let path = PathBuf::from(path);
+                return path
+                    .is_absolute()
+                    .then_some(path)
+                    .ok_or_else(|| unavailable("engine-path"));
+            }
+        }
+        let current = std::env::current_exe().map_err(|_| unavailable("engine-path"))?;
+        let directory = current.parent().ok_or_else(|| unavailable("engine-path"))?;
+        Ok(directory.join(ENGINE_RELATIVE))
+    }
+
+    /// The engine is started on, and owned by, a dedicated thread that lives
+    /// until the engine is closed: the engine's parent-death signal is tied to
+    /// the thread that spawned it, so a short-lived spawner would kill it.
+    pub(super) struct LinuxAgentSession {
+        engine: Option<Arc<LinuxAgentEngine>>,
+        keeper: Option<(mpsc::Sender<()>, JoinHandle<()>)>,
+        result: Option<(u64, Value)>,
+    }
+
+    impl LinuxAgentSession {
+        pub(super) fn open(
+            config: AgentReadonlyConfig,
+            test_fixture_port: Option<u16>,
+            test_fixture_id: Option<&str>,
+        ) -> Result<Self, HostFailure> {
+            let test_mode = test_fixture_id.is_some();
+            let engine_config = EngineConfig {
+                shell: engine_path(test_mode)?,
+                expected_sha256: pinned_sha256()?,
+                profile_root: config.profile_root,
+                gateway_address: config.gateway_address,
+                gateway_token: config.gateway_token,
+                test_fixture_port: if fixture_runtime_enabled() {
+                    test_fixture_port
+                } else {
+                    None
+                },
+            };
+            let (started_tx, started_rx) = mpsc::channel();
+            let (stop_tx, stop_rx) = mpsc::channel::<()>();
+            let keeper = std::thread::Builder::new()
+                .name("luckyray-agent-browser-engine".into())
+                .spawn(move || {
+                    let engine = match LinuxAgentEngine::start(engine_config) {
+                        Ok(engine) => Arc::new(engine),
+                        Err(failure) => {
+                            let _ = started_tx.send(Err(convert(failure)));
+                            return;
+                        }
+                    };
+                    if started_tx.send(Ok(Arc::clone(&engine))).is_err() {
+                        return;
+                    }
+                    // Parked until shutdown (or until the session is gone).
+                    let _ = stop_rx.recv();
+                    // The session drops its handle before signalling, so this
+                    // thread closes the engine it spawned.
+                    match Arc::try_unwrap(engine) {
+                        Ok(mut engine) => engine.close(),
+                        Err(engine) => drop(engine),
+                    }
+                })
+                .map_err(|_| unavailable("engine-thread"))?;
+            match started_rx.recv() {
+                Ok(Ok(engine)) => Ok(Self {
+                    engine: Some(engine),
+                    keeper: Some((stop_tx, keeper)),
+                    result: None,
+                }),
+                Ok(Err(failure)) => {
+                    let _ = keeper.join();
+                    Err(failure)
+                }
+                Err(_) => {
+                    let _ = keeper.join();
+                    Err(unavailable("engine-thread"))
+                }
+            }
+        }
+
+        fn engine(&self) -> Result<&LinuxAgentEngine, HostFailure> {
+            self.engine
+                .as_deref()
+                .ok_or_else(|| HostFailure::new("browser-host-terminated", "engine-closed"))
+        }
+
+        pub(super) fn snapshot(&self) -> ProductionState {
+            let Some(engine) = self.engine.as_deref() else {
+                return ProductionState::default();
+            };
+            let snapshot = engine.snapshot();
+            let result = self
+                .result
+                .as_ref()
+                .filter(|(generation, _)| *generation == snapshot.generation)
+                .map(|(_, value)| value.clone());
+            ProductionState {
+                status: snapshot.status,
+                origin: snapshot.origin,
+                document_token: snapshot.document_token,
+                title: snapshot.title,
+                generation: snapshot.generation,
+                result,
+                ..ProductionState::default()
+            }
+        }
+
+        pub(super) fn pump(&mut self) -> bool {
+            self.engine.as_deref().is_some_and(LinuxAgentEngine::is_alive)
+                && self
+                    .keeper
+                    .as_ref()
+                    .is_some_and(|(_, thread)| !thread.is_finished())
+        }
+
+        pub(super) fn execute(
+            &mut self,
+            request: &ProductionRequest,
+        ) -> Result<&'static str, HostFailure> {
+            match request {
+                ProductionRequest::Status { .. } => Ok("status"),
+                ProductionRequest::Read { .. } => {
+                    let engine = self.engine()?;
+                    let generation = engine.snapshot().generation;
+                    let value = engine.read().map_err(convert)?;
+                    self.result = Some((generation, value));
+                    Ok("read-completed")
+                }
+                ProductionRequest::Extract { kind, index, .. } => {
+                    let engine = self.engine()?;
+                    let generation = engine.snapshot().generation;
+                    let kind = match kind {
+                        AgentExtractKind::Main => EngineExtractKind::Main,
+                        AgentExtractKind::Article => EngineExtractKind::Article,
+                        AgentExtractKind::Headings => EngineExtractKind::Headings,
+                        AgentExtractKind::Links => EngineExtractKind::Links,
+                        AgentExtractKind::Table => EngineExtractKind::Table,
+                    };
+                    let value = engine.extract(kind, *index).map_err(convert)?;
+                    self.result = Some((generation, value));
+                    Ok("extract-completed")
+                }
+                ProductionRequest::Navigate { url, .. } => {
+                    self.result = None;
+                    self.engine()?.navigate(url).map_err(convert)?;
+                    Ok("navigating")
+                }
+                // Never embedded on Linux (the Windows non-embedded answer).
+                ProductionRequest::SetViewport { .. } => Err(HostFailure::new(
+                    "browser-viewport-invalid",
+                    "viewport-update",
+                )),
+                // The Agent protocol is navigate/status/read/extract/close.
+                ProductionRequest::Back { .. }
+                | ProductionRequest::Forward { .. }
+                | ProductionRequest::Reload { .. }
+                | ProductionRequest::Stop { .. }
+                | ProductionRequest::Initialize { .. }
+                | ProductionRequest::Close { .. } => Err(HostFailure::new(
+                    "browser-protocol-invalid",
+                    "protocol-command",
+                )),
+            }
+        }
+
+        pub(super) fn shutdown(&mut self) -> Result<(), HostFailure> {
+            self.result = None;
+            self.engine.take();
+            if let Some((stop, keeper)) = self.keeper.take() {
+                let _ = stop.send(());
+                if keeper.join().is_err() {
+                    return Err(HostFailure::new("browser-host-terminated", "engine-close"));
+                }
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for LinuxAgentSession {
+        fn drop(&mut self) {
+            let _ = self.shutdown();
+        }
+    }
 }
 
 #[cfg(all(windows, feature = "browser-host-poc-fixture"))]
