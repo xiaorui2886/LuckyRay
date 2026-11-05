@@ -8,13 +8,13 @@ import { auditLinuxClosure, safeRelative, sha256 } from './lsh-closure.mjs';
 
 const app = fileURLToPath(new URL('../../', import.meta.url));
 const records = join(app, 'dsh-host/linux-x64');
-const recordHashes = {
+export const recordHashes = {
   'runtime-authority.json': '061bb2e7f06419e9b67a53cbec90457e5e51222d1633e246cfa523eacced2db2',
   'runtime-manifest.json': '3003363bf2f03a7c241dac8c15dc083b6a16f1fcb06662c176a19ce35bfc364e',
   'dependency-audit.json': '6bdae5278832f87befaf343d2735c6d19118362933d16c4ee23b498ccde205f0',
   'THIRD-PARTY-NOTICES.txt': 'aaf953ce1bab3c5de84d3fc9363754d787093dfae26003390635852fae077880',
 };
-const hostFiles = [
+export const hostFiles = [
   ['HOST_SCRIPT_SHA256', 'luckyray-dsh-host.mjs'],
   ['HOST_COMPAT_SCRIPT_SHA256', 'luckyray-dsh-plugin-compat.mjs'],
   ['SURFACE_PLUGIN_SHA256', 'luckyray-dsh-authenticated-webserver/index.mjs'],

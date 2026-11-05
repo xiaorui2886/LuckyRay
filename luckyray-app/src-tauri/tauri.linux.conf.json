@@ -3,9 +3,16 @@
     "beforeBuildCommand": "node scripts/linux/prepare-tauri-build.mjs"
   },
   "bundle": {
-    "targets": ["deb", "appimage"],
+    "targets": [
+      "deb",
+      "appimage"
+    ],
     "resources": {
-      "agent-browser/": "agent-browser/"
+      "agent-browser/": "agent-browser/",
+      "../dsh-host/linux-x64/runtime-authority.json": "licenses/lsh-linux/runtime-authority.json",
+      "../dsh-host/linux-x64/runtime-manifest.json": "licenses/lsh-linux/runtime-manifest.json",
+      "../dsh-host/linux-x64/dependency-audit.json": "licenses/lsh-linux/dependency-audit.json",
+      "../dsh-host/linux-x64/THIRD-PARTY-NOTICES.txt": "licenses/lsh-linux/THIRD-PARTY-NOTICES.txt"
     },
     "linux": {
       "deb": {
