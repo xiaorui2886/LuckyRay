@@ -735,6 +735,40 @@ jobs:
           if node scripts/linux/check-lsh-package.mjs 2> "$WORK_ROOT/private/t52-s3-gate.log"; then exit 1; fi
           grep -q "LSH: sealed LSH runtime at src-tauri/dsh" "$WORK_ROOT/private/t52-s3-gate.log"
           rm -rf src-tauri/dsh
+      - name: Stage every Linux release input and require the package preparation to accept then refuse
+        id: linux-package-prepare
+        # T52 S4: prepare-tauri-build.mjs runs every Linux gate (Agent Browser, LSH,
+        # sidecars, media engine, notices, frontend), accepts the staged set and
+        # refuses a one-byte sidecar change.
+        if: >-
+          ${{ !cancelled() && steps.agent-browser-bundle.outcome == 'success'
+          && steps.linux-sidecars.outcome == 'success' && steps.linux-lsh-package.outcome == 'success' }}
+        timeout-minutes: 45
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+          CARGO_TARGET_DIR: ${{ runner.temp }}/luckyray-linux-runtime-work/release-target
+          GH_ARTIFACT_DIR: ${{ runner.temp }}/lgpl-bundle-artifact
+        run: |
+          set -euo pipefail
+          app=luckyray-app/src-tauri
+          prepare=luckyray-app/scripts/linux/prepare-tauri-build.mjs
+          lgpl="$WORK_ROOT/private/t52-s4-lgpl-bundle"
+          rm -rf "$lgpl" "$app/media-engine" "$app/agent-browser" "$app/dsh"; mkdir -p "$lgpl"
+          python3 luckyray-app/tools/linux-agent-browser/shell.py stage \
+            "$RUNNER_TEMP/chrome-headless-shell-linux64.zip" "$app/agent-browser"
+          node luckyray-app/scripts/linux/stage-lsh-package.mjs "$WORK_ROOT/runtime" > "$WORK_ROOT/private/t52-s4-lsh.json"
+          tar -C "$lgpl" -xf "$GH_ARTIFACT_DIR/lgpl-media-bundle.tar"
+          python3 luckyray-app/tools/linux-media-engine/engine.py assemble \
+            "$RUNNER_TEMP/linux-media-engine-downloads" "$lgpl" "$app/media-engine"
+          timeout 2400 rustup run 1.95.0 python3 luckyray-app/tools/linux-sidecars/sidecars.py build \
+            "$app" "$app/binaries" > "$WORK_ROOT/private/t52-s4-sidecars.json"
+          node "$prepare" > "$WORK_ROOT/private/t52-s4-prepare.json"
+          grep -q '"kind":"linux-package-prepared"' "$WORK_ROOT/private/t52-s4-prepare.json"
+          printf 'x' >> "$app/binaries/luckyray-cli-x86_64-unknown-linux-gnu"
+          if node "$prepare" 2> "$WORK_ROOT/private/t52-s4-refused.log"; then exit 1; fi
+          grep -q "Sidecars: linux sidecars refused" "$WORK_ROOT/private/t52-s4-refused.log"
+          rm -rf "$lgpl" "$app/media-engine" "$app/agent-browser" "$app/dsh"
+          find "$app/binaries" -mindepth 1 ! -name .gitignore -delete
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -768,6 +802,7 @@ jobs:
           CI_MEDIA_ENGINE: ${{ steps.media-engine.outcome }}
           CI_LINUX_SIDECARS: ${{ steps.linux-sidecars.outcome }}
           CI_LINUX_LSH_PACKAGE: ${{ steps.linux-lsh-package.outcome }}
+          CI_LINUX_PACKAGE_PREPARE: ${{ steps.linux-package-prepare.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}

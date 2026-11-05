@@ -2180,7 +2180,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "/usr/lib/x86_64-linux-gnu/libmpv", "--include-ignored"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_LGPL_BUNDLE: ${{ steps.media-lgpl-bundle.outcome }}", text)
-        self.assertEqual(ci.STEPS[-9], "MEDIA_LGPL_BUNDLE")
+        self.assertEqual(ci.STEPS[-10], "MEDIA_LGPL_BUNDLE")
         deps = (root / "luckyray-app/tools/linux-media-bundle/ci-build-deps.txt").read_text()
         for line in deps.splitlines():
             if line and not line.startswith("#"):
@@ -2221,7 +2221,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "secrets.", "--no-sandbox", "upload-artifact", "src-tauri/media-engine", "OVERRIDE"):
             self.assertNotIn(forbidden, step + cached, forbidden)
         self.assertIn("CI_MEDIA_ENGINE: ${{ steps.media-engine.outcome }}", text)
-        self.assertEqual(ci.STEPS[-3:-1], ("MEDIA_ENGINE", "LINUX_SIDECARS"))
+        self.assertEqual(ci.STEPS[-4:-2], ("MEDIA_ENGINE", "LINUX_SIDECARS"))
         rust = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
         live = rust[rust.index("fn live_linux_app_owned_engine_probes_a_synthetic_loopback_hls_master"):]
         live = live[:live.index("\n    #[test]")]
@@ -2290,8 +2290,38 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "secrets.", "--no-sandbox", "upload-artifact", "OVERRIDE", ".ps1"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_LINUX_LSH_PACKAGE: ${{ steps.linux-lsh-package.outcome }}", text)
-        self.assertEqual(ci.STEPS[-1], "LINUX_LSH_PACKAGE")
+        self.assertEqual(ci.STEPS[-2], "LINUX_LSH_PACKAGE")
         self.assertIn("luckyray-app/tests/linux-lsh-package.test.mjs", text)
+
+    def test_linux_package_prepare_step_accepts_the_staged_set_and_refuses_a_changed_sidecar(self):
+        # T52 S4: every Linux gate runs inside prepare-tauri-build.mjs.
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/linux-desktop-preflight.yml").read_text()
+        start = text.index("        id: linux-package-prepare\n")
+        finish = text.index("Preserve every actual outcome and fail incomplete coverage")
+        self.assertLess(text.index("        id: linux-lsh-package\n"), start)
+        self.assertLess(start, finish)
+        step = text[start:finish]
+        for required in (
+            "steps.agent-browser-bundle.outcome == 'success'", "steps.linux-sidecars.outcome == 'success'",
+            "steps.linux-lsh-package.outcome == 'success'", "timeout-minutes: 45", "set -euo pipefail",
+            "tools/linux-agent-browser/shell.py stage", 'stage-lsh-package.mjs "$WORK_ROOT/runtime"',
+            "tools/linux-media-engine/engine.py assemble", "rustup run 1.95.0 python3 luckyray-app/tools/linux-sidecars/sidecars.py build",
+            'node "$prepare" > "$WORK_ROOT/private/t52-s4-prepare.json"',
+            "grep -q '\"kind\":\"linux-package-prepared\"'",
+            "printf 'x' >> \"$app/binaries/luckyray-cli-x86_64-unknown-linux-gnu\"",
+            'if node "$prepare" 2> "$WORK_ROOT/private/t52-s4-refused.log"; then exit 1; fi',
+            'grep -q "Sidecars: linux sidecars refused"',
+            'find "$app/binaries" -mindepth 1 ! -name .gitignore -delete',
+        ):
+            self.assertIn(required, step, required)
+        self.assertEqual(step.count('rm -rf "$lgpl" "$app/media-engine" "$app/agent-browser" "$app/dsh"'), 2)
+        for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl",
+                          "secrets.", "--no-sandbox", "upload-artifact", "LUCKYRAY_SIDECAR_PREPARE",
+                          "LUCKYRAY_EXTENSION_ORIGINS", "OVERRIDE", ".ps1"):
+            self.assertNotIn(forbidden, step, forbidden)
+        self.assertIn("CI_LINUX_PACKAGE_PREPARE: ${{ steps.linux-package-prepare.outcome }}", text)
+        self.assertEqual(ci.STEPS[-1], "LINUX_PACKAGE_PREPARE")
 
     def test_port_fixtures_step_runs_exactly_the_fixed_upgrade_and_knowledge_tests(self):
         # T54: genuine old-schema fixtures plus Vault-scoped agent knowledge tests.
@@ -2342,7 +2372,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_PORT_FIXTURES: ${{ steps.port-fixtures.outcome }}", text)
-        self.assertEqual(ci.STEPS[-8], "PORT_FIXTURES")
+        self.assertEqual(ci.STEPS[-9], "PORT_FIXTURES")
 
     def test_agent_browser_engine_steps_pin_the_shell_and_run_exactly_seven_synthetic_tests(self):
         # T55 slice 2: pinned chrome-headless-shell (sha256, cached), pipe-only,
@@ -2400,7 +2430,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             self.assertNotIn(forbidden, step + shell_step, forbidden)
         self.assertIn("CI_AGENT_BROWSER_SHELL: ${{ steps.agent-browser-shell.outcome }}", text)
         self.assertIn("CI_AGENT_BROWSER_ENGINE: ${{ steps.agent-browser-engine.outcome }}", text)
-        self.assertEqual(ci.STEPS[-7:-4], ("AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE", "AGENT_BROWSER_RUNTIME"))
+        self.assertEqual(ci.STEPS[-8:-5], ("AGENT_BROWSER_SHELL", "AGENT_BROWSER_ENGINE", "AGENT_BROWSER_RUNTIME"))
         pin = json.loads((root / "luckyray-app/tools/linux-agent-browser/pin.json").read_text())
         self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(pin["executableSha256"], r"^[0-9a-f]{64}$")
@@ -2448,7 +2478,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         for forbidden in ("--include-ignored", "--skip", "set -x", "pkill", "echo", "apt ", "apt-", "curl", "secrets."):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}", text)
-        self.assertEqual(ci.STEPS[-5], "AGENT_BROWSER_RUNTIME")
+        self.assertEqual(ci.STEPS[-6], "AGENT_BROWSER_RUNTIME")
 
     def test_agent_browser_bundle_step_stages_the_pinned_bundle_and_refuses_missing_or_tampered(self):
         # T55 slice 4: deb/AppImage resources only from the verified, digest-pinned bundle.
@@ -2476,7 +2506,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("luckyray-app/tests/linux-agent-browser-bundle.test.mjs", text[text.index("        id: offline"):text.index("        id: frontend")])
         self.assertIn("CI_AGENT_BROWSER_BUNDLE: ${{ steps.agent-browser-bundle.outcome }}", text)
-        self.assertEqual(ci.STEPS[-4], "AGENT_BROWSER_BUNDLE")
+        self.assertEqual(ci.STEPS[-5], "AGENT_BROWSER_BUNDLE")
         pin = json.loads((root / "luckyray-app/tools/linux-agent-browser/pin.json").read_text())
         self.assertRegex(pin["bundleSha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(pin["installPath"], "/usr/lib/LuckyRay/agent-browser")
@@ -2520,7 +2550,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
         self.assertIn("20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d  "
                       "/usr/lib/x86_64-linux-gnu/libmpv.so.1.109.0\" | sha256sum -c -", deps)
         self.assertIn("CI_MEDIA_PLAYER: ${{ steps.media-player.outcome }}", text)
-        self.assertEqual(ci.STEPS[-10], "MEDIA_PLAYER")
+        self.assertEqual(ci.STEPS[-11], "MEDIA_PLAYER")
         source = (root / "luckyray-app/src-tauri/src/material_native_video/linux_mpv.rs").read_text()
         self.assertIn('if !self.property("mpv-configuration").contains("-Dgpl=false")', source)
         self.assertIn('"20bb08e98a4467432794bf1d1bb1aecd4ba5b53e8365da7179899bd047346d7d"', source)
@@ -2571,7 +2601,7 @@ class AttachmentMutationSourceTests(unittest.TestCase):
                           "--ignored", "set -x", "pkill", "echo", "apt ", "apt-", "src-tauri/media-engine"):
             self.assertNotIn(forbidden, step, forbidden)
         self.assertIn("CI_MEDIA_RESOLVER: ${{ steps.media-resolver.outcome }}", text)
-        self.assertEqual(ci.STEPS[-12:-10], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
+        self.assertEqual(ci.STEPS[-13:-11], ("MEDIA_PREVIEW", "MEDIA_RESOLVER"))
         source = (root / "luckyray-app/src-tauri/src/media_transfer.rs").read_text(encoding="utf-8")
         both = '#[cfg(any(all(windows, feature = "browser-host-runtime"), target_os = "linux"))]'
         for item in ("impl MediaResolver for ExternalMediaResolver", "fn write_site_cookie_file(",
