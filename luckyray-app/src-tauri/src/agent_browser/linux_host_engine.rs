@@ -628,6 +628,25 @@ pub(crate) fn renderer_sandbox_check(proc_root: &Path, browser_pid: u32) -> Resu
     Ok(renderers)
 }
 
+/// Ubuntu 23.10+ restricts unprivileged user namespaces through AppArmor.
+const USERNS_RESTRICTION: &str = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
+
+/// An engine that dies before CDP is up on a host that restricts user
+/// namespaces could not start its sandbox (it never runs without one): report
+/// that, so the AppImage on locked-down Ubuntu refuses with the sandbox code.
+/// The deb's AppArmor profile lifts the restriction for its root-owned engine.
+pub(crate) fn classify_start_failure(
+    failure: HostFailure,
+    engine_exited: bool,
+    userns_restriction: Option<&str>,
+) -> HostFailure {
+    if engine_exited && userns_restriction.map(str::trim) == Some("1") {
+        HostFailure::new("agent-browser-sandbox-unavailable", "sandbox-userns-restricted")
+    } else {
+        failure
+    }
+}
+
 /// True when no process of the engine holds a listening TCP socket.
 pub(crate) fn engine_has_no_listening_tcp(proc_root: &Path, browser_pid: u32) -> bool {
     let mut listening = std::collections::HashSet::new();
@@ -840,8 +859,10 @@ impl LinuxAgentEngine {
             browser_pid,
         };
         if let Err(failure) = engine.configure() {
+            let exited = engine.engine_exited_within(Duration::from_secs(1));
             engine.close();
-            return Err(failure);
+            let restriction = fs::read_to_string(USERNS_RESTRICTION).ok();
+            return Err(classify_start_failure(failure, exited, restriction.as_deref()));
         }
         if let Err(failure) = engine.wait_for_sandboxed_renderer() {
             engine.close();
@@ -1080,6 +1101,21 @@ impl LinuxAgentEngine {
             Some(&session),
         )?;
         Ok(result.pointer("/result/value").cloned().unwrap_or(Value::Null))
+    }
+
+    /// True when the engine process has already exited (within `wait`).
+    fn engine_exited_within(&mut self, wait: Duration) -> bool {
+        let Some(child) = self.child.as_mut() else {
+            return true;
+        };
+        let deadline = Instant::now() + wait;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+                _ => return false,
+            }
+        }
     }
 
     pub(crate) fn close(&mut self) {
@@ -1700,6 +1736,20 @@ mod tests {
         fake_process(none.path(), 100, 1, browser, 0, "1");
         assert!(renderer_sandbox_check(none.path(), 100).is_err());
         assert!(renderer_sandbox_check(none.path(), 999).is_err());
+    }
+
+    #[test]
+    fn linux_engine_start_failure_under_restricted_userns_is_a_sandbox_refusal() {
+        let cdp = || HostFailure::new("agent-browser-engine-failed", "cdp-call");
+        let refused = classify_start_failure(cdp(), true, Some("1\n"));
+        assert_eq!(refused.code, "agent-browser-sandbox-unavailable");
+        assert_eq!(refused.phase, "sandbox-userns-restricted");
+        // Unrestricted host, sysctl absent, or an engine that is still alive:
+        // the original failure stands.
+        for (exited, restriction) in [(true, Some("0\n")), (true, None), (false, Some("1\n"))] {
+            let kept = classify_start_failure(cdp(), exited, restriction);
+            assert_eq!((kept.code, kept.phase), ("agent-browser-engine-failed", "cdp-call"));
+        }
     }
 
     #[test]

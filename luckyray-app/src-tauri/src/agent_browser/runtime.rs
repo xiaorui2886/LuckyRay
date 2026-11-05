@@ -694,6 +694,18 @@ fn bounded_timeout(limit: Duration, deadline: Instant) -> Result<Duration, Agent
     Ok(limit.min(remaining).max(Duration::from_millis(1)))
 }
 
+/// The one launch refusal reported as itself rather than as unavailable: on
+/// Linux the engine never runs unsandboxed, and a host that cannot provide the
+/// sandbox (the AppImage on Ubuntu with restricted user namespaces) says so.
+fn linux_launch_refusal(ready: &HostResponse) -> Option<&'static str> {
+    (cfg!(target_os = "linux")
+        && ready.version == PROTOCOL_VERSION
+        && ready.id == "initialize"
+        && ready.event == "session-failed"
+        && ready.code == "agent-browser-sandbox-unavailable")
+        .then_some("agent-browser-sandbox-unavailable")
+}
+
 fn safe_navigation_failure_code(phase: Option<&str>) -> &'static str {
     match phase {
         Some("navigation-timeout") => "agent-browser-navigation-timeout",
@@ -857,6 +869,7 @@ impl AgentHost {
                 )
             }
         };
+        let ready_failure = linux_launch_refusal(&ready);
         if ready.version != PROTOCOL_VERSION
             || ready.id != "initialize"
             || ready.event != "session-ready"
@@ -873,7 +886,7 @@ impl AgentHost {
                 &profile,
                 reader,
                 stderr_reader,
-                AgentBrowserError::new("agent-browser-unavailable"),
+                AgentBrowserError::new(ready_failure.unwrap_or("agent-browser-unavailable")),
             );
         }
         let Some(nonce) = ready.session_nonce.filter(|value| valid_token(value, 96)) else {
@@ -1135,6 +1148,34 @@ mod tests {
         assert!(AgentHost::spawn(root.path(), GatewayMode::Production, None).is_err());
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
         assert_eq!(fs::read(host).unwrap(), b"synthetic");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_agent_launch_refusal_reports_only_the_sandbox_code() {
+        let response = |event: &str, code: &str| -> HostResponse {
+            serde_json::from_value(json!({
+                "version": PROTOCOL_VERSION, "id": "initialize", "event": event,
+                "phase": "sandbox-userns-restricted", "code": code, "challenge": null,
+                "sessionNonce": null, "status": "idle", "origin": null,
+                "documentToken": null, "title": null, "canGoBack": false,
+                "canGoForward": false, "generation": 0, "controlMode": "agent-readonly",
+                "agentAutomation": "read-only", "networkIsolation": "parent-gateway",
+                "privateSubresourcePrevention": "enforced", "result": null
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            linux_launch_refusal(&response("session-failed", "agent-browser-sandbox-unavailable")),
+            Some("agent-browser-sandbox-unavailable")
+        );
+        for (event, code) in [
+            ("session-failed", "agent-browser-engine-unavailable"),
+            ("session-failed", "agent-browser-engine-integrity"),
+            ("session-ready", "agent-browser-sandbox-unavailable"),
+        ] {
+            assert_eq!(linux_launch_refusal(&response(event, code)), None);
+        }
     }
 
     #[cfg(target_os = "linux")]
