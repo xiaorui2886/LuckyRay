@@ -86,7 +86,8 @@ jobs:
             luckyray-app/tests/notesDropRouting.contract.test.cjs \
             luckyray-app/tests/vaultImportSourceActivation.contract.test.cjs \
             luckyray-app/tests/linuxVaultPath.contract.test.cjs \
-            luckyray-app/tests/linux-package-config.test.mjs
+            luckyray-app/tests/linux-package-config.test.mjs \
+            luckyray-app/tests/linux-agent-browser-bundle.test.mjs
       - name: Build the required embedded frontend once
         id: frontend
         working-directory: luckyray-app
@@ -558,8 +559,9 @@ jobs:
             agent_browser::linux_host_policy::engine::tests::linux_engine_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway \
             agent_browser::linux_host_policy::engine::tests::linux_engine_refuses_a_shell_or_profile_that_does_not_match \
             agent_browser::linux_host_policy::engine::tests::linux_engine_sandbox_check_refuses_unsandboxed_or_missing_renderers \
+            agent_browser::linux_host_policy::engine::tests::linux_engine_start_failure_under_restricted_userns_is_a_sandbox_refusal \
             | tee "$WORK_ROOT/private/t55-agent-browser-engine.log"
-          grep -qx "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+          grep -qx "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t55-agent-browser-engine.log"
       - name: Linux Agent Browser runtime through the real sidecar and DSH broker (synthetic loopback)
         id: agent-browser-runtime
@@ -594,9 +596,40 @@ jobs:
             agent_browser::runtime::tests::linux_agent_host_refuses_a_host_that_is_not_an_executable_sidecar \
             agent_browser::runtime::tests::linux_agent_host_reads_and_extracts_a_synthetic_loopback_page_through_the_gateway \
             agent_browser::runtime::tests::linux_agent_host_death_takes_the_engine_down_and_fails_closed \
+            agent_browser::runtime::tests::linux_agent_launch_refusal_reports_only_the_sandbox_code \
             | tee "$WORK_ROOT/private/t55-agent-browser-runtime.log"
-          grep -qx "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
+          grep -qx "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; [0-9]* filtered out; finished in [0-9.]*s" \
             "$WORK_ROOT/private/t55-agent-browser-runtime.log"
+      - name: Gate the deb and AppImage Agent Browser resources on the pinned bundle digest
+        id: agent-browser-bundle
+        if: ${{ !cancelled() && steps.agent-browser-shell.outcome == 'success' }}
+        timeout-minutes: 10
+        env:
+          WORK_ROOT: ${{ runner.temp }}/luckyray-linux-runtime-work
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/chrome-headless-shell-linux64.zip"
+          bundle="luckyray-app/src-tauri/agent-browser"
+          tampered="$WORK_ROOT/agent-browser-tampered"
+          gate="luckyray-app/scripts/linux/check-agent-browser-bundle.mjs"
+          shell_py="luckyray-app/tools/linux-agent-browser/shell.py"
+          rm -rf "$bundle" "$tampered"
+          # A missing bundle is refused, by the gate and by the Linux build preparation.
+          if node "$gate" 2> "$WORK_ROOT/private/t55-bundle-missing.log"; then exit 1; fi
+          grep -q "agent-browser bundle missing" "$WORK_ROOT/private/t55-bundle-missing.log"
+          if node luckyray-app/scripts/linux/prepare-tauri-build.mjs 2> "$WORK_ROOT/private/t55-prepare.log"; then exit 1; fi
+          grep -q "Agent Browser: agent-browser bundle missing" "$WORK_ROOT/private/t55-prepare.log"
+          # The verified archive stages to exactly the pinned bundle; both digests agree.
+          python3 "$shell_py" stage "$archive" "$bundle"
+          node "$gate" | tee "$WORK_ROOT/private/t55-agent-browser-bundle.log"
+          test "$(python3 "$shell_py" bundle-digest "$bundle")" = "$(cut -d' ' -f3- "$WORK_ROOT/private/t55-agent-browser-bundle.log")"
+          if grep -q "Agent Browser:" <(node luckyray-app/scripts/linux/prepare-tauri-build.mjs 2>&1 || true); then exit 1; fi
+          # A one-byte change to a shipped licence notice is refused.
+          cp -a "$bundle" "$tampered"
+          printf 'x' >> "$tampered/chrome-headless-shell-linux64/ABOUT"
+          if node "$gate" "$tampered" 2> "$WORK_ROOT/private/t55-bundle-tampered.log"; then exit 1; fi
+          grep -q "digest does not match pin.json" "$WORK_ROOT/private/t55-bundle-tampered.log"
+          rm -rf "$bundle" "$tampered"
       - name: Preserve every actual outcome and fail incomplete coverage
         if: ${{ always() && steps.init.outcome == 'success' }}
         env:
@@ -626,6 +659,7 @@ jobs:
           CI_AGENT_BROWSER_SHELL: ${{ steps.agent-browser-shell.outcome }}
           CI_AGENT_BROWSER_ENGINE: ${{ steps.agent-browser-engine.outcome }}
           CI_AGENT_BROWSER_RUNTIME: ${{ steps.agent-browser-runtime.outcome }}
+          CI_AGENT_BROWSER_BUNDLE: ${{ steps.agent-browser-bundle.outcome }}
         run: python3 luckyray-app/tests/linux-notes-ci.py finish --work "$WORK_ROOT"
       - name: Retain only the explicit synthetic JSON evidence
         if: ${{ always() && steps.init.outcome == 'success' }}
