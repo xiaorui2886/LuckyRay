@@ -145,14 +145,38 @@ def safe_member(name):
     return name and not name.startswith("/") and all(p not in ("", ".", "..") for p in parts)
 
 
+PY_ALLOW_FILES = {"python/" + PYTHON.split("/", 1)[1], "python/" + LIBPYTHON.split("/", 1)[1]}
+PY_ALLOW_TREE = "python/lib/python3.11/"   # stdlib + lib-dynload
+
+
+def python_member_wanted(name):
+    """Only what the engine ships: interpreter, libpython, the stdlib tree."""
+    return name in PY_ALLOW_FILES or name.startswith(PY_ALLOW_TREE) or name in ("python", "python/lib",
+                                                                                "python/bin", PY_ALLOW_TREE[:-1])
+
+
 def unpack_python(archive, dest):
+    """Extract only the allowlisted members. Every member name must be safe and
+    under python/; allowlisted members must be plain files or directories (no
+    symlink, hard link, device or fifo), checked here so behaviour does not
+    depend on the Python version's tarfile filter. Unneeded members (e.g.
+    share/terminfo links) are never extracted."""
+    if not hasattr(tarfile, "data_filter"):
+        fail("this Python's tarfile has no data filter")
     with tarfile.open(archive, "r:gz") as tar:
+        wanted = []
         for member in tar:
-            if not safe_member(member.name) or not member.name.startswith("python/"):
+            if not safe_member(member.name) or not (member.name == "python" or member.name.startswith("python/")):
                 fail(f"unsafe python archive member {member.name!r}")
-            if member.isdev() or member.isfifo() or member.islnk():
+            if not python_member_wanted(member.name):
+                continue
+            if not (member.isfile() or member.isdir()):
                 fail(f"unexpected python archive member type {member.name!r}")
-        tar.extractall(dest, filter="data")
+            wanted.append(member)
+        names = {m.name for m in wanted}
+        if not PY_ALLOW_FILES <= names:
+            fail("python archive lacks the interpreter or libpython")
+        tar.extractall(dest, members=wanted, filter="data")
     return Path(dest) / "python"
 
 

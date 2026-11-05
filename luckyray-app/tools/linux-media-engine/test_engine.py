@@ -141,6 +141,52 @@ class Engine(unittest.TestCase):
         self.assertTrue(engine.safe_member("python/bin/python3.11"))
 
 
+class PythonArchive(unittest.TestCase):
+    def make(self, extra):
+        import io, tarfile
+        self.tmp = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.tmp)
+        arc = self.tmp / "py.tar.gz"
+        with tarfile.open(arc, "w:gz") as tar:
+            def add(name, data=b"x", **kw):
+                info = tarfile.TarInfo(name); info.size = len(data); info.mode = 0o755
+                for k, v in kw.items():
+                    setattr(info, k, v)
+                tar.addfile(info, io.BytesIO(data) if info.isfile() else None)
+            add("python/bin/python3.11", ELF_STUB)
+            add("python/lib/libpython3.11.so.1.0", ELF_STUB)
+            add("python/lib/python3.11/os.py", b"# os\n")
+            add("python/lib/python3.11/lib-dynload/_ssl.so", b"so")
+            for name, kw in extra:
+                add(name, b"", **kw)
+        return arc
+
+    def test_out_of_dest_link_outside_the_allowlist_is_skipped(self):
+        import tarfile
+        arc = self.make([("python/share/terminfo/1/1178", {"type": tarfile.LNKTYPE, "linkname": "a/adm1178"}),
+                         ("python/share/evil", {"type": tarfile.SYMTYPE, "linkname": "/etc/passwd"})])
+        out = engine.unpack_python(arc, self.tmp / "out")
+        self.assertTrue((out / "bin/python3.11").is_file())
+        self.assertTrue((out / "lib/python3.11/lib-dynload/_ssl.so").is_file())
+        self.assertFalse((out / "share").exists())
+
+    def test_link_inside_the_allowlist_is_refused(self):
+        import tarfile
+        for kw in ({"type": tarfile.SYMTYPE, "linkname": "../../../../etc/passwd"},
+                   {"type": tarfile.SYMTYPE, "linkname": "os.py"},
+                   {"type": tarfile.LNKTYPE, "linkname": "python/lib/python3.11/os.py"},
+                   {"type": tarfile.FIFOTYPE}):
+            arc = self.make([("python/lib/python3.11/linked.py", kw)])
+            with self.assertRaises(SystemExit) as caught:
+                engine.unpack_python(arc, self.tmp / "out")
+            self.assertIn("unexpected python archive member type", str(caught.exception.code))
+            self.assertFalse((self.tmp / "out").exists())
+
+    def test_unsafe_name_anywhere_is_refused(self):
+        arc = self.make([("python/share/../../x", {})])
+        with self.assertRaises(SystemExit):
+            engine.unpack_python(arc, self.tmp / "out")
+
+
 class Pins(unittest.TestCase):
     def test_sources_bind_the_shared_windows_manifest(self):
         sources, shared = engine.load_sources()

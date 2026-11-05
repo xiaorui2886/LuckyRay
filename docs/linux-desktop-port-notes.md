@@ -316,7 +316,7 @@ either runner drifts from the documented transform (only the two Path
 constructions change). Windows prepare-media-engine.ps1 and its runtime
 manifest hash are untouched.
 
-CI `media-engine`: offline `test_engine.py` (16 tests), sha-checked fetch
+CI `media-engine`: offline `test_engine.py` (19 tests), sha-checked fetch
 (cached), assemble, `pin`, then exactly one ignored live test
 (`media_transfer::tests::live_linux_app_owned_engine_probes_a_synthetic_loopback_hls_master`)
 that runs the production verifier with the compile-time pin and probes a
