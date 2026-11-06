@@ -1,0 +1,5 @@
+CREDITS
+
+Current maintainers and authors of libepubgen
+---------------------------------------------
+David Tardon (dtardon@redhat.com)

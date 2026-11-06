@@ -1,0 +1,6 @@
+CREDITS
+
+Current maintainers and authors of libzmf
+---------------------------------------------
+David Tardon (dtardon@redhat.com)
+Aleksas Pantechovskis (alex.pantec@gmail.com)

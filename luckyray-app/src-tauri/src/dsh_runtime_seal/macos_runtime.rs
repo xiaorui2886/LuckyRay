@@ -9,7 +9,7 @@ use std::os::unix::fs::MetadataExt;
 use std::sync::OnceLock;
 
 const AUTHORITY: &[u8] = include_bytes!("../../macos-lsh-authority.json");
-const AUTHORITY_SHA: &str = "eccb7ffb1abbd45d9cf0c7b9c9002970fb8914af41a469770f0c3572b33948a6";
+const AUTHORITY_SHA: &str = "f75eea082582100a15636d37336cb7ce99baf11afc9c1b44c240bc36f19141de";
 const RECEIPT: &str = "macos-build.json";
 const NODE: &str = "node/node";
 const ENTRY: &str = "host/node_modules/@deepseek-ai/dsh/lib/bin.js";

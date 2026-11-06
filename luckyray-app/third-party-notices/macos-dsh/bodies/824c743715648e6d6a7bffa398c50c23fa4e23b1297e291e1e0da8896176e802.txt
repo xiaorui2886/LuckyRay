@@ -1,0 +1,5 @@
+CREDITS
+
+Current maintainers and authors of libe-book
+---------------------------------------------
+David Tardon (dtardon@redhat.com)

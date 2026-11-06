@@ -1,0 +1,23 @@
+--- a/include/uni_algo/version.h
++++ b/include/uni_algo/version.h
+@@ -25,7 +25,8 @@
+ 
+ #include "impl/impl_cpp_lib_version.h"
+ #include "impl/impl_unicode_version.h"
+-
++#undef major
++#undef minor
+ namespace una::version {
+ 
+ class library_v
+--- a/include/uni_algo/prop.h
++++ b/include/uni_algo/prop.h
+@@ -50,7 +50,7 @@
+     // property data in type_codept because everything related to code point uses it there.
+     // --- Added later ---
+     // Actually it might be better to redesign the low-level for this, there are some parts
+-    // of the low-level where it will make structs smaller too for example breaks.
++    // of the low-level where it will make structs smaller too for example text segmentation.
+ 
+     // https://www.unicode.org/reports/tr44/#General_Category_Values
+ 

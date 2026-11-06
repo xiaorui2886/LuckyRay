@@ -1,0 +1,11 @@
+CREDITS
+
+Current maintainers
+-------------------
+David Tardon (dtardon@redhat.com)
+
+Contributors
+------------
+Anurag Kanungo <anuragkanungo@gmail.com>
+Fridrich Štrba <fridrich.strba@bluewin.ch>
+Laurent Alonso <alonso@loria.fr>

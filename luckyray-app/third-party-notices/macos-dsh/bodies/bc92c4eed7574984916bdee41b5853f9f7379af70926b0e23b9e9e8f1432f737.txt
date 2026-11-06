@@ -1,0 +1,18 @@
+/* ----------------------------------------------------------------------------------
+   Main library of routines for lp_solve v5.0+
+   ----------------------------------------------------------------------------------
+    Author:        Michel Berkelaar (to v3.2)
+                   Kjell Eikland    (v4.0 and forward)
+    Contact:       kjell.eikland@broadpark.no
+    License terms: LGPL.
+
+    Requires:      (see below)
+
+    Release notes:
+    v5.0.0  1 January 2004      First integrated and repackaged version.
+    v5.0.1  8 May 2004          Cumulative update since initial release;
+                                overall functionality scope maintained.
+    v5.1.0  20 July 2004        Reworked lp_solve throughout to fit new
+                                flexible matrix storage model.
+
+   ---------------------------------------------------------------------------------- */
