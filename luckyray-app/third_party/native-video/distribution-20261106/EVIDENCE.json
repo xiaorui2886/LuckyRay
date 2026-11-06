@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "auditDate": "2026-11-06",
+  "status": "BLOCKED_INCOMPLETE_DISTRIBUTION_MATERIALS",
+  "redistributionApproved": false,
+  "completeCorrespondingSource": false,
+  "mainHead": "8dbb79d57e444c8071b02888485aaa9dd836d60b",
+  "candidateBeforeAudit": "543b11f83daf458c16a7647e979de86e069630ca",
+  "artifactBuild": {
+    "mpvCommit": "3186d369f9f090cd1363be0ac46a037824b702c6",
+    "ffmpegCommit": "0b01ed76aa6a64e95ec4b87297aaa374a72de34e",
+    "buildRepository": "https://github.com/zhongfly/mpv-winbuild",
+    "buildCommit": "88bdc4db67bb476a7606921eb2d68b273440d59b",
+    "recipeCommit": "05a60b3cfd04e3e3b89918f4a27f3dde2935dff2",
+    "job": "https://github.com/zhongfly/mpv-winbuild/actions/runs/36858966630/job/110358230122",
+    "mpvGpl": false,
+    "ffmpegLicense": "LGPL version 3 or later",
+    "staticTransitiveDependencies": true,
+    "evidenceIsConfigurationNotLicenseClearance": true
+  },
+  "artifacts": [
+    {
+      "kind": "original-runtime-dll",
+      "name": "libmpv-2.dll",
+      "bytes": 100487168,
+      "sha256": "1a51f1000450ce97ae99fa44b13bc312ab5335e511bc8ae28ae2d90c78069848",
+      "uploaded": false
+    },
+    {
+      "kind": "original-upstream-archive",
+      "name": "mpv-dev-lgpl-x86_64-20261001-git-3186d369f9.7z",
+      "bytes": 28273230,
+      "sha256": "1c91708e027ed19eceff5a6f9b62ab1901b3592f02a1924473396db33bc9cec4",
+      "uploaded": false
+    }
+  ],
+  "sourceArchives": [
+    {
+      "repository": "mpv-player/mpv",
+      "commit": "3186d369f9f090cd1363be0ac46a037824b702c6",
+      "name": "mpv-3186d369f9f090cd1363be0ac46a037824b702c6.tar.gz",
+      "bytes": 7475297,
+      "sha256": "9e160328ced1266571ee57ae5b16ea77cc5c8ac34ebc1ec549ea73b5b4c54128",
+      "url": "https://codeload.github.com/mpv-player/mpv/tar.gz/3186d369f9f090cd1363be0ac46a037824b702c6",
+      "scope": "clean upstream source; does not include the missing complete transitive build sources"
+    },
+    {
+      "repository": "FFmpeg/FFmpeg",
+      "commit": "0b01ed76aa6a64e95ec4b87297aaa374a72de34e",
+      "name": "ffmpeg-0b01ed76aa6a64e95ec4b87297aaa374a72de34e.tar.gz",
+      "bytes": 17774713,
+      "sha256": "27d84b395033401af4d020d04fa6875e16318bc6b61531ece550ec22ce13beb3",
+      "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/0b01ed76aa6a64e95ec4b87297aaa374a72de34e",
+      "scope": "clean upstream source; does not include the missing complete transitive build sources"
+    },
+    {
+      "repository": "zhongfly/mpv-winbuild",
+      "commit": "88bdc4db67bb476a7606921eb2d68b273440d59b",
+      "name": "mpv-winbuild-88bdc4db67bb476a7606921eb2d68b273440d59b.tar.gz",
+      "bytes": 22686,
+      "sha256": "0bbf09be19bdde7edbb6810ef62a1257eb10887f2b118fb84249d401950c3952",
+      "url": "https://codeload.github.com/zhongfly/mpv-winbuild/tar.gz/88bdc4db67bb476a7606921eb2d68b273440d59b",
+      "scope": "clean upstream source; does not include the missing complete transitive build sources"
+    },
+    {
+      "repository": "shinchiro/mpv-winbuild-cmake",
+      "commit": "05a60b3cfd04e3e3b89918f4a27f3dde2935dff2",
+      "name": "mpv-winbuild-cmake-05a60b3cfd04e3e3b89918f4a27f3dde2935dff2.tar.gz",
+      "bytes": 82363,
+      "sha256": "8907f091a184a8b62927a5f60f383febd3fa8131ebc6d76e96e0a2cc6d83bbef",
+      "url": "https://codeload.github.com/shinchiro/mpv-winbuild-cmake/tar.gz/05a60b3cfd04e3e3b89918f4a27f3dde2935dff2",
+      "scope": "clean upstream source; does not include the missing complete transitive build sources"
+    }
+  ],
+  "licenses": [
+    {
+      "file": "licenses/mpv-Copyright.txt",
+      "bytes": 4096,
+      "sha256": "bfe9ee4cceabcb8ecbfadf208d04156f73d801e6a57369a5606bb8341e204a23",
+      "url": "https://github.com/mpv-player/mpv/blob/3186d369f9f090cd1363be0ac46a037824b702c6/Copyright"
+    },
+    {
+      "file": "licenses/mpv-LICENSE.LGPL.txt",
+      "bytes": 26410,
+      "sha256": "72b672113d642cbb8ef5dcc76938db801983c56e50b1400ab930f1a64d6dc8d9",
+      "url": "https://github.com/mpv-player/mpv/blob/3186d369f9f090cd1363be0ac46a037824b702c6/LICENSE.LGPL"
+    },
+    {
+      "file": "licenses/mpv-LICENSE.GPL.txt",
+      "bytes": 17984,
+      "sha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6",
+      "url": "https://github.com/mpv-player/mpv/blob/3186d369f9f090cd1363be0ac46a037824b702c6/LICENSE.GPL"
+    },
+    {
+      "file": "licenses/FFmpeg-LICENSE.md",
+      "bytes": 4352,
+      "sha256": "e6dc72d5665a1ebd6dcc841de59278dad4ca77ecc47b03f1064a55c3e9ea8bb8",
+      "url": "https://github.com/FFmpeg/FFmpeg/blob/0b01ed76aa6a64e95ec4b87297aaa374a72de34e/LICENSE.md"
+    },
+    {
+      "file": "licenses/FFmpeg-COPYING.LGPLv2.1.txt",
+      "bytes": 26517,
+      "sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30",
+      "url": "https://github.com/FFmpeg/FFmpeg/blob/0b01ed76aa6a64e95ec4b87297aaa374a72de34e/COPYING.LGPLv2.1"
+    },
+    {
+      "file": "licenses/FFmpeg-COPYING.LGPLv3.txt",
+      "bytes": 7651,
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+      "url": "https://github.com/FFmpeg/FFmpeg/blob/0b01ed76aa6a64e95ec4b87297aaa374a72de34e/COPYING.LGPLv3"
+    },
+    {
+      "file": "licenses/FFmpeg-COPYING.GPLv3.txt",
+      "bytes": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "url": "https://github.com/FFmpeg/FFmpeg/blob/0b01ed76aa6a64e95ec4b87297aaa374a72de34e/COPYING.GPLv3"
+    },
+    {
+      "file": "licenses/mpv-winbuild-LICENSE.txt",
+      "bytes": 1065,
+      "sha256": "616a0cefb333ddeafb45d46919f8f9037efa958742b48eba03ac5aae2b90b195",
+      "url": "https://github.com/zhongfly/mpv-winbuild/blob/88bdc4db67bb476a7606921eb2d68b273440d59b/LICENSE"
+    }
+  ],
+  "missing": [
+    "Exact revisions, local patches and corresponding source for all actually linked static dependencies, including Rust/submodule dependencies where used",
+    "Complete matching dependency notices and attribution; not only mpv/FFmpeg top-level license texts",
+    "A verified LGPL-compatible replacement or relinking path; current runtime enforces the pinned DLL size and hash",
+    "Closed product-specific redistribution review; no patent or commercial license conclusion inferred from configure flags"
+  ],
+  "retrieval": {
+    "runApi": 404,
+    "jobApi": 404,
+    "artifactListApi": 404,
+    "releaseTagApi": 404,
+    "cachedWebPageNotLiveArchive": true,
+    "localBuildPackageDirectories": 94,
+    "localHeadFiles": 0,
+    "note": "94 is the build-log inventory, not an SBOM or 94 confirmed linked libraries. write-head stdout files are empty; the SHA was written to HEAD, excluded by the upstream log collector."
+  },
+  "productChanges": {
+    "runtimeGuardChanged": false,
+    "dllHashesChanged": false,
+    "dllStagedForRelease": false,
+    "nativeResourceListChangedForPlayer": false,
+    "nativeBuildRun": false,
+    "installerBuilt": false,
+    "installedOrRestarted": false,
+    "mainOrProductionProfileWritten": false,
+    "modelOrGpuRequests": 0,
+    "cloudRunnerUsed": false
+  }
+}

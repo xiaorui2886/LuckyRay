@@ -28,15 +28,12 @@ export function MaterialLibraryAutoImport({ library, disabled }: { library: Mate
   }, []);
   const changedRoot = config.enabled && root && config.root !== root;
   return <div className="material-library-auto-import">
-    <label><input type="checkbox" checked={config.enabled && !changedRoot} disabled={disabled || (!root && !config.enabled)}
+    <label title={root || undefined}><input type="checkbox" checked={config.enabled && !changedRoot} disabled={disabled || (!root && !config.enabled)}
       onChange={event => { try { setLibraryRootWatch(library.id, root || config.root, event.target.checked); setError(""); } catch (reason) { setError(String(reason)); } }}/>
       自动导入库目录中的素材</label>
-    <details className="material-library-import-details"><summary tabIndex={0}>导入规则与目录</summary>
-    <p title={root}>{root || "库目录不可用"}</p>
-    <small>包含子文件夹，沿用此库的{library.storageMode === "managed" ? "托管复制（按内容去重）" : library.storageMode === "source" ? "源文件管理（按路径更新）" : "链接引用（按路径去重）"}；不删除源文件。内部文件、托管 assets 及其他库不扫描。关闭后不再开始新扫描，当前扫描会完成。</small>
-    </details>
     {changedRoot && <small role="status">库目录已变化，请重新勾选确认。</small>}
-    {config.enabled && status && <small role="status">{status.state === "scanning" ? "后台扫描中…" : status.state === "success" ? `上次导入 ${status.lastImportedCount ?? 0} 个，跳过 ${status.lastSkippedDuplicateCount ?? 0} 个重复项` : status.lastError || "等待扫描"}</small>}
+    {config.enabled && status?.state === "scanning" && <small role="status">后台扫描中…</small>}
+    {config.enabled && status?.lastError && <small className="material-library-error" role="alert">{status.lastError}</small>}
     {config.enabled && !!status?.waitingFiles && <small role="status">等待 {status.waitingFiles} 个文件复制完成…</small>}
     {config.enabled && status?.watchError && <small role="status">{status.watchError}</small>}
     {error && <small className="material-library-error" role="alert">{error}</small>}

@@ -1,3 +1,4 @@
+import { DesktopCodeBlock } from "../community/DesktopExtensions";
 import {useState,useMemo,useCallback,type ReactNode} from 'react';
 import {useI18n} from '../../core/i18n';
 import {normalizeWikiLinkKey as normalizeNoteLinkKey} from '../../core/markdown/wikiTargets';
@@ -231,7 +232,7 @@ export function NotePreview({
     }
     if (block.type === "code") {
       return (
-        <pre className="note-preview-code" key={block.key}>
+        <DesktopCodeBlock key={block.key} language={block.language} source={block.content} noteId={currentNoteId ?? null} fallback={<pre className="note-preview-code">
           <span className="note-preview-code-head">
             <span className="note-preview-code-lang">{block.language || "code"}</span>
             <button
@@ -255,7 +256,7 @@ export function NotePreview({
             </button>
           </span>
           <code>{block.content}</code>
-        </pre>
+        </pre>}/>
       );
     }
     if (block.type === "asset-card") {

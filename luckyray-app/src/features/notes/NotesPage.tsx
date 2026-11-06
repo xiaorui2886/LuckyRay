@@ -1534,7 +1534,7 @@ export default function NotesPage({visible=true}:{visible?:boolean}={}) {
   const [attachmentResolutionError, setAttachmentResolutionError] = useState('');
   const [attachmentRecheck, setAttachmentRecheck] = useState(0);
   const recheckAttachments = useCallback(() => setAttachmentRecheck(value => value + 1), []);
-  useAttachmentFileVersions(currentVault?.id, recheckAttachments);
+  useAttachmentFileVersions(currentVault?.id, recheckAttachments, visible);
   const realVaultAssetOpenPathRef = useRef<Map<string, string>>(new Map());
   const [notesIndexPanel, setNotesIndexPanel] = useState<NotesIndexPanel | null>(null);
   const [knowledgeSearchOpen, setKnowledgeSearchOpen] = useState(false);
@@ -9003,6 +9003,7 @@ toggleSource: () => notesPaneLayout ? setNotesSplitPaneMode(paneId, editorMode =
       )}
       {editorCtx && (
         <EditorContextMenu
+          onDismiss={()=>setEditorCtx(null)}
           x={editorCtx.x}
           y={editorCtx.y}
           aiBusy={aiWriteBusy}

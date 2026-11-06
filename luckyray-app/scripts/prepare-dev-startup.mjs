@@ -18,8 +18,8 @@ const powershell = (file, ...args) => ['powershell.exe', ['-NoProfile', '-Execut
 const stages = [
   { name: 'media', inputs: ['third_party/media-engine'], outputs: ['src-tauri/media-engine'], command: powershell('prepare-media-engine.ps1') },
   { name: 'dsh-package', inputs: dshInputs, outputs: ['src-tauri/dsh'], command: powershell('prepare-dsh-package-runtime.ps1') },
-  { name: 'dsh-debug', inputs: dshInputs, outputs: ['src-tauri/target/debug/lr-lsh/199-1/deepseek-harness'], command: powershell('prepare-dsh-dev-runtime.ps1') },
-  { name: 'sidecars', inputs: ['src-tauri/src','src-tauri/build.rs','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json','config/release-extension-origins.json','browser-extension-prototype/manifest.json'], outputs: ['src-tauri/binaries/luckyray-cli-x86_64-pc-windows-msvc.exe','src-tauri/binaries/luckyray-cli-x86_64-pc-windows-msvc.exe.identity.json','src-tauri/target/debug/luckyray-cli.exe','src-tauri/target/debug/luckyray-browser-host.exe'],
+  { name: 'dsh-debug', inputs: dshInputs, outputs: ['src-tauri/target/debug/lr-lsh/1910-2/deepseek-harness'], command: powershell('prepare-dsh-dev-runtime.ps1') },
+  { name: 'sidecars', inputs: ['src-tauri/src','src-tauri/build.rs','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json','config/release-extension-origins.json','config/dsh-host-compatibility.json','config/secondary-lsh-recovery-qualification.json','browser-extension-prototype/manifest.json'], outputs: ['src-tauri/binaries/luckyray-cli-x86_64-pc-windows-msvc.exe','src-tauri/binaries/luckyray-cli-x86_64-pc-windows-msvc.exe.identity.json','src-tauri/binaries/luckyray-browser-host-x86_64-pc-windows-msvc.exe','src-tauri/target/debug/luckyray-cli.exe','src-tauri/target/debug/luckyray-browser-host.exe'],
     // Written only by -Release (all four binaries). Development does not create
     // this file, but changes to an existing release contract must invalidate it.
     optionalOutputs: ['src-tauri/binaries/luckyray-sidecars.origin.identity.json'], command: powershell('prepare-dev-sidecars.ps1') },
@@ -41,7 +41,7 @@ async function run(command) {
 // modifies the sidecar contract, or claims the desktop build is ready.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 const stages = await getStartupStages(root);
-const selected = process.argv.includes('--runtimes-only') ? stages.slice(0, 3) : stages;
+const selected = process.argv.includes('--runtimes-only') ? stages.filter(stage => stage.name !== 'sidecars') : stages;
 if (process.argv.includes('--runtimes-only')) selected.find(stage => stage.name === 'dsh-debug').command[1].push('-ValidateOnly');
 const results = [];
 await withPreparationLock(join(receiptRoot, 'preparation.lock'), async () => {

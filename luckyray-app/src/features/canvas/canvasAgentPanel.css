@@ -47,10 +47,6 @@
 .canvas-r1-agent-icon-button svg { width: 16px; height: 16px; }
 .canvas-r1-agent-body { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .canvas-r1-agent-body[hidden] { display: none; }
-.canvas-r1-agent-canvas-label { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; padding: 12px 18px 10px; color: var(--agent-muted); font-size: 11px; }
-.canvas-r1-agent-canvas-label > span:nth-child(2) { max-width: 215px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.canvas-r1-agent-canvas-label > small { margin-left: auto; font-size: 8px; letter-spacing: .06em; white-space: nowrap; opacity: .65; }
-.canvas-r1-agent-canvas-symbol { width: 10px; height: 10px; flex: 0 0 auto; border: 1px solid currentColor; border-radius: 2px; transform: rotate(-7deg); opacity: .65; }
 .canvas-r1-agent-transcript { flex: 1; min-height: 0; padding: 6px 18px 22px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--theme-border-strong, #44444c) transparent; }
 .canvas-r1-agent-welcome { padding-top: clamp(10px, 3vh, 34px); }
 .canvas-r1-agent-welcome-art { display: flex; align-items: center; height: 58px; margin: 0 0 27px 5px; }
@@ -186,7 +182,7 @@
 }
 @media (max-height: 500px) {
   .canvas-r1-agent-header { min-height: 46px; padding-top: 7px; padding-bottom: 7px; }
-  .canvas-r1-agent-heading > span, .canvas-r1-agent-canvas-label, .canvas-r1-agent-context-empty, .canvas-r1-agent-composer-hint { display: none; }
+  .canvas-r1-agent-heading > span, .canvas-r1-agent-context-empty, .canvas-r1-agent-composer-hint { display: none; }
   .canvas-r1-agent-compose-area { padding: 8px 12px; }
   .canvas-r1-agent-context-list { max-height: 36px; }
   .canvas-r1-agent-composer textarea { min-height: 48px; max-height: 76px; }

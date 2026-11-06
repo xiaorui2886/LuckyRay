@@ -8,11 +8,12 @@ export type MaterialLibrarySnapshot = {
   registry: MaterialLibraryRegistry | null; libraryId: string | null; generation: number;
   status: "idle" | "loading" | "switching" | "ready" | "error"; error: string | null;
 };
-export type MaterialLibraryRequest = { libraryId: string | null; vaultId?: string; action: Record<string, unknown> };
+export type MaterialLibraryRequest = { libraryId: string | null; vaultId?: string; action: Record<string, unknown>; desktopEventOrigins?: string[] };
 export type MaterialLibraryTransport = <T>(request: MaterialLibraryRequest) => Promise<T>;
 const nativeTransport: MaterialLibraryTransport = async <T>(request: MaterialLibraryRequest) => {
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<T>("material_library_command", { request });
+  const { desktopEventOrigins, ...libraryRequest } = request;
+  return invoke<T>("material_library_command", { request: libraryRequest, ...(desktopEventOrigins?.length ? { desktopEventOrigins } : {}) });
 };
 type PreferenceSave = {
   values: Record<string, unknown>; version: number; inFlight: boolean;
@@ -34,9 +35,9 @@ export class MaterialLibrarySession {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   capture() { return { libraryId: this.state.libraryId, generation: this.state.generation }; }
   isCurrent(context: ReturnType<MaterialLibrarySession["capture"]>) { return context.libraryId === this.state.libraryId && context.generation === this.state.generation; }
-  request<T>(action: Record<string, unknown>, libraryId = this.state.libraryId) {
+  request<T>(action: Record<string, unknown>, libraryId = this.state.libraryId, desktopEventOrigins?: string[]) {
     // Identity is copied before any dialog/network/IO promise can yield.
-    return this.transport<T>({ libraryId, action }).then(value => {
+    return this.transport<T>({ libraryId, action, ...(desktopEventOrigins?.length ? { desktopEventOrigins } : {}) }).then(value => {
       if (typeof window !== "undefined" && libraryId && (action.op === "videoFrame" || catalogMutations.has(String(action.op)))) window.dispatchEvent(new CustomEvent("luckyray:material-library-change", { detail: { libraryId } }));
       return value;
     }).catch(error => {

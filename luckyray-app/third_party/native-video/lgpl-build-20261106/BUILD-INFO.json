@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "component": "libmpv",
+  "buildKind": "local-source-build-Windows-x86_64-LGPL",
+  "mpvCommit": "3186d369f9f090cd1363be0ac46a037824b702c6",
+  "ffmpegCommit": "0b01ed76aa6a64e95ec4b87297aaa374a72de34e",
+  "luaRelease": "5.2.4",
+  "luaArchiveSha256": "b9e2e4aad6789b3b63a056d442f7b39f0ecfca3ae0f1fc0ae4e9614401b69f4b",
+  "dependencySnapshotSource": {
+    "url": "https://github.com/Zencok/mpv-libre-runtime",
+    "commit": "fb08030026ae4a1889b2a2d841db3702fb7a6d4f",
+    "archiveSha256": "fd6e2e5a914906ac428c879b6b1f8609cf6ee581f92d5da2c1a6b582cc2fbc03",
+    "onlyIndividualUpstreamSourcesUsed": true,
+    "AGPLRuntimeAndLibreMPEGNotUsed": true
+  },
+  "toolchainImage": "ghcr.io/btbn/ffmpeg-builds/win64-lgpl@sha256:291298c28290ea30b94a224cb2545d1f2df922fe9445d1866036eabbeb246a3f",
+  "toolchain": "GCC 16.2.0, binutils 2.47, MinGW-w64 v14.0.0 UCRT/posix; crosstool-ng b1a94f65c5187d99037a4e2f57aefbdf995a9677",
+  "prebuiltMediaLibrariesExcluded": true,
+  "networkDuringBuild": false,
+  "jobs": 4,
+  "mpvConfiguration": "\"-Dbuildtype=release -Dprefix=/build/luckyray-prefix -Dlibdir=lib -Ddefault_library=shared -Dwrap_mode=nofallback -Dauto_features=disabled -Dprefer_static=true '-Dc_link_args=-static-libgcc -static-libstdc++ -L/build/luckyray-prefix/lib -lstdc++ -lpthread' '-Dcpp_link_args=-static-libgcc -static-libstdc++ -L/build/luckyray-prefix/lib -lpthread' -Dgpl=false -Dlibmpv=true -Dcplayer=true -Dwasapi=enabled -Dd3d11=enabled -Dshaderc=enabled -Ddirect3d=disabled -Dlcms2=enabled -Dgl=disabled -Dspirv-cross=enabled -Dwin32-threads=enabled -Dbuild-date=false -Dlua=lua52 --cross-file=/build/luckyray-build/cross.meson\"",
+  "FFmpegConfiguration": "\"--prefix=/build/luckyray-prefix --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --pkg-config=pkg-config --pkg-config-flags=--static --disable-autodetect --disable-gpl --disable-nonfree --disable-version3 --enable-static --disable-shared --disable-doc --disable-debug --enable-zlib --enable-bzlib --enable-libdav1d --enable-d3d11va --enable-dxva2 --enable-schannel --extra-cflags='-O2 -pipe -static-libgcc -I/build/luckyray-prefix/include -DBZ2_STATICLIB' --extra-cxxflags='-O2 -pipe -static-libgcc -static-libstdc++ -I/build/luckyray-prefix/include' --extra-ldflags='-static-libgcc -static-libstdc++ -L/build/luckyray-prefix/lib' --extra-libs='-lstdc++ -lpthread'\"",
+  "dllSha256": "6938419e82922251619c274c20b33186e70ad2408bb16b30f490433e8c1cbb17",
+  "dllSize": 52959744,
+  "commonFormatSupport": "Built-in FFmpeg decoders/demuxers; D3D11/DXVA2, WASAPI, libass, LCMS2. No promise of all formats.",
+  "licenseElection": "mpv/FFmpeg/libplacebo/FriBidi LGPL-2.1-or-later; combined runtime distributed using LGPL-3.0-or-later. FreeType uses FTL, Apache dependencies Apache-2.0.",
+  "patentReview": "NOT_ASSESSED; no patent license or commercial-public-distribution clearance implied",
+  "scope": "private acceptance only",
+  "independentTools": {
+    "ffmpeg": {
+      "size": 34188288,
+      "sha256": "602112ab4a82ee5cec271b3658cc0d8c7ee829fdcf4b9dcc856537df98821b36"
+    },
+    "ffprobe": {
+      "size": 33975808,
+      "sha256": "a5be5ef6a81af32040cf58ac112ed3d4c1a9efad8b9d2b43977072c422da338e"
+    },
+    "license": "LGPL-2.1-or-later, permissive dependencies and GCC Runtime Library Exception",
+    "correspondingSource": "same sources.tar.xz and build-lgpl.sh; make builds the standalone tools"
+  }
+}

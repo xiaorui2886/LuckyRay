@@ -14,6 +14,52 @@ type Error = &'static str;
 #[path = "canvas_media_options.rs"]
 mod options;
 
+// Billing is selected explicitly by the saved profile. Never rewrite plan to PAYG.
+fn ark_base(base:&str)->Result<(),Error> {
+    match base.trim_end_matches('/') {
+        "https://ark.cn-beijing.volces.com/api/plan/v3" | "https://ark.cn-beijing.volces.com/api/v3"=>Ok(()),
+        _=>Err("unsupported_input"),
+    }
+}
+fn ark_image_body(model:&str,prompt:&str,request:&AiImageGenerateRequest,images:&[String])->Result<Value,Error> {
+    if request.count.unwrap_or(1)!=1 || request.aspect.is_some() || request.resolution.is_some() {return Err("unsupported_input");}
+    let size=request.quality.as_deref().unwrap_or("2K");
+    if !matches!(size,"2K"|"4K") {return Err("unsupported_input");}
+    let mut body=json!({"model":model,"prompt":prompt,"size":size,"response_format":"url","output_format":"png","watermark":true});
+    if !images.is_empty(){body["image"]=if images.len()==1{json!(images[0])}else{json!(images)};}
+    Ok(body)
+}
+fn ark_video_body(model:&str,prompt:&str,request:&AiVideoGenerateRequest,images:&[String])->Result<Value,Error> {
+    // First-frame conditioning is the conservative common contract; do not silently
+    // turn last-frame or multi-reference inputs into first-frame requests.
+    if images.len()>1 || request.quality.is_some() || request.references.iter().any(|r|r.role!="firstFrame") {return Err("unsupported_input");}
+    let ratio=request.aspect.as_deref().unwrap_or("16:9");
+    let duration=request.duration.unwrap_or(5);
+    if !matches!(ratio,"16:9"|"9:16"|"1:1"|"4:3"|"3:4"|"21:9") || !(4..=12).contains(&duration) {return Err("unsupported_input");}
+    let mut content=vec![json!({"type":"text","text":prompt})];
+    if let Some(url)=images.first(){content.push(json!({"type":"image_url","image_url":{"url":url},"role":"first_frame"}));}
+    Ok(json!({"model":model,"content":content,"ratio":ratio,"duration":duration,"generate_audio":request.sound.unwrap_or(false),"watermark":true}))
+}
+fn ark_state(value:&Value,id:&str)->Result<&'static str,Error> {
+    if task_id(value)?!=id{return Err("invalid_response");}
+    match value.get("status").and_then(Value::as_str) {
+        Some("queued")=>Ok("queued"),Some("running")=>Ok("generating"),Some("succeeded")=>Ok("completed"),
+        Some("failed")=>Err(response_error_kind(reqwest::StatusCode::BAD_REQUEST,&value.to_string())),
+        Some("cancelled"|"expired")=>Err("provider_error"),_=>Err("invalid_response"),
+    }
+}
+async fn ark_reference_images(references:&[String])->Result<Vec<String>,Error> {
+    let mut images=Vec::new();let mut total=0usize;
+    for raw in references {
+        let (bytes,mime,_)=reference_bytes(raw.clone()).await?;
+        let encoded=format!("data:{mime};base64,{}",STANDARD.encode(bytes));
+        total=total.saturating_add(encoded.len());
+        if total>crate::CANVAS_GENERATION_MAX_RESPONSE_BYTES{return Err("unsupported_input");}
+        images.push(encoded);
+    }
+    Ok(images)
+}
+
 pub(crate) fn easycli_base<'a>(base:&'a str,protocol:&str)->std::borrow::Cow<'a,str> {
     if protocol=="easycli-auto" {
         if let Some(root)=base.trim_end_matches('/').strip_suffix("/v1beta") {
@@ -108,6 +154,7 @@ fn response_error_kind(status: reqwest::StatusCode, body: &str) -> Error {
                 "unsupported_protocol" | "unsupported_endpoint" | "method_not_allowed" => Some("unsupported_protocol"),
                 "invalid_api_key" | "UNAUTHENTICATED" | "PERMISSION_DENIED" => Some("unauthorized"),
                 "rate_limit_exceeded" | "RESOURCE_EXHAUSTED" => Some("rate_limited"),
+                "QuotaExceeded.AgentPlanQuotaExceeded" => Some("usage_limit"),
                 _ => None,
             };
             if let Some(kind) = kind { return kind; }
@@ -200,6 +247,7 @@ async fn response_json_observed(request:reqwest::RequestBuilder,limit:usize,mut 
         value.as_ref().map(|v|bigmodel_error_kind(status,v)).unwrap_or_else(|_|response_error_kind(status,""))
     }else{response_error_kind(status,&text)}); }
     let value=value.map_err(|_|"invalid_response")?;
+    if value.pointer("/error/code").and_then(Value::as_str)==Some("QuotaExceeded.AgentPlanQuotaExceeded") {return Err("usage_limit");}
     if bigmodel && value.get("error").is_some() {return Err(bigmodel_error_kind(status,&value));}
     if response_safety_blocked(&value) { return Err("moderation_blocked"); }
     Ok(value)
@@ -332,6 +380,7 @@ async fn image_inner(request: &AiImageGenerateRequest,config: &RuntimeProfile,ca
     let prompt=request.prompt.trim();
     if !safe_model(model) || prompt.is_empty() || prompt.len()>crate::CANVAS_GENERATION_MAX_PROMPT_BYTES { return Err("unsupported_input"); }
     let references=crate::ordered_canvas_image_references(&request.references).ok_or("unsupported_input")?;
+    if config.profile.image_protocol=="ark-image" {ark_base(&config.profile.base_url)?;}
     let client=provider_client(&config.profile.base_url).await?;
     // A single EasyCLI connection accepts either advertised base URL; retain any
     // reverse-proxy prefix and never change the configured origin or credentials.
@@ -345,6 +394,11 @@ async fn image_inner(request: &AiImageGenerateRequest,config: &RuntimeProfile,ca
     if key.is_empty(){return Err("no_api_key");}
     let mut gemini=false;
     let pending = match protocol {
+        "ark-image" => {
+            let images=ark_reference_images(&references).await?;
+            let body=ark_image_body(model,prompt,request,&images)?;
+            client.post(endpoint(base,"images/generations",false)?).bearer_auth(&key).json(&body)
+        },
         "openai-image" => {
             let aspect=request.aspect.as_deref().unwrap_or("1:1");
             let mut size=match aspect {"7:4" if model.contains("dall-e-3")=>"1792x1024","4:7" if model.contains("dall-e-3")=>"1024x1792","3:2"=>if model.contains("dall-e-3"){"1792x1024"}else{"1536x1024"},"2:3"=>if model.contains("dall-e-3"){"1024x1792"}else{"1024x1536"},_=>crate::canvas_image_size(model,Some(aspect))}.to_owned();
@@ -417,7 +471,15 @@ async fn image_inner(request: &AiImageGenerateRequest,config: &RuntimeProfile,ca
         _=>return Err("unsupported_input"),
     };
     if cancelled(){return Err("cancelled");}
-    let mut parsed=response_json(pending,crate::CANVAS_GENERATION_MAX_RESPONSE_BYTES).await?;
+    let mut parsed=response_json(pending,crate::CANVAS_GENERATION_MAX_RESPONSE_BYTES).await.map_err(|e|
+        if protocol=="ark-image" && matches!(e,"timeout"|"connection"|"invalid_response"){"submission_unknown"}else{e})?;
+    if protocol=="ark-image" {
+        if parsed.get("error").is_some(){return Err(response_error_kind(reqwest::StatusCode::BAD_REQUEST,&parsed.to_string()));}
+        if let Some(error)=parsed.get("data").and_then(Value::as_array).and_then(|items|items.iter().find_map(|item|item.get("error"))) {
+            // Partial output is not reported as a wholly successful generation.
+            return Err(response_error_kind(reqwest::StatusCode::BAD_REQUEST,&json!({"error":error}).to_string()));
+        }
+    }
     if protocol=="12ai-task" {
         let id=task_id(&parsed)?.to_owned();
         if parsed.get("status").is_none(){parsed=json!({"id":&id,"status":"queued"});}
@@ -555,8 +617,8 @@ async fn video_inner(app: &tauri::AppHandle,request: &AiVideoGenerateRequest,con
     let prompt=request.prompt.trim();
     if !safe_model(model)||prompt.is_empty()||prompt.len()>crate::CANVAS_GENERATION_MAX_PROMPT_BYTES{return Err("unsupported_input");}
     let protocol=config.profile.video_protocol.as_str();
-    if !matches!(protocol,"openai-video"|"12ai-task"|"bigmodel-video"){return Err("unsupported_input");}
-    let base=&config.profile.base_url;let client=provider_client(base).await?;let key=crate::normalize_ai_api_key(&config.api_key);
+    if !matches!(protocol,"openai-video"|"12ai-task"|"bigmodel-video"|"ark-video"){return Err("unsupported_input");}
+    let base=&config.profile.base_url;if protocol=="ark-video"{ark_base(base)?;}let client=provider_client(base).await?;let key=crate::normalize_ai_api_key(&config.api_key);
     if key.is_empty(){return Err("no_api_key");}
     let client_id=request.client_task_id.as_deref().ok_or("stable_task_id_required")?;
     let ledger=SubmissionLedger::new(&app.path().app_data_dir().map_err(|_|"provider_error")?.join("canvas/provider-submissions"),client_id,&config.profile,request)?;
@@ -577,7 +639,11 @@ async fn video_inner(app: &tauri::AppHandle,request: &AiVideoGenerateRequest,con
     }else{
         let duration=request.duration.unwrap_or(if protocol=="openai-video"{8}else{5});
         let aspect=request.aspect.as_deref().unwrap_or("16:9");
-        let builder=if protocol=="bigmodel-video" {
+        let builder=if protocol=="ark-video" {
+            let images=ark_reference_images(&references).await?;
+            let body=ark_video_body(model,prompt,request,&images)?;
+            client.post(endpoint(base,"contents/generations/tasks",false)?).bearer_auth(&key).json(&body)
+        }else if protocol=="bigmodel-video" {
             let mut body=bigmodel_body(model,prompt,&references,request)?;
             if let Some(raw)=references.first() {
                 let (bytes,mime,_)=reference_bytes(raw.clone()).await?;
@@ -624,6 +690,7 @@ async fn video_inner(app: &tauri::AppHandle,request: &AiVideoGenerateRequest,con
     if protocol!="bigmodel-video" && parsed.get("status").is_none(){parsed=json!({"id":&id,"status":"queued"});}
     crate::emit_canvas_video_progress(app,request.client_task_id.as_deref(),Some(&id),"queued",Some(0));
     let deadline=tokio::time::Instant::now()+Duration::from_secs(600);
+    let mut transient_query_failures=0u8;
     loop {
         if cancelled(){return Err("cancelled");}
         let state=if protocol=="bigmodel-video"{
@@ -632,14 +699,18 @@ async fn video_inner(app: &tauri::AppHandle,request: &AiVideoGenerateRequest,con
                 return Err(bigmodel_error_kind(reqwest::StatusCode::OK,&parsed));
             }
             bigmodel_state(&parsed,&id)?
-        }else{task_state(&parsed,&id)?};
+        }else if protocol=="ark-video"{ark_state(&parsed,&id)?}else{task_state(&parsed,&id)?};
         if state=="completed"{break;}
         crate::emit_canvas_video_progress(app,request.client_task_id.as_deref(),Some(&id),state,parsed.get("progress").and_then(Value::as_u64).map(|n|n.min(100)));
         if tokio::time::Instant::now()>=deadline{return Err("timeout");}
         tokio::time::sleep(Duration::from_secs(5)).await;
-        let route=format!("{}/{}",if protocol=="openai-video"{"videos"}else if protocol=="bigmodel-video"{"async-result"}else{"task"},id);
+        let route=format!("{}/{}",if protocol=="openai-video"{"videos"}else if protocol=="bigmodel-video"{"async-result"}else if protocol=="ark-video"{"contents/generations/tasks"}else{"task"},id);
         diagnostic.begin("poll");
-        parsed=response_json_observed(client.get(endpoint(base,&route,false)?).bearer_auth(&key),crate::CANVAS_GENERATION_MAX_POLL_BYTES,Some(diagnostic),protocol=="bigmodel-video",&[&key,prompt]).await?;
+        parsed=match response_json_observed(client.get(endpoint(base,&route,false)?).bearer_auth(&key),crate::CANVAS_GENERATION_MAX_POLL_BYTES,Some(diagnostic),protocol=="bigmodel-video",&[&key,prompt]).await {
+            Ok(value)=>{transient_query_failures=0;value},
+            Err(e) if protocol=="ark-video" && matches!(e,"rate_limited"|"timeout"|"connection") && transient_query_failures<3=>{transient_query_failures+=1;continue;},
+            Err(e)=>return Err(e),
+        };
     }
     let output_dir=app.path().app_data_dir().map_err(|_|"provider_error")?.join("canvas/generated-videos");
     crate::emit_canvas_video_progress(app,request.client_task_id.as_deref(),Some(&id),"downloading",Some(99));
@@ -648,7 +719,7 @@ async fn video_inner(app: &tauri::AppHandle,request: &AiVideoGenerateRequest,con
         let items=parsed.get("video_result").and_then(Value::as_array).ok_or("invalid_response")?;
         let urls:Vec<Value>=items.iter().take(4).filter_map(|item|item.get("url").cloned()).collect();
         result_urls(&json!({"outputs":urls}))
-    }else{result_urls(&parsed)};
+    }else if protocol=="ark-video"{result_urls(&json!({"output":parsed.pointer("/content/video_url")}))}else{result_urls(&parsed)};
     let url=match projected.into_iter().next() {
         Some(url)=>url,
         None if protocol=="openai-video"=>return download_video_content(&client,base,&id,&key,&output_dir,cancelled).await,
@@ -992,5 +1063,73 @@ mod generic_video_transport_tests {
         assert!(body.contains("name=\"model\"\r\n\r\nthird-party-video"));
         assert!(body.contains("name=\"seconds\"\r\n\r\n8"));
         assert!(!body.contains("input_reference"));assert!(!body.contains("Authorization"));
+    }
+}
+
+#[cfg(test)]
+mod ark_protocol_tests {
+    use super::*;
+    const PLAN:&str="https://ark.cn-beijing.volces.com/api/plan/v3";
+    const PAYG:&str="https://ark.cn-beijing.volces.com/api/v3";
+    fn image_request()->AiImageGenerateRequest {
+        serde_json::from_value(json!({"model":"seedream-exact-future-id","prompt":"Synthetic scene"})).unwrap()
+    }
+    fn video_request()->AiVideoGenerateRequest {
+        serde_json::from_value(json!({"model":"seedance-exact-future-id","prompt":"Synthetic scene","client_task_id":"ark-client"})).unwrap()
+    }
+    fn profile(base:&str)->crate::canvas_media_profiles::Profile {
+        serde_json::from_value(json!({"id":"ark-plan","name":"Synthetic","baseUrl":base,"imageModel":"seedream-exact-future-id","videoModel":"seedance-exact-future-id","imageProtocol":"ark-image","videoProtocol":"ark-video","revision":1})).unwrap()
+    }
+    #[test] fn billing_endpoints_are_explicit_and_not_rewritten() {
+        for base in [PLAN,PAYG] {
+            assert!(ark_base(base).is_ok());
+            assert_eq!(endpoint(base,"images/generations",false).unwrap(),format!("{base}/images/generations"));
+            assert_eq!(endpoint(base,"contents/generations/tasks/task-1",false).unwrap(),format!("{base}/contents/generations/tasks/task-1"));
+        }
+        for base in ["https://ark.cn-beijing.volces.com","https://ark.cn-beijing.volces.com/api/coding/v3","http://ark.cn-beijing.volces.com/api/plan/v3","https://example.com/api/plan/v3"] {
+            assert!(ark_base(base).is_err());
+        }
+    }
+    #[test] fn images_use_json_even_with_references_and_keep_exact_model() {
+        let r=image_request();
+        let body=ark_image_body(&r.model,&r.prompt,&r,&["data:image/png;base64,synthetic".into()]).unwrap();
+        assert_eq!(body,json!({"model":"seedream-exact-future-id","prompt":"Synthetic scene","size":"2K","response_format":"url","output_format":"png","watermark":true,"image":"data:image/png;base64,synthetic"}));
+        let mut r=image_request();r.count=Some(2);assert!(ark_image_body(&r.model,&r.prompt,&r,&[]).is_err());
+        r.count=Some(1);r.aspect=Some("1:1".into());assert!(ark_image_body(&r.model,&r.prompt,&r,&[]).is_err());
+    }
+    #[test] fn video_content_roles_controls_and_terminal_states_are_explicit() {
+        let mut r=video_request();r.sound=Some(true);
+        r.references=serde_json::from_value(json!([{"kind":"image","role":"firstFrame","media_url":"synthetic"}])).unwrap();
+        let body=ark_video_body(&r.model,&r.prompt,&r,&["data:image/png;base64,synthetic".into()]).unwrap();
+        assert_eq!(body["model"],"seedance-exact-future-id");assert_eq!(body["watermark"],true);
+        assert_eq!(body["generate_audio"],true);assert_eq!(body["content"][1]["role"],"first_frame");
+        assert_eq!(body["content"][1]["image_url"]["url"],"data:image/png;base64,synthetic");
+        r.references[0].role="lastFrame".into();assert!(ark_video_body(&r.model,&r.prompt,&r,&["synthetic".into()]).is_err());
+        for (status,expected) in [("queued","queued"),("running","generating"),("succeeded","completed")] {
+            assert_eq!(ark_state(&json!({"id":"task-1","status":status}),"task-1"),Ok(expected));
+        }
+        for status in ["failed","cancelled","expired","completed","unknown"] {
+            assert!(ark_state(&json!({"id":"task-1","status":status}),"task-1").is_err());
+        }
+        assert!(ark_state(&json!({"id":"wrong","status":"succeeded"}),"task-1").is_err());
+    }
+    #[test] fn quota_is_not_transient_and_secrets_never_enter_diagnostics() {
+        let body=json!({"error":{"code":"QuotaExceeded.AgentPlanQuotaExceeded","message":"synthetic secret prompt"}});
+        assert_eq!(response_error_kind(reqwest::StatusCode::TOO_MANY_REQUESTS,&body.to_string()),"usage_limit");
+        assert_eq!(response_error_kind(reqwest::StatusCode::TOO_MANY_REQUESTS,"{}"),"rate_limited");
+        let mut d=VideoDiagnostic::new("submit");d.observe(&body,&["synthetic secret prompt"]);
+        assert!(!serde_json::to_string(&d).unwrap().contains("synthetic"));
+        let request=client().unwrap().post(endpoint(PLAN,"images/generations",false).unwrap()).bearer_auth("synthetic-dedicated-key").json(&json!({"model":"unchanged"})).build().unwrap();
+        assert_eq!(request.headers()["authorization"],"Bearer synthetic-dedicated-key");
+        assert!(!request.url().as_str().contains("key"));
+        assert_eq!(request.headers()["content-type"],"application/json");
+    }
+    #[test] fn durable_receipt_resumes_and_never_crosses_billing_lanes() {
+        let dir=tempfile::tempdir().unwrap();let p=profile(PLAN);let r=video_request();
+        let ledger=SubmissionLedger::new(dir.path(),"ark-client",&p,&r).unwrap();ledger.begin().unwrap();
+        assert_eq!(ledger.recover(),Err("submission_unknown"));assert_eq!(ledger.begin(),Err("submission_unknown"));
+        ledger.record("ark-provider-task").unwrap();assert_eq!(ledger.recover().unwrap(),Some("ark-provider-task".into()));
+        assert_eq!(SubmissionLedger::new(dir.path(),"ark-client",&profile(PAYG),&r).unwrap().recover(),Err("submission_binding_changed"));
+        assert!(!std::fs::read_to_string(&ledger.marker).unwrap().contains("Synthetic"));
     }
 }

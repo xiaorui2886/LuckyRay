@@ -1,3 +1,4 @@
+import { DesktopViewHost, useDesktopContributions } from "./DesktopExtensions";
 // EXT-PAGE-R1: the real main-area page for a plugin `page` contribution.
 // Waits for the package registry, validates the page against the single
 // registry truth, then hosts the shared invocation body — no modal chrome.
@@ -8,6 +9,7 @@ import { useScriptPackages } from "./ScriptPlugins";
 import { useMessages } from "../../core/i18n/index";
 import { parsePluginPagePath } from "../../app/shellNav";
 import "./scriptPlugins.css";
+import { CommunityIcon } from "./CommunityPresentation";
 
 const COPY = {
   "page.loading": { "zh-CN": "正在读取插件状态…", "en-US": "Reading plugin state…" },
@@ -20,7 +22,9 @@ const COPY = {
 } as const;
 
 export function PluginPageHost({ path }: { path: string }) {
-  const packages = useScriptPackages();
+  const { t } = useMessages(COPY);
+  const packages = useScriptPackages(true);
+  useDesktopContributions();
   const hostVersion = extensionPackages.snapshot().hostVersion;
   const loaded = extensionPackages.snapshot().ready;
   const parsed = useMemo(() => parsePluginPagePath(path), [path]);
@@ -34,6 +38,10 @@ export function PluginPageHost({ path }: { path: string }) {
   if (!entry) return <PageNotice textKey="page.notInstalled" />;
   if (!entry.enabled) return <PageNotice textKey="page.disabled" />;
   if (!packageCompatibility(entry.package, hostVersion).compatible) return <PageNotice textKey="page.incompatible" />;
+  if (entry.package.manifest.type === "desktop") {
+    const key = `${parsed.packageId}/${parsed.pageId}`;
+    return <section className="plugin-page" data-plugin-page={parsed.packageId}><button className="plugin-page-back" onClick={() => { window.location.hash = "#community"; }}><CommunityIcon name="arrow" />{t("page.backToCommunity")}</button><DesktopViewHost viewKey={key}/></section>;
+  }
   const contribution = (entry.package.resource as ScriptResource).contributions.find(
     (item: ScriptContribution) => item.id === parsed.pageId && item.kind === "page",
   );
@@ -42,6 +50,7 @@ export function PluginPageHost({ path }: { path: string }) {
   return (
     <section className="plugin-page" data-plugin-page={parsed.packageId} data-plugin-page-id={parsed.pageId}>
       <header className="plugin-page-head">
+        <button className="plugin-page-back" onClick={() => { window.location.hash = "#community"; }}><CommunityIcon name="arrow" />{t("page.backToCommunity")}</button>
         <h1>{contribution.label}</h1>
         <p>{entry.package.manifest.name} · v{entry.package.manifest.version}</p>
       </header>

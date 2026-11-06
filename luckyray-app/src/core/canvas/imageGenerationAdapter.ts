@@ -2,7 +2,7 @@
 
 import { canvasGenerationTaskError } from "./generationErrors";
 import type { CanvasGenerationAdapter } from "./generationRunner";
-import type { CanvasGenerationRequestSnapshot } from "./generationTasks";
+import { snapshotDoubaoAccountPool, type CanvasGenerationRequestSnapshot } from "./generationTasks";
 
 export type CanvasGeneratedImage = {
   url: string;
@@ -23,6 +23,7 @@ export type CanvasImageGenerationResponse = {
  */
 export type CanvasAiImageGeneration = (
   request: CanvasGenerationRequestSnapshot,
+  stableClientTaskId?: string,
 ) => Promise<CanvasImageGenerationResponse>;
 
 export function createCanvasImageGenerationAdapter(
@@ -49,6 +50,7 @@ export function createCanvasImageGenerationAdapter(
       try {
         response = await generate({
           ...request,
+          ...snapshotDoubaoAccountPool(request),
           prompt,
           references: request.references.map((reference) => ({ ...reference })),
         });

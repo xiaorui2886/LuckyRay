@@ -862,26 +862,96 @@ fn unreadable_note_value(
     Ok(value)
 }
 
+// One resolver serves both manifest projection and the resource byte route.
+fn resolve_note_resource(
+    gateway: &CompanionGateway, doc: &KnowledgeDocumentSnapshot, destination: &str, wiki: bool,
+    approved: &[String], assets: &[crate::materials::MaterialAsset], refs: &[crate::materials::NoteAttachmentRefInput],
+) -> ContentResult<crate::knowledge::AttachmentResolution> {
+    let mut resolved = gateway.knowledge().resolve_attachment_with_approved_paths(
+        &doc.summary.document_ref, destination, wiki, approved,
+    ).map_err(|_| (404, "RESOURCE_UNAVAILABLE"))?;
+    let selected = crate::materials::MaterialCatalog::select_note_attachment(assets, refs, destination, wiki,
+        resolved.status == "missing");
+    match selected {
+        Err(status) => { resolved.status = status.into(); resolved.absolute_path = None; resolved.relative_path = None; resolved.version = None; }
+        Ok(Some(asset)) => {
+            let path = gateway.material_catalog().resolve_export_file(asset).map_err(|_| (404, "RESOURCE_UNAVAILABLE"))?;
+            let metadata = std::fs::metadata(&path).map_err(|_| (404, "RESOURCE_UNAVAILABLE"))?;
+            let modified = metadata.modified().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|time| time.as_nanos()).unwrap_or(0);
+            resolved.status = "resolved".into();
+            resolved.absolute_path = Some(path.to_string_lossy().into_owned());
+            resolved.relative_path = None;
+            resolved.version = Some(format!("{}-{modified}", metadata.len()));
+            resolved.material_asset_id = Some(asset.id.clone());
+        }
+        Ok(None) => (),
+    }
+    Ok(resolved)
+}
+
+// Content V1 and mobile caches identify resources by destination alone. A
+// Markdown destination is note-relative, while Wiki destinations are vault-
+// relative (or basename searches). Do not let a shared ID silently serve the
+// first of two different files. Preserve the existing IDs and accept mixed
+// syntax only when both authorities resolve to the same verified file/version.
+fn conflicting_note_resource_targets<'a>(
+    gateway: &CompanionGateway, doc: &KnowledgeDocumentSnapshot,
+    links: impl IntoIterator<Item = (&'a str, CompanionLinkSyntax)>,
+    approved: &[String], assets: &[crate::materials::MaterialAsset],
+    refs: &[crate::materials::NoteAttachmentRefInput],
+) -> HashSet<String> {
+    let mut syntaxes = HashMap::<&str, u8>::new();
+    for (destination, syntax) in links {
+        let bit = if syntax == CompanionLinkSyntax::Wiki { 2 } else { 1 };
+        *syntaxes.entry(destination).or_default() |= bit;
+    }
+    syntaxes.into_iter().filter_map(|(destination, mask)| {
+        if mask != 3 { return None; }
+        let markdown = resolve_note_resource(gateway, doc, destination, false, approved, assets, refs);
+        let wiki = resolve_note_resource(gateway, doc, destination, true, approved, assets, refs);
+        let same_file = match (markdown, wiki) {
+            (Ok(a), Ok(b)) if a.status == "resolved" && b.status == "resolved" => {
+                a.absolute_path.is_some() && a.absolute_path == b.absolute_path && a.version == b.version
+            }
+            _ => false,
+        };
+        (!same_file).then(|| destination.to_owned())
+    }).collect()
+}
+
 fn document_value(
     gateway: &CompanionGateway,
     vault: &str,
     id: &str,
     doc: &KnowledgeDocumentSnapshot,
 ) -> ContentResult<Value> {
-    let knowledge = gateway.knowledge();
     let approved = gateway.material_catalog()
         .approved_note_attachment_paths(
             &doc.summary.document_ref.vault_id,
             &doc.summary.relative_path,
         )
         .map_err(|_| (503, "RESOURCE_AUTHORITY_UNAVAILABLE"))?;
-    let resources = companion_attachment_links(&doc.content).into_iter().take(1000).map(|link| {
+    let catalog = gateway.material_catalog();
+    let assets = catalog.note_attachment_candidates(&doc.summary.document_ref.vault_id)
+        .map_err(|_| (503, "RESOURCE_AUTHORITY_UNAVAILABLE"))?;
+    let refs = catalog.note_attachment_refs(&doc.summary.document_ref.vault_id, &doc.summary.relative_path)
+        .map_err(|_| (503, "RESOURCE_AUTHORITY_UNAVAILABLE"))?;
+    let links = companion_attachment_links(&doc.content);
+    let conflicts = conflicting_note_resource_targets(gateway, doc,
+        links.iter().map(|link| (link.destination.as_str(), link.syntax)), &approved, &assets, &refs);
+    let resources = links.into_iter().take(1000).map(|link| {
         let resource_id = format!("res-{:x}", Sha256::digest(link.destination.as_bytes()));
-        let resolved = knowledge.resolve_attachment_with_approved_paths(&doc.summary.document_ref, &link.destination,
-            link.syntax == CompanionLinkSyntax::Wiki, &approved);
-        let (status, version) = resolved.map(|r| (r.status, r.version)).unwrap_or(("unavailable".into(), None));
+        let (status, version, resource_mime) = if conflicts.contains(&link.destination) {
+            ("ambiguous".into(), None, mime(&link.destination))
+        } else {
+            resolve_note_resource(gateway, doc, &link.destination,
+                link.syntax == CompanionLinkSyntax::Wiki, &approved, &assets, &refs).map(|r| {
+                let resource_mime = mime(r.absolute_path.as_deref().or(r.relative_path.as_deref()).unwrap_or(&link.destination));
+                (r.status, r.version, resource_mime)
+            }).unwrap_or(("unavailable".into(), None, mime(&link.destination)))
+        };
         json!({"resourceId": resource_id, "target": link.destination, "status": status, "version": version,
-            "mimeType": mime(&link.destination), "embedded": link.embedded})
+            "mimeType": resource_mime, "embedded": link.embedded})
     }).collect::<Vec<_>>();
     Ok(
         json!({"noteId": id, "vaultId": vault, "title": doc.summary.title, "relativePath": doc.summary.relative_path,
@@ -1071,9 +1141,8 @@ pub(super) fn resource(
         .and_then(|s| s.split_once("/resources/"))
         .ok_or((404, "NOT_FOUND"))?;
     let doc = current_document(gateway, &target, &vault, id)?;
-    let link = companion_attachment_links(&doc.content)
-        .into_iter()
-        .find(|link| {
+    let links = companion_attachment_links(&doc.content);
+    let link = links.iter().find(|link| {
             format!("res-{:x}", Sha256::digest(link.destination.as_bytes())) == resource_id
         })
         .ok_or((404, "RESOURCE_UNAVAILABLE"))?;
@@ -1084,14 +1153,18 @@ pub(super) fn resource(
             &doc.summary.relative_path,
         )
         .map_err(|_| (503, "RESOURCE_AUTHORITY_UNAVAILABLE"))?;
-    let resolved = knowledge
-        .resolve_attachment_with_approved_paths(
-            &doc.summary.document_ref,
-            &link.destination,
-            link.syntax == CompanionLinkSyntax::Wiki,
-            &approved,
-        )
-        .map_err(|_| (404, "RESOURCE_UNAVAILABLE"))?;
+    let catalog = gateway.material_catalog();
+    let assets = catalog.note_attachment_candidates(&doc.summary.document_ref.vault_id)
+        .map_err(|_| (503, "RESOURCE_AUTHORITY_UNAVAILABLE"))?;
+    let refs = catalog.note_attachment_refs(&doc.summary.document_ref.vault_id, &doc.summary.relative_path)
+        .map_err(|_| (503, "RESOURCE_AUTHORITY_UNAVAILABLE"))?;
+    let conflicts = conflicting_note_resource_targets(gateway, &doc,
+        links.iter().map(|entry| (entry.destination.as_str(), entry.syntax)), &approved, &assets, &refs);
+    if conflicts.contains(&link.destination) {
+        return Err((404, "RESOURCE_UNAVAILABLE"));
+    }
+    let resolved = resolve_note_resource(gateway, &doc, &link.destination,
+        link.syntax == CompanionLinkSyntax::Wiki, &approved, &assets, &refs)?;
     if resolved.status != "resolved" {
         return Err((404, "RESOURCE_UNAVAILABLE"));
     }
@@ -1698,6 +1771,70 @@ mod tests {
             "INSERT OR IGNORE INTO companion_device(device_id,label,credential_verifier,created_at,last_authenticated_at,revoked_at) VALUES(?1,'replica fixture','not-a-real-credential','2026-10-25',NULL,NULL)",
             [format!("device-{}", "a".repeat(32))]).unwrap();
         request("GET", &format!("/v1/notes/{id}/replica-manifest?vault={vault}"), Value::Null)
+    }
+
+    #[test]
+    fn mixed_syntax_resource_id_never_serves_the_first_different_file() {
+        let (_root, gateway, registration, vault) = fixture();
+        let root = Path::new(&registration.root_path);
+        fs::create_dir_all(root.join("nested/folder")).unwrap();
+        fs::create_dir_all(root.join("folder")).unwrap();
+        fs::write(root.join("nested/folder/pic.png"), b"markdown file").unwrap();
+        fs::write(root.join("folder/pic.png"), b"wiki file").unwrap();
+        fs::write(root.join("nested/Mixed.md"),
+            "![local](folder/pic.png)\n![[folder/pic.png]]\n").unwrap();
+        let listing = list(&gateway, &vault);
+        let id = listing["items"].as_array().unwrap().iter()
+            .find(|note| note["relativePath"] == "nested/Mixed.md").unwrap()["noteId"]
+            .as_str().unwrap();
+        let (target, _) = target(&gateway).unwrap();
+        let doc = current_document(&gateway, &target, &vault, id).unwrap();
+        // Exercise the real Knowledge resolver, not invented status fixtures.
+        let markdown = resolve_note_resource(&gateway, &doc, "folder/pic.png", false, &[], &[], &[]).unwrap();
+        let wiki = resolve_note_resource(&gateway, &doc, "folder/pic.png", true, &[], &[], &[]).unwrap();
+        assert_eq!(markdown.status, "resolved");
+        assert_eq!(wiki.status, "resolved");
+        assert_ne!(markdown.absolute_path, wiki.absolute_path);
+        let projection = document_value(&gateway, &vault, id, &doc).unwrap();
+        let resources = projection["resources"].as_array().unwrap();
+        assert_eq!(resources.len(), 2);
+        assert_eq!(resources[0]["resourceId"], resources[1]["resourceId"]);
+        assert!(resources.iter().all(|item| item["status"] == "ambiguous"));
+        let download = resources[0]["resourceId"].as_str().unwrap();
+        let get = request("GET", &format!("/v1/notes/{id}/resources/{download}?vault={vault}"), Value::Null);
+        assert_eq!(resource(&gateway, &get).unwrap_err(), (404, "RESOURCE_UNAVAILABLE"));
+        let manifest = read_route(&gateway, &replica_request(&gateway, &vault, id)).unwrap();
+        assert_eq!(manifest["complete"], false);
+        let dependencies = manifest["resources"].as_array().unwrap();
+        assert_eq!(dependencies.len(), 1);
+        assert_eq!(dependencies[0]["status"], "ambiguous");
+        assert!(dependencies[0].get("sha256").is_none());
+    }
+
+    #[test]
+    fn mixed_syntax_same_verified_file_and_same_syntax_duplicates_remain_readable() {
+        let (_root, gateway, registration, vault) = fixture();
+        create(&gateway, &vault, "kn-shared", "Shared");
+        let root = Path::new(&registration.root_path);
+        fs::write(root.join("same.png"), b"same verified file").unwrap();
+        fs::write(root.join("Shared.md"),
+            "![one](same.png)\n![[same.png]]\n![two](same.png)\n").unwrap();
+        list(&gateway, &vault);
+        let (target, _) = target(&gateway).unwrap();
+        let doc = current_document(&gateway, &target, &vault, "kn-shared").unwrap();
+        let projection = document_value(&gateway, &vault, "kn-shared", &doc).unwrap();
+        assert!(projection["resources"].as_array().unwrap().iter().all(|r| r["status"] == "resolved"));
+        let download = projection["resources"][0]["resourceId"].as_str().unwrap();
+        assert_eq!(download, format!("res-{:x}", Sha256::digest(b"same.png")));
+        let get = request("GET", &format!("/v1/notes/kn-shared/resources/{download}?vault={vault}"), Value::Null);
+        let (mut file, _, _) = resource(&gateway, &get).unwrap();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes).unwrap();
+        assert_eq!(bytes, b"same verified file");
+        let manifest = read_route(&gateway, &replica_request(&gateway, &vault, "kn-shared")).unwrap();
+        assert_eq!(manifest["complete"], true);
+        assert_eq!(manifest["resources"].as_array().unwrap().len(), 1);
+        assert_eq!(manifest["resources"][0]["status"], "verified");
     }
 
     #[test]

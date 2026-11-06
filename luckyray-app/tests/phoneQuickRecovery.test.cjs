@@ -1,0 +1,48 @@
+// Real React/store/client callbacks with synthetic IPC; never connects to a real Gateway.
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{createRequire}=require('node:module');
+const app=path.resolve(__dirname,'..'),req=createRequire(app+'/package.json'),qa=process.env.LR_TEST_TOOLS?createRequire(path.resolve(process.env.LR_TEST_TOOLS,'package.json')):req;
+const {JSDOM}=qa('jsdom'),{build,stop}=createRequire(req.resolve('vite'))('esbuild');
+const dom=new JSDOM('<div class="react-nav-shell"><div id="root"></div></div>',{url:'https://synthetic.invalid',pretendToBeVisual:true});
+for(const k of ['window','document','HTMLElement','Element','Node','Event','MouseEvent','KeyboardEvent','CustomEvent','navigator','localStorage','sessionStorage','getComputedStyle','MutationObserver'])Object.defineProperty(globalThis,k,{value:dom.window[k],configurable:true});
+globalThis.fetch=async()=>{throw Error('No real network in synthetic recovery test')};window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+const results=[];const tick=()=>new Promise(r=>setTimeout(r,10));
+(async()=>{
+ const result=await build({stdin:{contents:`export {default as Dialog} from './src/features/settings/PhoneConnectionDialog';export {createCompanionGatewayClient} from './src/core/services/companionGateway';export {createCompanionPresentationStore} from './src/core/services/companionPresentationStore';export {CompanionPresentationTestProvider} from './src/features/settings/CompanionPresentation';export {ApplicationModalIsolationProvider,createApplicationModalIsolationStore} from './src/app/applicationModalIsolation';export {I18nProvider} from './src/core/i18n';`,resolveDir:app,loader:'tsx'},bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',loader:{'.css':'empty','.png':'dataurl','.svg':'dataurl'},plugins:[{name:'external-react',setup(b){b.onResolve({filter:/^react(?:-dom)?(?:\/.*)?$/},a=>({path:req.resolve(a.path),external:true}));}}],logLevel:'silent'});stop();
+ const mod={exports:{}};new Function('require','module','exports',result.outputFiles[0].text)(req,mod,mod.exports);
+ const api=mod.exports,React=req('react'),{createRoot}=req('react-dom/client'),{flushSync}=req('react-dom');
+ let root,store,state,calls,devices;const base={desktopInstanceId:'synthetic-instance',certificateFingerprint:'synthetic-fingerprint'};
+ const running=()=>({...base,state:'running',bindAddress:'192.168.5.2',port:6845,generation:1,firewall:'manual-permission-required'});
+ const failed=()=>({state:'resume-failed',bindAddress:'192.168.5.2',port:6845,code:'gateway-bind-access-denied',bindFailure:{stage:'bind',kind:'access-denied',osCode:10013,attempts:1}});
+ const freshDevices=()=>[{deviceId:'synthetic-a',label:'Phone A',createdAt:'synthetic',lastAuthenticatedAt:null,revokedAt:null,connected:false},{deviceId:'synthetic-b',label:'Phone B',createdAt:'synthetic',lastAuthenticatedAt:null,revokedAt:null,connected:false},{deviceId:'synthetic-revoked',label:'Revoked phone',createdAt:'synthetic',lastAuthenticatedAt:null,revokedAt:'synthetic',connected:false}];
+ async function mount(status=running(),list=freshDevices()){
+  state=status;devices=list;calls=[];
+  const client=api.createCompanionGatewayClient(async(command,args)=>{
+   if(command==='companion_gateway_status')return state;
+   if(command==='companion_gateway_list_devices')return devices.map(d=>({...d}));
+   if(command==='companion_gateway_list_interfaces')return [{interfaceId:'synthetic',name:'Synthetic LAN',address:'192.168.5.2',prefixLength:24}];
+   if(command==='companion_gateway_list_audit')return [];
+   if(command==='companion_gateway_service_grants')return {permissionRevision:1,authorizationConfigured:true,authorizationMode:'trusted',grants:[],currentVault:null,savedLibraries:[]};
+   if(command==='companion_gateway_lsh_remote_state')return {granted:false,runtimeAvailable:false};
+   if(command==='companion_gateway_recover_endpoint'){calls.push({command,args});state={...running(),port:9310,generation:2};return state;}
+   if(command==='companion_gateway_endpoint_recovery_presentation'){calls.push({command,args});return {envelope:{schema:1,kind:'luckyray.endpoint-recovery',baseUrl:`https://${state.bindAddress}:${state.port}`,desktopInstanceId:base.desktopInstanceId,certificateFingerprint:base.certificateFingerprint},qrSize:2,qrPath:'M0 0h1v1h-1z'};}
+   if(command==='companion_gateway_revoke_device'){calls.push({command,args});devices=devices.map(d=>d.deviceId===args.deviceId?{...d,revokedAt:'synthetic-now'}:d);return {deviceId:args.deviceId,gateway:{outcome:'revoked'},lightseek:null};}
+   throw Error('Unexpected synthetic command '+command);
+  });
+  store=api.createCompanionPresentationStore(client);root=createRoot(document.getElementById('root'));
+  flushSync(()=>root.render(React.createElement(api.I18nProvider,{locale:'zh-CN'},React.createElement(api.ApplicationModalIsolationProvider,{store:api.createApplicationModalIsolationStore()},React.createElement(api.CompanionPresentationTestProvider,{store},React.createElement(api.Dialog,{onClose(){},onMore(){}}))))));await tick();await tick();
+ }
+ async function unmount(){flushSync(()=>root.unmount());store.dispose();await tick();}
+ function button(text,scope=document){const el=[...scope.querySelectorAll('button')].find(b=>b.textContent===text);assert(el,'missing button: '+text);return el;}
+ async function click(el){flushSync(()=>el.click());await tick();await tick();}
+ async function check(name,fn){await fn();results.push(name);console.log('PASS '+name);}
+ await check('revoked devices are hidden without deleting original records',async()=>{await mount();assert.equal(document.querySelectorAll('.phone-device').length,2);assert(!document.querySelector('.phone-device-list').textContent.includes('Revoked phone'));assert.equal(devices.length,3);assert.equal(calls.length,0);await unmount();});
+ await check('revoke cancel preserves rows; confirmed revoke hides row and selects remaining device',async()=>{await mount();await click(button('撤销设备'));assert.equal(calls.length,0);await click(button('取消',document.querySelector('.phone-revoke-dialog')));assert.equal(calls.length,0);await click(button('撤销设备'));await click(button('撤销设备',document.querySelector('.phone-revoke-dialog')));assert.equal(document.querySelectorAll('.phone-device').length,1);assert.equal(calls.length,1);assert.equal(store.getSnapshot().selectedDeviceId,'synthetic-b');await unmount();});
+ await check('all revoked devices yield empty list without permissions column',async()=>{await mount(running(),freshDevices().map(d=>({...d,revokedAt:'synthetic'})));assert.equal(document.querySelectorAll('.phone-device').length,0);assert(!document.querySelector('.phone-connection-right'));assert(!document.querySelector('.phone-device-list-title'));await unmount();});
+ await check('bind detail displayed; opening/cancelling recovery never mutates endpoint',async()=>{await mount(failed());assert(document.querySelector('.phone-error').textContent.includes('10013'));await click(button('选择可用端口'));assert.equal(calls.length,0);await click(button('取消',document.querySelector('.phone-endpoint-dialog')));assert.equal(calls.length,0);assert(!document.querySelector('.phone-endpoint-dialog'));await unmount();});
+ await check('recovery confirms exactly one same-interface request with expected saved port',async()=>{await mount(failed());await click(button('选择可用端口'));await click(button('确认选择新端口'));assert.deepEqual(calls,[{command:'companion_gateway_recover_endpoint',args:{expectedAddress:'192.168.5.2',expectedPort:6845,confirmed:true}}]);assert(!document.querySelector('.phone-endpoint-dialog'));assert(button('已配对手机更新地址'));await unmount();});
+ await check('changed failure target disables stale confirmation',async()=>{await mount(failed());await click(button('选择可用端口'));state={...failed(),port:6846};await store.refresh();await tick();assert(button('确认选择新端口').disabled);await click(button('确认选择新端口'));assert.equal(calls.length,0);await unmount();});
+ await check('non-port failures never offer a port-change workaround',async()=>{for(const code of ['gateway-bind-address-unavailable','gateway-listener-config-unavailable','unknown']){await mount({...failed(),code});assert(![...document.querySelectorAll('button')].some(b=>b.textContent==='选择可用端口'));assert.equal(calls.length,0);await unmount();}});
+ await check('address sharing reads public recovery presentation without pairing or permission writes; stale QR disappears',async()=>{await mount();await click(button('已配对手机更新地址'));assert.equal(calls.length,1);assert.equal(calls[0].command,'companion_gateway_endpoint_recovery_presentation');assert(document.querySelector('.phone-endpoint-dialog svg'));state={...running(),port:6846};await store.refresh();await tick();assert(!document.querySelector('.phone-endpoint-dialog'));await unmount();});
+ await check('quick phone surface uses the final canvas creative surface tokens with sufficient specificity',async()=>{const postcss=createRequire(req.resolve('vite'))('postcss'),css=postcss.parse(fs.readFileSync(app+'/src/features/settings/phoneConnection.css','utf8'));const rule=css.nodes.find(n=>n.type==='rule'&&n.selector.includes('.phone-connection-dialog.experience-dialog'));assert(rule.nodes.some(n=>n.prop==='background'&&n.value==='var(--theme-surface-panel, var(--theme-glass-bg))'));assert(rule.nodes.some(n=>n.prop==='backdrop-filter'&&n.value==='var(--theme-glass-filter)'));});
+ console.log(JSON.stringify({status:'PASS',checks:results.length,realGatewayAccess:false,realPhoneOperations:0,models:0}));dom.window.close();
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close();});

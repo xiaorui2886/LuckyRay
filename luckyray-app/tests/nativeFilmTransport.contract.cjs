@@ -44,5 +44,18 @@ const esbuild=require(require.resolve('esbuild',{paths:[fs.realpathSync(root+'/n
  p.close();await new Promise(r=>setImmediate(r));assert.equal(calls.at(-1).op,'close');
  await assert.rejects(p.snapshot(),/session-closed/);
  assert.ok(calls.every(c=>c.session===calls[0].session));
+ const comfy=new sandbox.module.exports.NativeFilmTransport(e=>errors.push(e));
+ const name='comfy-'+ 'a'.repeat(64)+'.mp4';
+ await comfy.openComfy(name,{x:2,y:3,width:608,height:352});
+ assert.equal(comfy.muted,true,'Comfy starts silent, including selected cards');
+ const request=calls.at(-1);assert.equal(request.op,'openComfy');assert.equal(request.resultName,name);
+ assert.deepEqual(Object.keys(request).sort(),['bounds','op','preview','resultName','session']);
+ assert.equal(request.preview,false);
+ assert.notEqual(request.session,calls[0].session);
+ comfy.close();await new Promise(r=>setImmediate(r));assert.equal(calls.at(-1).session,request.session);
+ const thumbnail=new sandbox.module.exports.NativeFilmTransport(e=>errors.push(e));
+ await thumbnail.openComfy(name,{x:0,y:0,width:1,height:1},true);
+ assert.equal(calls.at(-1).preview,true,'history hover opens the original result in the native thumbnail decoder');
+ assert.equal(calls.at(-1).resultName,name);thumbnail.close();
  console.log('NATIVE TRANSPORT PASS: 400 seeks / 2 ordering segments; 300 mixed seek+bounds updates without overflow; stale snapshot cannot undo seek/play intent; final resize, same-token close, closed-session rejection. IPC fixture only.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

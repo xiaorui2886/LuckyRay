@@ -5,8 +5,18 @@ export type PluginScope = {
   materialLibraryId?: string | null; materialIds: string[]; canvasIds: string[]; writes: boolean; exportPath?: string | null;
   knowledge: null | { allowCreate: boolean; vaultId: string; sourceEpoch: number; documents: string[]; parentRelativePath: string | null };
   theme: Record<string, string>;
+  aiSelection?: { provider: string; model: string; fingerprint: string } | null;
+  eventsAllowed?: Array<"knowledge.saved" | "materials.imported">;
+  eventMaterialLibraryId?: string | null;
+  eventDelivery?: boolean;
+  eventAllowAi?: boolean;
 };
-export type PluginUi = { title: string; text?: string; fields?: { id: string; label: string; value: string }[]; actions?: { id: string; label: string }[] };
+export type PluginAiSelection = NonNullable<PluginScope["aiSelection"]>;
+/** The native host returns only a label and opaque selection token, never a key or endpoint. */
+export async function selectCurrentPluginAi(): Promise<PluginAiSelection> {
+  return invoke<PluginAiSelection>("extension_runtime", { request: JSON.stringify({ op: "aiSelection" }) });
+}
+export type PluginUi = { title: string; text?: string; fields?: { id: string; label: string; value: string; kind?: "text" | "multiline" }[]; actions?: { id: string; label: string }[] };
 /** A host-confirmed write: the native response value of a dispatched write method, never the plugin's own claim. `call` is the dispatch sequence within the run. */
 export type PluginOutcome = { call: number; method: string; value: unknown; exportPath: string | null };
 /** A write whose commit status the host never reported back (transport loss, cancellation, delivery failure after commit). */
@@ -82,7 +92,10 @@ export function validatePluginUi(value: unknown): PluginUi {
   if (v.text !== undefined) result.text = text(v.text, 16000);
   if (v.fields !== undefined) {
     if (!Array.isArray(v.fields) || v.fields.length > 8) throw Error("plugin-ui-invalid");
-    result.fields = v.fields.map(f => ({ id: text(f.id, 64), label: text(f.label, 120), value: text(f.value, 1000) }));
+    result.fields = v.fields.map(f => {
+      if (!f || typeof f !== "object" || (f.kind !== undefined && f.kind !== "text" && f.kind !== "multiline")) throw Error("plugin-ui-invalid");
+      return { id: text(f.id, 64), label: text(f.label, 120), value: text(f.value, 1000), ...(f.kind ? {kind:f.kind} : {}) };
+    });
   }
   if (v.actions !== undefined) {
     if (!Array.isArray(v.actions) || v.actions.length > 8) throw Error("plugin-ui-invalid");
@@ -156,6 +169,9 @@ export async function runPlugin(id: string, scope: PluginScope, event: object, s
       } else if (OUTCOME_METHODS.has(call.method)) {
         settle(pending);
         outcomes.push({ call: callIndex, method: call.method, value: response.response.value, exportPath: call.method === "canvas.export" ? scope.exportPath ?? null : null });
+      }
+      if (!response.response.error && (call.method === "events.subscribe" || call.method === "events.unsubscribe")) {
+        window.dispatchEvent(new CustomEvent("luckyray:plugin-subscriptions-changed", {detail:{id}}));
       }
       publish();
       if (call.method === "log" && !signal.aborted) log(String(call.params.message || "").slice(0, 1000));

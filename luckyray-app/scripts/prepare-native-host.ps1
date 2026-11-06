@@ -25,7 +25,19 @@ function Get-Sha256([string]$Path) {
 function Assert-WindowsPe([string]$Path, [string]$Name) {
   $stream = [IO.File]::OpenRead($Path)
   try {
-    if (($stream.ReadByte() -ne 0x4D) -or ($stream.ReadByte() -ne 0x5A)) {
+    # The debug placeholder also begins with MZ. Require a real PE signature
+    # and enough space for the COFF header before staging any built sidecar.
+    if ($stream.Length -lt 88 -or ($stream.ReadByte() -ne 0x4D) -or ($stream.ReadByte() -ne 0x5A)) {
+      throw "Built sidecar is not a Windows PE file: $Name"
+    }
+    $reader = [IO.BinaryReader]::new($stream)
+    $stream.Position = 0x3c
+    $peOffset = $reader.ReadUInt32()
+    if ($peOffset -lt 64 -or $peOffset -gt ($stream.Length - 24)) {
+      throw "Built sidecar is not a Windows PE file: $Name"
+    }
+    $stream.Position = $peOffset
+    if ($reader.ReadUInt32() -ne 0x00004550) {
       throw "Built sidecar is not a Windows PE file: $Name"
     }
   } finally {

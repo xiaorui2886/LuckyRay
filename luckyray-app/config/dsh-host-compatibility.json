@@ -9,6 +9,7 @@
     "plugin-quarantine-v1",
     "signed-closure-switch-v1",
     "closure-budget-40000-v1",
-    "loader-login-relay-ready-v1"
+    "loader-login-relay-ready-v1",
+    "sealed-pending-health-recovery-v1"
   ]
 }

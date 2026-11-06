@@ -100,6 +100,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $tauriConfig = Join-Path $repoRoot "src-tauri\tauri.conf.json"
 $readiness = Join-Path $PSScriptRoot "assert-package-readiness.ps1"
 $mediaPrepare = Join-Path $PSScriptRoot "prepare-media-engine.ps1"
+$nativeVideoPrepare = Join-Path $PSScriptRoot "prepare-native-video.ps1"
 $dshPrepare = Join-Path $PSScriptRoot "prepare-dsh-package-runtime.ps1"
 $sidecarPrepare = Join-Path $PSScriptRoot "prepare-native-host.ps1"
 . (Join-Path $PSScriptRoot 'release-extension-origins.ps1')
@@ -120,6 +121,7 @@ $plan = [ordered]@{
   steps = @(
     [ordered]@{ name = "readiness-inputs"; script = "scripts/assert-package-readiness.ps1"; phase = "Inputs" },
     [ordered]@{ name = "media-engine"; script = "scripts/prepare-media-engine.ps1" },
+    [ordered]@{ name = "native-video"; script = "scripts/prepare-native-video.ps1"; verifyOnly = $true },
     [ordered]@{ name = "dsh-runtime"; script = "scripts/prepare-dsh-package-runtime.ps1"; output = "src-tauri/dsh" },
     [ordered]@{ name = "external-bins"; script = "scripts/prepare-native-host.ps1"; release = $true; sidecarNames = $sidecarNames },
     [ordered]@{ name = "frontend"; command = @("pnpm.cmd", "build") },
@@ -143,6 +145,9 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
   throw "release media engine preparation failed"
 }
+
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $nativeVideoPrepare -VerifyOnly
+if ($LASTEXITCODE -ne 0) { throw "release native player materials verification failed" }
 
 & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $dshPrepare
 if ($LASTEXITCODE -ne 0) {

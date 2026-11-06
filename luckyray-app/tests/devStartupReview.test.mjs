@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile, unlink, stat, utimes } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, unlink, stat, utimes, copyFile, link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -35,6 +35,10 @@ test('production sidecars configuration fingerprints release contract changes, d
   const stage = (await getStartupStages(root)).find(stage => stage.name === 'sidecars');
   const origin = join(root, 'src-tauri/binaries/luckyray-sidecars.origin.identity.json');
   const debugCli = join(root, 'src-tauri/target/debug/luckyray-cli.exe');
+  const stagedBrowser = join(root, 'src-tauri/binaries/luckyray-browser-host-x86_64-pc-windows-msvc.exe');
+  const debugBrowser = join(root, 'src-tauri/target/debug/luckyray-browser-host.exe');
+  assert.ok(stage.outputs.includes(stagedBrowser));
+  assert.ok(stage.outputs.includes(debugBrowser));
   assert.ok(stage.optionalOutputs.includes(origin));
   assert.ok(stage.outputs.includes(debugCli));
   for (const path of stage.inputs) { await mkdir(dirname(path), { recursive: true }); await writeFile(path, 'source fixture'); }
@@ -47,6 +51,10 @@ test('production sidecars configuration fingerprints release contract changes, d
   const cached = () => cachedStage({ ...stage, run, log() {} });
   assert.equal((await cached()).cache, 'qualified');
   assert.equal((await cached()).cache, 'hit', 'clean dev must not perpetually rebuild a missing release file');
+  await copyFile(stagedBrowser, debugBrowser);
+  assert.equal((await cached()).cache, 'hit', 'Tauri copying identical staged browser bytes stays reusable');
+  await writeFile(stagedBrowser, 'tampered!!');
+  assert.equal((await cached()).cache, 'qualified', 'modified staged browser bytes must invalidate the cache');
   await writeFile(origin, 'release-one');
   assert.equal((await cached()).cache, 'qualified');
   assert.equal((await cached()).cache, 'hit');
@@ -59,7 +67,65 @@ test('production sidecars configuration fingerprints release contract changes, d
   assert.equal((await cached()).cache, 'hit', 'absence is stable after one requalification');
   await unlink(debugCli);
   assert.equal((await cached()).cache, 'qualified', 'the CLI executable consumed beside the app is required');
-  assert.equal(preparations, 5);
+  assert.equal(preparations, 6);
+  for (const input of ['config/dsh-host-compatibility.json', 'config/secondary-lsh-recovery-qualification.json']) {
+    const path = join(root, input);
+    assert.ok(stage.inputs.includes(path));
+    const before = await stat(path);
+    await writeFile(path, 'changed source');
+    await utimes(path, before.atime, before.mtime);
+    assert.equal((await cached()).cache, 'qualified', 'compiled recovery inputs must invalidate cached sidecars');
+    assert.equal((await cached()).cache, 'hit');
+  }
+  assert.equal(preparations, 8);
+});
+
+test('detaching a generated sidecar preserves Cargo hardlink bytes when the top-level copy is replaced', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'luckyray-sidecar-links-'));
+  const backing = join(root, 'cargo-deps.exe'), target = join(root, 'debug-sidecar.exe');
+  await writeFile(backing, 'synthetic Cargo output');
+  await link(backing, target);
+  assert.equal((await stat(target)).nlink, 2);
+  const script = `
+    $ErrorActionPreference='Stop'
+    Import-Module "$env:SystemRoot\\System32\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1"
+    $errors=$null; $tokens=$null
+    $ast=[System.Management.Automation.Language.Parser]::ParseFile($env:LR_TEST_SCRIPT,[ref]$tokens,[ref]$errors)
+    if ($errors.Count) { throw 'script-parse-failed' }
+    $fn=$ast.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Detach-DevSidecar'},$true)
+    Invoke-Expression $fn.Extent.Text
+    Detach-DevSidecar $env:LR_TEST_TARGET
+  `;
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+    env: { ...process.env, LR_TEST_SCRIPT: join(process.cwd(), 'scripts/prepare-dev-sidecars.ps1'), LR_TEST_TARGET: target }, encoding: 'utf8', windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal((await stat(target)).nlink, 1);
+  assert.equal(await readFile(target, 'utf8'), 'synthetic Cargo output');
+  await writeFile(target, 'Tauri replacement');
+  assert.equal(await readFile(backing, 'utf8'), 'synthetic Cargo output');
+});
+
+test('sidecar validation accepts a real PE and rejects the MZ-only debug placeholder', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'luckyray-sidecar-pe-'));
+  const placeholder = join(root, 'placeholder.exe');
+  await writeFile(placeholder, 'MZ\nLuckyRay debug sidecar placeholder. Run pnpm.cmd build:sidecars before bundling.\n');
+  const script = `
+    $ErrorActionPreference='Stop'
+    $errors=$null; $tokens=$null
+    $ast=[System.Management.Automation.Language.Parser]::ParseFile($env:LR_TEST_SCRIPT,[ref]$tokens,[ref]$errors)
+    if ($errors.Count) { throw 'script-parse-failed' }
+    $fn=$ast.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-WindowsPe'},$true)
+    Invoke-Expression $fn.Extent.Text
+    Assert-WindowsPe $env:LR_TEST_REAL 'real'
+    $rejected=$false
+    try { Assert-WindowsPe $env:LR_TEST_PLACEHOLDER 'placeholder' } catch { $rejected=$true }
+    if (-not $rejected) { throw 'placeholder-accepted' }
+  `;
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+    env: { ...process.env, LR_TEST_SCRIPT: join(process.cwd(), 'scripts/prepare-native-host.ps1'), LR_TEST_REAL: process.execPath, LR_TEST_PLACEHOLDER: placeholder }, encoding: 'utf8', windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('frontend error classification preserves occupied, OS denial and unknown failures', () => {

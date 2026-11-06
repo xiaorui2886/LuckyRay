@@ -1,16 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type PackageManifest = {
-  schemaVersion: 0 | 1; id: string; name: string; version: string; type: "theme" | "template" | "script";
-  entry: "theme.json" | "template.json" | "main.js"; minHostVersion: string; apiVersion: 0 | 1;
+  schemaVersion: 0 | 1 | 2; id: string; name: string; version: string; type: "theme" | "template" | "script" | "desktop";
+  entry: "theme.json" | "template.json" | "main.js"; minHostVersion: string; apiVersion: 0 | 1 | 2;
   requiredModules: string[]; optionalModules: string[];
 };
 export type ThemeResource = { base: "dark" | "light"; tokens: Record<string, string> };
 export type TemplateResource = { markdown: string; parameters: Record<string, string> };
 export type ScriptContribution = { id: string; label: string; kind: "command" | "menu" | "panel" | "settings" | "page" };
 export type ScriptResource = { code: string; requiredPermissions: string[]; optionalPermissions: string[]; dataVersion: number; contributions: ScriptContribution[] };
-export type ExtensionPackage = { manifest: PackageManifest; resource: ThemeResource | TemplateResource | ScriptResource };
-export type InstalledPackage = { package: ExtensionPackage; enabled: boolean; digest: string; grants?: string[]; epoch?: number };
+export type DesktopResource = { code: string; css?: string; assets?: Record<string, {mimeType:string; base64:string}>; dataVersion:number; contributions:ScriptContribution[] };
+export type ExtensionPackage = { manifest: PackageManifest; resource: ThemeResource | TemplateResource | ScriptResource | DesktopResource; signature?: { version: number; publicKey: string; signature: string } };
+export type InstalledPackage = { package: ExtensionPackage; enabled: boolean; digest: string; grants?: string[]; epoch?: number; trustedPublisher?: string; data?: { schemaVersion:number; revision:number; settings:unknown; cache:unknown } };
 export type PackageState = { revision: number; packages: InstalledPackage[]; hostVersion: string };
 /** Client-side load projection: true only after the first transport round-trip succeeded.
  * A genuinely empty library can still be `ready` — this is not `revision > 0`. */
@@ -24,14 +25,15 @@ export function packageCompatibility(pkg: ExtensionPackage, hostVersion: string)
   const parse = (v: string) => /^\d+\.\d+\.\d+$/.test(v) ? v.split(".").map(Number) : [];
   const required = parse(pkg.manifest.minHostVersion), host = parse(hostVersion);
   const versionOk = required.length === 3 && host.length === 3 && (required[0] < host[0] || (required[0] === host[0] && (required[1] < host[1] || (required[1] === host[1] && required[2] <= host[2]))));
+  const modules = pkg.manifest.type === "desktop" ? ["knowledge", "materials", "canvas", "ai", "events", "workspace", "editor", "commands", "theme", "network", "filesystem", "process", "storage"] : ["knowledge", "materials", "canvas", "ai", "events"];
   return {
-    compatible: versionOk && pkg.manifest.apiVersion === (pkg.manifest.type === "script" ? 1 : 0) && pkg.manifest.requiredModules.every(m => ["knowledge", "materials", "canvas"].includes(m)),
-    unavailableOptional: pkg.manifest.optionalModules.filter(m => !["knowledge", "materials", "canvas"].includes(m)),
+    compatible: versionOk && pkg.manifest.apiVersion === (pkg.manifest.type === "desktop" ? 2 : pkg.manifest.type === "script" ? 1 : 0) && pkg.manifest.requiredModules.every(m => modules.includes(m)),
+    unavailableOptional: pkg.manifest.optionalModules.filter(m => !modules.includes(m)),
   };
 }
 /** No filesystem paths. UI supplies a user-selected File.text() JSON envelope. */
 export function parseLocalPackage(text: string): ExtensionPackage {
-  if (new TextEncoder().encode(text).length > 131072) throw new ExtensionError("extension-package-too-large");
+  if (new TextEncoder().encode(text).length > 16 * 1024 * 1024) throw new ExtensionError("extension-package-too-large");
   try { return JSON.parse(text) as ExtensionPackage; } catch { throw new ExtensionError("extension-invalid-json"); }
 }
 export function createExtensionPackageService(transport: PackageTransport = request => invoke("manage_extension_packages", { request: JSON.stringify(request) })) {
@@ -61,9 +63,10 @@ export function createExtensionPackageService(transport: PackageTransport = requ
     subscribe(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; },
     snapshot: (): PackageLoadState => ({ ...structuredClone(state), ready }),
     refresh: () => run({ op: "list" }),
-    install: async (text: string, expectedRevision: number) => run({ op: "install", package: parseLocalPackage(text), expectedRevision }),
-    update: async (text: string, expectedRevision: number) => run({ op: "update", package: parseLocalPackage(text), expectedRevision }),
+    install: async (text: string, expectedRevision: number, publisherApproved = false) => run({ op: "install", package: parseLocalPackage(text), expectedRevision, publisherApproved }),
+    update: async (text: string, expectedRevision: number, publisherApproved = false) => run({ op: "update", package: parseLocalPackage(text), expectedRevision, publisherApproved }),
     grant: (id: string, grants: string[], expectedRevision: number) => run({ op: "grant", id, grants, expectedRevision }),
+    saveData: (id: string, data: NonNullable<InstalledPackage["data"]>, expectedRevision:number) => run({op:"data",id,data,expectedRevision}),
     enable: (id: string, expectedRevision: number) => run({ op: "enable", id, expectedRevision }),
     disable: (id: string, expectedRevision: number) => run({ op: "disable", id, expectedRevision }),
     uninstall: (id: string, expectedRevision: number) => run({ op: "uninstall", id, expectedRevision }),

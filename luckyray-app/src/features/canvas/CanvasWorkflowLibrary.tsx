@@ -12,6 +12,9 @@ export function workflowErrorMessage(error: unknown, english = false): string {
   'too-large':['模板超过上限：64 张卡片、128 条连线、500 KB。','Template exceeds the limit: 64 cards, 128 connections, 500 KB.'],
   'canvas-changed':['当前画布已变化，请重新打开模板。','The active canvas changed. Open templates again.'],
   'invalid-text':['请检查名称与文本长度，名称最多 60 字。','Check the name and text lengths. Names allow up to 60 characters.'],
+  'custom-comfy-template-export':['自定义 ComfyUI 模板请在连接设置的「我的工作流」中导出；完整画布仍可正常保存。','Export custom ComfyUI templates from My workflows in connection settings. Saving the full canvas remains available.'],
+  'invalid-comfy-parameters':['短剧预设参数无法保存，请检查尺寸、步数和开关，或保存整个画布。','Short-drama settings could not be saved. Check the size, steps and switches, or save the canvas.'],
+  'invalid-number':['参数超出允许范围，请检查后重试。','A setting is out of range. Check it and try again.'],
   'operation-failed':['未能完成操作，画布内容未改变。请重试。','The operation failed. Canvas content was not changed. Please retry.'],
  };
  return messages[code]?.[english ? 1 : 0] || (english ? `Invalid workflow (${code}). Nothing was inserted.` : `模板不符合格式要求（${code}），未添加任何卡片。`);
@@ -98,7 +101,7 @@ export function CanvasWorkflowLibrary({english = false, selectionCount, onClose,
    </section>
   </div>
   <details className="canvas-workflow-export-disclosure"><summary>{english ? `Save selected cards as a template · ${selectionCount} selected` : `将所选保存为模板 · 已选 ${selectionCount} 项`}</summary><form className="canvas-workflow-export" onSubmit={e => {e.preventDefault(); void exportSelection();}}>
-   <div><strong>{english ? 'Keep your own workflow' : '留住自己的创作流程'}</strong><p>{english ? 'Export selected cards or a reference pack, then open the file in another canvas. Text and prompts are included; review them before sharing. Media, note contents, model profiles and task history are not included.' : '将所选卡片或参考包导出，在另一画布打开。包含文本与提示词，分享前请检查；素材文件、引用笔记正文、模型配置与任务记录不随模板导出。'}</p></div>
+   <div><strong>{english ? 'Keep your own workflow' : '留住自己的创作流程'}</strong><p>{english ? 'Export selected cards or a reference pack for another canvas. Text, prompts and short-drama size, timing, seed and advanced switches are included; review them before sharing. Media, note contents, model configuration, server addresses and task history are not included.' : '将所选卡片或参考包导出，在另一画布打开。包含文本、提示词和短剧预设的尺寸、时长、种子与高级开关，分享前请检查；素材文件、引用笔记正文、模型配置、服务地址与任务记录不随模板导出。'}</p></div>
    <label><span className="canvas-workflow-eyebrow">{english ? 'TEMPLATE NAME' : '模板名称'}</span><input aria-label={english ? 'Template name' : '模板名称'} maxLength={60} value={name} onChange={e => setName(e.target.value)} placeholder={english ? 'My product workflow' : '如：我的产品创作流程'}/></label>
    <button type="submit" disabled={busy || !name.trim() || !selectionCount}>{english ? 'Export selection' : '导出所选模板'}</button>
   </form></details>

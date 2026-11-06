@@ -27,7 +27,7 @@ test('real prepared bundle matches both sealed portable and compiled native full
   { skip: !process.env.DSH_BUNDLED_RUNTIME_ROOT }, async () => {
     const root = resolve(process.env.DSH_BUNDLED_RUNTIME_ROOT);
     const authority = validateDshRuntimeAuthority(JSON.parse(await readFile(join(app, 'dsh-host/runtime-authority.json'), 'utf8')));
-    assert.equal(authority.runtimePackage.version, '0.2.1-rc.3');
+    assert.equal(authority.runtimePackage.version, '0.2.2-rc.1');
     const files = [];
     const visit = async directory => {
       for (const entry of await readdir(directory, { withFileTypes: true })) {

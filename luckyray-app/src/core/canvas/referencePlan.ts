@@ -61,7 +61,13 @@ export function createCanvasReferencePlan(
   stored: readonly ReferenceValue[],
   protocol?: CanvasImageProtocol | CanvasVideoProtocol,
   inputOrder: readonly string[] = [],
+  imageReferenceOnly = false,
 ): ReferenceEntry[] {
+  if(imageReferenceOnly) {
+    connected=connected.map(input=>input.reference.kind==='image'?{...input,role:'reference',reference:{...input.reference,role:'reference'}}:input);
+    stored=stored.map(ref=>ref.kind==='image'?{...ref,role:'reference'}:ref);
+    protocol=undefined;
+  }
   const entries: ReferenceEntry[] = connected.map((input) => ({
     key: input.edgeId,
     source: "connected",

@@ -36,6 +36,7 @@ fn implements_capability(name: &str) -> bool {
         | "resource-intents-v1" | "plugin-quarantine-v1" | "signed-closure-switch-v1" => true,
         "closure-budget-40000-v1" => super::MAX_CLOSURE_FILE_COUNT == 40_000,
         "loader-login-relay-ready-v1" => crate::dsh_host::UPDATE_LOGIN_RELAY_READY_PROTOCOL == 1,
+        "sealed-pending-health-recovery-v1" => true,
         _ => false,
     }
 }

@@ -1,0 +1,20 @@
+[package]
+name = "luckyray-native-core-proof"
+version = "0.0.0"
+edition = "2021"
+publish = false
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+chrono = "0.4"
+rand = "0.8"
+rusqlite = { version = "0.31", features = ["bundled"] }
+base64 = "0.22"
+unicode-normalization = "=0.1.25"
+pulldown-cmark = { version = "=0.13.4", default-features = false }
+tempfile = "3"
+url = "2"
+reqwest = { version = "0.12", default-features = false }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+[workspace]

@@ -15,36 +15,36 @@ export class DshSupplyChainError extends Error {
 }
 
 // Whole-closure budget, not the unchanged per-npm-archive entry budget.
-// The admitted Windows 0.2.1-rc.3 tree contains 35,192 files.
+// The admitted Windows 0.2.2-rc.1 tree contains 39,095 files.
 export const MAX_DSH_CLOSURE_FILE_COUNT = 40_000;
 const EXPECTED_AUTHORITY = Object.freeze({
   "schemaVersion": 1,
   "runtimePackage": {
     "name": "@deepseek-ai/dsh",
-    "version": "0.2.1-rc.3",
-    "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.1-rc.3.tgz",
-    "registryIntegrity": "sha512-H+E9HLnHf7fJqzen84Z9Bq8ggb5xbrcbyhZjXTJLE9NabHr3zteGvTRvdvGkxPl4ov80is4WLglFmSo+/olJjg==",
-    "registrySha1": "ccc527065b9f736ea299a1f78150a21143d961aa",
-    "sha256": "9a8f9493bfab8218215a8ca38ab8821e76dff63dc4fcb65841ef87c0aa277141",
-    "size": 25130,
+    "version": "0.2.2-rc.1",
+    "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.2-rc.1.tgz",
+    "registryIntegrity": "sha512-ijR9UEVYkG15Q/Q79JzvzLBzQOQfc63VLr9n6flpwHPhr5IKn2UxthnSoto/P9l7qGd7pPvI1Ra6TW7LH3oKpg==",
+    "registrySha1": "95d1cf510061a57c97b4a68d43336658bcec6af1",
+    "sha256": "ad21968aed0337a326b853507a23b30eacbbec4d67ab07f3b6fde69b75b19cd6",
+    "size": 25197,
     "license": "MIT"
   },
   "sourceReference": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
-    "commit": "1f81c047fc48fa190a683e469daa699857e9afe8",
-    "tree": "fe242286aaa4a399c91814de21e55f874ea34295",
-    "declaredVersion": "0.2.1-rc.3",
+    "commit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+    "tree": "3aeac580e803b0ce82f867b1374ed494a59662c2",
+    "declaredVersion": "0.2.2-rc.1",
     "role": "audit-only",
     "provenanceBoundToRuntime": false
   },
   "nodeRuntime": {
-    "version": "22.19.0",
+    "version": "24.22.2",
     "platform": "win32",
     "architecture": "x64",
-    "archive": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-win-x64.zip",
-    "archiveSha256": "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86",
-    "nodeExeSha256": "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362",
-    "licenseSha256": "339c50294da6a84322dcbe7285b57b248123bd4d9e37a2f72d68d5abf2574783",
+    "archive": "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip",
+    "archiveSha256": "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+    "nodeExeSha256": "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9",
+    "licenseSha256": "ed34dd8e3f0a78dbaf00d0444ce8e285b015b765379c2e17880455f70370f8e9",
     "stagedFiles": [
       "LICENSE",
       "node.exe"
@@ -102,27 +102,27 @@ const EXPECTED_AUTHORITY = Object.freeze({
   "dependencyClosure": {
     "lockfile": "pnpm-lock.yaml",
     "lockfileVersion": "9.0",
-    "sha256": "0faaa6a7163bf2248735883e69e6051825b45fafb253a42432b4b6ee5a3bbbea",
-    "packageCount": 634,
-    "stagedPackageCount": 562,
-    "installedAuditSha256": "b361fd576b25e6cd37d4c1c4fe01203cf544da5b4cfd0506cdf83a8e17d46619",
-    "resolverGraphSha256": "65eb2c38f0fe86830a22ef6fb41e821b8965b7b8b3f7680dd4f77b567784be40",
-    "lockReconciliationSha256": "33bd8d500dc0403353f29060aa9c5f66d5f7f2a2b8f492efbc877276c83fa880",
+    "sha256": "3ccc9cd54ac21d6f6ae95efd6d030cdb7d9afa74961b4e0fcd429921ad5be599",
+    "packageCount": 665,
+    "stagedPackageCount": 593,
+    "installedAuditSha256": "16cba4ca914aa888191eb275efeb6cff0054a0fa9f1f271fdc06045e7eb721a7",
+    "resolverGraphSha256": "82e92d20c1bb23b959f6cb8ad28360c4ecb78c5d1080f51b09e15777f4357d9e",
+    "lockReconciliationSha256": "f8bd26fbb4249137e05926f5ef937276eadfd9312cb0d83e75f926ea365730d5",
     "releaseLayout": {
       "schemaVersion": 1,
       "nodeLinker": "hoisted",
       "packageImportMethod": "copy",
-      "physicalPackageRootCount": 570,
+      "physicalPackageRootCount": 605,
       "resolverGraphEdgeCount": 0,
       "maxNodeModulesRelativePathLength": 161,
       "maxRelativePathLength": 179,
-      "fileCount": 35192,
-      "contentSha256": "c454ae927c4109ab33b5708c6258432ea0d5884d513c9e206a5df7aa62e04615",
-      "normalizedShimCount": 13,
+      "fileCount": 39095,
+      "contentSha256": "f6bf0ce3003adea6d07054023d87512d23f0de6fd239e5225aeeacfd0f3d12e7",
+      "normalizedShimCount": 14,
       "fixedEntryPoint": "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
       "reparsePoints": 0
     },
-    "nodeVersion": "22.19.0",
+    "nodeVersion": "24.22.2",
     "pnpmVersion": "11.7.0"
   },
   "policy": {
@@ -133,6 +133,35 @@ const EXPECTED_AUTHORITY = Object.freeze({
     "allowInstallScripts": false
   }
 });
+
+// A second exact, reviewed bootstrap identity for newer qualified runtimes.
+// This does not authorize any runtime: native admission still requires the
+// signed descriptor, version edge, host contract and full closure.
+const NODE_22_RUNTIME = Object.freeze({
+  version: "22.19.0", platform: "win32", architecture: "x64",
+  archive: "https://nodejs.org/dist/v22.19.0/node-v22.19.0-win-x64.zip",
+  archiveSha256: "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86",
+  nodeExeSha256: "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362",
+  licenseSha256: "339c50294da6a84322dcbe7285b57b248123bd4d9e37a2f72d68d5abf2574783",
+  stagedFiles: ["LICENSE", "node.exe"],
+});
+const NODE_24_RUNTIME = Object.freeze({
+  ...NODE_22_RUNTIME,
+  version: "24.22.2",
+  archive: "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip",
+  archiveSha256: "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+  nodeExeSha256: "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9",
+  licenseSha256: "ed34dd8e3f0a78dbaf00d0444ce8e285b015b765379c2e17880455f70370f8e9",
+});
+export function qualifiedNodeToolset(runtime) {
+  if (isDeepStrictEqual(runtime, NODE_22_RUNTIME)) {
+    return Object.freeze({ name: "node22.19.0-pnpm11.7.0-policy1", archiveBytes: 35_424_607 });
+  }
+  if (isDeepStrictEqual(runtime, NODE_24_RUNTIME)) {
+    return Object.freeze({ name: "node24.22.2-pnpm11.7.0-policy1", archiveBytes: 37_754_834 });
+  }
+  throw new DshSupplyChainError("dsh-qualified-node-toolset-invalid");
+}
 
 // Only fixed qualification validation can create this in-memory identity. The
 // native worker invokes it AFTER signed hash/size admission; the maintainer
@@ -163,6 +192,8 @@ export function validateQualifiedDshRuntimeAuthority(value) {
   const hex = (v, length = 64) => typeof v === "string" && new RegExp(`^[a-f0-9]{${length}}$`, "u").test(v);
   const count = (v, max) => Number.isSafeInteger(v) && v > 0 && v <= max;
   const runtime = value?.runtimePackage, closure = value?.dependencyClosure, layout = closure?.releaseLayout;
+  qualifiedNodeToolset(value?.nodeRuntime);
+  if (closure?.nodeVersion !== value.nodeRuntime.version) invalid();
   if (!runtime || !closure || !layout || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)?$/u.test(runtime.version ?? "")
       || runtime.version.length > 128 || runtime.tarball !== `https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-${runtime.version}.tgz`
       || !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(runtime.registryIntegrity ?? "")
@@ -177,6 +208,8 @@ export function validateQualifiedDshRuntimeAuthority(value) {
   // Substitute ONLY version-qualified data, then compare ALL policy, tool,
   // origin, layout/schema fields and keys against fixed host capabilities.
   const fixed = structuredClone(value), expected = EXPECTED_AUTHORITY;
+  fixed.nodeRuntime = expected.nodeRuntime;
+  fixed.dependencyClosure.nodeVersion = expected.dependencyClosure.nodeVersion;
   fixed.runtimePackage = { ...runtime, version: expected.runtimePackage.version,
     tarball: expected.runtimePackage.tarball, registryIntegrity: expected.runtimePackage.registryIntegrity,
     registrySha1: expected.runtimePackage.registrySha1, sha256: expected.runtimePackage.sha256, size: expected.runtimePackage.size };
@@ -190,10 +223,12 @@ export function validateQualifiedDshRuntimeAuthority(value) {
   return qualifiedClone(value);
 }
 
-export function frozenHostTemplate(version) {
+export function frozenHostTemplate(version, nodeVersion = EXPECTED_AUTHORITY.nodeRuntime.version) {
   if (typeof version !== "string" || version.length > 128 || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)?$/u.test(version))
     throw new DshSupplyChainError("dsh-host-package-invalid");
-  return { ...structuredClone(EXPECTED_HOST_PACKAGE), dependencies: { ...EXPECTED_HOST_PACKAGE.dependencies, "@deepseek-ai/dsh": version } };
+  if (!["22.19.0", "24.22.2"].includes(nodeVersion)) throw new DshSupplyChainError("dsh-host-package-invalid");
+  return { ...structuredClone(EXPECTED_HOST_PACKAGE), engines: { node: `=${nodeVersion}` },
+    dependencies: { ...EXPECTED_HOST_PACKAGE.dependencies, "@deepseek-ai/dsh": version } };
 }
 
 const EXPECTED_HOST_PACKAGE = Object.freeze({
@@ -203,9 +238,9 @@ const EXPECTED_HOST_PACKAGE = Object.freeze({
   type: "module",
   license: "UNLICENSED",
   packageManager: "pnpm@11.7.0",
-  engines: { node: "=22.19.0" },
+  engines: { node: "=24.22.2" },
   dependencies: {
-    "@deepseek-ai/dsh": "0.2.1-rc.3",
+    "@deepseek-ai/dsh": "0.2.2-rc.1",
     react: "18.3.1",
     "react-dom": "18.3.1",
   },
@@ -484,10 +519,21 @@ const ALLOWED_LICENSES = new Set([
   "Python-2.0",
 ]);
 
+// Blue Oak 1.0.0 is OSI-approved; this exact upstream package includes the
+// full notice text. A different package, version or altered/missing notice
+// still requires a separate review instead of a general allow-list expansion.
+export function validateReviewedPackageLicense(manifest, licenseFiles) {
+  if (ALLOWED_LICENSES.has(manifest?.license)) return;
+  if (manifest?.name === "lru-cache" && manifest.version === "11.5.3" && manifest.license === "BlueOak-1.0.0"
+      && licenseFiles.some(file => file.path === "LICENSE.md"
+        && file.sha256 === "8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004")) return;
+  throw new DshSupplyChainError("dsh-license-not-allowlisted");
+}
+
 const LIFECYCLE_SCRIPT_REVIEWS = Object.freeze([
   {
     name: "@deepseek-ai/dsh-subprocess-local",
-    version: "0.2.1-rc.3",
+    version: "0.2.2-rc.1",
     scripts: [{ stage: "postinstall", command: "node scripts/ensure-spawn-helper.mjs" }],
     windowsRuntimeEvidence: [],
     rationale: "The script only restores a POSIX executable bit on node-pty spawn-helper; Windows does not use that permission bit.",
@@ -929,7 +975,8 @@ async function auditPackage(packageRoot) {
   ) {
     throw new DshSupplyChainError("dsh-package-manifest-invalid");
   }
-  if (!ALLOWED_LICENSES.has(manifest.license)) {
+  if (!ALLOWED_LICENSES.has(manifest.license)
+      && !(manifest.name === "lru-cache" && manifest.version === "11.5.3" && manifest.license === "BlueOak-1.0.0")) {
     throw new DshSupplyChainError("dsh-license-not-allowlisted");
   }
 
@@ -952,6 +999,8 @@ async function auditPackage(packageRoot) {
       licenseFiles.push({ path, sha256: fileHash, size: bytes.length });
     }
   }
+
+  validateReviewedPackageLicense(manifest, licenseFiles);
 
   const lifecycleScripts = ["preinstall", "install", "postinstall"]
     .filter((stage) => typeof manifest.scripts?.[stage] === "string")
@@ -1187,7 +1236,7 @@ async function validateWindowsX64NativeEvidence(nodeModulesRoot, qualified = fal
   return checked;
 }
 
-export async function probeDshNativeModules({ stageRoot, expectedNodeVersion = "22.19.0", qualified = false }) {
+export async function probeDshNativeModules({ stageRoot, expectedNodeVersion = EXPECTED_AUTHORITY.nodeRuntime.version, qualified = false }) {
   if (process.version !== `v${expectedNodeVersion}` || process.platform !== "win32" || process.arch !== "x64") {
     throw new DshSupplyChainError("dsh-native-probe-runtime-invalid");
   }
@@ -1223,6 +1272,17 @@ export async function probeDshNativeModules({ stageRoot, expectedNodeVersion = "
   });
 }
 
+export function validateRequiredWindowsOfficeRuntime(packages) {
+  const officeKit = packages.find((entry) =>
+    entry.name === "@deepseek-ai/libreoffice-kit" && entry.version === "0.1.5");
+  if (officeKit && !packages.some((entry) =>
+    entry.name === "@deepseek-ai/libreoffice-kit-win32-x64" && entry.version === "0.1.5"
+    && Array.isArray(entry.nativeArtifacts)
+    && entry.nativeArtifacts.some((artifact) => artifact.path === "bin/libreoffice-kit.exe"))) {
+    throw new DshSupplyChainError("dsh-native-prebuild-evidence-missing");
+  }
+}
+
 export function buildPublishedDshRecords({ authority, dependencyAudit }) {
   const validatedAuthority = validateDshRuntimeAuthority(authority);
   const closure = validatedAuthority.dependencyClosure;
@@ -1239,13 +1299,19 @@ export function buildPublishedDshRecords({ authority, dependencyAudit }) {
     || dependencyAudit.lockReconciliation?.stagedCount !== closure.stagedPackageCount
     || (qualifiedAuthorities.has(validatedAuthority)
       ? dependencyAudit.lockReconciliation?.mandatoryReachableCount + dependencyAudit.lockReconciliation?.optionalOnlyReachableCount !== closure.packageCount
-      : dependencyAudit.lockReconciliation?.mandatoryReachableCount !== 556 || dependencyAudit.lockReconciliation?.optionalOnlyReachableCount !== 78)
+      : dependencyAudit.lockReconciliation?.mandatoryReachableCount !== 587 || dependencyAudit.lockReconciliation?.optionalOnlyReachableCount !== 78)
     || sha256(canonicalBytes(dependencyAudit.resolverGraph)) !== closure.resolverGraphSha256
     || sha256(canonicalBytes(dependencyAudit.lockReconciliation)) !== closure.lockReconciliationSha256
     || sha256(canonicalBytes(dependencyAudit)) !== closure.installedAuditSha256
   ) {
     throw new DshSupplyChainError("dsh-installed-audit-invalid");
   }
+
+  // pnpm can silently skip a missing optional platform tarball in an offline
+  // install. For the reviewed 0.1.5 Office kit, Windows x64 needs this exact
+  // runtime; otherwise the resulting frozen descriptor cannot reproduce the
+  // closure and document conversion would be unavailable.
+  validateRequiredWindowsOfficeRuntime(dependencyAudit.packages);
 
   const nativeArtifactCount = dependencyAudit.packages.reduce(
     (total, entry) => total + entry.nativeArtifacts.length,
@@ -2069,7 +2135,8 @@ export function validateAuthenticatedWorkspacePolicy(workspacePolicy, installPol
 
 export function validateDshFrozenClosure({ authority, hostPackage, lockfile, npmrc, workspacePolicy }) {
   const validatedAuthority = validateDshRuntimeAuthority(authority);
-  const expectedHost = qualifiedAuthorities.has(validatedAuthority) ? frozenHostTemplate(validatedAuthority.runtimePackage.version) : EXPECTED_HOST_PACKAGE;
+  const expectedHost = qualifiedAuthorities.has(validatedAuthority)
+    ? frozenHostTemplate(validatedAuthority.runtimePackage.version, validatedAuthority.nodeRuntime.version) : EXPECTED_HOST_PACKAGE;
   if (!isDeepStrictEqual(hostPackage, expectedHost)) {
     throw new DshSupplyChainError("dsh-host-package-invalid");
   }

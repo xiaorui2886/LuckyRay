@@ -41,7 +41,7 @@ mod tests {
 
     fn install(root: &PathBuf, package: Package) -> Result<self::store::State, String> {
         let state = manage(root, "1.9.2", Request::List).unwrap();
-        manage(root, "1.9.2", Request::Install { package, expected_revision: state.revision })
+        manage(root, "1.9.2", Request::Install { package, publisher_approved: false, expected_revision: state.revision })
     }
 
     #[test]

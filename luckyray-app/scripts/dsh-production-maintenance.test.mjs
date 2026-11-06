@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { ORIGIN, FEED, REPOSITORY, sha256, encryptedRoot, restoreProof, rawPublicKey, decodePublicKey, verifyEnvelope, publicationPlan, validatePublicationBundle, validateCandidate, publishReviewed, anonymousReadback } from "./dsh-production-maintenance.mjs";
+import { ORIGIN, FEED, REPOSITORY, sha256, encryptedRoot, restoreProof, rawPublicKey, decodePublicKey, verifyEnvelope, publicationPlan, validatePublicationBundle, validateCandidate, validateRecoveryAuthorization, publishReviewed, anonymousReadback } from "./dsh-production-maintenance.mjs";
+import { qualifiedNodeToolset } from "./dsh-supply-chain.mjs";
+import { compatibilityDeclaration, HOST_INTERFACES } from "./dsh-host-compatibility.mjs";
 
 // Explicit engineering keys exist only in memory. No init command, production
 // storage/root receipt, publication or runtime installation occurs in tests.
@@ -33,14 +35,49 @@ function fixture() {
     nodeSha256: q.authority.nodeRuntime.nodeExeSha256, entrySha256: q.dependencyAudit.entryPoint.fileSha256,
     artifactUrl: `${ORIGIN}descriptors/${sha256(descriptor)}.json`, artifactSha256: sha256(descriptor), artifactBytes: descriptor.length,
     closureSha256: "a".repeat(64), closureFileCount: q.authority.dependencyClosure.releaseLayout.fileCount, dataCompatibility: "no-migration",
-    assembly: { schema: 2, kind: "official-npm-qualified-win-x64-v2", toolset: "node22.19.0-pnpm11.7.0-policy1" } };
+    assembly: { schema: 2, kind: "official-npm-qualified-win-x64-v2", toolset: qualifiedNodeToolset(q.authority.nodeRuntime).name } };
   const pair = generateKeyPairSync("ed25519"), key = rawPublicKey(pair.publicKey).toString("base64url");
   const envelopeFor = value => { const payload = Buffer.from(JSON.stringify(value)); return Buffer.from(JSON.stringify({ payload: payload.toString("base64url"), signature: sign(null, payload, pair.privateKey).toString("base64url") })); };
   return { descriptor, candidate, key, envelopeFor, envelope: envelopeFor(candidate) };
 }
 const genuine = { skip: !descriptionPath };
+function recoveryFixture() {
+  return { schema: 1, purpose: "sealed-code-only-pending-recovery", profileIdentifier: "com.luckyray.desktop.dev.ui-empty",
+    predecessorPhase: "activated_pending_health", predecessorVersion: "0.2.0-rc.2", predecessorArtifactSha256: "a".repeat(64),
+    predecessorActiveSha256: "b".repeat(64), predecessorJournalSha256: "c".repeat(64), snapshotManifestSha256: "d".repeat(64),
+    dataQualificationSha256: "e".repeat(64) };
+}
+test("pending recovery authorization requires exact state, profile, snapshot and data qualification fields", () => {
+  const candidate = { schema: 2, version: "0.2.2-rc.1", fromVersions: ["0.2.0-rc.2"], compatibility: compatibilityDeclaration() };
+  const value = recoveryFixture();
+  assert.deepEqual(validateRecoveryAuthorization(value, candidate), value);
+  for (const field of Object.keys(value)) {
+    const bad = { ...value, [field]: field === "schema" ? 2 : "invalid/value" };
+    assert.throws(() => validateRecoveryAuthorization(bad, candidate), /recovery-authorization-invalid/u);
+  }
+  assert.throws(() => validateRecoveryAuthorization({ ...value, ignoreVersionChecks: true }, candidate), /unexpected-fields/u);
+  assert.throws(() => validateRecoveryAuthorization(value, { ...candidate, schema: 1 }));
+  assert.throws(() => validateRecoveryAuthorization(value, { ...candidate, fromVersions: ["0.1.7-rc.2"] }));
+  assert.throws(() => validateRecoveryAuthorization(value, { ...candidate, compatibility: { requiredCapabilities: [] } }));
+});
+test("production validator authenticates recovery fields with an ephemeral key and prevents ordinary publication", genuine, () => {
+  const f = fixture(), qualifiedContract = { ...contract, interfaces: HOST_INTERFACES };
+  f.candidate.schema = 2;
+  f.candidate.compatibility = compatibilityDeclaration();
+  f.candidate.version = "0.2.2-rc.1";
+  f.candidate.fromVersions = ["0.2.0-rc.2"];
+  f.candidate.sealedRecovery = recoveryFixture();
+  const envelope = f.envelopeFor(f.candidate);
+  assert.deepEqual(verifyEnvelope(envelope, f.key, f.descriptor, qualifiedContract).sealedRecovery, f.candidate.sealedRecovery);
+  assert.throws(() => publicationPlan(envelope, f.key, f.descriptor, qualifiedContract), /sealed-recovery-local-only/u);
+  const changed = JSON.parse(envelope);
+  const payload = JSON.parse(Buffer.from(changed.payload, "base64url"));
+  payload.sealedRecovery.snapshotManifestSha256 = "0".repeat(64);
+  changed.payload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  assert.throws(() => verifyEnvelope(Buffer.from(JSON.stringify(changed)), f.key, f.descriptor, qualifiedContract), /signature-invalid/u);
+});
 test("signed catalog binds genuine qualification but upstream latest gives no permission", genuine, () => {
-  const f = fixture(); assert.equal(verifyEnvelope(f.envelope, f.key, f.descriptor, contract).version, "0.1.7-rc.2");
+  const f = fixture(); assert.equal(verifyEnvelope(f.envelope, f.key, f.descriptor, contract).version, f.candidate.version);
   const wrongKey = rawPublicKey(generateKeyPairSync("ed25519").publicKey).toString("base64url");
   assert.throws(() => verifyEnvelope(f.envelope, wrongKey, f.descriptor, contract), /signature-invalid/u);
   const envelope = JSON.parse(f.envelope); envelope.payload = Buffer.from("{}").toString("base64url");

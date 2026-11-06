@@ -1,287 +1,89 @@
+import { canvasProfileModelIds } from "../../core/canvas/apiModelLibrary";
+import {CanvasComfyUiSettings} from "./CanvasComfyUiSettings";
+import { GenerationConcurrencySettings } from "./GenerationConcurrencySettings";
 import { isTwelveMediaHost } from "../../core/canvas/mediaCapabilities";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../core/i18n/index";
 import {
   CANVAS_MEDIA_PRESETS,
   canvasMediaProfilesClient,
-  canvasComfyUiClient,
   type CanvasMediaProfileInput,
   type CanvasMediaProfilesSnapshot,
 } from "../../core/services/canvasMediaProfiles";
 
-function ModelPickerField({
-  label,
-  value,
-  onChange,
-  models,
-  disabled,
-  placeholder,
-  fetchLabel,
-  fetchBusy,
-  onFetch,
-  fetchDisabled,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  models: string[];
-  disabled?: boolean;
-  placeholder: string;
-  fetchLabel: string;
-  fetchBusy: boolean;
-  onFetch: () => void;
-  fetchDisabled?: boolean;
+function ModelPickerField({label, value, values, onChange, models, disabled, placeholder, fetchLabel, fetchBusy, onFetch, fetchDisabled}: {
+  label: string; value: string; values: string[]; onChange: (values: string[]) => void;
+  models: string[]; disabled?: boolean; placeholder: string; fetchLabel: string;
+  fetchBusy: boolean; onFetch: () => void; fetchDisabled?: boolean;
 }) {
+  const {locale} = useI18n();
+  const english = locale === "en-US";
+  const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const filtered = useMemo(() => {
-    const query = value.trim().toLowerCase();
-    if (!query) return models;
-    return models.filter((id) => id.toLowerCase().includes(query));
-  }, [models, value]);
+  const candidates = useMemo(() => Array.from(new Set([...values, ...models])), [values, models]);
+  const filtered = candidates.filter(id => id.toLowerCase().includes(query.trim().toLowerCase()));
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (boxRef.current && !boxRef.current.contains(event.target as Node))
-        setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
+    const close = (event: PointerEvent) => {if (!boxRef.current?.contains(event.target as Node)) setOpen(false);};
+    document.addEventListener("pointerdown", close, true);
+    return () => document.removeEventListener("pointerdown", close, true);
   }, [open]);
-  const select = (id: string) => {
-    onChange(id);
-    setOpen(false);
-    inputRef.current?.focus();
+  const add = () => {
+    const id = query.trim();
+    if (!id || id.length > 128 || values.length >= 500) return;
+    onChange(Array.from(new Set([...values, id])));
+    setQuery(""); setOpen(true);
   };
-  return (
-    <div className="canvas-model-picker" ref={boxRef}>
-      <div className="canvas-model-picker-head">
-        <label>
-          <span>{label}</span>
-          <div className="canvas-model-picker-row">
-            <input
-              ref={inputRef}
-              disabled={disabled}
-              value={value}
-              placeholder={placeholder}
-              spellCheck={false}
-              aria-haspopup="listbox"
-              aria-expanded={open}
-              onFocus={() => {
-                if (models.length) setOpen(true);
-              }}
-              onChange={(e) => onChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (!models.length) return;
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setOpen(true);
-                }
-                if (
-                  e.key === "Enter" &&
-                  open &&
-                  filtered[0] &&
-                  filtered[0] !== value
-                ) {
-                  e.preventDefault();
-                  select(filtered[0]);
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="canvas-model-picker-toggle"
-              disabled={disabled || !models.length}
-              aria-label={
-                models.length ? `${models.length} ${fetchLabel}` : fetchLabel
-              }
-              aria-expanded={open}
-              onClick={() => setOpen((current) => !current)}
-            >
-              <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden>
-                <path
-                  d="M2 4.2 6 8.4 10 4.2"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          </div>
-        </label>
-        <button
-          type="button"
-          className="canvas-model-fetch"
-          disabled={disabled || fetchBusy || fetchDisabled}
-          onClick={onFetch}
-        >
-          <span
-            className={
-              "canvas-model-fetch-icon" + (fetchBusy ? " is-spinning" : "")
-            }
-            aria-hidden
-          >
-            <svg viewBox="0 0 14 14" width="12" height="12">
-              <path
-                d="M11.6 5.2A4.9 4.9 0 0 0 2.3 4M2.4 8.8a4.9 4.9 0 0 0 9.3 1.2"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-              <path
-                d="M12 2.6v2.7H9.3M2 11.4V8.7h2.7"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-          {fetchBusy ? "…" : fetchLabel}
-        </button>
-      </div>
-      {models.length > 0 && (
-        <p className="canvas-model-picker-status">
-          {models.length} 可选
-          {filtered.length !== models.length
-            ? ` · 匹配 ${filtered.length}`
-            : ""}
-          {value.trim() && !models.includes(value.trim())
-            ? " · 当前为手动输入"
-            : ""}
-        </p>
-      )}
-      {open && models.length > 0 && (
-        <div
-          className="canvas-model-picker-list"
-          role="listbox"
-          aria-label={label}
-        >
-          {filtered.slice(0, 200).map((id) => (
-            <button
-              key={id}
-              type="button"
-              role="option"
-              aria-selected={id === value}
-              className={
-                "canvas-model-option" + (id === value ? " is-selected" : "")
-              }
-              onClick={() => select(id)}
-            >
-              <span className="canvas-model-option-id">{id}</span>
-              {id === value ? (
-                <span className="canvas-model-option-check" aria-hidden>
-                  <svg viewBox="0 0 12 12" width="11" height="11">
-                    <path
-                      d="M2.2 6.4 4.8 9 9.8 3.2"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </span>
-              ) : null}
-            </button>
-          ))}
-          {filtered.length === 0 && (
-            <p className="canvas-model-picker-empty">
-              没有匹配项；可直接手动输入。
-            </p>
-          )}
+  return <div className="canvas-model-picker" ref={boxRef} onKeyDown={event => {
+    if (event.key === "Escape" && open && !event.nativeEvent.isComposing) {event.preventDefault(); event.stopPropagation(); setOpen(false);}
+  }}>
+    <div className="canvas-model-picker-head">
+      <label><span>{label}</span>
+        <div className="canvas-model-picker-row">
+          <input aria-label={label} disabled={disabled} value={disabled ? value : query} placeholder={placeholder} spellCheck={false} maxLength={128}
+            onFocus={() => setOpen(true)} onChange={event => {setQuery(event.target.value); setOpen(true);}}
+            onKeyDown={event => {if (event.key === "Enter" && !event.nativeEvent.isComposing) {event.preventDefault(); add();}}} />
+          <button type="button" className="canvas-model-picker-toggle" disabled={disabled} aria-label={english ? `Choose ${label}` : `选择${label}`} aria-expanded={open} onClick={() => setOpen(current => !current)}>
+            <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden><path d="M2 4.2 6 8.4 10 4.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
         </div>
-      )}
+      </label>
+      <button type="button" className="canvas-model-fetch" disabled={disabled || fetchBusy || fetchDisabled} onClick={() => {setOpen(true); onFetch();}}>{fetchBusy ? "…" : fetchLabel}</button>
     </div>
-  );
+    {!disabled ? <p className="canvas-model-picker-status">{english ? `${values.length} added · Available on API cards after saving` : `已添加 ${values.length} 个 · 保存后可在 API 卡片直接选择`}</p> : null}
+    {open && !disabled ? <div className="canvas-model-picker-list" role="group" aria-label={english ? `${label} selection` : `${label}勾选`}>
+      {filtered.map(id => <label key={id} className={`canvas-model-option canvas-model-check-option${values.includes(id) ? " is-selected" : ""}`}>
+        <input type="checkbox" checked={values.includes(id)} disabled={disabled || (!values.includes(id) && values.length >= 500)} onChange={() => onChange(values.includes(id) ? values.filter(value => value !== id) : [...values, id])} />
+        <span className="canvas-model-option-id">{id}</span>
+      </label>)}
+      {query.trim() && !candidates.includes(query.trim()) ? <button type="button" className="canvas-model-option" onClick={add}>{english ? "Add" : "添加"}「{query.trim()}」</button> : null}
+      {!filtered.length && !query.trim() ? <p className="canvas-model-picker-empty">{english ? "Fetch models, or enter a model ID to add." : "获取模型后勾选，或输入模型 ID 添加。"}</p> : null}
+    </div> : null}
+  </div>;
 }
 
-/** Independent preparation endpoint. Never adds a generation protocol or submits a workflow. */
-function ComfyUiPreparation({en}:{en:boolean}) {
-  const copy=(zh:string,english:string)=>en?english:zh;
-  const [baseUrl,setBaseUrl]=useState("http://127.0.0.1:8188");
-  const [busy,setBusy]=useState(false);
-  const [loaded,setLoaded]=useState(false);
-  const [status,setStatus]=useState("");
-  const [failed,setFailed]=useState(false);
-  const epoch=useRef(0);
-  useEffect(()=>{
-    const current=++epoch.current;
-    void canvasComfyUiClient.get().then(value=>{
-      if(current!==epoch.current)return;
-      setBaseUrl(value.baseUrl);setLoaded(true);
-    }).catch(()=>{
-      if(current!==epoch.current)return;
-      setLoaded(true);
-      setFailed(true);setStatus(copy("未能读取已保存地址，可重新填写并保存；不会自动覆盖。","Could not read the saved address. You can enter and save it again; nothing is overwritten automatically."));
-    });
-    return ()=>{epoch.current++;};
-  },[]);
-  const connectionError=(code:string)=>{
-    if(code.includes("local-address-invalid"))return copy("请输入本机地址，例如 http://127.0.0.1:8188，不含路径、账号、查询参数或片段。","Use a local address such as http://127.0.0.1:8188 without paths, credentials, query parameters or fragments.");
-    if(code.includes("settings-unavailable"))return copy("本地设置暂时不可用，请稍后重试。","Local settings are unavailable. Try again later.");
-    if(code.includes("unexpected-response"))return copy("服务响应不是可识别的 ComfyUI 状态，请检查地址与服务类型。","The service did not return recognised ComfyUI status. Check the address and service type.");
-    if(code.includes("timeout"))return copy("连接超时，请确认本机 ComfyUI 已启动。","Connection timed out. Check that local ComfyUI is running.");
-    return copy("未能连接本机 ComfyUI，请确认服务已启动及地址正确。","Could not connect to local ComfyUI. Check that it is running and the address is correct.");
-  };
-  const run=async(test:boolean)=>{
-    if(busy||!loaded)return;
-    const current=++epoch.current;
-    setBusy(true);setStatus("");setFailed(false);
-    try {
-      if(test){
-        const value=await canvasComfyUiClient.test(baseUrl);
-        if(current!==epoch.current)return;
-        setFailed(!value.reachable);
-        setStatus(value.reachable
-          ? copy("连接正常，仅验证只读状态接口，尚未启用生成。","Connected. Read-only status verified; generation is not enabled.")+(value.version?` (ComfyUI ${value.version})`:"")
-          : connectionError(value.error || ""));
-      } else {
-        const value=await canvasComfyUiClient.save(baseUrl);
-        if(current!==epoch.current)return;
-        setBaseUrl(value.baseUrl);setStatus(copy("地址已保存，仅作后续连接准备。","Address saved for future connection support only."));
-      }
-    }catch(cause){
-      if(current!==epoch.current)return;
-      setFailed(true);setStatus(connectionError(String(cause)));
-    }finally{if(current===epoch.current)setBusy(false);}
-  };
-  return <fieldset className="canvas-media-profile-section">
-    <legend>{copy("本地 ComfyUI · 连接准备","Local ComfyUI · Preparation")}</legend>
-    <p className="canvas-media-profile-hint">{copy("仅连接准备，暂不参与生成。只保存本机服务地址、只读测试 /system_stats；不提交工作流、不上传素材、不执行生图或视频。","Preparation only, not available for generation. Saves a local address and checks /system_stats read-only; no workflows, uploads or image/video generation.")}</p>
-    <label><span>{copy("本机服务地址","Local endpoint")}</span><input aria-label={copy("ComfyUI 本机服务地址","ComfyUI local endpoint")} value={baseUrl} disabled={busy||!loaded} spellCheck={false} onChange={e=>{setBaseUrl(e.target.value);setStatus("");}} /></label>
-    <p className="canvas-media-profile-hint">{copy("本阶段仅支持 localhost、127.0.0.1 或 [::1]，无需 API Key。运行 LuckyRay 的电脑需能访问此地址。","This stage accepts localhost, 127.0.0.1 or [::1] only, without an API key. The computer running LuckyRay must be able to reach this address.")}</p>
-    <div className="canvas-media-profile-actions">
-      <button type="button" disabled={busy||!loaded||!baseUrl.trim()} onClick={()=>void run(false)}>{copy("保存地址","Save address")}</button>
-      <button type="button" disabled={busy||!loaded||!baseUrl.trim()} onClick={()=>void run(true)}>{busy?copy("处理中…","Working…"):copy("只读测试连接","Test read-only connection")}</button>
-    </div>
-    {status?<p className={failed?"canvas-settings-error":"canvas-media-profile-hint"} role={failed?"alert":"status"}>{status}</p>:null}
-  </fieldset>;
-}
+// The editor is unloaded by Canvas Home. Keep its unsaved connection draft in
+// this window's memory only, never in browser storage or the native profile.
+let retainedConnectionDraft: CanvasMediaProfileInput | null = null;
 
 export function CanvasMediaProfilesPanel({
   snapshot,
   onChange,
+  section = "generation",
+  onDraftChange,
 }: {
+  section?: "generation" | "connections";
+  onDraftChange?: (hasDraft: boolean) => void;
   snapshot: CanvasMediaProfilesSnapshot | null;
   onChange: (value: CanvasMediaProfilesSnapshot) => void;
 }) {
   const { locale } = useI18n();
   const en = locale === "en-US";
   const copy = (zh: string, english: string) => (en ? english : zh);
-  const [draft, setDraft] = useState<CanvasMediaProfileInput | null>(null);
+  const [draft, setDraft] = useState<CanvasMediaProfileInput | null>(() => retainedConnectionDraft);
+  useLayoutEffect(() => { retainedConnectionDraft = draft; }, [draft]);
+  useEffect(() => { onDraftChange?.(!!draft); }, [!!draft, onDraftChange]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState("");
@@ -319,9 +121,15 @@ export function CanvasMediaProfilesPanel({
     draft.imageModel.startsWith("gemini-") &&
     draft.imageModel.includes("image") &&
     draft.imageProtocol === "openai-image";
-  const active = snapshot?.profiles.find(
-    (p) => p.id === snapshot.activeProfileId,
+  const isArkPlan = draft?.baseUrl.replace(/\/$/, "") === CANVAS_MEDIA_PRESETS.arkPlan.baseUrl;
+  const selectableProfiles = snapshot?.profiles.filter(p => p.id !== "doubao-default" && p.imageProtocol !== "doubao-image" && p.videoProtocol !== "doubao-video") || [];
+  const active = selectableProfiles.find(
+    (p) => p.id === snapshot?.activeProfileId,
   );
+  const modelSummary = (kind: "text" | "image" | "video") => {
+    const count = canvasProfileModelIds(active, kind).length;
+    return count ? copy(`${count} 个已添加模型`, `${count} added models`) : "—";
+  };
   const run = async (
     action: () => Promise<CanvasMediaProfilesSnapshot>,
     close = false,
@@ -359,7 +167,7 @@ export function CanvasMediaProfilesPanel({
     }
   };
   const fetchModels = async (protocol?: string) => {
-    if (modelsBusy || !draft) return;
+    if (modelsBusy || !draft || isArkPlan) return;
     const epoch = ++discoveryEpoch.current;
     const context = discoveryContextRef.current;
     const current = () =>
@@ -424,10 +232,8 @@ export function CanvasMediaProfilesPanel({
   };
   return (
     <section className="canvas-settings-generation canvas-media-profiles">
-      <div className="canvas-settings-section-title">
-        <strong>{copy("生成配置", "Generation connections")}</strong>
-      </div>
-      <label>
+      <div className="canvas-settings-profile-content" hidden={section !== "generation"}>
+      <label className="canvas-settings-connection-row">
         <span>{copy("当前配置", "Active connection")}</span>
         <select
           aria-label={copy("当前生成配置", "Active generation connection")}
@@ -437,7 +243,8 @@ export function CanvasMediaProfilesPanel({
             void run(() => canvasMediaProfilesClient.activate(e.target.value))
           }
         >
-          {snapshot?.profiles.map((p) => (
+          <option value="" disabled>{copy("请选择生成配置", "Select a generation connection")}</option>
+          {selectableProfiles.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
               {p.apiKeyConfigured ? "" : copy(" · 待配置", " · Setup required")}
@@ -486,16 +293,12 @@ export function CanvasMediaProfilesPanel({
                         imageModels:
                           draft.imageProtocol === "disabled"
                             ? []
-                            : models.length
-                              ? models.filter((id) => /image|图|img/i.test(id))
-                              : draft.imageModels,
-                        textModels: draft.textProtocol === "openai-chat" ? (models.length ? models : draft.textModels) : [],
+                            : canvasProfileModelIds({...draft, revision:1, apiKeyConfigured:false}, "image"),
+                        textModels: draft.textProtocol === "openai-chat" ? canvasProfileModelIds({...draft, revision:1, apiKeyConfigured:false}, "text") : [],
                         videoModels:
                           draft.videoProtocol === "disabled"
                             ? []
-                            : models.length
-                              ? models.filter((id) => /video|视频/i.test(id))
-                              : draft.videoModels,
+                            : canvasProfileModelIds({...draft, revision:1, apiKeyConfigured:false}, "video"),
                       }),
                     true,
                   )
@@ -573,23 +376,20 @@ export function CanvasMediaProfilesPanel({
         ) : null}
       </div>
       {!draft && active ? (
-        <p className="canvas-media-profile-summary">
-          {copy("文本", "Text")}: {(active.textProtocol ?? "legacy") === "legacy" ? copy("沿用软件设置", "Use app settings") : active.textProtocol === "disabled" ? copy("未启用", "Disabled") : active.textModel || "—"}
-          <br />
-          {copy("图片", "Image")}: {active.imageModel || "—"}
-          <br />
-          {copy("视频", "Video")}:{" "}
-          {active.videoProtocol === "disabled"
+        <dl className="canvas-media-profile-summary">
+          <div><dt>{copy("文本", "Text")}</dt><dd>{(active.textProtocol ?? "legacy") === "legacy" ? copy("沿用软件设置", "Use app settings") : active.textProtocol === "disabled" ? copy("未启用", "Disabled") : modelSummary("text")}</dd></div>
+          <div><dt>{copy("图片", "Image")}</dt><dd>{active.imageProtocol === "disabled" ? copy("未启用", "Disabled") : modelSummary("image")}</dd></div>
+          <div><dt>{copy("视频", "Video")}</dt><dd>{active.videoProtocol === "disabled"
             ? copy("未启用", "Disabled")
-            : active.videoModel || "—"}
-        </p>
+            : modelSummary("video")}</dd></div>
+        </dl>
       ) : null}
       {draft ? (
         <div className="canvas-media-profile-editor">
           <p className="canvas-media-draft-status">
             {copy(
-              "编辑中 · 收起面板会保留本次输入，保存后生效",
-              "Editing · Closing this panel keeps your input; save to apply",
+              "编辑中 · 保存后生效",
+              "Editing · Save to apply",
             )}
           </p>
           {draft.expectedRevision === null ? (
@@ -609,6 +409,7 @@ export function CanvasMediaProfilesPanel({
                       ? {
                           ...current,
                           ...preset,
+                          textProtocol: "disabled",
                           imageModels: [],
                           videoModels: e.target.value === "bigmodel" ? ["cogvideox-flash"] : [],
                           apiKey: "",
@@ -618,6 +419,8 @@ export function CanvasMediaProfilesPanel({
                   );
                 }}
               >
+                <option value="arkPlan">火山方舟 · Agent Plan</option>
+                <option value="arkPaygo">火山方舟 · 按量付费</option>
                 <option value="easycli">EasyCLIProxyAPI</option>
                 <option value="custom">{copy("自定义", "Custom")}</option>
                 <option value="agnes">Agnes</option>
@@ -647,7 +450,7 @@ export function CanvasMediaProfilesPanel({
               onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
             />
           </label>
-          <fieldset className="canvas-media-profile-section">
+          {!isArkPlan ? <fieldset className="canvas-media-profile-section canvas-media-model-group">
             <legend>{copy("文本生成", "Text generation")}</legend>
             <label><span>{copy("文本协议", "Text protocol")}</span>
               <select disabled={busy} value={draft.textProtocol || "legacy"} onChange={e=>setDraft({...draft,textProtocol:e.target.value as CanvasMediaProfileInput["textProtocol"]})}>
@@ -657,14 +460,16 @@ export function CanvasMediaProfilesPanel({
               </select>
             </label>
             {draft.textProtocol === "openai-chat" ? <>
-              <ModelPickerField label={copy("文本模型", "Text model")} value={draft.textModel || ""}
-                onChange={textModel=>setDraft({...draft,textModel})} models={models} disabled={busy}
+              <ModelPickerField label={copy("文本模型", "Text model")} value={draft.textModel || ""} values={Array.from(new Set([draft.textModel, ...(draft.textModels ?? [])].filter((id): id is string => !!id)))}
+                onChange={textModels=>setDraft({...draft,textModels,textModel:textModels.includes(draft.textModel || "") ? draft.textModel : textModels[0] || ""})} models={models} disabled={busy}
                 placeholder={copy("填写或选择文本模型 ID", "Type or pick a text model ID")}
                 fetchLabel={copy("获取模型", "Fetch models")} fetchBusy={modelsBusy}
                 onFetch={()=>void fetchModels("openai-image")} fetchDisabled={!draft.baseUrl.trim()} />
               <p className="canvas-media-profile-hint">{copy("使用这套配置的 Base URL 和 Key，不再读取软件外部的文本模型设置。模型需支持 /chat/completions。", "Uses this connection's URL and key independently of app text settings; requires /chat/completions support.")}</p>
             </> : null}
-          </fieldset>
+          </fieldset> : null}
+          <fieldset className="canvas-media-profile-section canvas-media-model-group">
+            <legend>{copy("图片生成", "Image generation")}</legend>
           <label>
             <span>{copy("图片协议", "Image protocol")}</span>
             <select
@@ -678,6 +483,7 @@ export function CanvasMediaProfilesPanel({
                 })
               }
             >
+              <option value="ark-image">火山方舟 Images</option>
               <option value="easycli-auto">{copy("EasyCLIProxyAPI · 按模型自动匹配", "EasyCLIProxyAPI · Auto by model")}</option>
               <option value="agnes">Agnes</option>
               <option value="openai-image">{copy("OpenAI Images 兼容协议", "OpenAI Images compatible protocol")}</option>
@@ -686,6 +492,22 @@ export function CanvasMediaProfilesPanel({
               <option value="disabled">{copy("不启用", "Disabled")}</option>
             </select>
           </label>
+          <ModelPickerField
+            label={copy("图片模型", "Image model")}
+            value={draft.imageModel} values={Array.from(new Set([draft.imageModel, ...(draft.imageModels ?? [])].filter(Boolean)))}
+            onChange={imageModels => setDraft({...draft,imageModels,imageModel:imageModels.includes(draft.imageModel) ? draft.imageModel : imageModels[0] || ""})}
+            models={models}
+            disabled={busy || draft.imageProtocol === "disabled"}
+            placeholder={copy(
+              "填写或从列表选择模型 ID",
+              "Type or pick a model ID",
+            )}
+            fetchLabel={copy("获取模型", "Fetch models")}
+            fetchBusy={modelsBusy}
+            onFetch={() => void fetchModels()}
+            fetchDisabled={!draft.baseUrl.trim() || isArkPlan}
+          />
+
           {draft.imageProtocol === "easycli-auto" ? <p className="canvas-media-profile-hint">{copy(
             "选择节点中的 GPT / Gemini 图片模型时自动匹配接口。",
             "Automatically matches the interface for the GPT / Gemini image model selected on the node.",
@@ -711,21 +533,9 @@ export function CanvasMediaProfilesPanel({
               </button>
             </div>
           ) : null}
-          <ModelPickerField
-            label={copy("图片模型", "Image model")}
-            value={draft.imageModel}
-            onChange={(imageModel) => setDraft({ ...draft, imageModel })}
-            models={models}
-            disabled={busy || draft.imageProtocol === "disabled"}
-            placeholder={copy(
-              "填写或从列表选择模型 ID",
-              "Type or pick a model ID",
-            )}
-            fetchLabel={copy("获取模型", "Fetch models")}
-            fetchBusy={modelsBusy}
-            onFetch={() => void fetchModels()}
-            fetchDisabled={!draft.baseUrl.trim()}
-          />
+          </fieldset>
+          <fieldset className="canvas-media-profile-section canvas-media-model-group">
+            <legend>{copy("视频生成", "Video generation")}</legend>
           <label>
             <span>{copy("视频协议", "Video protocol")}</span>
             <select
@@ -742,6 +552,7 @@ export function CanvasMediaProfilesPanel({
             >
               <option value="disabled">{copy("不启用", "Disabled")}</option>
               <option value="agnes">Agnes</option>
+              <option value="ark-video">火山方舟 Content Generation</option>
               <option value="openai-video">{copy("OpenAI Videos 兼容协议（第三方兼容服务）", "OpenAI Videos compatible protocol (third-party services)")}</option>
               <option value="bigmodel-video">智谱 CogVideoX-Flash</option>
               <option value="12ai-task">12API Task</option>
@@ -749,8 +560,8 @@ export function CanvasMediaProfilesPanel({
           </label>
           <ModelPickerField
             label={copy("视频模型", "Video model")}
-            value={draft.videoModel}
-            onChange={(videoModel) => setDraft({ ...draft, videoModel })}
+            value={draft.videoModel} values={Array.from(new Set([draft.videoModel, ...(draft.videoModels ?? [])].filter(Boolean)))}
+            onChange={videoModels => setDraft({...draft,videoModels,videoModel:videoModels.includes(draft.videoModel) ? draft.videoModel : videoModels[0] || ""})}
             models={draft.videoProtocol === "bigmodel-video" ? ["cogvideox-flash"] : models}
             disabled={busy || draft.videoProtocol === "disabled" || draft.videoProtocol === "bigmodel-video"}
             placeholder={copy(
@@ -760,8 +571,9 @@ export function CanvasMediaProfilesPanel({
             fetchLabel={copy("获取模型", "Fetch models")}
             fetchBusy={modelsBusy}
             onFetch={() => void fetchModels()}
-            fetchDisabled={!draft.baseUrl.trim() || draft.videoProtocol === "bigmodel-video"}
+            fetchDisabled={!draft.baseUrl.trim() || isArkPlan || draft.videoProtocol === "bigmodel-video"}
           />
+          </fieldset>
           {draft.videoProtocol === "bigmodel-video" ? <p className="canvas-media-profile-hint">{copy(
             "智谱专用异步接口，仅接入 cogvideox-flash。提示词最多 512 个字符，支持一张 PNG／JPEG 图片（不超过 5 MiB）或首帧，不支持尾帧或视频参考；时长、清晰度、音频等未验证参数不发送。免费额度与可用性以智谱账户为准，不会自动切换收费模型。",
             "Dedicated BigModel async API for cogvideox-flash only. Supports a prompt up to 512 characters and one PNG/JPEG image (up to 5 MiB) / first frame, not a last frame or video reference. Unverified duration, resolution and audio options are not sent. Free quota and availability depend on your BigModel account; no automatic switch to paid models.",
@@ -803,6 +615,7 @@ export function CanvasMediaProfilesPanel({
               </span>
             </label>
           ) : null}
+          {(draft.imageProtocol === "ark-image" || draft.videoProtocol === "ark-video") ? <p className="canvas-media-profile-hint">{copy("火山方舟与豆包会员不互通。Agent Plan 与按量付费各用独立 Key，不回退；请填写控制台实际可用的准确模型 ID。Agent Plan 不使用 /models 获取列表。停止跟踪不代表供应商停止生成或计费。", "Ark is separate from Doubao membership. Agent Plan and pay-as-you-go use separate keys with no fallback. Enter exact available model IDs; Agent Plan does not query /models. Stopping tracking does not cancel provider work or billing.")}</p> : null}
           <p className="canvas-media-profile-hint">
             {copy(
               "仅支持所选协议的模型可用。使用中转会把提示词与参考素材发送给该服务；请使用它自己的 Key。",
@@ -829,8 +642,8 @@ export function CanvasMediaProfilesPanel({
           {draft.baseUrl.trim().startsWith("http://") ? (
             <p className="canvas-media-profile-hint">
               {copy(
-                "本机接口仅支持 localhost、127.0.0.1 或 [::1]。服务须支持所选图片／视频协议；本机图片使用 Base64 返回。ComfyUI 工作流接口尚未接入。",
-                "Local HTTP accepts only localhost, 127.0.0.1 or [::1]. The service must implement the selected image/video protocol; local images use Base64 responses. ComfyUI workflows are not yet supported.",
+                "本机接口仅支持 localhost、127.0.0.1 或 [::1]。服务须支持所选图片／视频协议；本机图片使用 Base64 返回。ComfyUI 请使用“连接”中的独立设置。",
+                "Local HTTP accepts only localhost, 127.0.0.1 or [::1]. The service must implement the selected image/video protocol; local images use Base64 responses. For ComfyUI, use its separate settings in Connections.",
               )}
             </p>
           ) : null}
@@ -845,7 +658,11 @@ export function CanvasMediaProfilesPanel({
           ) : null}
         </div>
       ) : null}
-      <ComfyUiPreparation en={en} />
+      <GenerationConcurrencySettings en={en} />
+      </div>
+      <div className="canvas-settings-connections-content" hidden={section !== "connections"}>
+      <CanvasComfyUiSettings en={en} />
+      </div>
       {error ? (
         <p className="canvas-settings-error" role="alert">
           {error}

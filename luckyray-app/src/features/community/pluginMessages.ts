@@ -73,6 +73,32 @@ export const SCRIPT_PLUGIN_MESSAGES = defineMessages({
   "plugin.perm.knowledge.insert": { "zh-CN": "向所选笔记插入文本（需干净的编辑会话）", "en-US": "Insert text into the selected note (clean editor session required)" },
   "plugin.perm.canvas.read": { "zh-CN": "读取所选画布的已保存结构（不含附件）", "en-US": "Read the saved structure of the selected canvas (no attachments)" },
   "plugin.perm.canvas.export": { "zh-CN": "将所选画布导出为 SVG（保存位置由你选择）", "en-US": "Export the selected canvas as SVG (you choose the location)" },
+  "plugin.perm.ai.generate": { "zh-CN": "使用你为本次运行选择的现有 AI 模型（不向插件提供密钥）", "en-US": "Use your chosen configured AI model for a run (the plugin does not receive its key)" },
+  "plugin.ai.title": { "zh-CN": "AI 模型", "en-US": "AI model" },
+  "plugin.ai.allow": { "zh-CN": "允许本次运行使用当前配置的 AI 模型", "en-US": "Allow this run to use the currently configured AI model" },
+  "plugin.ai.selected": { "zh-CN": "已选择：{provider} · {model}", "en-US": "Selected: {provider} · {model}" },
+  "plugin.ai.hint": { "zh-CN": "插件发送的内容会交给该模型服务；模型或配置变化后需重新选择。", "en-US": "The plugin's prompt is sent to this model provider. Select again if its configuration changes." },
+  "plugin.ai.unavailable": { "zh-CN": "当前 AI 配置不可用，请检查软件已有的模型设置。", "en-US": "The current AI configuration is unavailable; check the existing model settings." },
+  "plugin.ai.denied": { "zh-CN": "本次未选择 AI 模型或插件没有 AI 授权。", "en-US": "No AI model was selected for this run, or the plugin lacks AI permission." },
+  "plugin.ai.changed": { "zh-CN": "AI 配置已变化，请重新选择本次模型。", "en-US": "The AI configuration changed; select the model again." },
+  "plugin.ai.timeout": { "zh-CN": "AI 请求超时，请检查模型连接后重试。", "en-US": "The AI request timed out; check the model connection before retrying." },
+  "plugin.ai.failed": { "zh-CN": "AI 请求未完成，请检查现有模型配置或服务状态。", "en-US": "The AI request did not finish; check the existing model configuration or service." },
+  "plugin.perm.events.subscribe": { "zh-CN": "订阅你选择的笔记保存或素材库导入事件", "en-US": "Subscribe to saves and imports in the scope you choose" },
+  "plugin.events.title": { "zh-CN": "事件订阅范围", "en-US": "Event subscription scope" },
+  "plugin.events.notes": { "zh-CN": "允许订阅所选笔记的保存", "en-US": "Allow subscribing to saves of the selected notes" },
+  "plugin.events.materials": { "zh-CN": "允许订阅当前素材库的导入", "en-US": "Allow subscribing to imports in the current material library" },
+  "plugin.events.library": { "zh-CN": "已选择素材库：{name}", "en-US": "Selected material library: {name}" },
+  "plugin.events.allowAi": { "zh-CN": "允许这些事件自动调用所选 AI 模型（每次可能产生用量）", "en-US": "Allow these events to call the selected AI model automatically (each call may incur usage)" },
+  "plugin.events.activeTitle": { "zh-CN": "自动事件", "en-US": "Automatic events" },
+  "plugin.events.none": { "zh-CN": "当前没有订阅。选择范围后运行插件即可订阅。", "en-US": "No active subscriptions. Choose a scope and run the plugin to subscribe." },
+  "plugin.events.noteType": { "zh-CN": "所选笔记保存", "en-US": "Selected note saved" },
+  "plugin.events.materialType": { "zh-CN": "所选素材库导入", "en-US": "Selected library import" },
+  "plugin.events.cancel": { "zh-CN": "取消订阅", "en-US": "Unsubscribe" },
+  "plugin.events.processing": { "zh-CN": "正在处理事件…", "en-US": "Processing event…" },
+  "plugin.events.result": { "zh-CN": "插件返回", "en-US": "Plugin result" },
+  "plugin.events.failed": { "zh-CN": "插件未能处理事件", "en-US": "Plugin could not process the event" },
+  "plugin.events.hint": { "zh-CN": "订阅仅在本次软件运行期间有效；忙碌时事件可能跳过。事件处理不能修改笔记或素材，停用插件会取消订阅。", "en-US": "Subscriptions last for this app session; busy events may be skipped. Handlers cannot modify notes or materials, and disabling the plugin removes subscriptions." },
+  "plugin.events.unavailable": { "zh-CN": "事件范围不可用，请检查所选笔记或素材库。", "en-US": "The event scope is unavailable; check the selected notes or library." },
 
   "plugin.dialog.scopeTitle": { "zh-CN": "本次授权对象", "en-US": "Objects for this run" },
   "plugin.dialog.summary.materials": { "zh-CN": "素材 {count} 项", "en-US": "{count} materials" },
@@ -100,6 +126,7 @@ export const SCRIPT_PLUGIN_MESSAGES = defineMessages({
 
   "plugin.dialog.outputTitle": { "zh-CN": "运行结果", "en-US": "Result" },
   "plugin.dialog.stale": { "zh-CN": "选择已变化。以下结果是上一次运行的内容，重新运行后才会反映新选择。", "en-US": "The selection changed. The result below is from the previous run; run again to reflect it." },
+  "plugin.dialog.refreshSelection": { "zh-CN": "按新选择重新运行", "en-US": "Run again with this selection" },
   "plugin.dialog.outcomes": { "zh-CN": "宿主确认的操作", "en-US": "Host-confirmed operations" },
   "plugin.dialog.outcomes.none": { "zh-CN": "本轮运行没有写入操作。", "en-US": "No write operations in this run." },
   "plugin.dialog.round.title": { "zh-CN": "本轮宿主确认", "en-US": "This run, as confirmed by the host" },
@@ -151,6 +178,23 @@ export type PluginCopyKey = keyof typeof SCRIPT_PLUGIN_MESSAGES | ExtCopyKey;
 
 /** Plugin runtime error code → copy key; unknown codes keep one neutral line. */
 export const PLUGIN_ERROR_COPY: Record<string, PluginCopyKey> = {
+  "plugin-ai-unavailable": "plugin.ai.unavailable",
+  "plugin-ai-not-selected": "plugin.ai.denied",
+  "plugin-ai-selection-changed": "plugin.ai.changed",
+  "plugin-ai-timeout": "plugin.ai.timeout",
+  "plugin-ai-no_api_key": "plugin.ai.unavailable",
+  "plugin-ai-unauthorized": "plugin.ai.failed",
+  "plugin-ai-rate_limited": "plugin.ai.failed",
+  "plugin-ai-connection": "plugin.ai.failed",
+  "plugin-ai-provider_error": "plugin.ai.failed",
+  "plugin-ai-failed": "plugin.ai.failed",
+  "plugin-ai-output-limit": "plugin.ai.failed",
+  "plugin-ai-input-limit": "plugin.ai.failed",
+  "plugin-event-not-selected": "plugin.events.unavailable",
+  "plugin-event-object-required": "plugin.events.unavailable",
+  "plugin-event-library-unavailable": "plugin.events.unavailable",
+  "plugin-event-ai-not-selected": "plugin.events.unavailable",
+  "plugin-event-recursion-denied": "plugin.events.unavailable",
   "plugin-not-script": "plugin.error.notScript",
   "plugin-changed": "plugin.error.changed",
   "plugin-source-changed": "plugin.dialog.sourceChanged",
@@ -185,7 +229,7 @@ export function pluginErrorCode(error: unknown): string {
 
 /** Runtime `plugin-*` codes, then package `ExtensionError` codes, then one neutral line carrying the raw code. */
 export function pluginErrorCopyKey(error: unknown): PluginCopyKey {
-  const code = domainErrorCode(pluginErrorCode(error));
+  const code = domainErrorCode(pluginErrorCode(error)).replace(/^Error: (?=plugin-)/, "");
   if (PLUGIN_ERROR_COPY[code]) return PLUGIN_ERROR_COPY[code];
   if (code in EXTENSION_ERROR_COPY) return EXTENSION_ERROR_COPY[code];
   return "plugin.error.unknown";

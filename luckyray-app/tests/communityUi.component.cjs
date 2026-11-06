@@ -6,7 +6,7 @@ const http = require("node:http");
 const assert = require("node:assert/strict");
 const root = path.resolve(__dirname, "..");
 const esbuild = require(require.resolve("esbuild", { paths: [fs.realpathSync(root + "/node_modules/vite")] }));
-const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || "playwright");
+const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || "C:/Users/Administrator/AppData/Local/npm-cache/_npx/31e32ef8478fbf80/node_modules/playwright");
 const out = process.env.COMMUNITY_UI_EVIDENCE || path.join(root, ".tmp-community-ui");
 const packs = JSON.parse(fs.readFileSync(root + "/plugin-sdk/examples/page-desk/example.page-desk.lrpack.json", "utf8"));
 const manifestPack = JSON.parse(fs.readFileSync(root + "/plugin-sdk/examples/material-manifest/example.material-manifest.lrpack.json", "utf8"));
@@ -45,7 +45,7 @@ const report = { kind: "production-community-controlled-transports", checks: [],
     window.__TAURI_INTERNALS__ = { invoke: async (command,args) => {
       if (command === "community_mcp_status") return { revision:"fixture-1",phase:"ready",version:"0.1.3",packageAvailable:true,downloadBytes:null,authorized:true,grant:{libraryId:"fixture-library",vaultId:"component-vault",expiresAt:Math.floor(Date.now()/1000)+3600},configured:true,tunnelId:null,hasKey:true,connectOnLaunch:false,desktopReady:true,tunnelReady:true,lastWebCallAt:1,errorCode:null,libraries:[{id:"fixture-library",name:"Synthetic library"}],vaults:[{id:"component-vault",name:"Synthetic vault"}] };
       if (command === "community_mcp_action") { window.mcpActions.push(args?.input?.action); throw Error("fixture-mcp-mutation-not-allowed"); }
-      if (command === "manage_extension_packages") { if (window.failRegistry) throw Error("component-list-failed"); return structuredClone(registry); }
+      if (command === "manage_extension_packages") { if (window.delayRegistry) await new Promise(resolve => { (window.releaseRegistry ??= []).push(resolve); }); if (window.failRegistry) throw Error("component-list-failed"); return structuredClone(registry); }
       if (command === "get_local_transport_client_config") return {baseUrl:"http://127.0.0.1:1",credential:"",protocolVersion:1};
       if (command === "get_collection_server_base_url") return "http://127.0.0.1:1";
       if (command === "knowledge_activate_ui_source") return {vaultId:"component-vault",sourceEpoch:1};
@@ -82,6 +82,70 @@ const report = { kind: "production-community-controlled-transports", checks: [],
     const shot = async name => { const file = "component/"+name+".png"; await page.screenshot({path:path.join(out,file),fullPage:true}); report.screenshots.push(file); };
     await page.goto("http://127.0.0.1:"+server.address().port);
     await page.locator(".plugin-card").first().waitFor();
+    if (process.env.COMMUNITY_REFRESH_ONLY === "1") {
+      await page.setViewportSize({width:1120,height:560});
+      await tab("status");
+      await page.locator(".community-capability-card").waitFor();
+      await page.evaluate(()=>Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async()=>{throw Error("denied");}}}));
+      await page.getByText("源码目录",{exact:true}).click();
+      await page.getByRole("button",{name:"复制路径",exact:true}).click();
+      await page.getByRole("alert").getByText(/手动复制/).waitFor();
+      const before = await page.evaluate(()=>{
+        const card=document.querySelector(".community-capability-card"), grid=card.parentElement;
+        window.keptCard=card; window.keptGrid=grid; window.refreshFrames=[]; window.recordRefresh=true;
+        const frame=()=>{if(!window.recordRefresh)return;window.refreshFrames.push({at:performance.now(),cardConnected:window.keptCard.isConnected,gridHeight:window.keptGrid.getBoundingClientRect().height,scrollTop:document.querySelector(".community-page").scrollTop});requestAnimationFrame(frame);};requestAnimationFrame(frame);
+        return {gridHeight:grid.getBoundingClientRect().height,count:document.querySelector("#community-tab-status .community-tab-count").textContent};
+      });
+      await shot("refresh-before");
+      await page.evaluate(()=>{window.delayCatalog=true;});
+      await page.locator(".community-message").getByRole("button",{name:"刷新",exact:true}).click();
+      await page.waitForTimeout(160);
+      const during=await page.evaluate(()=>({sameCard:document.querySelector(".community-capability-card")===window.keptCard,gridHeight:window.keptGrid.getBoundingClientRect().height,loading:document.querySelectorAll(".community-loading").length,count:document.querySelector("#community-tab-status .community-tab-count")?.textContent??null}));
+      await shot("refresh-pending");
+      await page.evaluate(()=>{window.delayCatalog=false;window.releaseCatalog();});
+      await page.locator(".community-capability-card").waitFor();
+      await page.waitForTimeout(40);
+      const after=await page.evaluate(()=>{window.recordRefresh=false;return {sameCard:document.querySelector(".community-capability-card")===window.keptCard,frames:window.refreshFrames};});
+      await shot("refresh-after");
+      await page.evaluate(()=>{window.delayRegistry=true;});
+      await tab("packages");
+      await page.waitForFunction(()=>window.releaseRegistry?.length>0);
+      const cachedTheme=await page.evaluate(()=>({cards:document.querySelectorAll(".community-theme-card").length,loading:document.querySelectorAll(".community-loading").length}));
+      await shot("cached-theme-pending");
+      await page.evaluate(()=>{window.delayRegistry=false;window.releaseRegistry.splice(0).forEach(resolve=>resolve());});
+      await page.locator(".community-theme-card").waitFor();
+      report.refresh={before,during,after,cachedTheme};
+      if (process.env.COMMUNITY_CAPTURE_BASELINE !== "1") {
+        assert.equal(during.sameCard,true); assert.equal(after.sameCard,true);
+        assert.equal(during.loading,0); assert.equal(during.count,before.count);
+        assert.ok(Math.abs(during.gridHeight-before.gridHeight)<1);
+        assert.ok(after.frames.every(frame=>frame.cardConnected));
+        assert.equal(cachedTheme.cards,1); assert.equal(cachedTheme.loading,0);
+        report.checks.push("refresh keeps card DOM, gallery height and counts; cached themes stay visible during revalidation");
+        await tab("templates");
+        await page.evaluate(()=>{window.failRegistry=true;});
+        await tab("packages");
+        await page.getByRole("alert").getByText("无法读取已安装扩展包。",{exact:true}).waitFor();
+        assert.equal(await page.locator(".community-theme-card").count(),1);
+        await page.evaluate(()=>{window.keptTheme=document.querySelector(".community-theme-card");window.failRegistry=false;window.delayRegistry=true;});
+        await page.getByRole("button",{name:"重试",exact:true}).click();
+        await page.waitForFunction(()=>window.releaseRegistry.length>0);
+        assert.equal(await page.evaluate(()=>document.querySelector(".community-theme-card")===window.keptTheme),true);
+        assert.equal(await page.locator(".community-loading").count(),0);
+        await page.evaluate(()=>{window.delayRegistry=false;window.releaseRegistry.splice(0).forEach(resolve=>resolve());});
+        await page.getByRole("alert").waitFor({state:"detached"});
+        report.checks.push("failed registry refresh reports error, preserves known themes and retries without replacing cards");
+        await page.addInitScript(()=>{window.delayCatalog=true;});
+        await page.reload();
+        await page.waitForFunction(()=>typeof window.releaseCatalog==="function");
+        await tab("skills");
+        await page.locator(".community-loading").waitFor();
+        assert.equal(await page.locator(".community-capability-card").count(),0);
+        await page.evaluate(()=>{window.delayCatalog=false;window.releaseCatalog();});
+        await page.locator(".community-capability-card").first().waitFor();
+        report.checks.push("cold first read still shows loading and never claims an empty or successful catalog early");
+      }
+    } else {
     await step("community drawer stays below titlebar, within content, and compact through resize and scroll", async () => {
       await page.getByRole("button", {name:"如何安装本地扩展？",exact:true}).click();
       await page.getByRole("dialog").waitFor();
@@ -214,7 +278,8 @@ const report = { kind: "production-community-controlled-transports", checks: [],
       }
       await page.evaluate(()=>window.setCollectorScenario("pending"));
       await service.getByRole("button",{name:"刷新",exact:true}).click();
-      await service.getByText("检测中",{exact:true}).waitFor();
+      await service.getByText("本机服务不可用",{exact:true}).waitFor();
+      assert.equal(await service.getByText("检测中",{exact:true}).count(),0);
       assert.equal(await service.getByRole("button",{name:"刷新",exact:true}).isDisabled(),true);
       await tab("extensions");
       await page.evaluate(()=>{window.releaseCollector(); delete window.__LUCKYRAY__;});
@@ -245,6 +310,7 @@ const report = { kind: "production-community-controlled-transports", checks: [],
     await tab("status"); await shot("tools-light");
     await step("clipboard failure offers manual path and no false success",async()=>{
       await page.evaluate(()=>Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async()=>{throw Error("denied");}}}));
+      await page.getByText("源码目录",{exact:true}).click();
       await page.getByRole("button",{name:"复制路径",exact:true}).click(); await page.getByRole("alert").getByText(/手动复制/).waitFor();
       assert.equal(await page.getByText("已复制仓库内插件目录",{exact:true}).count(),0);
     });
@@ -263,8 +329,12 @@ const report = { kind: "production-community-controlled-transports", checks: [],
       await page.getByRole("button",{name:"清除筛选",exact:true}).click();
       await page.evaluate(()=>{window.failCatalog=true;window.catalog=[];}); await page.getByRole("button",{name:"刷新",exact:true}).click();
       await page.getByRole("alert").getByText("加载失败，请稍后重试。",{exact:true}).waitFor(); await shot("skills-read-failure");
+      assert.equal(await page.locator(".community-capability-card").count(),2);
+      await page.evaluate(()=>{window.staleCard=document.querySelector(".community-capability-card");});
       await page.evaluate(()=>{window.failCatalog=false;window.delayCatalog=true;}); await page.getByRole("button",{name:"重试",exact:true}).click();
-      await page.locator(".community-loading").waitFor(); await shot("skills-loading");
+      assert.equal(await page.locator(".community-loading").count(),0);
+      assert.equal(await page.evaluate(()=>document.querySelector(".community-capability-card")===window.staleCard),true);
+      await shot("skills-refresh-pending");
       await page.evaluate(()=>{window.delayCatalog=false;window.releaseCatalog();}); await page.getByText("暂无能力。",{exact:true}).waitFor();
     });
     for(const theme of ["dark","rose-tea","white-zero"]) {await page.evaluate(theme=>window.base(theme),theme); await tab("extensions"); await shot("plugins-"+theme);}
@@ -286,6 +356,7 @@ const report = { kind: "production-community-controlled-transports", checks: [],
       await page.setViewportSize({width,height:900});
       for(const key of ["extensions","packages","templates","skills","status"]) {await tab(key); await step(key+" "+width+"px has no document or page overflow",async()=>assert.ok(await page.evaluate(()=>{const p=document.querySelector(".community-page");return document.documentElement.scrollWidth<=innerWidth+1 && p.scrollWidth<=p.clientWidth+1;})));}
       await shot("tools-"+width);
+    }
     }
     assert.deepEqual(await page.evaluate(()=>window.mcpActions),[]);
     assert.deepEqual(report.errors,[]); report.ok=true;

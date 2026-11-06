@@ -179,6 +179,20 @@ test("canonical KnowledgeDocumentRef is preserved across Tauri list, create, app
   ]);
 });
 
+test("desktop event origins travel with the exact knowledge write and ordinary writes remain unchanged", async () => {
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const ref = { vaultId: "synthetic", relativePath: "note.md" };
+  const client = createKnowledgeClient({
+    isTauri: () => true,
+    invoke: async (command, args) => { calls.push({ command, args }); return {} as never; },
+    preview: { listDocuments: async () => [] },
+  });
+  await client.appendDocument(ref, "ordinary", "r1", 12);
+  await client.appendDocument(ref, "from extension", "r2", 12, ["test.extension"]);
+  assert.deepEqual(calls[0].args, {input:{documentRef:ref,content:"ordinary",expectedRevision:"r1"},sourceEpoch:12});
+  assert.deepEqual(calls[1].args, {input:{documentRef:ref,content:"from extension",expectedRevision:"r2"},sourceEpoch:12,desktopEventOrigins:["test.extension"]});
+});
+
 test("backend-owned index queries and revision-safe tag writes use the typed production commands", async () => {
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const documentRef = { vaultId: "vault-a", relativePath: "Inbox/Tagged.md" };

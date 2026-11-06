@@ -28,8 +28,8 @@ const tick=()=>new Promise(r=>setTimeout(r,20));const button=text=>[...document.
  require(out);await tick();button('管理素材库').click();await tick();await tick();
  let dialog=document.querySelector('.material-library-management');assert.ok(dialog.open);assert.equal(dialog.querySelectorAll('.material-library-row').length,2);assert.equal(dialog.querySelectorAll('.material-library-current-badge').length,1);
  assert.equal(dialog.querySelector('.material-library-management-body').tabIndex,0);
- const details=dialog.querySelector('.material-library-import-details');assert.equal(details.open,false);details.open=true;assert.match(details.textContent,/不删除源文件/);
- assert.equal(dialog.querySelectorAll('.material-library-location').length,2);assert.match(dialog.textContent,/位置不可用/);assert.match(dialog.textContent,/已从列表移除/);
+ assert.equal(dialog.querySelector('.material-library-import-details'),null);assert.doesNotMatch(dialog.textContent,/不删除源文件|默认兼容库|上次导入/);
+ assert.equal(dialog.querySelectorAll('.material-library-location').length,1);assert.match(dialog.textContent,/位置不可用/);assert.match(dialog.textContent,/已从列表移除/);
  const checkbox=dialog.querySelector('input[type=checkbox]');assert.equal(checkbox.disabled,false);checkbox.click();await tick();assert.ok(calls.some(c=>c[0]==='watch'&&c[3]===true));
  button('新建素材库…').click();await tick();assert.ok(document.querySelector('dialog').querySelector('form'));assert.equal(document.querySelector('dialog').classList.contains('material-library-management'),false);
  document.querySelector('button[aria-label="关闭"]').click();await tick();button('库任务').click();await tick();

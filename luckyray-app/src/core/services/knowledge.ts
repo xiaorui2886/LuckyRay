@@ -211,10 +211,10 @@ export type KnowledgeClient = {
   listDocuments(input?: { limit?: number }): Promise<KnowledgeDocumentSummary[]>;
   searchDocuments(query: string, limit?: number): Promise<KnowledgeDocumentSummary[]>;
   readDocument(documentRef: KnowledgeDocumentRef): Promise<KnowledgeDocumentSnapshot>;
-  createDocument(input: KnowledgeCreateInput, sourceEpoch?: number): Promise<KnowledgeDocumentSnapshot>;
-  appendDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null, sourceEpoch?: number): Promise<KnowledgeMutationResult>;
-  insertDocument(documentRef: KnowledgeDocumentRef, offset: number, text: string, expectedRevision?: string | null, sourceEpoch?: number): Promise<KnowledgeMutationResult>;
-  replaceDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null, sourceEpoch?: number): Promise<KnowledgeMutationResult>;
+  createDocument(input: KnowledgeCreateInput, sourceEpoch?: number, eventOrigins?: string[]): Promise<KnowledgeDocumentSnapshot>;
+  appendDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null, sourceEpoch?: number, eventOrigins?: string[]): Promise<KnowledgeMutationResult>;
+  insertDocument(documentRef: KnowledgeDocumentRef, offset: number, text: string, expectedRevision?: string | null, sourceEpoch?: number, eventOrigins?: string[]): Promise<KnowledgeMutationResult>;
+  replaceDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null, sourceEpoch?: number, eventOrigins?: string[]): Promise<KnowledgeMutationResult>;
   moveDocument(documentRef: KnowledgeDocumentRef, title: string, expectedRevision: string, parentRelativePath?: string | null, sourceEpoch?: number): Promise<KnowledgeDocumentSnapshot>;
   deleteDocument(documentRef: KnowledgeDocumentRef, expectedRevision: string, sourceEpoch?: number): Promise<void>;
   insertIntoCurrent(input: { text: string; appendIfNoCursor?: boolean }, sourceEpoch?: number): Promise<KnowledgeMutationResult>;
@@ -284,6 +284,9 @@ export function createKnowledgeClient(runtime: KnowledgeRuntime): KnowledgeClien
   const withSourceEpoch = (args: Record<string, unknown>, sourceEpoch?: number) => (
     sourceEpoch === undefined ? args : { ...args, sourceEpoch }
   );
+  const withEventOrigins = (args: Record<string, unknown>, eventOrigins?: string[]) => (
+    eventOrigins?.length ? { ...args, desktopEventOrigins: eventOrigins } : args
+  );
   return {
     listDocuments(input = {}) {
       if (!runtime.isTauri()) return runtime.preview.listDocuments(input);
@@ -297,27 +300,27 @@ export function createKnowledgeClient(runtime: KnowledgeRuntime): KnowledgeClien
       if (!runtime.isTauri()) return requirePreviewMethod(runtime.preview, "readDocument").call(runtime.preview, documentRef);
       return invokeKnowledge(runtime, "knowledge_read_document", { documentRef });
     },
-    createDocument(input, sourceEpoch) {
+    createDocument(input, sourceEpoch, eventOrigins) {
       if (!runtime.isTauri()) return requirePreviewMethod(runtime.preview, "createDocument").call(runtime.preview, input);
-      return invokeKnowledge(runtime, "knowledge_create_document", withSourceEpoch({ input }, sourceEpoch));
+      return invokeKnowledge(runtime, "knowledge_create_document", withEventOrigins(withSourceEpoch({ input }, sourceEpoch), eventOrigins));
     },
-    appendDocument(documentRef, content, expectedRevision, sourceEpoch) {
+    appendDocument(documentRef, content, expectedRevision, sourceEpoch, eventOrigins) {
       if (!runtime.isTauri()) {
         return requirePreviewMethod(runtime.preview, "appendDocument").call(runtime.preview, documentRef, content, expectedRevision);
       }
-      return invokeKnowledge(runtime, "knowledge_append_document", withSourceEpoch({ input: { documentRef, content, expectedRevision } }, sourceEpoch));
+      return invokeKnowledge(runtime, "knowledge_append_document", withEventOrigins(withSourceEpoch({ input: { documentRef, content, expectedRevision } }, sourceEpoch), eventOrigins));
     },
-    insertDocument(documentRef, offset, text, expectedRevision, sourceEpoch) {
+    insertDocument(documentRef, offset, text, expectedRevision, sourceEpoch, eventOrigins) {
       if (!runtime.isTauri()) {
         return requirePreviewMethod(runtime.preview, "insertDocument").call(runtime.preview, documentRef, offset, text, expectedRevision);
       }
-      return invokeKnowledge(runtime, "knowledge_insert_document", withSourceEpoch({ input: { documentRef, offset, text, expectedRevision } }, sourceEpoch));
+      return invokeKnowledge(runtime, "knowledge_insert_document", withEventOrigins(withSourceEpoch({ input: { documentRef, offset, text, expectedRevision } }, sourceEpoch), eventOrigins));
     },
-    replaceDocument(documentRef, content, expectedRevision, sourceEpoch) {
+    replaceDocument(documentRef, content, expectedRevision, sourceEpoch, eventOrigins) {
       if (!runtime.isTauri()) {
         return requirePreviewMethod(runtime.preview, "replaceDocument").call(runtime.preview, documentRef, content, expectedRevision);
       }
-      return invokeKnowledge(runtime, "knowledge_replace_document", withSourceEpoch({ input: { documentRef, content, expectedRevision } }, sourceEpoch));
+      return invokeKnowledge(runtime, "knowledge_replace_document", withEventOrigins(withSourceEpoch({ input: { documentRef, content, expectedRevision } }, sourceEpoch), eventOrigins));
     },
     moveDocument(documentRef, title, expectedRevision, parentRelativePath, sourceEpoch) {
       if (!runtime.isTauri()) {
@@ -665,25 +668,25 @@ export function createActiveKnowledgeUiClient(
       activationSource = null;
       await client.deactivateUiSource();
     }),
-    async createDocument(input: KnowledgeCreateInput) {
+    async createDocument(input: KnowledgeCreateInput, eventOrigins?: string[]) {
       const active = await ensureActive();
       requireLatestActivation(active);
-      return client.createDocument(input, active.sourceEpoch);
+      return client.createDocument(input, active.sourceEpoch, eventOrigins);
     },
-    async appendDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null) {
+    async appendDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null, eventOrigins?: string[]) {
       const active = await ensureActive();
       requireLatestActivation(active, documentRef);
-      return client.appendDocument(documentRef, content, expectedRevision, active.sourceEpoch);
+      return client.appendDocument(documentRef, content, expectedRevision, active.sourceEpoch, eventOrigins);
     },
-    async insertDocument(documentRef: KnowledgeDocumentRef, offset: number, text: string, expectedRevision?: string | null) {
+    async insertDocument(documentRef: KnowledgeDocumentRef, offset: number, text: string, expectedRevision?: string | null, eventOrigins?: string[]) {
       const active = await ensureActive();
       requireLatestActivation(active, documentRef);
-      return client.insertDocument(documentRef, offset, text, expectedRevision, active.sourceEpoch);
+      return client.insertDocument(documentRef, offset, text, expectedRevision, active.sourceEpoch, eventOrigins);
     },
-    async replaceDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null) {
+    async replaceDocument(documentRef: KnowledgeDocumentRef, content: string, expectedRevision?: string | null, eventOrigins?: string[]) {
       const active = await ensureActive();
       requireLatestActivation(active, documentRef);
-      return client.replaceDocument(documentRef, content, expectedRevision, active.sourceEpoch);
+      return client.replaceDocument(documentRef, content, expectedRevision, active.sourceEpoch, eventOrigins);
     },
     async insertIntoCurrent(input: { text: string; appendIfNoCursor?: boolean }) {
       const active = await ensureActive();

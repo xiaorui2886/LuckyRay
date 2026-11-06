@@ -55,15 +55,16 @@ test('outside dismissal preserves explicit always-visible preference', async () 
 });
 
 
-test('keyboard opens, moves between five tools and Escape restores the handle without reopening', async () => {
+test('keyboard moves between the four remaining tools; image refinement and export have moved out of the rail', async () => {
   const app = await mount();
   try {
     const press = async (target, key) => React.act(() => target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })));
     await press(app.handle, 'ArrowDown');
     const actions = [...document.querySelectorAll('nav button')];
-    assert.equal(actions.length, 5); assert.equal(document.activeElement, actions[0]);
-    await press(actions[0], 'End'); assert.equal(document.activeElement, actions[4]);
-    await press(actions[4], 'ArrowDown'); assert.equal(document.activeElement, actions[0]);
+    assert.equal(actions.length, 4); assert.equal(document.activeElement, actions[0]);
+    assert.equal(actions.some(button => /Image tools|Export results/.test(button.textContent)), false);
+    await press(actions[0], 'End'); assert.equal(document.activeElement, actions[3]);
+    await press(actions[3], 'ArrowDown'); assert.equal(document.activeElement, actions[0]);
     await press(actions[0], 'Escape'); assert.equal(document.activeElement, app.handle); assert.equal(app.handle.getAttribute('aria-expanded'), 'false');
     for (let i = 0; i < 10; i++) { await click(app.handle); await pointer(document.getElementById('other')); }
     assert.equal(app.handle.getAttribute('aria-expanded'), 'false'); assert.deepEqual(app.actions, []);

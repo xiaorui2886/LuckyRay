@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { validateFrozenAssemblyDescription, validateQualifiedAssemblyDescription, qualifiedHostFiles } from "./dsh-frozen-assembly-description.mjs";
-import { validateDshRuntimeAuthority } from "./dsh-supply-chain.mjs";
+import { validateDshRuntimeAuthority, validateQualifiedDshRuntimeAuthority, qualifiedNodeToolset } from "./dsh-supply-chain.mjs";
 import { frozenPackageInputs, frozenLockedInputs } from "./dsh-frozen-inputs.mjs";
 const root = new URL("../dsh-host/", import.meta.url);
 const authority = JSON.parse(await readFile(new URL("runtime-authority.json", root), "utf8"));
@@ -15,13 +15,13 @@ const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // Synthetic schema-only data; never fetched, installed, or claimed as official bytes.
 const fixture = {
   schema: 1, kind: "official-npm-frozen-win-x64-v1", runtimePackage: authority.runtimePackage,
-  node: { ...authority.nodeRuntime, archiveBytes: 35424607 }, packageManager: { ...authority.packageManager, archiveBytes: 4590455 },
+  node: { ...authority.nodeRuntime, archiveBytes: 37754834 }, packageManager: { ...authority.packageManager, archiveBytes: 4590455 },
   lockSha256: hash(lockfile), hostFiles: Object.entries(hostFiles).map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: hash(bytes) })),
   packages: frozenPackageInputs(lockfile.toString("utf8"), dependencyAudit).map((pkg) => ({ ...pkg, bytes: 1, sha256: "a".repeat(64) })),
-  packageCount: 561, packageBytes: 561, finalLayout: authority.dependencyClosure.releaseLayout,
+  packageCount: 593, packageBytes: 593, finalLayout: authority.dependencyClosure.releaseLayout,
   authorization: "UNSIGNED_MAINTAINER_INPUT_RECORD_NOT_INSTALL_AUTHORITY",
   releaseTimes: frozenLockedInputs(lockfile.toString("utf8")).map((pkg) => ({ ...pkg, publishedAt: "2026-09-01T00:00:00.000Z" })),
-  releaseTimePolicy: { minimumAgeMinutes: 1440, strict: true, ignoreMissingTime: false, lockedVersionCount: 633,
+  releaseTimePolicy: { minimumAgeMinutes: 1440, strict: true, ignoreMissingTime: false, lockedVersionCount: 665,
     source: "https://registry.npmjs.org/", acquiredAt: "2026-09-29T00:00:00.000Z" },
 };
 function verify(value, overrides = {}) {
@@ -30,7 +30,7 @@ function verify(value, overrides = {}) {
     authority, dependencyAudit, lockfile, hostFiles, ...overrides });
 }
 test("bounded description is data only, and binds the entire frozen input set", () => {
-  assert.equal(verify(fixture).packages.length, 561); assert.equal(verify(fixture).releaseTimes.length, 633);
+  assert.equal(verify(fixture).packages.length, 593); assert.equal(verify(fixture).releaseTimes.length, 665);
 });
 test("changed bytes or pointer size/hash are rejected before use", () => {
   assert.throws(() => verify(fixture, { expectedHash: "b".repeat(64) }));
@@ -54,7 +54,7 @@ test("commands, arbitrary sources, missing/extra/duplicate packages, budgets and
 test("genuine acquired record validates when explicitly supplied, without network or installation", { skip: !process.env.DSH_OFFICIAL_INPUTS_RECORD }, async () => {
   const bytes = await readFile(process.env.DSH_OFFICIAL_INPUTS_RECORD);
   assert.equal(validateFrozenAssemblyDescription({ bytes, expectedHash: hash(bytes), expectedBytes: bytes.length,
-    authority, dependencyAudit, lockfile, hostFiles }).packageBytes, 149412102);
+    authority, dependencyAudit, lockfile, hostFiles }).packageBytes, 153832468);
 });
 
 const dynamic = { ...structuredClone(fixture), schema: 2, kind: "official-npm-qualified-win-x64-v2",
@@ -71,12 +71,57 @@ function verifyDynamic(value, overrides = {}) {
 }
 test("signed qualification projection retains baseline seal and generates fixed policy, never imports config", () => {
   const result = verifyDynamic(dynamic);
-  assert.equal(result.authority.runtimePackage.version, "0.2.1-rc.2");
+  assert.equal(result.authority.runtimePackage.version, "0.2.2-rc.1");
   assert.equal(result.records.dependencyAudit.entryPoint.fileSha256, dependencyAudit.entryPoint.fileSha256);
   assert.deepEqual(result.hostFiles, qualifiedHostFiles(authority, lockfile));
   assert.throws(() => { result.authority.policy.allowInstallScripts = true; }, TypeError);
   const unbranded = structuredClone(authority); unbranded.runtimePackage.version = "0.1.5-rc.2";
   assert.throws(() => validateDshRuntimeAuthority(unbranded), /authority-invalid/u);
+});
+test("Node 24 qualification accepts only its complete pinned bootstrap and preserves Node 22", () => {
+  const next = structuredClone(dynamic);
+  const node24 = next.qualification.authority.nodeRuntime;
+  Object.assign(node24, { version: "24.22.2",
+    archive: "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip",
+    archiveSha256: "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+    nodeExeSha256: "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9",
+    licenseSha256: "ed34dd8e3f0a78dbaf00d0444ce8e285b015b765379c2e17880455f70370f8e9" });
+  next.qualification.authority.dependencyClosure.nodeVersion = node24.version;
+  next.node = { ...node24, archiveBytes: 37_754_834 };
+  next.hostFiles = Object.entries(qualifiedHostFiles(next.qualification.authority, lockfile))
+    .map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: hash(bytes) }));
+  const result = verifyDynamic(next);
+  assert.equal(result.authority.nodeRuntime.version, "24.22.2");
+  assert.equal(JSON.parse(result.hostFiles["package.json"]).engines.node, "=24.22.2");
+  assert.equal(qualifiedNodeToolset(result.authority.nodeRuntime).name, "node24.22.2-pnpm11.7.0-policy1");
+  // Exercise the old pinned Node identity using a synthetic qualification;
+  // this does not assert that the DSH 0.2.2 package itself runs on Node 22.
+  const legacy = structuredClone(dynamic);
+  Object.assign(legacy.qualification.authority.nodeRuntime, {
+    version: "22.19.0",
+    archive: "https://nodejs.org/dist/v22.19.0/node-v22.19.0-win-x64.zip",
+    archiveSha256: "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86",
+    nodeExeSha256: "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362",
+    licenseSha256: "339c50294da6a84322dcbe7285b57b248123bd4d9e37a2f72d68d5abf2574783",
+  });
+  legacy.qualification.authority.dependencyClosure.nodeVersion = "22.19.0";
+  legacy.node = { ...legacy.qualification.authority.nodeRuntime, archiveBytes: 35_424_607 };
+  legacy.hostFiles = Object.entries(qualifiedHostFiles(legacy.qualification.authority, lockfile))
+    .map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: hash(bytes) }));
+  const oldResult = verifyDynamic(legacy);
+  assert.equal(qualifiedNodeToolset(oldResult.authority.nodeRuntime).name, "node22.19.0-pnpm11.7.0-policy1");
+  assert.equal(oldResult.authority.nodeRuntime.version, "22.19.0");
+  assert.throws(() => validateDshRuntimeAuthority(structuredClone(oldResult.authority)), /authority-invalid/u);
+  for (const mutate of [
+    d => { d.qualification.authority.nodeRuntime.archiveSha256 = "0".repeat(64); },
+    d => { d.qualification.authority.nodeRuntime.nodeExeSha256 = "0".repeat(64); },
+    d => { d.qualification.authority.nodeRuntime.licenseSha256 = "0".repeat(64); },
+    d => { d.qualification.authority.nodeRuntime.archive = "https://other.example/node.zip"; },
+    d => { d.qualification.authority.dependencyClosure.nodeVersion = "22.19.0"; },
+    d => { d.node.archiveBytes++; },
+    d => { d.qualification.authority.policy.allowInstallScripts = true; },
+  ]) { const bad = structuredClone(next); mutate(bad); assert.throws(() => verifyDynamic(bad)); }
+  assert.throws(() => validateQualifiedDshRuntimeAuthority({ ...authority, nodeRuntime: { ...node24, version: "24.22.3" } }));
 });
 test("qualification rejects policy/script/tool injection, bad binding, extra/missing/duplicate inputs and audit changes", () => {
   const changes = [

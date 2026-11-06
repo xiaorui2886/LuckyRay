@@ -162,7 +162,7 @@ async function assemble({ workspace, stage }, bundle, { authorityFile, authority
     ...(qualified ? { qualifiedAuthority: authority, qualifiedRecords: records } : {}) });
   emit({ kind: "progress", stage: "assemble", done: 3, total: 4 });
   failureStage = "native-probe";
-  await probeDshNativeModules({ stageRoot: stage, qualified });
+  await probeDshNativeModules({ stageRoot: stage, expectedNodeVersion: authority.nodeRuntime.version, qualified });
   emit({ kind: "progress", stage: "assemble", done: 4, total: 4 });
   return { outcome: "ASSEMBLED_FROZEN_RUNTIME", packageCount: description.packageCount };
 }

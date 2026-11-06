@@ -77,6 +77,16 @@ export function mediaCapabilities(kind: "image" | "video", profile?: CanvasMedia
   if (kind === "image" && protocol === "gemini-image") return {
     ...legacy, aspects:["1:1","16:9","9:16","4:3","3:4"], qualities:model.includes("gemini-2.5") ? [] : ["1K","2K","4K"], counts:[1], sound:false, camera:false,
   };
+  // Retired profiles remain readable, but expose no generation controls.
+  if (protocol === "doubao-image" || protocol === "doubao-video") {
+    return {aspects:[],qualities:[],durations:[],counts:[],sound:false,camera:false,promptOnly:false};
+  }
+  if (kind === "image" && protocol === "ark-image") return {
+    aspects:[], qualities:["2K","4K"], durations:[], counts:[1], sound:false, camera:false, promptOnly:false,
+  };
+  if (kind === "video" && protocol === "ark-video") return {
+    aspects:["16:9","9:16","1:1","4:3","3:4","21:9"], qualities:[], durations:[4,5,6,7,8,9,10,11,12], counts:[1], sound:true, camera:false, promptOnly:false,
+  };
   // Flash accepts one optional image but its extra generation controls are not verified.
   if (kind === "video" && protocol === "bigmodel-video") return {
     aspects:[], qualities:[], durations:[], counts:[1], sound:false, camera:false, promptOnly:false,

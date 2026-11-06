@@ -128,8 +128,8 @@ export function MaterialLibrarySwitcher({ showControls = true }: { showControls?
         <div className="material-library-list" aria-label="本机素材库">
           {snapshot.registry?.libraries.map(library => <section key={library.id} className="material-library-row" data-current={library.id === snapshot.libraryId || undefined} aria-label={library.name}>
             <div className="material-library-row-summary"><div className="material-library-row-heading"><strong title={library.name}>{library.name}</strong>{library.id === snapshot.libraryId && <span className="material-library-current-badge">当前</span>}</div>
-              <p className="material-library-location" title={materialLibraryLocation(library)}>{materialLibraryLocation(library)}</p>
-              <span className="material-library-row-state">{materialLibraryStateLabel[library.state]}{library.id === snapshot.registry!.legacyId ? " · 默认兼容库" : ""}{!library.visible ? " · 已从列表移除" : ""}</span>
+              {library.rootPath && <p className="material-library-location" title={materialLibraryLocation(library)}>{materialLibraryLocation(library)}</p>}
+              {(library.state !== "ready" || !library.visible) && <span className="material-library-row-state">{[library.state !== "ready" ? materialLibraryStateLabel[library.state] : "", !library.visible ? "已从列表移除" : ""].filter(Boolean).join(" · ")}</span>}
               <MaterialLibraryAutoImport library={library} disabled={busy}/>
             </div><MaterialLibraryOperations library={library} legacyId={snapshot.registry!.legacyId} currentId={snapshot.libraryId} busy={busy} fromManagement/>
           </section>)}

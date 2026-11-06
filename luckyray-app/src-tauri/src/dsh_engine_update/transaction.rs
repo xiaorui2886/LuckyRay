@@ -280,6 +280,9 @@ impl UpdateStore {
     /// process startup. Full signed-closure verification remains mandatory
     /// before a health commit; polling status must not rehash 25k files.
     pub(crate) fn selected_pending_health(&self, candidate: Option<&Candidate>) -> Option<bool> {
+        if self.sealed_recovery_present() {
+            return self.sealed_pending_for(candidate?);
+        }
         let active_path = self.root.join(ACTIVE_FILE);
         match candidate {
             Some(selected) => {
@@ -336,6 +339,7 @@ impl UpdateStore {
     /// engine and its journal stay in place during a second update; a torn
     /// pointer to the pending target never passes this structural gate.
     pub(crate) fn can_abandon_pre_activation(&self) -> bool {
+        if self.sealed_recovery_requested_or_present() { return false; }
         let pending = self.root.join(PENDING_FILE);
         if !safe_runtime_entry(&pending).is_ok_and(|metadata| metadata.is_file()) {
             return false;
@@ -441,6 +445,9 @@ impl UpdateStore {
         cancel: &std::sync::atomic::AtomicBool,
         progress: &mut dyn FnMut(&'static str, u64, u64),
     ) -> Result<PreparedRuntime, StoreError> {
+        if admitted.candidate.sealed_recovery.is_some() {
+            return Err(StoreError::RecoveryRequired);
+        }
         let target = self.version_path(&admitted.candidate.artifact_sha256)?;
         if target.exists() {
             verify_runtime_closure_with_progress(&admitted.candidate, &target, cancel,
@@ -529,6 +536,7 @@ impl UpdateStore {
         bundled_version: Option<&str>,
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<(), StoreError> {
+        if self.sealed_recovery_requested_or_present() { return Err(StoreError::RecoveryRequired); }
         if self.root.join(PENDING_FILE).exists() {
             let raw = fs::read(self.root.join(PENDING_FILE)).map_err(|_| StoreError::Io)?;
             let existing: PendingRecord =
@@ -604,6 +612,7 @@ impl UpdateStore {
             self.clear_switch_error_marker();
             return Ok(false);
         }
+        if self.sealed_recovery_requested_or_present() { return Err(StoreError::RecoveryRequired); }
         let raw = fs::read(&pending_path).map_err(|_| StoreError::Io)?;
         if raw.is_empty() || raw.len() > MAX_ENVELOPE_BYTES * 2 {
             return Err(StoreError::RecoveryRequired);
@@ -668,6 +677,7 @@ impl UpdateStore {
         from_version: &str,
         bundled_version: &str,
     ) -> Result<(), StoreError> {
+        if self.sealed_recovery_requested_or_present() { return Err(StoreError::RecoveryRequired); }
         let _timing = super::StageTiming::new("activate-runtime");
         if prepared.admitted.candidate.data_compatibility != "no-migration" {
             return Err(StoreError::Invalid);
@@ -1181,7 +1191,7 @@ mod tests {
             artifact_url: "https://example.test/rc2.zip".into(),
             artifact_sha256: "a".repeat(64), artifact_bytes: 1,
             closure_sha256: "f".repeat(64), closure_file_count: 1,
-            data_compatibility: "no-migration".into(), resource_gate_sha256: "0".repeat(64), compatibility: None, upstream: None, assembly: None,
+            data_compatibility: "no-migration".into(), resource_gate_sha256: "0".repeat(64), compatibility: None, upstream: None, assembly: None, sealed_recovery: None,
         };
         atomic_write_json(&store.root.join(ACTIVE_FILE), &ActiveRecord {
             schema: 1, artifact_sha256: candidate.artifact_sha256.clone(),
@@ -1409,3 +1419,6 @@ mod qualified_version_proof;
 
 #[cfg(test)]
 mod code_only_switch_tests;
+
+#[allow(dead_code)]
+mod sealed_recovery;

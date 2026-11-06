@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "component": "@deepseek-ai/libreoffice-kit-win32-x64@0.1.5",
+  "coreRevision": "bce0998afefdbc355585ca324285661a2170ba77",
+  "engineSha256": "4b60b337f493421cd3b8690c9706494df620d6ba265b99c0cc6ab22b88cb6fd7",
+  "dependencyInventory": "conservative-source-superset-not-actual-binary-link-map",
+  "actualOfficeRebuilt": false,
+  "bitForBitRebuildVerified": false,
+  "sourceAsset": {
+    "name": "LuckyRay-1.9.10-Office-corresponding-source.zip",
+    "bytes": 723048042,
+    "sha256": "c04916975649f3ffe856fdba466e201813184f6e1471c660f2f9807a57666e64",
+    "sourceFilesVerified": 340,
+    "externalArchives": 88,
+    "lockedCrates": 144,
+    "runtimeOrUserDataIncluded": false,
+    "sourcesExecuted": false,
+    "actualOfficeRebuilt": false,
+    "privateReleaseTag": "private-v1.9.10-main-convergence-20261106"
+  },
+  "applicationSourceAsset": "LuckyRay-1.9.10-source.zip",
+  "publicSourceAvailabilityVerified": false,
+  "patentsAssessed": false
+}

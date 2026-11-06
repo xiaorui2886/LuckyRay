@@ -53,6 +53,7 @@ export type StoryboardNode = {
     label?: string;
     generationPrompt?: string;
     generationModel?: string;
+    generationProfileId?: string;
     generationTask?: { id?: string; parentTaskId?: string; sourceNodeId?: string; resultNodeId?: string; status: string; error?: unknown };
     sourceGenerationTaskId?: string;
     sourceGenerationHistoryId?: string;

@@ -240,14 +240,30 @@ pub(super) fn knowledge_set_attachment_handling_policy(
 }
 
 #[tauri::command]
-pub(super) fn knowledge_attachment_versions(vault_id: String) -> Result<serde_json::Value, String> {
-    let service = knowledge_service()?;
-    let catalog = backend_services()?.material_catalog();
+pub(super) async fn knowledge_attachment_versions(vault_id: String) -> Result<serde_json::Value, String> {
+    // Retained notes poll this command while other routes receive mouse input.
+    // File identity checks and SQLite work must never run on the window thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        attachment_versions_with_services(
+            &knowledge_service()?,
+            &backend_services()?.material_catalog(),
+            &vault_id,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(super) fn attachment_versions_with_services(
+    service: &knowledge::KnowledgeService,
+    catalog: &materials::MaterialCatalog,
+    vault_id: &str,
+) -> Result<serde_json::Value, String> {
     if service.current_vault_id().map_err(knowledge_error)? != vault_id {
         return Err("knowledge-target-not-current".into());
     }
     let paths = catalog
-        .approved_vault_attachment_paths(&vault_id)
+        .approved_vault_attachment_paths(vault_id)
         .map_err(|e| e.message)?;
     if paths.len() > 4096 {
         return Err("附件自动检查超过本次容量，请分批检查。".into());
@@ -258,10 +274,10 @@ pub(super) fn knowledge_attachment_versions(vault_id: String) -> Result<serde_js
         .map_err(knowledge_error)?;
     for path in paths {
         let _source = service
-            .lock_active_ui_source(active.source_epoch, Some(&vault_id))
+            .lock_active_ui_source(active.source_epoch, Some(vault_id))
             .map_err(knowledge_error)?;
         catalog
-            .register_note_attachment(std::path::Path::new(&path), &vault_id, None)
+            .register_note_attachment(std::path::Path::new(&path), vault_id, None)
             .map_err(|e| e.message)?;
         let metadata = std::fs::metadata(&path).ok();
         let version = metadata.as_ref().map(|m| {

@@ -73,7 +73,7 @@
 :root[data-animations="off"] .phone-permission-switch i { transition: none; }
 
 /* Keep the quick-phone entry consistent with the global device settings. */
-.phone-connection-dialog, .phone-revoke-dialog { border-color: var(--theme-border-strong); background: var(--theme-surface-panel); }
+.phone-connection-dialog.experience-dialog, .phone-revoke-dialog.experience-dialog, .phone-endpoint-dialog.experience-dialog { border-color: var(--theme-border-strong); background: var(--theme-surface-panel, var(--theme-glass-bg)); backdrop-filter: var(--theme-glass-filter); }
 .phone-connection-dialog :is(.phone-device-list-title, .phone-kicker),
 .phone-device > svg { color: var(--text-secondary); }
 .phone-connection-dialog select:focus-visible,
@@ -83,3 +83,16 @@
 .phone-revoke-dialog p { color: var(--text-secondary); line-height: 1.6; }
 .phone-revoke-dialog button { min-height: 32px; white-space: normal; margin-bottom: 6px; }
 .phone-connection-status { flex-wrap: wrap; }
+
+/* Recovery is a small secondary action; existing pairing and permissions retain their layout. */
+.phone-endpoint-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 100%; }
+.phone-endpoint-actions button { font-size: 12px; }
+.phone-endpoint-backdrop { position: fixed; inset: 0; z-index: 2100; display: grid; place-items: center; padding: 24px; }
+.phone-endpoint-dialog { width: min(400px, 100%); max-height: calc(100dvh - 48px); min-width: 0; padding: 24px; overflow: auto; overscroll-behavior: contain; color: var(--text-primary); font: inherit; }
+.phone-endpoint-dialog h3 { margin: 0 0 14px; font-size: 15px; }
+.phone-endpoint-dialog p { margin: 12px 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.phone-endpoint-dialog .phone-qr-frame { margin: 18px auto; }
+.phone-endpoint-dialog button { font: inherit; font-size: 12px; color: var(--text-primary); background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+.phone-endpoint-dialog button.primary { color: var(--theme-accent-on-solid, white); background: var(--accent); border-color: transparent; }
+.phone-endpoint-dialog button:disabled { opacity: .5; cursor: default; }
+.phone-endpoint-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 20px; }

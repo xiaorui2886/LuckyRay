@@ -10,9 +10,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 test("the formal Windows package is no-Hermes and media owns its Python runtime", async () => {
   const tauri = JSON.parse(await readFile(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
   assert.deepEqual(tauri.bundle.resources, {
-    "dsh/": "lr-lsh/199-1/deepseek-harness/",
-    "dsh-host/": "lr-lsh/199-1/dsh-host/",
-    "media-engine/": "media-engine/",
+    "dsh/": "lr-lsh/1910-2/deepseek-harness/",
+    "dsh-host/": "lr-lsh/1910-2/dsh-host/",
+    "media-engine/": "media-engine/1910-1/",
+    "native-video/": "native-video/",
     "../third-party-notices/": "third-party-notices/",
   });
 
@@ -44,7 +45,7 @@ test("the formal Windows package is no-Hermes and media owns its Python runtime"
     ytDlp: "2026.7.4",
     ytDlpEjs: "0.8.0",
     deno: "2.9.4",
-    ffmpeg: "9.0.1",
+    ffmpeg: "8.0.git-0b01ed76",
   });
 
   const resolver = await readFile(path.join(root, "src-tauri", "src", "media_transfer.rs"), "utf8");

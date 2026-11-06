@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LuckyRay Issue 189 Epoch 386 E2E",
+  "identifier": "com.luckyray.desktop.issue189-epoch386-e2e",
+  "build": {
+    "beforeDevCommand": "pnpm.cmd exec vite --host 127.0.0.1 --port 1422 --strictPort",
+    "devUrl": "http://127.0.0.1:1422"
+  },
+  "bundle": {
+    "active": false,
+    "resources": {
+      "dsh-issue189-old/": "deepseek-harness-issue189-old/"
+    }
+  }
+}

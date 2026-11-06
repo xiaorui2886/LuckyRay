@@ -66,9 +66,9 @@ function CommunityDrawerSurface({ title, label, icon = "plugin", children, foote
     }
   }, [dismissible, surfaceRef]);
   return createPortal(<div className="community-drawer-backdrop" style={host ? undefined : { position: "fixed" }} onPointerDown={onBackdropPointerDown}>
-    <div ref={surfaceRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="community-drawer" onKeyDown={onSurfaceKeyDown}>
-      <header className="community-drawer-top"><span><CommunityIcon name={icon} />{label}</span><button type="button" className="community-icon-button" aria-label={t("community.close")} disabled={!dismissible} onClick={onClose} data-modal-initial-focus><CommunityIcon name="close" /></button></header>
-      <div className="community-drawer-scroll"><div className="community-drawer-title"><CommunityIcon name={icon} tile /><h2 id={titleId}>{title}</h2></div>{children}</div>
+    <div ref={surfaceRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-description={label} className="community-drawer" onKeyDown={onSurfaceKeyDown}>
+      <header className="community-drawer-top"><CommunityIcon name={icon} /><h2 id={titleId}>{title}</h2><button type="button" className="community-icon-button" aria-label={t("community.close")} disabled={!dismissible} onClick={onClose} data-modal-initial-focus><CommunityIcon name="close" /></button></header>
+      <div className="community-drawer-scroll">{children}</div>
       {footer && <footer className="community-drawer-footer">{footer}</footer>}
     </div>
   </div>, host ?? document.body);

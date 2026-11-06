@@ -547,6 +547,48 @@ impl MaterialCatalog {
     /// Existing target bindings remain available when the file is missing. The
     /// caller combines these with the freshly parsed Markdown targets, removing
     /// a binding only when its target really disappeared from the document.
+    /// Candidates must already belong to this vault and the request's selected
+    /// material library. A note ID/name is never authority to scan other libraries.
+    pub(crate) fn note_attachment_candidates(&self, vault_id: &str) -> MaterialResult<Vec<MaterialAsset>> {
+        validate_document(vault_id, "attachments.md")?;
+        let conn = self.open_read()?;
+        if !has_schema(&conn)? { return Ok(Vec::new()); }
+        let scope = super::super::libraries::namespace_condition(&conn, "asset", "nv.asset_id")?;
+        let mut stmt = conn.prepare(&format!("SELECT nv.asset_id FROM material_note_vault nv WHERE nv.vault_id=?1 AND {scope}"))
+            .map_err(|e| MaterialError::database("Read scoped note attachments", e))?;
+        let ids = stmt.query_map([vault_id], |r| r.get::<_, String>(0))
+            .map_err(|e| MaterialError::database("Read scoped note attachments", e))?
+            .collect::<Result<Vec<_>, _>>().map_err(|e| MaterialError::database("Read scoped note attachments", e))?;
+        ids.iter().map(|id| read_asset(&conn, id)).collect()
+    }
+
+    pub(crate) fn select_note_attachment<'a>(assets: &'a [MaterialAsset], refs: &[NoteAttachmentRefInput], raw: &str, wiki: bool, allow_name_fallback: bool)
+        -> Result<Option<&'a MaterialAsset>, &'static str> {
+        use unicode_normalization::UnicodeNormalization;
+        let normalize = |s: &str| s.nfc().collect::<String>().to_lowercase();
+        let target = raw.split('|').next().unwrap_or(raw).trim();
+        let key = normalize(target);
+        let exact = if wiki { target.to_owned() } else { format!("md:{raw}") };
+        let mut bindings: Vec<_> = refs.iter().filter(|r| r.target == exact).collect();
+        if bindings.is_empty() {
+            bindings = refs.iter().filter(|r| !r.target.starts_with("md:") && normalize(r.target.split('|').next().unwrap_or(&r.target).trim()) == key).collect();
+        }
+        if !bindings.is_empty() {
+            let ids: std::collections::HashSet<_> = bindings.iter().map(|r| r.asset_id.as_str()).collect();
+            if ids.len() != 1 { return Err("ambiguous"); }
+            // An explicit stale/out-of-scope binding must not silently select a namesake.
+            return assets.iter().find(|a| ids.contains(a.id.as_str())).map(Some).ok_or("missing");
+        }
+        if let Some(asset) = assets.iter().find(|a| a.id == target) { return Ok(Some(asset)); }
+        if !allow_name_fallback { return Ok(None); }
+        let mut matching = assets.iter().filter(|a| normalize(&a.name) == key ||
+            [Some(a.original_path.as_str()), a.library_path.as_deref()].into_iter().flatten()
+                .any(|path| !path.is_empty() && normalize(path.rsplit(['/', '\\']).next().unwrap_or(path)) == key));
+        let first = matching.next();
+        if matching.next().is_some() { return Err("ambiguous"); }
+        Ok(first)
+    }
+
     pub(crate) fn note_attachment_refs(
         &self,
         vault_id: &str,

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import {buildDesktopPackage,createDesktopProject} from "./desktop-pack.mjs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
@@ -7,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const [command, directory = ".", ...options] = process.argv.slice(2);
 const root = path.resolve(directory);
 const here = path.dirname(fileURLToPath(import.meta.url));
-const permissions = ["materials.read", "materials.image", "materials.tags", "knowledge.read", "knowledge.create", "knowledge.insert", "canvas.read", "canvas.export"];
+const permissions = ["materials.read", "materials.image", "materials.tags", "knowledge.read", "knowledge.create", "knowledge.insert", "canvas.read", "canvas.export", "ai.generate", "events.subscribe"];
 const keys = ["id", "name", "version", "minHostVersion", "requiredModules", "optionalModules", "requiredPermissions", "optionalPermissions", "dataVersion", "contributions"];
 const version = value => typeof value === "string" && /^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/.test(value);
 const bytes = value => Buffer.byteLength(value, "utf8");
@@ -17,6 +18,7 @@ const fail = code => { throw new Error(code); };
 
 function build() {
   const config = JSON.parse(fs.readFileSync(path.join(root, "plugin.json"), "utf8"));
+  if (config?.runtime === "desktop") return buildDesktopPackage(root);
   if (!config || Array.isArray(config) || typeof config !== "object" || Object.keys(config).some(key => !keys.includes(key))) fail("extension-invalid-manifest-fields");
   const { id, name, version: packageVersion, minHostVersion = "1.9.2", requiredModules = [], optionalModules = [], requiredPermissions = [], optionalPermissions = [], dataVersion = 1, contributions } = config;
   if (typeof id !== "string" || !/^[a-z][a-z0-9.-]{2,79}$/.test(id) || id.includes("..")) fail("extension-invalid-id");
@@ -53,10 +55,11 @@ function pack() {
 }
 
 function create() {
+  if(options.length===1 && options[0]==="--desktop"){console.log(createDesktopProject(root));return;}
   if (fs.existsSync(root)) fail("Choose a new project directory; existing directories are never overwritten");
   let template;
   if (options.length) {
-    if (options.length !== 2 || options[0] !== "--template" || !["palette", "outline", "canvas-export", "material-manifest", "page-desk", "material-reader"].includes(options[1])) fail("Unknown template; use --template <shipped-example>");
+    if (options.length !== 2 || options[0] !== "--template" || !["palette", "outline", "canvas-export", "material-manifest", "page-desk", "material-reader", "event-ai"].includes(options[1])) fail("Unknown template; use --template <shipped-example>");
     template = options[1];
   }
   const config = template ? fs.readFileSync(path.join(here, "examples", template, "plugin.json"), "utf8") : JSON.stringify({ id: "example.hello", name: "Hello plugin", version: "1.0.0", requiredModules: [], optionalModules: [], requiredPermissions: [], optionalPermissions: [], dataVersion: 1, contributions: [{ id: "hello", label: "Hello", kind: "panel" }] }, null, 2);

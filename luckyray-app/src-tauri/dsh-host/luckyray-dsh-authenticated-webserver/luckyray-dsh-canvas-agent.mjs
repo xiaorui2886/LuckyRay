@@ -8,6 +8,8 @@ import { beginTaskContext, validTaskContext, recordTaskReceipt, taskContextForMo
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, open, readFile, rename, unlink, writeFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 export const CANVAS_AGENT_LIMITS = Object.freeze({
   requestBytes: 2 * 1024 * 1024, nodes: 256, connections: 2048, steps: 64,
@@ -858,7 +860,7 @@ export function createCanvasAgentService(ctx, { stateDirectory, runTimeoutMs = 0
     } catch { return unavailable(); }
     return data;
   };
-  const setup = state => (agentCtx, agent) => {
+  const setup = state => async (agentCtx, agent) => {
     const runId = state.snapshot.runId;
     // Setup is scoped to one attached Agent and Canvas run. Nothing here is
     // reused across resumes (official revision/attempt counters restart).
@@ -872,7 +874,14 @@ export function createCanvasAgentService(ctx, { stateDirectory, runTimeoutMs = 0
       if (typeof onReasoningDiagnostic === "function") try { Promise.resolve(onReasoningDiagnostic(Object.freeze(summary))).catch(() => {}); } catch {}
     };
     agentCtx.tools.restrict({ allow: [] });
-    agentCtx.tools.presentAs("native");
+    if (typeof agentCtx.tools.presentAs === "function") agentCtx.tools.presentAs("native");
+    else {
+      // 0.2.2 moved presentation into scoped executor plugins. Resolve from
+      // the already verified official Host entry, never a renderer-supplied path.
+      const entry = createRequire(process.argv[1]).resolve("@deepseek-ai/dsh-tool-executor-native");
+      const { NativeToolExecutor } = await import(pathToFileURL(entry).href);
+      agentCtx.tools.setExecutor(new NativeToolExecutor(agentCtx));
+    }
     agentCtx.tools.guard(exec => state.creationHandoff ? "User action is pending. Stop tool calls and explain what the user must do; do not claim completion." : TOOL_NAMES.has(exec.name) ? undefined : "Canvas Agent permits only its scoped canvas tools.");
     agentCtx.systemPrompt.section({ name: "luckyray:canvas-agent", order: 0, complete: true, interpolate: false, text: instructions });
     agentCtx.tools.register({name:"canvas_read_task_state",description:"Read durable exact user goal/constraints and receipt-grounded prior outcomes. These are not permissions or current-state proof; refresh revisions before edits. Does not rewrite official session history.",parameters:{type:"object",properties:{},additionalProperties:false},output,

@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), http = require('node:http'), path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const esbuild = require(require.resolve('esbuild', { paths: [fs.realpathSync(path.join(root, 'node_modules', 'vite'))] }));
-const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || 'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@playwright/mcp/node_modules/playwright');
 const saveOnly = process.env.LUCKYRAY_PHONE_SAVE_ONLY === '1';
 const renewalOnly = process.env.LUCKYRAY_PHONE_RENEWAL_ONLY === '1';
 const output = path.join(root, 'output', 'playwright', renewalOnly ? 'issue191-qr-switch-interaction' : saveOnly ? 'issue191-phone-save-feedback' : 'issue191-phone-refinement');

@@ -499,12 +499,12 @@ export type LuckyRayBridge = {
   searchCollectionBoxForGlobal: (query: string, options?: { limit?: number }) => Promise<Array<{ id: string; content: string; snippet: string; type: string; source: string | null; processedAction: string | null; url: string | null; updatedAt: string }>>;
   getSettings: () => Promise<BridgeSettings>;
   setSettings: (patch: Partial<BridgeSettings>) => Promise<BridgeSettings>;
-  aiChatComplete: (messages: Array<{ role: string; content: BridgeAiMessageContent }>, options?: { systemPrompt?: string; temperature?: number; maxTokens?: number; model?: string }) => Promise<BridgeAiChatResponse>;
+  aiChatComplete: (messages: Array<{ role: string; content: BridgeAiMessageContent }>, options?: { systemPrompt?: string; temperature?: number; maxTokens?: number; model?: string; signal?: AbortSignal }) => Promise<BridgeAiChatResponse>;
   notesInlineGenerate: (action: "rewrite" | "shorten" | "expand" | "continue") => Promise<BridgeNotesInlinePreview>;
   notesInlineApply: (previewId: string, mode: "replace" | "insert-below") => Promise<BridgeNotesInlineApplyResult>;
   notesInlineDiscard: (previewId: string) => Promise<void>;
   notesInlineCancel: () => Promise<boolean>;
-  aiImageGenerate: (request: import("../canvas/generationTasks").CanvasGenerationRequestSnapshot) => Promise<import("../canvas/imageGenerationAdapter").CanvasImageGenerationResponse>;
+  aiImageGenerate: (request: import("../canvas/generationTasks").CanvasGenerationRequestSnapshot, stableClientTaskId?: string) => Promise<import("../canvas/imageGenerationAdapter").CanvasImageGenerationResponse>;
   aiVideoGenerate: (
     request: import("../canvas/generationTasks").CanvasGenerationRequestSnapshot,
     onProgress?: (progress: import("../canvas/videoGenerationAdapter").CanvasVideoGenerationProgress) => void,

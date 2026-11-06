@@ -1,0 +1,6 @@
+{
+  "id": "example.event-ai", "name": "Synthetic event and AI", "version": "1.0.0",
+  "requiredModules": ["materials", "events", "ai"], "optionalModules": [],
+  "requiredPermissions": ["materials.read", "events.subscribe", "ai.generate"], "optionalPermissions": [],
+  "dataVersion": 1, "contributions": [{ "id": "sample", "label": "Event and AI sample", "kind": "panel" }]
+}

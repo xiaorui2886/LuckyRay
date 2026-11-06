@@ -129,6 +129,8 @@ impl DshEngineUpdater {
         let context = self.host.engine_update_context();
         let current_version = context.as_ref().map(|(_, version, _)| version.clone());
         let pending_health = context.as_ref().is_some_and(|(_, _, pending)| *pending);
+        let sealed_recovery = context.as_ref().is_some_and(|(store, _, _)| store.sealed_recovery_present());
+        let sealed_request = context.as_ref().is_some_and(|(store, _, _)| store.sealed_recovery_requested_or_present());
         let restart_required = context
             .as_ref()
             .is_some_and(|(store, _, _)| store.pending_switch());
@@ -148,6 +150,10 @@ impl DshEngineUpdater {
             "verification_failed"
         } else if pending_health {
             "verification_required"
+        } else if sealed_recovery {
+            "sealed_healthy"
+        } else if sealed_request {
+            "recovery_required"
         } else if restart_required && state.outcome == Some("exit_prepared") {
             "exit_prepared"
         } else if restart_required {
@@ -174,6 +180,7 @@ impl DshEngineUpdater {
             "verification_required" => "新版引擎已切换，仍需完成启动和资源链验收；不会自动回滚数据。",
             "verification_failed" => "本机健康检查未通过；当前引擎仍保留，未自动回滚资料。请确认 LightSeek 会话可打开并处理插件问题后重试。",
             "healthy" => "已验证新版引擎、会话界面及插件组合；本机健康状态已保存。",
+            "sealed_healthy" => "恢复后的引擎及插件组合已验证；后续引擎升级仍需单独接续。",
             "restart_required" => "新版已验证暂存。可从冷宿主直接受控重启；若已使用 LightSeek，请先完成任务、核对草稿，再准备正常退出切换。",
             "exit_prepared" => "已准备在本次正常退出后切换。请先保存其他页面更改、完成 LightSeek 与远程任务，再从 LuckyRay 完全退出并重新打开；隐藏窗口或异常终止不会激活更新。",
             "working" => "正在检查或准备引擎更新。",
@@ -197,9 +204,10 @@ impl DshEngineUpdater {
             && phase != "initializing"
             && !state.assembly_unsettled
             && !pending_health
+            && !sealed_request
             && !restart_required
             && !state.busy;
-        let can_recover = matches!(phase, "recovery_required" | "switch_incomplete" | "restart_required" | "exit_prepared")
+        let can_recover = !sealed_request && matches!(phase, "recovery_required" | "switch_incomplete" | "restart_required" | "exit_prepared")
             && !state.busy
             && !state.assembly_unsettled
             && context.as_ref().map_or_else(
@@ -448,6 +456,15 @@ impl DshEngineUpdater {
             if !plugin_composition_clear(&compat, &current)
                 || self.host.surface_status().stage != DshNativeSurfaceStage::SessionOpen {
                 return false;
+            }
+            if let Some(bundle) = self.host.sealed_recovery_bundle() {
+                let binding = self.host.native_surface_binding();
+                if binding.is_none() { return false; }
+                return store.finish_qualified_sealed_health(&bundle, &|| {
+                    self.host.native_surface_binding() == binding
+                        && self.host.surface_status().stage == DshNativeSurfaceStage::SessionOpen
+                        && self.host.plugin_compat_status().is_ok_and(|status| plugin_composition_clear(&status, &current))
+                }).is_ok();
             }
             let Ok(Some(installed)) = store.load_active() else {
                 return false;

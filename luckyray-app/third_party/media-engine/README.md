@@ -7,7 +7,8 @@ caches and user configuration are never committed.
 
 The product uses the PyPI wheel of yt-dlp rather than its PyInstaller Windows
 executable. The wheel is Unlicense; the separate yt-dlp-ejs wheel contains MIT
-and ISC components. Deno is MIT. FFmpeg is the BtbN `lgpl-shared` variant and
+and ISC components. Deno is MIT. FFmpeg is the fixed System233 9.0.1
+`x64-windows-shared-lgpl` variant in manifest.json and
 must report neither `--enable-gpl` nor `--enable-nonfree` before it is accepted.
 
 Runtime auto-update, yt-dlp plugins, remote EJS components, inherited proxy

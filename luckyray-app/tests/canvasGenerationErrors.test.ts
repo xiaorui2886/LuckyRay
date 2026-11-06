@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { transformSync } from "esbuild";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { transformSync } = createRequire(require.resolve("vite"))("esbuild");
 import { canvasGenerationFailure, canvasGenerationTaskError } from "../src/core/canvas/generationErrors.ts";
 import { createCanvasImageGenerationAdapter } from "../src/core/canvas/imageGenerationAdapter.ts";
-import { createCanvasVideoGenerationAdapter } from "../src/core/canvas/videoGenerationAdapter.ts";
+import { createCanvasVideoGenerationAdapter, prepareCanvasVideoBridgeReferences } from "../src/core/canvas/videoGenerationAdapter.ts";
 
 const request = { kind: "image" as const, model: "synthetic-image", prompt: "synthetic", references: [] };
 const privateText = "synthetic-private-prompt https://private.invalid/path?key=synthetic-secret";
@@ -63,7 +65,7 @@ test("App image invoke rejection and response both preserve safe error classific
   for (const reject of [true, false]) {
     const run = Function("invoke", "prepareCanvasMediaReference", "materializeCanvasGeneratedImage", "canvasGenerationFailure", code + ";return aiImageGenerate;")(
       async () => { if (reject) throw "moderation_blocked"; return { success: false, error_kind: "unsupported_protocol", error_message: privateText }; },
-      async (v: string) => v, async (v: string) => v, canvasGenerationFailure,
+      async (v: string) => v, async (v: string) => v, canvasGenerationFailure, prepareCanvasVideoBridgeReferences,
     );
     const result = await run(request);
     assert.equal(result.error_kind, reject ? "moderation_blocked" : "unsupported_protocol");
@@ -75,9 +77,9 @@ test("App video invoke retains rejection kind and never returns raw provider dia
   const body = source.slice(source.indexOf("async function aiVideoGenerate("), source.indexOf("async function prepareCanvasMediaReference("));
   const code = transformSync(body, { loader: "ts", format: "cjs", target: "es2022" }).code;
   for (const reject of [true, false]) {
-    const run = Function("invoke", "prepareCanvasMediaReference", "canvasGenerationFailure", code + ";return aiVideoGenerate;")(
+    const run = Function("invoke", "prepareCanvasMediaReference", "canvasGenerationFailure", "prepareCanvasVideoBridgeReferences", code + ";return aiVideoGenerate;")(
       async () => { if (reject) throw { code: "rate_limited", message: privateText }; return { success: false, error_kind: "unauthorized", error_message: privateText }; },
-      async (v: string) => v, canvasGenerationFailure,
+      async (v: string) => v, canvasGenerationFailure, prepareCanvasVideoBridgeReferences,
     );
     const result = await run({ ...request, kind: "video" });
     assert.equal(result.error_kind, reject ? "rate_limited" : "unauthorized");
@@ -86,6 +88,16 @@ test("App video invoke retains rejection kind and never returns raw provider dia
 });
 
 test("limit copy includes quota uncertainty and provider failures do not claim user frequency", () => {
-  assert.match(canvasGenerationFailure('rate_limited').error_message, /额度/);
+  assert.match(canvasGenerationFailure('rate_limited').error_message, /限制.*未知/);
   assert.doesNotMatch(canvasGenerationFailure('provider_error').error_message, /过于频繁|额度耗尽/);
+});
+
+test('retired provider failure is explicit and non-retryable for images and videos',()=>{
+ const code='canvas-media-provider-removed';
+ const failure=canvasGenerationFailure(code);
+ assert.equal(failure.error_kind,code);assert.match(failure.error_message,/豆包连接器已移除/);
+ for(const kind of ['image','video'] as const){
+  const error=canvasGenerationTaskError(kind,code);assert.equal(error.retryable,false);
+  assert.equal(error.code,`${kind.toUpperCase()}_PROVIDER_REMOVED`);
+ }
 });

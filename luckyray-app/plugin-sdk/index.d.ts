@@ -1,7 +1,7 @@
 /** Public LuckyRay SDK V1. Available in the isolated runtime; no imports needed. */
 type LRJson = null | boolean | number | string | LRJson[] | { [key: string]: LRJson };
-type LRModule = "materials" | "knowledge" | "canvas";
-type LRPermission = "materials.read" | "materials.image" | "materials.tags" | "knowledge.read" | "knowledge.create" | "knowledge.insert" | "canvas.read" | "canvas.export";
+type LRModule = "materials" | "knowledge" | "canvas" | "ai" | "events";
+type LRPermission = "materials.read" | "materials.image" | "materials.tags" | "knowledge.read" | "knowledge.create" | "knowledge.insert" | "canvas.read" | "canvas.export" | "ai.generate" | "events.subscribe";
 interface LRContribution { id: string; label: string; kind: "command" | "menu" | "panel" | "settings" | "page"; }
 interface LRPluginConfig { id: string; name: string; version: string; minHostVersion?: string; requiredModules?: LRModule[]; optionalModules?: LRModule[]; requiredPermissions?: LRPermission[]; optionalPermissions?: LRPermission[]; dataVersion?: number; contributions: LRContribution[]; }
 type LREmptyParams = Record<string, never>;
@@ -11,6 +11,9 @@ interface LRData { schemaVersion: number; revision: number; settings: LRJson; ca
 interface LRGraph { id: string; name: string; digest: string; revision: number; snapshot: "saved"; attachments: "excluded"; nodes: { id: string; type: string; title: string; x: number; y: number }[]; edges: { id: string; source: string; target: string }[]; }
 interface LRLibraryMaterialResult { consumerVersion: 1; libraryId: string; requestId: string; asset: LRMaterial; }
 interface LRApi {
+ "ai.generate": { input: { prompt: string }; output: { text: string } };
+ "events.subscribe": { input: { type: "knowledge.saved" | "materials.imported" }; output: { type: string; subscribed: true } };
+ "events.unsubscribe": { input: { type: "knowledge.saved" | "materials.imported" }; output: { type: string; subscribed: false } };
  /** Additive explicit library consumer; requires a host-confirmed library/object scope. Legacy methods keep their legacy default scope. */
  "materials.library.list": { input: { libraryId: string; requestId: string }; output: { consumerVersion: 1; libraryId: string; requestId: string; items: LRMaterial[] } };
  "materials.library.read": { input: { libraryId: string; requestId: string; id: string }; output: LRLibraryMaterialResult };
@@ -31,9 +34,9 @@ interface LRApi {
  "ui.theme": { input: LREmptyParams; output: Record<string, string> };
  "log": { input: { message: string }; output: null };
 }
-interface LREvent { input: { contribution: string; action: string; fields: Record<string, string> }; capabilities: string[]; objects: { materials: string[]; materialLibraryId?: string | null; knowledge: { vaultId: string; documents: string[] } | null; canvases: string[] }; theme: Record<string, string>; }
+interface LREvent { input: { contribution: string; action: string; fields: Record<string, string>; notification?: { type: "knowledge.saved" | "materials.imported"; id: string; truncated: boolean } }; capabilities: string[]; objects: { materials: string[]; materialLibraryId?: string | null; knowledge: { vaultId: string; documents: string[] } | null; canvases: string[] }; theme: Record<string, string>; }
 /** A `page` contribution opens as a real main-area page in the host shell (EXT-PAGE); the handler returns the same bounded UI schema on every visit and the host keeps the user's in-progress fields for the session. */
-interface LRUi { title: string; text?: string; fields?: { id: string; label: string; value: string }[]; actions?: { id: string; label: string }[]; }
+interface LRUi { title: string; text?: string; fields?: { id: string; label: string; value: string; kind?: "text" | "multiline" }[]; actions?: { id: string; label: string }[]; }
 type LRNoParamsMethod = "materials.list" | "knowledge.selection" | "data.get" | "ui.theme";
 type LRCallArgs<K extends keyof LRApi> = K extends LRNoParamsMethod ? [params?: LRApi[K]["input"]] : [params: LRApi[K]["input"]];
-declare const LuckyRay: { readonly apiVersion: 1; register(handler: (event: LREvent) => LRUi | Promise<LRUi>): void; call<K extends keyof LRApi>(method: K, ...params: LRCallArgs<K>): Promise<LRApi[K]["output"]> };
+declare const LuckyRay: { readonly apiVersion: 1; register(handler: (event: LREvent) => LRUi | Promise<LRUi>): void; call<K extends keyof LRApi>(method: K, ...params: LRCallArgs<K>): Promise<LRApi[K]["output"]>; stream(method: "ai.generate", params: LRApi["ai.generate"]["input"], onChunk: (delta: string) => void): Promise<LRApi["ai.generate"]["output"]> };

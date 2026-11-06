@@ -27,8 +27,8 @@ pub(super) fn validate_candidate_input(candidate: &Candidate) -> Result<(), Admi
                 || candidate.entry_sha256 != ENTRY_SHA { return Err(AdmissionError::InvalidManifest); }
         },
         2 if input.kind == "official-npm-qualified-win-x64-v2" => {
-            if input.toolset.as_deref() != Some("node22.19.0-pnpm11.7.0-policy1") || candidate.node_sha256 != NODE_SHA
-                { return Err(AdmissionError::RequiresHost); }
+            let toolset = select_node_toolset(input).ok_or(AdmissionError::RequiresHost)?;
+            if candidate.node_sha256 != toolset.exe_sha { return Err(AdmissionError::RequiresHost); }
             // No version/entry/count baseline here. Native signature/contract
             // gates plus bounded qualification and the complete closure apply.
         },
@@ -39,10 +39,43 @@ pub(super) fn validate_candidate_input(candidate: &Candidate) -> Result<(), Admi
 
 const NODE_SHA: &str = "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362";
 const ENTRY_SHA: &str = "935e95d05f4dc70a8a013eea59da80028946b5c139e45c6351dcaf2810ca00a1";
-const NODE_URL: &str = "https://nodejs.org/dist/v22.19.0/node-v22.19.0-win-x64.zip";
-const NODE_ARCHIVE_SHA: &str = "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86";
-const NODE_BYTES: u64 = 35_424_607;
-const LICENSE_SHA: &str = "339c50294da6a84322dcbe7285b57b248123bd4d9e37a2f72d68d5abf2574783";
+
+#[derive(Clone, Copy)]
+struct NodeToolset {
+    exe_sha: &'static str,
+    archive_url: &'static str,
+    archive_sha: &'static str,
+    archive_bytes: u64,
+    license_sha: &'static str,
+    archive_root: &'static str,
+}
+
+const NODE_22: NodeToolset = NodeToolset {
+    exe_sha: NODE_SHA,
+    archive_url: "https://nodejs.org/dist/v22.19.0/node-v22.19.0-win-x64.zip",
+    archive_sha: "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86",
+    archive_bytes: 35_424_607,
+    license_sha: "339c50294da6a84322dcbe7285b57b248123bd4d9e37a2f72d68d5abf2574783",
+    archive_root: "node-v22.19.0-win-x64",
+};
+const NODE_24: NodeToolset = NodeToolset {
+    exe_sha: "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9",
+    archive_url: "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip",
+    archive_sha: "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+    archive_bytes: 37_754_834,
+    license_sha: "ed34dd8e3f0a78dbaf00d0444ce8e285b015b765379c2e17880455f70370f8e9",
+    archive_root: "node-v24.22.2-win-x64",
+};
+
+// Only a signed candidate can select one of these compile-time identities.
+fn select_node_toolset(input: &FrozenAssemblyIdentity) -> Option<NodeToolset> {
+    match (input.schema, input.kind.as_str(), input.toolset.as_deref()) {
+        (1, "official-npm-frozen-win-x64-v1", None) => Some(NODE_22),
+        (2, "official-npm-qualified-win-x64-v2", Some("node22.19.0-pnpm11.7.0-policy1")) => Some(NODE_22),
+        (2, "official-npm-qualified-win-x64-v2", Some("node24.22.2-pnpm11.7.0-policy1")) => Some(NODE_24),
+        _ => None,
+    }
+}
 const PNPM_URL: &str = "https://registry.npmjs.org/pnpm/-/pnpm-11.7.0.tgz";
 const PNPM_SHA: &str = "deafa7ec98a1218b6a047289b92fbe2395c1e22d3495bb711653013218ee15ee";
 const PNPM_BYTES: u64 = 4_590_455;
@@ -137,18 +170,18 @@ mod implementation {
         Ok(())
     }
 
-    fn extract_node(archive: &Path, workspace: &Path, cancel: &AtomicBool) -> Result<(), ArtifactError> {
+    pub(super) fn extract_node(archive: &Path, workspace: &Path, cancel: &AtomicBool, toolset: NodeToolset) -> Result<(), ArtifactError> {
         // Whole official archive verified first; only exact Node/LICENSE are
         // materialized, never its npm/corepack scripts or a shell installer.
-        if super::super::digest_file(archive)? != NODE_ARCHIVE_SHA { return Err(ArtifactError::Invalid); }
+        if super::super::digest_file(archive)? != toolset.archive_sha { return Err(ArtifactError::Invalid); }
         let root = workspace.join("node");
         fs::create_dir(&root).map_err(|_| ArtifactError::Io)?;
         let mut zip = zip::ZipArchive::new(File::open(archive).map_err(|_| ArtifactError::Io)?)
             .map_err(|_| ArtifactError::Invalid)?;
         if zip.len() > 10_000 { return Err(ArtifactError::Invalid); }
-        for (name, hash) in [("node.exe", NODE_SHA), ("LICENSE", LICENSE_SHA)] {
+        for (name, hash) in [("node.exe", toolset.exe_sha), ("LICENSE", toolset.license_sha)] {
             if cancel.load(Ordering::Acquire) { return Err(ArtifactError::Io); }
-            let entry = zip.by_name(&format!("node-v22.19.0-win-x64/{name}")).map_err(|_| ArtifactError::Invalid)?;
+            let entry = zip.by_name(&format!("{}/{name}", toolset.archive_root)).map_err(|_| ArtifactError::Invalid)?;
             let kind = entry.unix_mode().unwrap_or(0) & 0o170000;
             if entry.is_dir() || !matches!(kind, 0 | 0o100000) || entry.size() > 100 * 1024 * 1024 { return Err(ArtifactError::Invalid); }
             let mut bytes = Vec::new();
@@ -271,6 +304,7 @@ mod implementation {
         let descriptor_bytes = fs::read(description).map_err(|_| ArtifactError::Io)?;
         let descriptor: serde_json::Value = serde_json::from_slice(&descriptor_bytes).map_err(|_| ArtifactError::Invalid)?;
         let identity = admitted.candidate.assembly.as_ref().ok_or(ArtifactError::Invalid)?;
+        let node_toolset = select_node_toolset(identity).ok_or(ArtifactError::Invalid)?;
         if descriptor.get("schema").and_then(|v| v.as_u64()) != Some(identity.schema as u64)
             || descriptor.get("kind").and_then(|v| v.as_str()) != Some(identity.kind.as_str()) { return Err(ArtifactError::Invalid); }
         let parent = stage.parent().ok_or(ArtifactError::Invalid)?;
@@ -288,11 +322,11 @@ mod implementation {
             }
             let client = super::super::artifact_client()?;
             let node_archive = workspace.join("node.zip");
-            tauri::async_runtime::block_on(super::super::download_exact_async(&client, NODE_URL, NODE_BYTES,
-                NODE_ARCHIVE_SHA, false, &node_archive, cancel, &mut |done, total| progress("bootstrap", done, total)))?;
+            tauri::async_runtime::block_on(super::super::download_exact_async(&client, node_toolset.archive_url, node_toolset.archive_bytes,
+                node_toolset.archive_sha, false, &node_archive, cancel, &mut |done, total| progress("bootstrap", done, total)))?;
             #[cfg(test)] eprintln!("NATIVE_BOOTSTRAP_DOWNLOAD_VERIFIED");
             leases.push(hold(&node_archive)?);
-            extract_node(&node_archive, &workspace, cancel)?;
+            extract_node(&node_archive, &workspace, cancel, node_toolset)?;
             #[cfg(test)] eprintln!("NATIVE_BOOTSTRAP_NODE_EXTRACTED");
             leases.push(hold(&workspace.join("node/node.exe"))?);
             leases.push(hold(&workspace.join("node/LICENSE"))?);
@@ -362,6 +396,7 @@ mod implementation {
         let description = std::path::PathBuf::from(std::env::var_os("DSH_OFFICIAL_INPUTS_RECORD").unwrap());
         let tar_cache = std::path::PathBuf::from(std::env::var_os("DSH_OFFICIAL_TARBALL_CACHE").unwrap());
         let bootstrap = std::path::PathBuf::from(std::env::var_os("DSH_OFFICIAL_BOOTSTRAP_CACHE").unwrap());
+        let node24_fixture = std::env::var("DSH_TEST_NODE24_QUALIFIED").as_deref() == Ok("1");
         assert!([&description, &tar_cache, &bootstrap].iter().all(|path| path.is_absolute()));
         let bytes = fs::read(description).unwrap();
         use sha2::{Digest, Sha256};
@@ -375,14 +410,19 @@ mod implementation {
         }
         fs::create_dir(workspace.join("node")).unwrap();
         for name in ["node.exe", "LICENSE"] {
-            fs::copy(bootstrap.join("bootstrap-node/node-v22.19.0-win-x64").join(name), workspace.join("node").join(name)).unwrap();
+            let node_dir = if node24_fixture { "bootstrap-node/node-v24.22.2-win-x64" } else { "bootstrap-node/node-v22.19.0-win-x64" };
+            fs::copy(bootstrap.join(node_dir).join(name), workspace.join("node").join(name)).unwrap();
             leases.push(hold(&workspace.join("node").join(name))?);
         }
         let cancel = AtomicBool::new(false);
         let mut progress = |phase, done, _| println!("NATIVE_CACHED_WORKER_PHASE {phase} {done}");
         let plan = run_worker(&workspace, &stage, &hash, bytes.len() as u64, "plan", &cancel, &mut progress)?;
         let inputs: Vec<Input> = serde_json::from_value(plan["packages"].clone()).map_err(|_| ArtifactError::Invalid)?;
-        assert_eq!(inputs.len(), 516);
+        if node24_fixture {
+            assert_eq!(inputs.len(), 593);
+            assert_eq!(plan["version"], "0.2.2-rc.1");
+            assert_eq!(plan["nodeSha256"], NODE_24.exe_sha);
+        } else { assert_eq!(inputs.len(), 516); }
         fs::create_dir(workspace.join("tarballs")).unwrap();
         fs::copy(bootstrap.join("cache/inputs/pnpm-11.7.0.tgz"), workspace.join("pnpm.tgz")).unwrap();
         leases.push(hold(&workspace.join("pnpm.tgz"))?);
@@ -396,7 +436,19 @@ mod implementation {
         let result = run_worker(&workspace, &stage, &hash, bytes.len() as u64, "assemble", &cancel, &mut progress)?;
         assert_eq!(result["outcome"], "ASSEMBLED_FROZEN_RUNTIME");
         let control = crate::dsh_runtime_seal::RuntimeSealControl::new(&cancel);
-        crate::dsh_runtime_seal::RuntimeIdentityLease::acquire(&stage, &control).map_err(|_| ArtifactError::Invalid)?;
+        if node24_fixture {
+            // Test-only unsigned fixture: never authorizes production startup.
+            let identity = crate::dsh_runtime_seal::RuntimeIdentity {
+                executable: "node/node.exe".into(),
+                entry_point: "host/node_modules/@deepseek-ai/dsh/lib/bin.js".into(),
+                node_exe_sha256: NODE_24.exe_sha.into(),
+                entry_sha256: plan["entrySha256"].as_str().ok_or(ArtifactError::Invalid)?.into(),
+                package_version: "0.2.2-rc.1".into(),
+            };
+            crate::dsh_runtime_seal::RuntimeIdentityLease::acquire_identity(&stage, &identity, &control).map_err(|_| ArtifactError::Invalid)?;
+        } else {
+            crate::dsh_runtime_seal::RuntimeIdentityLease::acquire(&stage, &control).map_err(|_| ArtifactError::Invalid)?;
+        }
         Ok(())
     }
 }
@@ -404,6 +456,32 @@ mod implementation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[test]
+    #[ignore = "explicit official Node 24 archive and retained synthetic output root required"]
+    fn node24_official_extraction_rejects_changed_archive() {
+        use std::fs;
+        use std::sync::atomic::AtomicBool;
+        let archive = std::path::PathBuf::from(std::env::var_os("DSH_TEST_NODE24_ARCHIVE").unwrap());
+        let parent = std::path::PathBuf::from(std::env::var_os("DSH_TEST_NODE24_OUTPUT").unwrap());
+        assert!(archive.is_absolute() && parent.is_absolute());
+        let parent = parent.canonicalize().unwrap();
+        let root = tempfile::Builder::new().prefix("node24-extraction-").tempdir_in(&parent).unwrap().keep();
+        assert_eq!(root.canonicalize().unwrap().parent(), Some(parent.as_path()));
+        let good = root.join("good");
+        fs::create_dir(&good).unwrap();
+        implementation::extract_node(&archive, &good, &AtomicBool::new(false), NODE_24).unwrap();
+        assert_eq!(super::super::digest_file(&good.join("node/node.exe")).unwrap(), NODE_24.exe_sha);
+        assert_eq!(super::super::digest_file(&good.join("node/LICENSE")).unwrap(), NODE_24.license_sha);
+        let mut altered = fs::read(&archive).unwrap();
+        altered[0] ^= 1;
+        let changed = root.join("changed.zip");
+        fs::write(&changed, altered).unwrap();
+        let bad = root.join("bad");
+        fs::create_dir(&bad).unwrap();
+        assert_eq!(implementation::extract_node(&changed, &bad, &AtomicBool::new(false), NODE_24), Err(ArtifactError::Invalid));
+        assert!(!bad.join("node").exists());
+    }
     #[cfg(all(windows, feature = "browser-host-runtime"))]
     #[test]
     #[ignore = "explicit acquired official cache; real owned worker diagnostic, not native acquisition proof"]

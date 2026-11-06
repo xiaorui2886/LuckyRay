@@ -26,18 +26,17 @@ const LAUNCH_BYTES: &[u8] = include_bytes!(concat!(env!("LUCKYRAY_ISSUE189_OLD_D
 const RUNTIME_BYTES: &[u8] = include_bytes!(concat!(env!("LUCKYRAY_ISSUE189_OLD_DSH_HOST"), "/records/runtime-manifest.json"));
 
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const AUTHORITY_SHA256: &str = "14cb818cdbf56eb2d27e9ee16c50096bc57a9e58a1911d9d9f03b56fdca27793";
+const AUTHORITY_SHA256: &str = "818b199c0459381dd138cc2328511fb06dbc1d103fd16b1674dcbfb13b4607cd";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const AUDIT_SHA256: &str = "955c7b4ab2d6b34b0a04236e6f2ac128129d51593f84744c48d3d195493c4746";
+const AUDIT_SHA256: &str = "e0a797ecf83deb95f0b59a8f114a3a7212bd011188b594b53c744434be6eae82";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const LAUNCH_SHA256: &str = "4f6f3330a056b58f8ffa67d4598cac8be621ad1cbb2d46ec2ba09714226c158a";
+const LAUNCH_SHA256: &str = "d555c652ee9180800f461cc2ccd582a721a5f2fc343e0d6ee8d7e4b6a7560d3a";
 #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-const RUNTIME_SHA256: &str = "9158395f1af30cd19fa45ac95854767fc1cb3f875ddadf3728f6fa8b3db61f2d";
-// Full native admission uses lexical path + NUL + size + NUL + file SHA + LF.
-// The sealed releaseLayout.contentSha256 uses the preparation tool's portable
-// tree format (locale-sorted path + NUL + file SHA + LF). They authenticate the
-// same exact rc.3 files, but are deliberately not interchangeable digests.
-const BUNDLED_NATIVE_CLOSURE_SHA256: &str = "ba89c613435a4c5d5d72ef836db644dc331d37005f3ca43f34867f8495cc43c3";
+const RUNTIME_SHA256: &str = "489349bfd3a04862d1d3ce44a6d07a1cf04ee76c333e7760a75435647111f3fa";
+// Full native admission uses bytewise path + NUL + size + NUL + file SHA + LF.
+// This authenticates the same rc.1 tree as the portable preparation digest,
+// with a deliberately distinct encoding. Rechecked from the frozen runtime.
+const BUNDLED_NATIVE_CLOSURE_SHA256: &str = "9013135ed92c52969184755620bd672bcbc62b56acd8d4807aaf2d1c772159d4";
 #[cfg(feature = "issue189-frozen-old-fixture")]
 const AUTHORITY_SHA256: &str = "c0c4b4bec0ce5b86f759b970c722f7fc82073cdbd678593ec03eaf61a4d49c04";
 #[cfg(feature = "issue189-frozen-old-fixture")]
@@ -402,7 +401,7 @@ pub(crate) fn bundled_runtime_identity() -> Result<BundledRuntimeIdentity, ()> {
     let launch = runtime_identity_from_records()?;
     // Renew this exact compiled full-tree pin when qualifying a later bundle.
     // In particular, the frozen old-runtime test feature must not inherit it.
-    if launch.package_version != "0.2.1-rc.3" { return Err(()); }
+    if launch.package_version != "0.2.2-rc.1" { return Err(()); }
     let closure_file_count = layout["fileCount"].as_u64().filter(|v| *v > 0 && *v <= 40000).ok_or(())?;
     Ok(BundledRuntimeIdentity {
         launch,
@@ -647,17 +646,21 @@ mod tests {
         );
         assert_eq!(identity.package_version, if cfg!(feature = "issue189-frozen-old-fixture") {
             "0.1.5-rc.2"
-        } else { "0.2.1-rc.3" });
+        } else { "0.2.2-rc.1" });
         assert_eq!(
             identity.node_exe_sha256,
-            "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362"
+            if cfg!(feature = "issue189-frozen-old-fixture") {
+                "995a3fb3cefad590cd3f4b321532a4b9582fb9c6575320ed2e3e894caac3e362"
+            } else {
+                "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9"
+            }
         );
         assert_eq!(
             identity.entry_sha256,
             if cfg!(feature = "issue189-frozen-old-fixture") {
                 "0ff7f1d72c4e0cbe14001709c81e20a04b70464118a7f78568952988e28f2ac5"
             } else {
-                "80112efe368efb1a39720c7ada0af00442e5131fb2744edaaff8a3e8bb499e6f"
+                "b6640801a5a65aae9f53ca21bcce3b2ea28bd9e9554c939c1ff7c4448d91fa18"
             }
         );
     }
@@ -716,7 +719,7 @@ mod tests {
         let elapsed = started.elapsed();
         assert_eq!(identity.package_version, if cfg!(feature = "issue189-frozen-old-fixture") {
             "0.1.5-rc.2"
-        } else { "0.2.1-rc.2" });
+        } else { "0.2.2-rc.1" });
         eprintln!(
             "runtime identity check took {:?} (two critical entries; full closure stays on prepare/install)",
             elapsed

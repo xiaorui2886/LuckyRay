@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { validateQualifiedAssemblyDescription } from "./dsh-frozen-assembly-description.mjs";
 import { validateCompatibility } from "./dsh-host-compatibility.mjs";
-import { MAX_DSH_CLOSURE_FILE_COUNT } from "./dsh-supply-chain.mjs";
+import { MAX_DSH_CLOSURE_FILE_COUNT, qualifiedNodeToolset } from "./dsh-supply-chain.mjs";
 
 export const REPOSITORY = "xiaorui2886/luckyray-update-metadata";
 export const ORIGIN = `https://raw.githubusercontent.com/${REPOSITORY}/main/`;
@@ -103,7 +103,7 @@ export function initializeRoot({ primary, backupOne, backupTwo, passphrase }) {
 }
 
 export function validateCandidate(candidate, descriptor, contract, now = Math.floor(Date.now() / 1000)) {
-  keys(candidate, ["schema", "channel", "runtimePackage", "issuedAt", "expiresAt", "hostVersion", "adapterFingerprint", "platform", "fromVersions", "version", "nodeSha256", "entrySha256", "artifactUrl", "artifactSha256", "artifactBytes", "closureSha256", "closureFileCount", "dataCompatibility", "resourceGateSha256", "assembly", ...(candidate.schema === 2 ? ["compatibility"] : [])]);
+  keys(candidate, ["schema", "channel", "runtimePackage", "issuedAt", "expiresAt", "hostVersion", "adapterFingerprint", "platform", "fromVersions", "version", "nodeSha256", "entrySha256", "artifactUrl", "artifactSha256", "artifactBytes", "closureSha256", "closureFileCount", "dataCompatibility", "resourceGateSha256", "assembly", ...(candidate.schema === 2 ? ["compatibility"] : []), ...(Object.hasOwn(candidate, "sealedRecovery") ? ["sealedRecovery"] : [])]);
   keys(contract, ["hostVersion", "adapterFingerprint", "resourceGateSha256", ...(Object.hasOwn(contract, "interfaces") ? ["interfaces"] : [])]);
   if (candidate.schema === 2) {
     if (!contract.interfaces) bad("host-interfaces-required");
@@ -119,14 +119,31 @@ export function validateCandidate(candidate, descriptor, contract, now = Math.fl
       || !Array.isArray(candidate.fromVersions) || !candidate.fromVersions.length || candidate.fromVersions.length > 16
       || new Set(candidate.fromVersions).size !== candidate.fromVersions.length || !candidate.fromVersions.every(semver)
       || candidate.dataCompatibility !== "no-migration" || !Number.isSafeInteger(candidate.closureFileCount) || candidate.closureFileCount < 1 || candidate.closureFileCount > MAX_DSH_CLOSURE_FILE_COUNT) bad("candidate-contract-invalid");
+  if (Object.hasOwn(candidate, "sealedRecovery")) validateRecoveryAuthorization(candidate.sealedRecovery, candidate);
   keys(candidate.assembly, ["schema", "kind", "toolset"]);
-  if (candidate.assembly.schema !== 2 || candidate.assembly.kind !== "official-npm-qualified-win-x64-v2" || candidate.assembly.toolset !== "node22.19.0-pnpm11.7.0-policy1"
+  if (candidate.assembly.schema !== 2 || candidate.assembly.kind !== "official-npm-qualified-win-x64-v2"
       || candidate.artifactUrl !== `${ORIGIN}descriptors/${candidate.artifactSha256}.json` || candidate.artifactBytes !== descriptor.length || sha256(descriptor) !== candidate.artifactSha256) bad("descriptor-binding-invalid");
   const description = validateQualifiedAssemblyDescription({ bytes: descriptor, expectedHash: candidate.artifactSha256, expectedBytes: candidate.artifactBytes });
   const q = JSON.parse(descriptor).qualification;
-  if (q.authority.runtimePackage.version !== candidate.version || q.authority.nodeRuntime.nodeExeSha256 !== candidate.nodeSha256
+  if (candidate.assembly.toolset !== qualifiedNodeToolset(q.authority.nodeRuntime).name
+      || q.authority.runtimePackage.version !== candidate.version || q.authority.nodeRuntime.nodeExeSha256 !== candidate.nodeSha256
       || q.dependencyAudit.entryPoint.fileSha256 !== candidate.entrySha256 || q.authority.dependencyClosure.releaseLayout.fileCount !== candidate.closureFileCount) bad("qualification-identity-mismatch");
   return description;
+}
+export function validateRecoveryAuthorization(value, candidate) {
+  keys(value, ["schema", "purpose", "profileIdentifier", "predecessorPhase", "predecessorVersion", "predecessorArtifactSha256",
+    "predecessorActiveSha256", "predecessorJournalSha256", "snapshotManifestSha256", "dataQualificationSha256"]);
+  // Only the current reviewed recovery edge is prepared by this operator.
+  // The existing signer/key remains unchanged; these fields are inside the signed payload.
+  if (value.schema !== 1 || value.purpose !== "sealed-code-only-pending-recovery"
+    || value.predecessorPhase !== "activated_pending_health" || value.predecessorVersion !== "0.2.0-rc.2"
+    || candidate.version !== "0.2.2-rc.1" || candidate.schema !== 2
+    || !candidate.fromVersions?.includes(value.predecessorVersion)
+    || !candidate.compatibility?.requiredCapabilities?.includes("sealed-pending-health-recovery-v1")
+    || typeof value.profileIdentifier !== "string" || !/^[A-Za-z0-9._-]{1,128}$/u.test(value.profileIdentifier)
+    || ![value.predecessorArtifactSha256, value.predecessorActiveSha256, value.predecessorJournalSha256,
+      value.snapshotManifestSha256, value.dataQualificationSha256].every(hex)) bad("recovery-authorization-invalid");
+  return value;
 }
 export function verifyEnvelope(envelopeBytes, encodedKey, descriptor, contract, now) {
   if (envelopeBytes.length < 1 || envelopeBytes.length > 96 * 1024) bad("envelope-size-invalid");
@@ -156,6 +173,7 @@ export function signCandidate({ keyDirectory, passphrase, candidatePath, descrip
 
 export function publicationPlan(envelope, publicKey, descriptor, contract) {
   const candidate = verifyEnvelope(envelope, publicKey, descriptor, contract);
+  if (candidate.sealedRecovery) bad("sealed-recovery-local-only");
   // Project exact bytes, not arbitrary operator paths/extra files. The only
   // allowed public description is the already bounded qualification format.
   if (/-----BEGIN|(?:^|["\s])[A-Z]:[\\/]|Bearer\s|github_pat_|ghp_|AppData[\\/]|(?:password|apiKey|accessToken)\s*"\s*:/iu.test(descriptor.toString("utf8"))) bad("private-data-in-descriptor");

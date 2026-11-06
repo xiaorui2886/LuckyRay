@@ -12,6 +12,7 @@ const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || 'playwrig
   window.calls={renames:[],saves:[],settings:[]};window.renameDelay=0;
   window.__TAURI_INTERNALS__={invoke:async(command)=>{
     if(command==='canvas_media_profiles_list')return {version:1,activeProfileId:'qa-media',profiles:[{id:'qa-media',name:'QA Media',baseUrl:'https://example.test/v1',imageModel:'qa-image',videoModel:'qa-video',imageProtocol:'openai-image',videoProtocol:'disabled',revision:1,apiKeyConfigured:true}]};
+    if(command==='canvas_comfyui_get_config')return {baseUrl:'http://127.0.0.1:8188'};
     if(command==='plugin:sql|load')return 'sqlite:qa';
     if(command==='plugin:sql|select')return [];
     throw new Error('Synthetic fixture: unsupported command');
@@ -25,8 +26,8 @@ const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || 'playwrig
    saveCanvasThumbnail:async()=>{},getCanvasThumbnailUrl:()=>'',getCanvasStorageDir:async()=>'',
    getAppSettings:async()=>({}),listAssets:async()=>[],listNotes:async()=>[],listTags:async()=>[]
   };createRoot(document.getElementById('root')).render(<CanvasSpike/>);`;
-  const built = await esbuild.build({stdin:{contents:entry,resolveDir:root,loader:'tsx'},bundle:true,write:false,format:'esm',platform:'browser',jsx:'automatic',loader:{'.css':'empty'}});
-  const css = fs.readFileSync(path.join(root,'src/canvas-spike-scroll.css'),'utf8');
+  const built = await esbuild.build({stdin:{contents:entry,resolveDir:root,loader:'tsx'},bundle:true,write:false,format:'esm',platform:'browser',jsx:'automatic',loader:{'.css':'empty','.module.css':'empty'}});
+  const css = ['src/core/theme/themeTokens.css','src/canvas-spike-scroll.css','src/features/canvas/canvasDialogScope.css','src/features/canvas/canvasSettingsDialog.css'].map(file=>fs.readFileSync(path.join(root,file),'utf8')).join('\n');
   const server = http.createServer((req,res)=>{
     res.setHeader('Content-Type',req.url==='/fixture.js'?'text/javascript':req.url==='/style.css'?'text/css':'text/html');
     res.end(req.url==='/fixture.js'?built.outputFiles[0].text:req.url==='/style.css'?css:'<style>html,body,#root{margin:0;height:100%;background:#111;color:#eee}body{--text-primary:#eee;--theme-border-strong:#555;--theme-glass-bg:#222}</style><link rel="stylesheet" href="/style.css"><div id="root"></div><script type="module" src="/fixture.js"></script>');
@@ -41,19 +42,24 @@ const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || 'playwrig
     const title=page.locator('.canvas-editor-current');
     await title.filter({hasText:'QA canvas'}).waitFor();
     await page.locator('.canvas-settings-anchor > button').click();
-    const panel=page.locator('.canvas-settings-panel');await panel.waitFor();
+    const panel=page.locator('.canvas-settings-dialog');
+    try { await panel.waitFor({timeout:5000}); }
+    catch (error) {
+      console.error(JSON.stringify(await page.evaluate(()=>Object.fromEntries(['.canvas-editor-body','.canvas-dialog-scope','.canvas-settings-backdrop'].map(selector=>{const el=document.querySelector(selector),r=el?.getBoundingClientRect();return [selector,el?{width:r.width,height:r.height,display:getComputedStyle(el).display,hidden:el.hidden}:null]})))));
+      throw error;
+    }
     await panel.locator('.canvas-media-profile-actions button').nth(1).click();
     const input=panel.locator('.canvas-media-profile-editor label input').first();await input.fill('QA unsaved draft');await input.focus();
     const box=await input.boundingBox();
     await page.mouse.move(box.x+box.width-8,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x-45,box.y+box.height/2,{steps:8});await page.mouse.up();
     assert(await panel.isVisible(),'selection drag released outside must not dismiss');assert.equal(await input.inputValue(),'QA unsaved draft');
-    await panel.locator('.canvas-settings-heading').click();assert(await panel.isVisible(),'non-focusable interior must not dismiss');
+    await panel.locator('.canvas-settings-dialog-toolbar').click();assert(await panel.isVisible(),'non-focusable interior must not dismiss');
     await panel.locator('.canvas-media-clear-key span').click();assert(await panel.isVisible(),'labels must not dismiss');
-    await panel.getByRole('tab',{name:'画布外观'}).click();
+    await panel.getByRole('button',{name:'画布外观'}).click();
     await panel.locator('.canvas-settings-toggle').first().click();assert(await panel.isVisible(),'toggle must not dismiss');
     await page.mouse.click(20,900);assert.equal(await panel.isVisible(),false,'outside click closes');
     await page.locator('.canvas-settings-anchor > button').click();
-    await panel.getByRole('tab',{name:'生成配置'}).click();assert.equal(await input.inputValue(),'QA unsaved draft','reopening retains unsaved input');
+    await panel.getByRole('button',{name:'生成配置'}).click();assert.equal(await input.inputValue(),'QA unsaved draft','reopening retains unsaved input');
     await page.keyboard.press('Escape');assert.equal(await panel.isVisible(),false,'Escape closes');
     await page.locator('.canvas-settings-anchor > button').click();assert.equal(await input.inputValue(),'QA unsaved draft','Escape does not discard');
     await panel.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await panel.locator('.canvas-media-profile-editor').count(),0,'explicit cancel discards');

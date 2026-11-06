@@ -52,3 +52,25 @@ does not relabel those components as MIT or LGPL-only.
 Every supplied body is hash-addressed in the corresponding index. These files
 are distribution/legal notices, not internal test reports or a formal release
 acceptance claim.
+
+## Current 1.9.10 media replacement
+
+The old standalone System233 FFmpeg 9.0.1 package has been removed from this
+candidate, rather than having its LGPL label or source correspondence assumed.
+The standalone FFmpeg/ffprobe programs and libmpv are built by the recorded local
+source recipe. Their exact revisions, build configurations, license bodies,
+toolchain and corresponding sources are supplied in `native-video/`, including
+`sources.tar.xz`, `SOURCE-INDEX.json`, `BUILD-INFO.json` and relink instructions.
+See `third_party/media-engine/FFMPEG-TOOLS.md` in the corresponding app source.
+The preceding historical archive references do not stand in for these files.
+
+## LibreOffice Kit 0.1.5
+
+`office-kit-0.1.5/` identifies the actual statically linked Windows document
+engine, its original component notices, exact Core and patch set, editable
+OpenSymbol font source, and the hash-pinned companion source asset. That asset
+includes the conservative native-dependency and locked Rust source archives;
+it is not presented as the engine's unavailable actual link map. Preserve the
+source asset alongside the installer and exact application source when sharing
+this candidate. Public distribution requires making those same files available
+to its recipients; a private draft link alone is not a public source offer.

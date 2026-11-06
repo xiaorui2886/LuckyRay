@@ -1,11 +1,76 @@
 {
   "name": "@luckyray/plugin-sdk",
-  "version": "1.0.1",
+  "version": "1.2.0",
+  "description": "Authoring tools for LuckyRay lightweight scripts and fully trusted desktop extensions",
   "private": false,
   "license": "MIT",
   "type": "module",
   "types": "index.d.ts",
-  "engines": { "node": ">=18" },
-  "bin": { "lr-plugin": "cli.mjs" },
-  "files": ["index.d.ts", "cli.mjs", "export-sdk.mjs", "README.md", "README.zh-CN.md", "DELIVERY.md", "COMPATIBILITY.md", "LICENSE", "MANIFEST.json", "examples/*/main.js", "examples/*/plugin.json", "material-library-consumer.js", "material-library-consumer.d.ts", "material-library-consumer.md"]
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "lr-plugin": "cli.mjs"
+  },
+  "files": [
+    "index.d.ts",
+    "cli.mjs",
+    "sign-package.mjs",
+    "export-sdk.mjs",
+    "README.md",
+    "README.zh-CN.md",
+    "DELIVERY.md",
+    "COMPATIBILITY.md",
+    "LICENSE",
+    "MANIFEST.json",
+    "examples/*/main.js",
+    "examples/*/plugin.json",
+    "material-library-consumer.js",
+    "material-library-consumer.d.ts",
+    "material-library-consumer.md",
+    "desktop.d.ts",
+    "desktop-pack.mjs",
+    "DESKTOP.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./index.d.ts"
+    },
+    "./desktop": {
+      "types": "./desktop.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.0.0",
+    "@codemirror/commands": "^6.0.0",
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/autocomplete": "^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "@codemirror/state": {
+      "optional": true
+    },
+    "@codemirror/view": {
+      "optional": true
+    },
+    "@codemirror/commands": {
+      "optional": true
+    },
+    "@codemirror/language": {
+      "optional": true
+    },
+    "@codemirror/autocomplete": {
+      "optional": true
+    }
+  }
 }

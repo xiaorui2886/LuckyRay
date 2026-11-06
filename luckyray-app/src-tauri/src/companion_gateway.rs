@@ -7,6 +7,8 @@
 
 mod scopes;
 mod diagnostics;
+mod request_budget;
+use request_budget::{AuthenticatedRequestBudget, RequestClass};
 pub(crate) mod endpoint_recovery;
 pub(crate) use endpoint_recovery::BindFailure;
 #[cfg(test)]
@@ -952,51 +954,6 @@ impl FailureAuditBudget {
             return FailureAuditDecision::Summary;
         }
         FailureAuditDecision::Suppress
-    }
-}
-
-struct AuthenticatedRequestWindow {
-    started_at: Instant,
-    accepted: usize,
-}
-
-#[derive(Default)]
-struct AuthenticatedRequestBudget {
-    devices: HashMap<String, AuthenticatedRequestWindow>,
-}
-
-impl AuthenticatedRequestBudget {
-    fn admit(&mut self, policy: &GatewayPolicy, device_id: &str) -> Result<(), GatewayError> {
-        self.admit_limit(policy,device_id,policy.authenticated_request_limit)
-    }
-
-    fn admit_limit(&mut self, policy: &GatewayPolicy, device_id: &str, limit: usize) -> Result<(), GatewayError> {
-        let now = Instant::now();
-        let window =
-            self.devices
-                .entry(device_id.to_owned())
-                .or_insert(AuthenticatedRequestWindow {
-                    started_at: now,
-                    accepted: 0,
-                });
-        if now.duration_since(window.started_at) >= policy.authenticated_request_window {
-            window.started_at = now;
-            window.accepted = 0;
-        }
-        if window.accepted >= limit {
-            diagnostics::rate_limited(policy.authenticated_request_window.saturating_sub(now.duration_since(window.started_at)));
-            return Err(GatewayError::new(
-                "AUTH_RATE_LIMITED",
-                "Authenticated Companion requests are temporarily rate limited",
-            ));
-        }
-        window.accepted += 1;
-        Ok(())
-    }
-
-    fn remove(&mut self, device_id: &str) {
-        self.devices.remove(device_id);
-        self.devices.remove(&format!("content:{device_id}"));
     }
 }
 
@@ -2915,7 +2872,9 @@ impl CompanionGateway {
             self.record_security_failure("authentication-failed", None, error.code)?;
             return Err(error);
         };
-        match self.verify_credential_for_content(presented, content::is_content_route(&request.path)) {
+        match self.verify_credential_for_class(presented, RequestClass::classify(
+            &request.method, &request.path, content::is_content_route(&request.path),
+        )) {
             Ok(device) => Ok(device),
             Err(error) => {
                 let device_id = presented
@@ -2972,10 +2931,10 @@ impl CompanionGateway {
     }
 
     fn verify_credential(&self, presented: &str) -> Result<PairedDevice, GatewayError> {
-        self.verify_credential_for_content(presented,false)
+        self.verify_credential_for_class(presented, RequestClass::Ordinary)
     }
 
-    fn verify_credential_for_content(&self, presented: &str, content: bool) -> Result<PairedDevice, GatewayError> {
+    fn verify_credential_for_class(&self, presented: &str, class: RequestClass) -> Result<PairedDevice, GatewayError> {
         let identity = self.identity()?;
         let (device_id, secret) = presented.split_once('.').ok_or_else(|| {
             GatewayError::new("PAIRING_REQUIRED", "Device authentication is invalid")
@@ -3032,10 +2991,13 @@ impl CompanionGateway {
             ));
         }
         {
-            let mut budget=self.authenticated_requests.lock().expect("companion authenticated request mutex");
-            if content {
-                budget.admit_limit(&self.policy,&format!("content:{device_id}"),self.policy.authenticated_request_limit.saturating_mul(20))?;
-            } else {budget.admit(&self.policy,device_id)?;}
+            let mut budget = self.authenticated_requests.lock().expect("companion authenticated request mutex");
+            budget.admit(device_id, self.policy.authenticated_request_limit,
+                self.policy.authenticated_request_window, class).map_err(|retry_after| {
+                diagnostics::rate_limited(retry_after);
+                GatewayError::new("AUTH_RATE_LIMITED",
+                    "Authenticated Companion requests are temporarily rate limited")
+            })?;
         }
         let authenticated_at = chrono::Utc::now().to_rfc3339();
         connection

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { invoke } from "@tauri-apps/api/core";
 import { confirm as hostConfirm, save } from "@tauri-apps/plugin-dialog";
 import { extensionPackages, parseLocalPackage, ExtensionError, THEME_TOKEN_KEYS, type InstalledPackage, type ScriptContribution, type ScriptResource } from "../../core/extensions/packages";
-import { PluginRunError, domainErrorCode, runPlugin, type PluginProgress, type PluginRunResult, type PluginScope, type PluginUi } from "../../core/extensions/runtime";
+import { PluginRunError, domainErrorCode, runPlugin, selectCurrentPluginAi, type PluginAiSelection, type PluginProgress, type PluginRunResult, type PluginScope, type PluginUi } from "../../core/extensions/runtime";
 import { listLegacyFilteredMaterialAssets, listLegacyMaterialAssets } from "../../core/services/materials";
 import { ensureActiveKnowledgeUiSource, knowledgeDocumentNoteId, listKnowledgeDocuments, searchKnowledgeDocuments } from "../../core/services/knowledge";
 import { readActiveKnowledgeWriteSource } from "../../core/services/knowledgeSource";
@@ -16,6 +16,9 @@ import { pluginPagePath } from "../../app/shellNav";
 import "./scriptPlugins.css";
 import { CommunityDrawer, CommunityIcon, CommunityState, communityMatchesStatus, type CommunityStatusFilter } from "./CommunityPresentation";
 import { COMMUNITY_UI_MESSAGES } from "./communityMessages";
+import { materialLibrarySession } from "../../core/services/materialLibraryContext";
+import { cancelPluginEventSubscription, pluginEventSubscriptions, type PluginEventKind, type PluginEventStatus } from "../../core/extensions/pluginEventPanel";
+import { confirmPublisher } from "./publisherApproval";
 
 const COPY = defineMessages({ ...EXT_PACKAGE_MESSAGES, ...SCRIPT_PLUGIN_MESSAGES });
 type Translate = (key: PluginCopyKey, params?: Readonly<Record<string, string | number>>) => string;
@@ -25,10 +28,10 @@ function useCopy(): { t: Translate } {
 }
 export function usePluginCopy(): { t: Translate } { return useCopy(); }
 
-export function useScriptPackages() {
+export function useScriptPackages(includeDesktop = false) {
   const [packages, setPackages] = useState(() => extensionPackages.snapshot().packages);
   useEffect(() => extensionPackages.subscribe(() => setPackages(extensionPackages.snapshot().packages)), []);
-  return packages.filter(p => p.package.manifest.type === "script");
+  return packages.filter(p => p.package.manifest.type === "script" || (includeDesktop && p.package.manifest.type === "desktop"));
 }
 export function openPlugin(id: string, contribution: string) { window.dispatchEvent(new CustomEvent("luckyray:plugin-open", { detail: { id, contribution } })); }
 /** A `page` contribution opens as a real main-area page, never as the modal dialog. */
@@ -65,7 +68,7 @@ function methodCopy(t: Translate, method: string) {
 type Notice = { kind: "info" | "error"; text: string };
 
 /** Installed functional plugins: install/update, consent, enable/disable, uninstall, entries. */
-export function ScriptPackagesPanel({ search = "", compact = false, statusFilter = "all", onClearFilters, onBusyChange }: { search?: string; compact?: boolean; statusFilter?: CommunityStatusFilter; onClearFilters?: () => void; onBusyChange?: (busy: boolean) => void }) {
+export function ScriptPackagesPanel({ suppressEmpty = false, search = "", compact = false, statusFilter = "all", onClearFilters, onBusyChange }: { suppressEmpty?: boolean; search?: string; compact?: boolean; statusFilter?: CommunityStatusFilter; onClearFilters?: () => void; onBusyChange?: (busy: boolean) => void }) {
   const { t } = useCopy();
   const { t: ui } = useMessages(COMMUNITY_UI_MESSAGES);
   const packages = useScriptPackages();
@@ -109,10 +112,12 @@ export function ScriptPackagesPanel({ search = "", compact = false, statusFilter
   const install = (file: File) => act("install", async () => {
     const text = await file.text();
     const parsed = parseLocalPackage(text);
-    if (parsed.manifest.type !== "script") throw new ExtensionError("plugin-not-script");
+    if (parsed.manifest.type !== "script" && parsed.manifest.type !== "desktop") throw new ExtensionError("plugin-not-script");
     const latest = await extensionPackages.refresh();
-    const existing = latest.packages.some(p => p.package.manifest.id === parsed.manifest.id);
-    const next = existing ? await extensionPackages.update(text, latest.revision) : await extensionPackages.install(text, latest.revision);
+    const existing = latest.packages.find(p => p.package.manifest.id === parsed.manifest.id);
+    const approved = await confirmPublisher(existing, parsed, t);
+    if (approved === null) return;
+    const next = existing ? await extensionPackages.update(text, latest.revision, approved) : await extensionPackages.install(text, latest.revision, approved);
     const name = next.packages.find(p => p.package.manifest.id === parsed.manifest.id)?.package.manifest.name ?? parsed.manifest.name;
     return { kind: "info", text: t(existing ? "pack.updated" : "pack.installed", { name }) };
   });
@@ -121,7 +126,9 @@ export function ScriptPackagesPanel({ search = "", compact = false, statusFilter
     const parsed = parseLocalPackage(text);
     if (parsed.manifest.id !== view.id || parsed.manifest.type !== "script") return { kind: "error", text: t("pack.error.mismatch", { name: view.name }) };
     const latest = await current(view);
-    await extensionPackages.update(text, latest.revision);
+    const approved = await confirmPublisher(latest.packages.find(p => p.package.manifest.id === view.id), parsed, t);
+    if (approved === null) return;
+    await extensionPackages.update(text, latest.revision, approved);
     return { kind: "info", text: t("pack.updated", { name: parsed.manifest.name }) };
   });
   const saveGrants = (view: PluginView) => act(`grant:${view.id}`, async () => {
@@ -152,8 +159,7 @@ export function ScriptPackagesPanel({ search = "", compact = false, statusFilter
 
   return <section className="community-section plugin-section" aria-busy={busy !== null}>
     <div className="community-section-head plugin-section-head">
-      <div><h2>{ui("community.localPlugins")}</h2><p>{ui("community.pluginDesc")}</p></div>
-      {compact && load === "ready" && <span className="community-count-label">{ui("community.count", { count: views.length })}</span>}
+      <h2>{ui("community.localPlugins")}</h2>
       {!compact && <label className={`lr-cap-run plugin-file-button${busy === "install" ? " is-busy" : ""}`}>
         {t("plugin.install")}
         <input type="file" accept=".json,.lrpack.json,application/json" disabled={busy !== null} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void install(file); }} />
@@ -162,7 +168,7 @@ export function ScriptPackagesPanel({ search = "", compact = false, statusFilter
     {notice && <div className={`community-message plugin-notice${notice.kind === "error" ? " error" : ""}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</div>}
     {load === "error" && <CommunityState kind="error" message={`${t("plugin.panel.loadFailed")}${packages.length > 0 ? ` ${t("plugin.panel.stale")}` : ""}`} action={<button className="lr-cap-run secondary" onClick={() => void loadPackages()}>{t("plugin.panel.retry")}</button>} />}
     {load === "loading" && allViews.length === 0 && <CommunityState kind="loading" message={t("plugin.panel.loading")} />}
-    {load === "ready" && views.length === 0 && <CommunityState kind={allViews.length ? "no-match" : "empty"} message={allViews.length ? undefined : t("plugin.panel.empty")} action={allViews.length && onClearFilters ? <button className="lr-cap-run secondary" onClick={onClearFilters}>{ui("community.clear")}</button> : undefined} />}
+    {!suppressEmpty && load === "ready" && views.length === 0 && <CommunityState kind={allViews.length ? "no-match" : "empty"} message={allViews.length ? undefined : t("plugin.panel.empty")} action={allViews.length && onClearFilters ? <button className="lr-cap-run secondary" onClick={onClearFilters}>{ui("community.clear")}</button> : undefined} />}
     <div className="community-card-list community-plugin-grid">
       {views.map(view => <PluginCard key={view.id} view={view} t={t} busy={busy}
         optional={optionalChoice[view.id] ?? view.granted.filter(p => view.optional.includes(p))}
@@ -195,8 +201,8 @@ function PluginCard({ view, t, busy, optional, onToggle, onDetail }: PluginCardP
   const canEnable = view.compatible && view.missingRequired.length === 0 && !grantsDirty;
   return <article className={`community-card plugin-card is-${view.status}`} aria-busy={busy?.endsWith(`:${view.id}`) ?? false}>
     <div className={`community-card-top${view.id === "example.page-desk" ? " is-page-extension" : ""}`}><CommunityIcon name={view.id === "example.material-manifest" ? "checklist" : "plugin"} tile /><div className="community-card-heading"><h3 className="community-card-title">{view.name}</h3><span className="plugin-version">v{view.version}</span></div><span className={`plugin-status plugin-status-${view.status}`}><i aria-hidden="true" />{view.status === "disabled" ? ui("community.disabled") : t(pluginStatusKey(view))}</span></div>
-    <p className="community-card-desc">{ui(view.id === "example.material-manifest" ? "community.materialManifest" : view.id === "example.page-desk" ? "community.pageDesk" : "community.pluginFallback")}</p>
-    <div className="community-card-meta">{view.id === "example.material-manifest" && <><span>{ui("community.tagMaterials")}</span><span>{ui("community.tagNotes")}</span></>}{view.id === "example.page-desk" && <><span>{ui("community.tagPage")}</span><span>{ui("community.tagData")}</span></>}<small>{t("plugin.entry.header", { count: view.contributions.length })}</small></div>
+    {view.id === "example.material-manifest" && <p className="community-card-desc">{ui("community.materialManifestShort")}</p>}
+    {view.id === "example.page-desk" && <p className="community-card-desc">{ui("community.pageDeskShort")}</p>}
     {!view.compatible && <p className="ext-package-warn">{t("pack.incompatible", { host: view.minHostVersion })}</p>}
     <div className="community-card-actions plugin-card-actions"><button className={`lr-cap-run${view.enabled ? " secondary" : ""}`} disabled={locked || (!view.enabled && !canEnable)} onClick={onToggle}>{t(view.enabled ? "plugin.disable" : "plugin.enable")}</button><button className="community-text-button" disabled={locked} onClick={onDetail}>{t("plugin.details")}<CommunityIcon name="arrow" /></button></div>
     {view.enabled && view.contributions.length > 0 && <div className="plugin-entries plugin-card-entries">{view.contributions.slice(0, 2).map(entry => <button key={entry.id} className="community-text-button plugin-entry" disabled={locked} onClick={() => entry.kind === "page" ? openPluginPage(view.id, entry.id) : openPlugin(view.id, entry.id)}>{entry.label}<CommunityIcon name="arrow" /></button>)}{view.contributions.length > 2 && <button className="community-text-button" disabled={locked} onClick={onDetail}>{ui("community.entries")} · {view.contributions.length}</button>}</div>}
@@ -220,7 +226,7 @@ function PluginDetails({ view, t, busy, optional, onOptional, onSaveGrants, onRe
       <button className="lr-cap-run secondary danger" disabled={locked} onClick={onUninstall}>{t("plugin.uninstall")}</button>
     </>}>
       {notice && <div className={`community-drawer-message${notice.kind === "error" ? " error" : ""}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</div>}
-      <p className="community-drawer-intro">{ui("community.pluginFallback")}</p>
+      <p className="community-drawer-intro">{ui(view.id === "example.material-manifest" ? "community.materialManifest" : view.id === "example.page-desk" ? "community.pageDesk" : "community.pluginFallback")}</p>
       <div className="community-detail-status"><span className={`plugin-status plugin-status-${view.status}`}>{t(pluginStatusKey(view))}</span><span>v{view.version}</span></div>
       {!view.compatible && <div className="ext-package-warn">{t("pack.incompatible", { host: view.minHostVersion })}</div>}
       {view.compatible && view.status === "needs-consent" && view.granted.length > 0 && <div className="ext-package-note">{t("plugin.consentCleared")}</div>}
@@ -230,6 +236,7 @@ function PluginDetails({ view, t, busy, optional, onOptional, onSaveGrants, onRe
         {view.optional.map(permission => <label key={permission} className="plugin-permission"><input type="checkbox" checked={optional.includes(permission)} onChange={e => onOptional(e.target.checked ? [...optional, permission] : optional.filter(p => p !== permission))} /><span className="plugin-permission-text"><span className="plugin-permission-badge optional">{t("plugin.perm.optional")}</span>{permissionCopy(t, permission)}</span></label>)}
       </fieldset>}
       {view.compatible && view.granted.length > 0 && <button className="community-text-button" disabled={locked} onClick={onRevoke}>{t("plugin.grant.revokeAll")}</button>}
+      {view.enabled && view.granted.includes("events.subscribe") && <PluginEventPanel id={view.id} t={t} />}
       <section className="community-detail-section"><h3>{ui("community.entries")}</h3>{!view.enabled && <p className="community-muted">{ui("community.afterEnable")}</p>}<div className="community-entry-list">{view.contributions.map(entry => <div key={entry.id} className="community-entry-row"><span><strong>{entry.label}</strong><small>{kindCopy(t, entry.kind)}</small></span><button className="lr-cap-run secondary plugin-entry" disabled={locked || !view.enabled} onClick={() => openEntry(entry)}>{ui("community.open")}<CommunityIcon name="arrow" /></button>{view.enabled && entry.kind === "page" && <SidebarPrefToggle view={view} pageId={entry.id} label={entry.label} />}</div>)}</div></section>
       <details className="community-detail-technical"><summary>{ui("community.moreInfo")}</summary><dl className="community-info plugin-detail">
         <dt>{t("pack.detail.id")}</dt><dd><code>{view.id}</code></dd>
@@ -241,6 +248,44 @@ function PluginDetails({ view, t, busy, optional, onOptional, onSaveGrants, onRe
         <dt>{t("plugin.perm.optional")}</dt><dd><code>{view.optional.join(", ") || t("pack.detail.none")}</code></dd>
       </dl></details>
   </CommunityDrawer>;
+}
+
+function PluginEventPanel({id,t}:{id:string;t:Translate}) {
+  const [kinds,setKinds] = useState<PluginEventKind[]>([]);
+  const [recent,setRecent] = useState<PluginEventStatus|null>(null);
+  const [loading,setLoading] = useState(false);
+  const [error,setError] = useState<string|null>(null);
+  useEffect(() => {
+    let live=true, sequence=0;
+    const refresh = () => {
+      const request=++sequence;
+      void pluginEventSubscriptions(id).then(value => { if(live && request===sequence) {setKinds(value);setError(null);} })
+        .catch(err => { if(live && request===sequence) setError(pluginErrorCode(err)); });
+    };
+    const updateSubscriptions = (event:Event) => { if ((event as CustomEvent<{id:string}>).detail?.id === id) refresh(); };
+    const updateStatus = (event:Event) => {
+      const detail = (event as CustomEvent<{id:string;status:PluginEventStatus|null}>).detail;
+      if (detail?.id === id) setRecent(detail.status ?? null);
+    };
+    window.addEventListener("luckyray:plugin-subscriptions-changed",updateSubscriptions);
+    window.addEventListener("luckyray:plugin-event-status",updateStatus);
+    refresh();
+    window.dispatchEvent(new CustomEvent("luckyray:plugin-event-status-request",{detail:{id}}));
+    return () => {live=false;window.removeEventListener("luckyray:plugin-subscriptions-changed",updateSubscriptions);window.removeEventListener("luckyray:plugin-event-status",updateStatus);};
+  },[id]);
+  const cancel = async (kind:PluginEventKind) => {
+    setLoading(true);setError(null);
+    try { await cancelPluginEventSubscription(id,kind); }
+    catch(err) {setError(pluginErrorCode(err));}
+    finally {setLoading(false);}
+  };
+  return <section className="plugin-event-panel" aria-label={t("plugin.events.activeTitle")}>
+    <h4>{t("plugin.events.activeTitle")}</h4>
+    {kinds.length === 0 ? <p className="community-muted">{t("plugin.events.none")}</p> : <ul className="plugin-event-list">{kinds.map(kind => <li key={kind}><span>{t(kind === "knowledge.saved" ? "plugin.events.noteType" : "plugin.events.materialType")}</span><button className="lr-cap-run secondary" disabled={loading} onClick={() => void cancel(kind)}>{t("plugin.events.cancel")}</button></li>)}</ul>}
+    {recent && <div className="plugin-event-result" aria-live="polite"><strong>{t(recent.state === "running" ? "plugin.events.processing" : recent.state === "done" ? "plugin.events.result" : "plugin.events.failed")}</strong>{recent.ui && <><span>{recent.ui.title}</span>{recent.ui.text && <pre className="plugin-output-text">{recent.ui.text}</pre>}</>}</div>}
+    {error && <p className="ext-package-warn" role="alert">{t("plugin.events.unavailable")}</p>}
+    {(error || recent?.error) && <details className="plugin-logs"><summary>{t("plugin.dialog.logs")}</summary><pre>{error || recent?.error}</pre></details>}
+  </section>;
 }
 
 type Selection = { id: string; contribution: string; digest: string | null; epoch: number | null };
@@ -278,9 +323,9 @@ export function PluginEntryMenu() {
   const close = () => setSelected(null);
   if (!enabled.length && !selected) return null;
   return <>
-    {enabled.length > 0 && <details className="plugin-entry-menu"><summary>{t("plugin.menu.label")}</summary>
+    {enabled.length > 0 && <details className="plugin-entry-menu"><summary><CommunityIcon name="plugin" />{t("plugin.menu.label")}</summary>
       {enabled.map(p => <div className="plugin-entry-group" key={p.package.manifest.id}><span className="plugin-entry-group-name">{p.package.manifest.name}</span>
-        {(p.package.resource as ScriptResource).contributions.map(c => <button key={c.id} onClick={() => c.kind === "page" ? openPluginPage(p.package.manifest.id, c.id) : openPlugin(p.package.manifest.id, c.id)}>{c.label}<small>{kindCopy(t, c.kind)}</small></button>)}
+        {(p.package.resource as ScriptResource).contributions.map(c => <button key={c.id} title={kindCopy(t, c.kind)} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); c.kind === "page" ? openPluginPage(p.package.manifest.id, c.id) : openPlugin(p.package.manifest.id, c.id); }}><CommunityIcon name={c.kind === "page" ? "note" : "plugin"} /><span>{c.label}</span><CommunityIcon name="arrow" /></button>)}
       </div>)}
     </details>}
     {selected && <div className="plugin-dialog-backdrop" onMouseDown={e => { if (e.target === e.currentTarget && !busyRef.current) close(); }}>
@@ -329,6 +374,14 @@ export function PluginInvocation({ pkg, contribution, close, onBusyChange, t, va
   const needMaterials = grants.some(p => p.startsWith("materials."));
   const needKnowledge = grants.some(p => p.startsWith("knowledge."));
   const needCanvas = grants.some(p => p.startsWith("canvas."));
+  const needAi = grants.includes("ai.generate");
+  const [aiSelection, setAiSelection] = useState<PluginAiSelection | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const needEvents = grants.includes("events.subscribe");
+  const [eventKinds, setEventKinds] = useState<Array<"knowledge.saved" | "materials.imported">>([]);
+  const [eventLibrary, setEventLibrary] = useState<{id:string;name:string}|null>(null);
+  const [eventLoading, setEventLoading] = useState(false);
+  const [eventAi, setEventAi] = useState(false);
   const [materials, setMaterials] = useState<PickState>(PICK_IDLE);
   const [notes, setNotes] = useState<PickState>(PICK_IDLE);
   const [canvases, setCanvases] = useState<{ state: PickState; all: PickItem[] }>({ state: PICK_IDLE, all: [] });
@@ -394,7 +447,7 @@ export function PluginInvocation({ pkg, contribution, close, onBusyChange, t, va
   }, [loadMaterials, loadNotes, log, needCanvas, remember, t]);
 
   const scope: RunScope = { materialIds, documents, canvasIds, allowCreate, writes };
-  const signature = scopeSignature(scope);
+  const signature = `${scopeSignature(scope)}:${JSON.stringify([aiSelection?.fingerprint ?? "",eventKinds,eventLibrary?.id ?? null,eventAi])}`;
   const stale = lastSignature !== null && lastSignature !== signature;
   const summaryParts = () => {
     const parts: string[] = [];
@@ -455,7 +508,7 @@ export function PluginInvocation({ pkg, contribution, close, onBusyChange, t, va
         if (!initial) setUi(null);
         setProgress(EMPTY_PROGRESS); setRound("running"); roundStarted = true;
       }
-      const result: PluginRunResult = await runPlugin(pkg.package.manifest.id, { materialIds: [...runScope.materialIds], canvasIds: [...runScope.canvasIds], knowledge, writes: allowWrites, exportPath, theme }, { contribution: contribution.id, action, fields }, abort.signal, log, themeOnly ? undefined : latest => { if (current()) setProgress(latest); });
+      const result: PluginRunResult = await runPlugin(pkg.package.manifest.id, { materialIds: [...runScope.materialIds], canvasIds: [...runScope.canvasIds], knowledge, writes: allowWrites, exportPath, theme, aiSelection: themeOnly ? null : aiSelection, eventsAllowed: themeOnly ? [] : eventKinds, eventMaterialLibraryId: themeOnly ? null : eventLibrary?.id ?? null, eventAllowAi: !themeOnly && !!aiSelection && eventKinds.length > 0 && eventAi }, { contribution: contribution.id, action, fields }, abort.signal, log, themeOnly ? undefined : latest => { if (current()) setProgress(latest); });
       if (abort.signal.aborted || !current()) return;
       setUi(result.ui);
       if (themeOnly) { setFields(current => mergeFieldValues(current, result.ui.fields, edited.current)); return; }
@@ -530,6 +583,31 @@ export function PluginInvocation({ pkg, contribution, close, onBusyChange, t, va
 
   return <>
     {variant === "dialog" && <header className="plugin-dialog-head"><div><h2>{pkg.package.manifest.name}</h2><p>{contribution.label} · {kindCopy(t, contribution.kind)}</p></div><button className="lr-cap-run secondary" onClick={requestClose}>{t("plugin.close")}</button></header>}
+    {needAi && <section className="plugin-scope" aria-label={t("plugin.ai.title")}>
+      <label className="plugin-toggle"><input type="checkbox" checked={!!aiSelection} disabled={busy || aiLoading} onChange={event => {
+        if (!event.target.checked) { setAiSelection(null); setEventAi(false); return; }
+        setAiLoading(true);
+        void selectCurrentPluginAi().then(value => { if (live.current) setAiSelection(value); }).catch(error => { if (live.current) setNotice({ kind: "error", text: errorText(t, error) }); }).finally(() => { if (live.current) setAiLoading(false); });
+      }} />{t("plugin.ai.allow")}</label>
+      {aiSelection && <p className="plugin-scope-hint">{t("plugin.ai.selected", { provider: aiSelection.provider, model: aiSelection.model })}</p>}
+      <p className="plugin-scope-hint">{t("plugin.ai.hint")}</p>
+    </section>}
+    {needEvents && <section className="plugin-scope" aria-label={t("plugin.events.title")}>
+      {grants.includes("knowledge.read") && <label className="plugin-toggle"><input type="checkbox" checked={eventKinds.includes("knowledge.saved")} disabled={busy || documents.length === 0} onChange={e => setEventKinds(old => e.target.checked ? [...old.filter(k => k !== "knowledge.saved"), "knowledge.saved"] : old.filter(k => k !== "knowledge.saved"))} />{t("plugin.events.notes")}</label>}
+      {grants.includes("materials.read") && <label className="plugin-toggle"><input type="checkbox" checked={eventKinds.includes("materials.imported")} disabled={busy || eventLoading} onChange={e => {
+        if (!e.target.checked) { setEventKinds(old => old.filter(k => k !== "materials.imported")); setEventLibrary(null); return; }
+        setEventLoading(true);
+        void materialLibrarySession.initialize().then(registry => {
+          const id = materialLibrarySession.getSnapshot().libraryId;
+          const library = registry.libraries.find(item => item.id === id && item.state === "ready");
+          if (!library) throw Error("plugin-event-library-unavailable");
+          if (live.current) { setEventLibrary({id:library.id,name:library.name}); setEventKinds(old => [...old.filter(k => k !== "materials.imported"), "materials.imported"]); }
+        }).catch(error => { if (live.current) setNotice({kind:"error",text:errorText(t,error)}); }).finally(() => { if (live.current) setEventLoading(false); });
+      }} />{t("plugin.events.materials")}</label>}
+      {eventLibrary && <p className="plugin-scope-hint">{t("plugin.events.library",{name:eventLibrary.name})}</p>}
+      {aiSelection && eventKinds.length > 0 && <label className="plugin-toggle"><input type="checkbox" checked={eventAi} disabled={busy} onChange={event => setEventAi(event.target.checked)} />{t("plugin.events.allowAi")}</label>}
+      <p className="plugin-scope-hint">{t("plugin.events.hint")}</p>
+    </section>}
     {!isSettings && <section className="plugin-scope" aria-label={t("plugin.dialog.scopeTitle")}>
       <div className="plugin-scope-summary">
         <strong>{summaryParts()}</strong>
@@ -551,13 +629,17 @@ export function PluginInvocation({ pkg, contribution, close, onBusyChange, t, va
       <button className="lr-cap-run" disabled={busy} onClick={() => void execute("run")}>{t("plugin.run")}</button>
       {busy && <><span className="plugin-running" aria-live="polite">{t("plugin.dialog.running")}</span><button className="lr-cap-run secondary" onClick={stop}>{t("plugin.stop")}</button></>}
     </div>}
-    {isSettings && busy && <div className="plugin-run-bar"><span className="plugin-running" aria-live="polite">{t("plugin.dialog.running")}</span><button className="lr-cap-run secondary" onClick={stop}>{t("plugin.stop")}</button></div>}
+    {isSettings && (stale || busy) && <div className="plugin-run-bar">
+      {stale && <button className="lr-cap-run secondary" disabled={busy} onClick={() => void execute("run", false, true)}>{t("plugin.dialog.refreshSelection")}</button>}
+      {busy && <><span className="plugin-running" aria-live="polite">{t("plugin.dialog.running")}</span><button className="lr-cap-run secondary" onClick={stop}>{t("plugin.stop")}</button></>}
+    </div>}
     {notice && <div className={`community-message plugin-notice${notice.kind === "error" ? " error" : ""}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</div>}
+    {grants.includes("events.subscribe") && <PluginEventPanel id={pkg.package.manifest.id} t={t} />}
     {ui && <section className={`plugin-output${stale ? " is-stale" : ""}`} aria-label={t("plugin.dialog.outputTitle")}>
       {stale && <div className="plugin-stale" role="status">{t("plugin.dialog.stale")}</div>}
       {variant === "dialog" || ui.title !== contribution.label ? <h3>{ui.title}</h3> : null}
       {ui.text && <pre className="plugin-output-text">{ui.text}</pre>}
-      {ui.fields?.map(f => <label key={f.id} className="plugin-field">{f.label}<input value={fields[f.id] ?? ""} maxLength={1000} disabled={busy} onChange={e => { edited.current.add(f.id); setFields(current => ({ ...current, [f.id]: e.target.value })); }} /></label>)}
+      {ui.fields?.map(f => <label key={f.id} className="plugin-field">{f.label}{f.kind === "multiline" ? <textarea value={fields[f.id] ?? ""} maxLength={1000} disabled={busy} onChange={e => { edited.current.add(f.id); setFields(current => ({ ...current, [f.id]: e.target.value })); }} /> : <input value={fields[f.id] ?? ""} maxLength={1000} disabled={busy} onChange={e => { edited.current.add(f.id); setFields(current => ({ ...current, [f.id]: e.target.value })); }} />}</label>)}
       {ui.actions && ui.actions.length > 0 && <div className="plugin-actions">{ui.actions.map(a => <button key={a.id} className="lr-cap-run secondary" disabled={busy || stale} onClick={() => void execute(a.id)}>{a.label}</button>)}</div>}
     </section>}
     {round !== "idle" && (variant === "dialog" || round === "failed" || round === "cancelled" || roundOutcomes.length > 0 || progress.unconfirmed.length > 0 || refusedWrites.length > 0) && <section className={`plugin-round is-${round}`} aria-label={t("plugin.dialog.round.title")} aria-live="polite">

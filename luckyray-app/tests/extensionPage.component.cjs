@@ -34,6 +34,7 @@ const packageWith = (id, name, pages, extra = []) => ({
         import { I18nProvider } from "./src/core/i18n/index";
         import { AppSidebar } from "./src/app/AppSidebar";
         import { PluginPageHost } from "./src/features/community/PluginPageHost";
+        import { PluginEntryMenu } from "./src/features/community/ScriptPlugins";
         import { extensionPackages } from "./src/core/extensions/packages";
         import { writeSidebarPref, collectInstalledPageKeys, pruneSidebarPrefs } from "./src/features/community/pluginPages";
         import { applyGlobalSettings, readSavedSettings } from "./src/features/settings/useSettings";
@@ -93,6 +94,7 @@ const packageWith = (id, name, pages, extra = []) => ({
                 activePluginPagePath={route === "plugins" ? path : undefined}
                 onOpenPluginPage={(p) => { window.location.hash = "#" + p; }} />
               <main>{route === "plugins" ? <PluginPageHost path={path} /> : <div data-builtin-route={route}>内置页 {route}</div>}</main>
+              <PluginEntryMenu />
             </div>
           </I18nProvider>;
         }
@@ -321,6 +323,16 @@ const packageWith = (id, name, pages, extra = []) => ({
       await page.locator(".plugin-page .plugin-field input").waitFor({ timeout: 8000 });
       await page.waitForFunction(() => document.querySelector(".plugin-field input")?.value === "旧值", null, { timeout: 8000 });
       assert.equal(await page.locator(".plugin-page .plugin-field input").inputValue(), "旧值", "alpha page fresh from its own plugin after the rebuild");
+    });
+    await step("compact entry menu closes on page selection, then the page returns to Community", async () => {
+      await page.locator(".plugin-entry-menu summary").click();
+      const menu=page.locator(".plugin-entry-menu");
+      assert.equal(await menu.evaluate(e=>e.getBoundingClientRect().width<=288),true);
+      await menu.getByRole("button",{name:"甲·统计",exact:true}).click();
+      await page.locator(".plugin-page-head h1").getByText("甲·统计",{exact:true}).waitFor();
+      assert.equal(await menu.getAttribute("open"),null);
+      await page.getByRole("button",{name:"返回社区",exact:true}).click();
+      await page.waitForFunction(()=>location.hash==="#community");
     });
     results.push({ step: "summary", ok: true });
   } finally {

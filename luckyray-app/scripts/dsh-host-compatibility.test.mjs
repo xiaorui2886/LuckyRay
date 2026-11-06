@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { HOST_INTERFACES, compatibilityDeclaration, validateCompatibility } from "./dsh-host-compatibility.mjs";
 import { hostContract } from "./prepare-dsh-production-candidate.mjs";
 import { ORIGIN, sha256, rawPublicKey, verifyEnvelope } from "./dsh-production-maintenance.mjs";
+import { qualifiedNodeToolset } from "./dsh-supply-chain.mjs";
 import { DSH_HOST_PROTOCOL, createDshHostProtocol, signCanonicalHostFrame } from "../src-tauri/dsh-host/luckyray-dsh-host.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,7 +24,7 @@ function fixture(schema = 2) {
     nodeSha256: qualification.authority.nodeRuntime.nodeExeSha256, entrySha256: qualification.dependencyAudit.entryPoint.fileSha256,
     artifactUrl: `${ORIGIN}descriptors/${sha256(descriptor)}.json`, artifactSha256: sha256(descriptor), artifactBytes: descriptor.length,
     closureSha256: "a".repeat(64), closureFileCount: qualification.authority.dependencyClosure.releaseLayout.fileCount,
-    dataCompatibility: "no-migration", assembly: { schema: 2, kind: "official-npm-qualified-win-x64-v2", toolset: "node22.19.0-pnpm11.7.0-policy1" },
+    dataCompatibility: "no-migration", assembly: { schema: 2, kind: "official-npm-qualified-win-x64-v2", toolset: qualifiedNodeToolset(qualification.authority.nodeRuntime).name },
     ...(schema === 2 ? { compatibility: compatibilityDeclaration() } : {}) };
   const pair = generateKeyPairSync("ed25519"), key = rawPublicKey(pair.publicKey).toString("base64url");
   const envelopeFor = value => { const payload = Buffer.from(JSON.stringify(value));
@@ -79,7 +80,7 @@ test("same-version old host rejects the new engine while both implemented capabi
   }
   assert.throws(() => verifyEnvelope(envelope, f.key, descriptor,
     { ...contract, hostVersion: "1.9.8", interfaces: legacy198 }, 500), /compatibility-contract-invalid/u);
-  assert.equal(verifyEnvelope(envelope, f.key, descriptor, contract, 500).version, "0.2.1-rc.2");
+  assert.equal(verifyEnvelope(envelope, f.key, descriptor, contract, 500).version, qualification.authority.runtimePackage.version);
   const carrier = await readFile(join(root, "src-tauri/dsh-host/luckyray-dsh-authenticated-webserver/index.mjs"), "utf8");
   const native = await readFile(join(root, "src-tauri/src/dsh_host.rs"), "utf8");
   const gate = await readFile(join(root, "src-tauri/src/dsh_engine_update/compatibility.rs"), "utf8");

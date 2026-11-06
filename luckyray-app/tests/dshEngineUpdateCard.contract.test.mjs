@@ -12,10 +12,10 @@ const viteRequire = createRequire(require.resolve("vite"));
 const { build } = viteRequire("esbuild");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-async function render(phase, canInstall = false, locale = "zh-CN", splitLayout = false) {
+async function render(phase, canInstall = false, locale = "zh-CN", splitLayout = false, statusOverrides = {}) {
   const status = { phase, currentVersion: "0.1.7-rc.2", candidateVersion: canInstall ? "0.2.0-rc.2" : null,
     upstreamVersion: "0.2.0-rc.2", sourceClass: "development", channel: "preview", canCheck: true, canInstall,
-    canRecover: false, canVerify: false, canRestart: false, canPrepareExit: false, canCancel: false, workStage: null };
+    canRecover: false, canVerify: false, canRestart: false, canPrepareExit: false, canCancel: false, workStage: null, ...statusOverrides };
   const bundle = await build({ entryPoints: [resolve(root, "src/features/settings/DshEngineUpdateCard.tsx")],
     bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic", external: ["react", "react/jsx-runtime"],
     loader: { ".css": "empty" }, plugins: [{ name: "explicit-native-fixtures", setup(builder) {
@@ -65,4 +65,16 @@ test("split presentation exposes the same admitted actions while information is 
   const denied = await render("untrusted", false, "zh-CN", true);
   assert.doesNotMatch(denied, /下载并验证升级/);
   assert.match(denied, /签名、格式或有效期/);
+});
+
+test("sealed recovery health result renders in both locales without authorizing another update", async () => {
+  for (const locale of ["zh-CN", "en-US"]) {
+    const html = await render("sealed_healthy", false, locale, false, {
+      currentVersion: "0.2.2-rc.1", canCheck: false,
+    });
+    assert.match(html, /0\.2\.2-rc\.1/);
+    assert.match(html, locale === "zh-CN" ? /恢复后的引擎及插件组合已验证.*后续.*单独接续/ : /recovered engine and plugin composition.*separate transition/i);
+    assert.match(html, /<button[^>]*disabled=""/);
+    assert.doesNotMatch(html, /下载并验证升级|完成本机健康检查|撤销未激活的切换|Download and verify update|Verify local engine health/);
+  }
 });

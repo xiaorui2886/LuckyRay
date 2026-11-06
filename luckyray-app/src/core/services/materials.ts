@@ -57,11 +57,11 @@ export async function getMaterialCatalogChange() {
   return requireBridge().getMaterialChangeState();
 }
 
-function requireBridge(libraryId = materialLibrarySession.getSnapshot().libraryId): MaterialCatalogAdapter {
+function requireBridge(libraryId = materialLibrarySession.getSnapshot().libraryId, eventOrigins?: string[]): MaterialCatalogAdapter {
   const bridge = getLuckyRayBridgeSync();
   if (!bridge) throw new Error("LuckyRay bridge is not ready");
   const id = libraryId;
-  return id ? createMaterialLibraryAdapter(bridge as MaterialCatalogAdapter, id) : bridge as MaterialCatalogAdapter;
+  return id ? createMaterialLibraryAdapter(bridge as MaterialCatalogAdapter, id, () => eventOrigins) : bridge as MaterialCatalogAdapter;
 }
 
 function attachmentBridge(vaultId?: string, libraryId = materialLibrarySession.getSnapshot().libraryId) {
@@ -109,8 +109,9 @@ export async function importMaterialAssets(
     managedLibraryDir?: string | null;
     libraryId?: string | null;
   } = {},
+  eventOrigins?: string[],
 ): Promise<MaterialImportResult> {
-  const bridge = requireBridge(options.libraryId === undefined ? materialLibrarySession.getSnapshot().libraryId : options.libraryId);
+  const bridge = requireBridge(options.libraryId === undefined ? materialLibrarySession.getSnapshot().libraryId : options.libraryId, eventOrigins);
   if (!bridge.importAssets) throw new Error("当前环境不支持导入素材");
   return bridge.importAssets({
     folderId: folderId ?? null,
@@ -141,8 +142,8 @@ export async function selectMaterialImportFolder(): Promise<string | null> {
   return bridge.selectImportFolder();
 }
 
-export async function importMaterialFolder(path: string, options?: MaterialFolderImportOptions, libraryId = materialLibrarySession.getSnapshot().libraryId): Promise<MaterialFolderImportResult> {
-  const bridge = requireBridge(libraryId);
+export async function importMaterialFolder(path: string, options?: MaterialFolderImportOptions, libraryId = materialLibrarySession.getSnapshot().libraryId, eventOrigins?: string[]): Promise<MaterialFolderImportResult> {
+  const bridge = requireBridge(libraryId, eventOrigins);
   if (!bridge.importFolder) throw new Error("当前环境不支持导入文件夹");
   return bridge.importFolder(path, options);
 }

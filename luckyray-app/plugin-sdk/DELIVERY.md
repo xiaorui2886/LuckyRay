@@ -1,6 +1,6 @@
 # 独立 SDK 交付与消费者快速验证
 
-本地交付，不公开npm/仓库/Release。工具包1.0.1仅提供类型、CLI、六个普通示例和说明；Script API1由LuckyRay受限worker注入。开发需要Node.js>=18及npm；可选类型检查使用TypeScript5.8（验证过5.8.3）。不需要私有源码、凭据、SDK专属宿主分支或浏览器授权绕过。
+本地候选，不代表已公开 npm/仓库/Release。工具包 1.2.0 候选提供类型、CLI、七个 API 1 示例和说明，另有 API 2 桌面扩展能力；Script API1 由 LuckyRay 受限 worker 注入。开发需要 Node.js>=18 及 npm；可选类型检查使用 TypeScript 5.8。不需要私有源码、凭据或 SDK 专属宿主分支。
 
 ## 收到tarball后，从一个空目录开始
 
@@ -10,7 +10,7 @@
 mkdir sdk-consumer
 cd sdk-consumer
 npm init -y
-npm install --save-dev --ignore-scripts --no-audit --no-fund /path/to/luckyray-plugin-sdk-1.0.1.tgz
+npm install --save-dev --ignore-scripts --no-audit --no-fund /path/to/luckyray-plugin-sdk-1.2.0.tgz
 npx --no-install lr-plugin create ./hello
 npx --no-install lr-plugin check ./hello
 npx --no-install lr-plugin pack ./hello
@@ -29,7 +29,7 @@ npx --no-install lr-plugin check ./reader
 npx --no-install lr-plugin pack ./reader
 ```
 
-其他模板为palette、outline、canvas-export、material-manifest、page-desk。默认hello及六个模板生成项目的strict配置已通过TypeScript5.8.3验证。修改代码时仍须收窄LRJson中的null/primitive/array，不能假定自有settings/cache永远是对象。page-desk提供安全处理及保存回显参考；material-reader只做有限素材读取，知识创建仅由用户明确点击动作发起。
+其他模板为 palette、outline、canvas-export、material-manifest、page-desk、event-ai。修改代码时须收窄 LRJson 中的 null/primitive/array，不能假定自有 settings/cache 永远是对象。page-desk 提供保存回显参考；material-reader 只做有限素材读取，知识创建仅由用户明确点击动作发起。event-ai 需要具备候选 AI/事件能力的宿主及单独的事件自动调用授权；示例使用固定合成提示，不用于默认消耗模型额度。
 
 ## 安装和调用不是同一个权限步骤
 
@@ -47,10 +47,15 @@ cd ../public-sdk
 npm pack --ignore-scripts --json
 ```
 
-导出只含12个公共文件和六例的main.js/plugin.json，不夹带历史lrpack、node_modules、宿主程序、测试driver或用户数据。MANIFEST.json记录formatVersion、sdkVersion、Script API/Consumer版本、sourceCommit、sourceDirty和逐文件SHA256/长度。正式候选须sourceDirty=false及准确Git commit；unknown/null意味着来源不可证明，不应包装成可追溯提交。MANIFEST自身不自哈希，交付单另列整个tarball SHA256。导出工具拒绝已存在目标；再导出已交付包会校验原manifest，不把修改后的文件沿用旧来源。
+导出只含明确列出的公共文件和七例的 main.js/plugin.json，不夹带历史 lrpack、node_modules、宿主程序、测试 driver 或用户数据。MANIFEST.json 记录 formatVersion、sdkVersion、Script API/Desktop API/Consumer 版本、sourceCommit、sourceDirty 和逐文件 SHA256/长度。导出时会将 CLI 的 CRLF shebang 规范为 LF 后再计算哈希，避免 npm 安装时改写首行使已安装文件无法通过清单核对。候选须 sourceDirty=false 及准确 Git commit；unknown/null 意味着来源不可证明，不应包装成可追溯提交。MANIFEST 自身不自哈希，交付单另列整个 tarball SHA256。导出工具拒绝已存在目标；再导出已交付包会严格校验原 manifest，不把修改后的文件沿用旧来源。
 
-不执行npm publish。安装时可忽略scripts，本包无install hook/依赖下载。保留原tarball/hash和MANIFEST；不要用一个已被修改的SDK目录替换冻结制品。
+不执行 npm publish。安装时可忽略 scripts，本包无 install hook/依赖下载。保留原 tarball/hash 和 MANIFEST；不要用一个已被修改的 SDK 目录替换冻结制品。
+
+公开发布前需经独立审查，核实 MIT 许可及包含内容的授权、目标 npm registry 与 `@luckyray` scope 和包名归属、发布者账号的相应权限、版本号与发布渠道。由获授权的维护者在审查后决定发布；不得把本地 pack/install 说成已发布，也不在此申请或索取凭据。
 
 ## 验证边界
 
 本交付的独立消费者回归从本地导出tarball/npm install开始，经已安装CLI创建、check、pack和TypeScript正/负用例；调用验证使用既有实际QuickJS worker的stdio通道，RPC由受控适配器回复。它证明真实worker执行消费者代码及可见拒绝/unknown处理，不证明原生Broker授权、GUI安装、真实Vault/PNG落地或普通浏览器activeTab。这些范围必须分列PASS/NOT_RUN，不重新运行旧采集矩阵来填SDK证据。
+
+
+SDK 1.2.0 / API 2 is a source candidate. Local pack/export is not npm publication or Windows acceptance. Preserve the exact exported MANIFEST and source patch provenance; sourceDirty=true is not a clean release proof.

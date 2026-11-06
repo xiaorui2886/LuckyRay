@@ -110,7 +110,7 @@ export function CanvasCreativeRail({
         aria-hidden={!expanded}
         onPointerEnter={() => { cancelTimer(); if (expanded) setHover(true); }}
       >
-        {(Object.keys(icons) as CreativeAction[]).map((action, index) => action === 'agent' ? null : (
+        {(Object.keys(icons) as CreativeAction[]).map((action, index) => ['agent', 'editImage', 'export'].includes(action) ? null : (
           <button
             key={action}
             type="button"

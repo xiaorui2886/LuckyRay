@@ -14,6 +14,8 @@ const { chromium } = require(
     'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@playwright/mcp/node_modules/playwright',
 );
 const out = process.env.LUCKYRAY_EVIDENCE_DIR || path.join(root, '.tmp-materials-page');
+const videoDragOnly = process.argv.includes('--video-drag-only');
+const scopedFixture = videoDragOnly || process.argv.includes('--marquee-only');
 
 const svg = (color, w, h, label) =>
   'data:image/svg+xml,' + encodeURIComponent(
@@ -57,16 +59,41 @@ const fixtures = {
     import { I18nProvider } from './src/core/i18n/index';
     import MaterialsPage from './src/features/materials/MaterialsPage';
     import { materialStore } from './src/core/services/materialStore';
+    import { moveActiveMaterialExternalDragToFolder } from './src/core/services/materials';
     const fixtures = ${JSON.stringify(fixtures)};
+    if (${JSON.stringify(videoDragOnly)}) {
+      fixtures.video.libraryPath = 'synthetic://drag-video.webm';
+      fixtures.video2.libraryPath = 'synthetic://drag-video-2.webm';
+    }
     let live = [fixtures.video, ...fixtures.images, fixtures.video2];
     let folders = [{ id: 'folder-a', name: 'Project A', parentId: null, children: [] }];
-    window.__setLive = (next) => { live = next; materialStore.invalidate({ reason: 'fixture-change', resync: true }); window.dispatchEvent(new CustomEvent('luckyray:materials-data-changed')); };
+    window.__setLive = (next) => { live = next; materialStore.invalidate({ reason: 'fixture-change', resync: true }); if (!${JSON.stringify(scopedFixture)}) window.dispatchEvent(new CustomEvent('luckyray:materials-data-changed')); };
     window.__renameFolder = (name) => { folders = [{ ...folders[0], name }]; materialStore.invalidate({ reason: 'fixture-folder-rename', resync: true }); window.dispatchEvent(new CustomEvent('luckyray:materials-folders-changed', { detail: { scope: 'materials' } })); };
     window.__toolbarState = null;
     window.addEventListener('luckyray:materials-toolbar-state', event => { window.__toolbarState = event.detail; });
     window.__calls = [];
-    window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+    window.__drags = [];
+    window.__moves = [];
+    window.__moveActiveToFolder = moveActiveMaterialExternalDragToFolder;
+    window.__TAURI_INTERNALS__ = { transformCallback: () => 1, invoke: async (command, args) => {
       window.__calls.push(String(command));
+      if (${JSON.stringify(videoDragOnly)} && command === 'material_video_preview_command') throw new Error('fixture uses browser-decoded video');
+      if (command === 'material_catalog_begin_external_drag') window.__drags.push({ assetIds: args.assetIds, libraryId: args.libraryId });
+      if (${JSON.stringify(scopedFixture)} && command === 'material_library_command') {
+        const action = args.request.action;
+        if (action.op === 'registry') return { activeId: 'fixture-library', legacyId: 'fixture-library', libraries: [{ id: 'fixture-library', name: 'Synthetic library', rootPath: null, storageMode: 'linked', visible: true, state: 'ready', preferences: {}, version: 1 }] };
+        if (action.op === 'list') return structuredClone(live);
+        if (action.op === 'folders') return structuredClone(folders);
+        if (action.op === 'get') return structuredClone(live.filter(asset => action.ids.includes(asset.id)));
+        if (action.op === 'change') return null;
+        if (action.op === 'tasks') return { exports: [], csv: [] };
+        if (action.op === 'move') {
+          window.__moves.push({ id: action.id, folderId: action.folderId, libraryId: args.request.libraryId });
+          live = live.map(asset => asset.id === action.id ? { ...asset, folderId: action.folderId } : asset);
+          return null;
+        }
+        return [];
+      }
       if (command === 'list_material_assets') return structuredClone(live);
       if (command === 'list_favorite_items' || command === 'material_catalog_list_note_attachments') return [];
       if (command === 'favorite_item_counts' || command === 'get_favorite_item_counts') return { material: 0, note: 0 };
@@ -77,6 +104,18 @@ const fixtures = {
       return [];
     } };
     window.fetch = async () => new Response(JSON.stringify({ capabilities: [] }), { headers: { 'Content-Type': 'application/json' } });
+    let clip;
+    const previewClip = () => clip ||= new Promise(resolve => {
+      const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 90;
+      const stream = canvas.captureStream(10), chunks = [];
+      const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+      recorder.ondataavailable = event => chunks.push(event.data);
+      let frame = 0;
+      const timer = setInterval(() => { const ctx = canvas.getContext('2d'); ctx.fillStyle = frame++ % 2 ? '#336699' : '#669933'; ctx.fillRect(0, 0, 160, 90); stream.getVideoTracks()[0].requestFrame?.(); }, 50);
+      recorder.onstop = () => { clearInterval(timer); stream.getTracks().forEach(track => track.stop()); const blob = new Blob(chunks, { type: 'video/webm' }); window.__clipInfo = { size: blob.size, type: blob.type }; resolve(URL.createObjectURL(blob)); };
+      recorder.start();
+      setTimeout(() => recorder.stop(), 400);
+    });
     // The page's store reads window.__LUCKYRAY__ synchronously. A deep async
     // proxy supplies safe defaults for every bridge surface; the materials
     // list is overridden with the live fixture set.
@@ -86,6 +125,7 @@ const fixtures = {
       listFolders: async () => structuredClone(folders),
       getAssetsByIds: async (ids) => structuredClone(live.filter(a => ids.includes(a.id))),
       getMaterialChangeState: async () => null,
+      getAssetPreviewUrl: async () => ${JSON.stringify(videoDragOnly)} ? previewClip() : '',
       listFavoriteItems: async () => [],
       getFavoriteItemCounts: async () => ({ material: 0, note: 0 }),
       addFavoriteItem: async (type, id) => ({ itemType: type, itemId: id, label: id }),
@@ -129,7 +169,32 @@ const fixtures = {
     await page.waitForFunction(() => window.__harnessReady === true, { timeout: 45000 });
     // The store boots through the bridge; cards for our fixture images are
     // the proof the production data path worked.
-    await page.locator('[data-asset-id="img1"]').waitFor({ timeout: 20000 });
+    await page.locator('[data-asset-id="img1"]').waitFor({ timeout: 20000 }).catch(async error => {
+      console.error('FIXTURE-STATE', await page.evaluate(() => ({ calls: window.__calls, snapshot: window.__store.getSnapshot(), body: document.body.innerText.slice(0, 1500) })));
+      await page.screenshot({ path: path.join(out, 'fixture-failure.png') });
+      throw error;
+    });
+
+    if (videoDragOnly) {
+      await require('./materialVideoDrag.browserCases.cjs')(page, out);
+      assert.deepEqual(errors, [], 'no page errors');
+      return;
+    }
+
+    if (process.argv.includes('--marquee-only')) {
+      await require('./materialMarquee.browserCases.cjs')(page, out, fixtures).catch(async error => {
+        console.error('MARQUEE-STATE', await page.evaluate(() => {
+          const el = document.querySelector('.masonry-container');
+          const rect = el?.getBoundingClientRect();
+          return { errors: window.__calls.slice(-10), clientHeight: el?.clientHeight, scrollHeight: el?.scrollHeight,
+            scrollTop: el?.scrollTop, rect: rect?.toJSON(), className: el?.className, overlayHidden: el?.querySelector('.materials-marquee')?.hidden };
+        }));
+        await page.screenshot({ path: path.join(out, 'marquee-failure.png') });
+        throw error;
+      });
+      assert.deepEqual(errors, [], 'no page errors');
+      return;
+    }
 
     // ===== R5: preset switching on the REAL page =====
     const cycleWorkView = () => page.evaluate(() => window.dispatchEvent(new CustomEvent('luckyray:materials-toolbar-command', { detail: { type: 'cycle-workview' } })));

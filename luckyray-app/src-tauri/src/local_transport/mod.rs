@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod materials_grants;
+#[cfg(all(test, windows))]
+mod native_binary_tests;
 pub(crate) use materials_grants::MaterialsGrant;
 
 const AUTH_FILE_NAME: &str = "local-transport-auth-v1.json";
@@ -79,6 +81,19 @@ pub(crate) struct MaterialPrincipalAdmission<'a> {
 impl std::fmt::Debug for VerifiedTransportPrincipal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("VerifiedTransportPrincipal(sha256)")
+    }
+}
+
+impl PartialEq for VerifiedTransportPrincipal {
+    fn eq(&self, other: &Self) -> bool {
+        self.digest == other.digest && match (&self.material_binding, &other.material_binding) {
+            (Some(left), Some(right)) => Arc::ptr_eq(&left.auth, &right.auth)
+                && left.credential_digest == right.credential_digest
+                && left.extension_origin == right.extension_origin
+                && left.materials_grant_id == right.materials_grant_id,
+            (None, None) => true,
+            _ => false,
+        }
     }
 }
 
@@ -179,8 +194,14 @@ impl VerifiedTransportPrincipal {
         Ok(format!("{:x}", hash.finalize()))
     }
 
+    pub(crate) fn is_native_tool_principal(&self) -> bool {
+        self.material_binding.as_ref().is_some_and(|binding| {
+            binding.extension_origin.is_none() && binding.materials_grant_id.is_none()
+        })
+    }
+
     pub(crate) fn tool_context(&self) -> crate::tools::ToolCallContext {
-        crate::tools::ToolCallContext::local_transport_verified(self.digest)
+        crate::tools::ToolCallContext::native_transport_verified(self.digest, self)
     }
 
     pub(crate) fn capture_request_key(&self, request_id: &str) -> String {
@@ -189,6 +210,19 @@ impl VerifiedTransportPrincipal {
         hasher.update(self.digest);
         hasher.update(request_id.as_bytes());
         format!("{:x}", hasher.finalize())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_tool_test_principal(app_data: &Path) -> Self {
+        let auth = Arc::new(Mutex::new(AuthState::load_or_create(app_data).expect("synthetic auth")));
+        let credential = auth.lock().unwrap().native_credential().unwrap();
+        let mut principal = Self::from_authenticated_request(None, CapabilityTier::Dangerous, CapabilityTier::Dangerous);
+        principal.material_binding = Some(MaterialPrincipalBinding {
+            auth, materials_grant_id: None, extension_origin: None,
+            credential_digest: Sha256::digest(credential.as_bytes()).into(),
+            granted_tier: CapabilityTier::Dangerous,
+        });
+        principal
     }
 
     #[cfg(test)]
@@ -1761,9 +1795,19 @@ fn safe_adapter_failure_code(body: &str) -> Option<&'static str> {
         "consumer-delivery-denied" => Some("consumer-delivery-denied"),
         "consumer-asset-not-found" => Some("consumer-asset-not-found"),
         "material-library-scope" => Some("material-library-scope"),
+        "material-revision-conflict" => Some("material-revision-conflict"),
+        "material-preview-unavailable" => Some("material-preview-unavailable"),
+        "material-catalog-error" => Some("material-catalog-error"),
         "library-unavailable" => Some("library-unavailable"),
         "library-offline" => Some("library-offline"),
         "library-invalid" => Some("library-invalid"),
+        "library-not-found" => Some("library-not-found"),
+        "canvas-agent-revision-conflict" => Some("canvas-agent-revision-conflict"),
+        "canvas-agent-input-invalid" => Some("canvas-agent-input-invalid"),
+        "canvas-agent-context-invalid" => Some("canvas-agent-context-invalid"),
+        "canvas-agent-content-too-large" => Some("canvas-agent-content-too-large"),
+        "canvas-agent-storage-unavailable" => Some("canvas-agent-storage-unavailable"),
+        "canvas-agent-storage-invalid" => Some("canvas-agent-storage-invalid"),
         "capture-commit-uncertain" => Some("capture-commit-uncertain"),
         "capture-commit-partial" => Some("capture-commit-partial"),
         "capture-receipt-unavailable" => Some("capture-receipt-unavailable"),
@@ -2428,6 +2472,24 @@ mod tests {
     }
 
     #[test]
+    fn native_canvas_material_errors_keep_fixed_codes_without_private_details() {
+        for code in [
+            "canvas-agent-revision-conflict", "canvas-agent-input-invalid",
+            "canvas-agent-context-invalid", "canvas-agent-content-too-large",
+            "canvas-agent-storage-unavailable", "canvas-agent-storage-invalid",
+            "material-revision-conflict", "material-preview-unavailable",
+            "material-catalog-error", "library-not-found",
+        ] {
+            let body = json!({"code": code, "message":"private diagnostic", "path":"C:/private", "details":{"content":"private"}}).to_string();
+            assert_eq!(safe_adapter_failure_code(&body), Some(code));
+            assert_eq!(safe_adapter_failure_details(&body), None);
+        }
+        for code in ["canvas-agent-private-path", "material-private-diagnostic", "library-private-id"] {
+            assert_eq!(safe_adapter_failure_code(&json!({"code":code}).to_string()), None);
+        }
+    }
+
+    #[test]
     fn queued_media_transfer_uses_the_http_accepted_status_line() {
         let response = success_response(202, r#"{"state":"queued"}"#, "request-1", None);
         assert!(response.starts_with("HTTP/1.1 202 Accepted\r\n"));
@@ -2935,13 +2997,32 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "canvas.create",
+                "canvas.list",
+                "canvas.read",
+                "canvas.rename",
+                "canvas.save",
                 "capability.run",
                 "knowledge.append",
                 "knowledge.create",
+                "knowledge.insert",
+                "knowledge.list",
+                "knowledge.move",
                 "knowledge.read",
+                "knowledge.relations",
+                "knowledge.replace",
                 "knowledge.search",
                 "knowledge.set_tags",
+                "knowledge.tags",
+                "materials.detail",
+                "materials.import_bytes",
+                "materials.libraries",
+                "materials.library_preview",
+                "materials.library_taxonomy",
+                "materials.list",
+                "materials.organize",
                 "materials.search",
+                "materials.update",
             ]
         );
     }
@@ -3032,6 +3113,40 @@ mod tests {
             ),
         );
         assert_eq!(status(&evil_origin), 403);
+    }
+
+    #[test]
+    fn native_tools_are_not_discoverable_or_callable_by_extension_credentials() {
+        let app_data = temp_dir("native-tool-boundary");
+        let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
+        let origin = "chrome-extension://aaaaaaaaaaaaaaaa";
+        let mut config = ServerConfig::test(app_data);
+        config.extension_origins.insert(origin.to_owned());
+        let handle = start_server(config, Arc::new(LegacyLocalTransportAdapter::new(backend))).unwrap();
+        let bootstrap = bootstrap_extension(&handle, origin);
+        let extension_credential = body(&bootstrap)["data"]["credential"].as_str().unwrap().to_owned();
+        let native_listing=authorized_request(&handle,"GET","/api/v1/tools/list",None,None);
+        let native_listing=body(&native_listing);
+        let legacy=["capability.run","knowledge.append","knowledge.create","knowledge.read","knowledge.search","knowledge.set_tags","materials.search"];
+        let additions=native_listing["data"].as_array().unwrap().iter()
+            .filter_map(|definition|definition["id"].as_str())
+            .filter(|id|!legacy.contains(id)).collect::<Vec<_>>();
+        assert_eq!(additions.len(),19);
+        for include_origin in [true, false] {
+            let origin_header = if include_origin { format!("Origin: {origin}\r\n") } else { String::new() };
+            let listing = request(handle.port, &format!("GET /api/v1/tools/list HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n{origin_header}Authorization: Bearer {extension_credential}\r\nConnection: close\r\n\r\n",handle.port));
+            assert_eq!(status(&listing), 200);
+            assert_eq!(body(&listing)["data"].as_array().unwrap().len(), 7);
+            for id in &additions {
+                let input = json!({"toolId":id,"input":{"native":true,"requestId":"extension-native-denied"}}).to_string();
+                let denied = request(handle.port, &format!("POST /api/v1/tools/run HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n{origin_header}Authorization: Bearer {extension_credential}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{input}",handle.port,input.len()));
+                assert_eq!(body(&denied)["error"]["code"], "tool-not-found", "{id}, origin={include_origin}");
+            }
+        }
+        let input = json!({"toolId":"canvas.create","input":{"name":"Native","requestId":"native-allowed"}}).to_string();
+        let allowed = authorized_request(&handle, "POST", "/api/v1/tools/run", Some(&input), None);
+        assert_eq!(status(&allowed),200);
+        assert_eq!(body(&allowed)["data"]["result"]["committed"],true);
     }
 
     #[test]

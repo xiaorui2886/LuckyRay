@@ -28,8 +28,8 @@ test('JSX presentation compiles and keeps existing actions, errors and task bran
  assert.equal(result.diagnostics.filter(x=>x.category===ts.DiagnosticCategory.Error).length,0);
  }
  const auto=fs.readFileSync(path.join(dir,'MaterialLibraryAutoImport.tsx'),'utf8');
- assert.match(auto,/<summary tabIndex=\{0\}>导入规则与目录/);
- assert.match(auto,/<\/details>\s*\{changedRoot/);assert.match(auto,/role="alert"/);
+ assert.doesNotMatch(auto,/导入规则与目录|上次导入|等待扫描/);
+ assert.match(auto,/changedRoot/);assert.match(auto,/status\?\.state === "scanning"/);assert.match(auto,/role="alert"/);
  const transfer=fs.readFileSync(path.join(dir,'MaterialLibraryTransferUI.tsx'),'utf8');
  assert.match(transfer,/dialog\?\.kind === "tasks" \? " material-library-tasks-dialog" : ""/);
  assert.match(transfer,/materialLibraryTransfers\.cancel\(task\)/);assert.match(transfer,/materialLibraryTransfers\.retry\(task\)/);

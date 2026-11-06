@@ -37,7 +37,7 @@ const MAX_OPEN_INTENT_FILE_BYTES: u64 = 200 * 1024 * 1024;
 const RESOURCE_RESULT_CHUNK_BYTES: usize = 180 * 1024;
 const MAX_HOST_SCRIPT_BYTES: usize = 128 * 1024;
 const HOST_SCRIPT_SHA256: &str =
-    "ff1f65ad0cf81c24630c4d0c37f7266bafd90dd402c016c5daf1128431a4d08d";
+    "d505982d75203404a05d371c8881b49e2f157d1ca107f80b5424154fbc500d58";
 const HOST_COMPAT_SCRIPT: &str = "luckyray-dsh-plugin-compat.mjs";
 const HOST_COMPAT_SCRIPT_SHA256: &str =
     "667322ba0a798db057bcf5152a5fcf0b7664b57d0041045beaa011fd296e40d1";
@@ -55,9 +55,9 @@ fn verify_host_compat_script(host_script: &Path) -> Result<(), ()> {
     Ok(())
 }
 const SURFACE_PLUGIN_SHA256: &str =
-    "c61767ce9c54abfde8360e0a39d178e5930319ef4f31e81b538b8eef6657ce86";
+    "178e47ed8af7057069c47eac034c5c9cfd746c668ed700c2c93cb5db4a1fe1f3";
 const CANVAS_AGENT_SHA256: &str =
-    "33a88964c2aedd9eb5c00a6a9201bd50a5ae475d9f722984e5f353817185a2d0";
+    "68fd40d15788b8c0419c9dd7d7d373d0247585c248895b8050d32f70cd923017";
 const CANVAS_PROJECTION_SHA256: &str =
     "ef52770a12f58d420604b20314e59b788589fdf61754b72704106bda1c125ac9";
 const CANVAS_TASK_STATE_SHA256: &str =
@@ -467,8 +467,7 @@ impl RuntimeDescriptor {
         let (state_root, surface_state_root) = prepare_dsh_state_roots(app_data_dir)?;
         let update_store = Arc::new(crate::dsh_engine_update::UpdateStore::open(app_data_dir)
             .map_err(|_| ())?);
-        // Layout diagnostics share the existing update writer ownership; even
-        // an invalid installed tree must not write into another live store.
+        // Layout diagnostics share the existing update writer ownership.
         #[cfg(not(feature = "issue189-frozen-old-fixture"))]
         let (bundled_root, host_dir) = installation::resource_roots(&resource_dir).map_err(|_| {
             crate::dsh_engine_update::record_invalid_resource_at_stage(app_data_dir, "bundled-resource-layout");
@@ -479,24 +478,29 @@ impl RuntimeDescriptor {
         installation::verify_host_tree(&host_dir).map_err(|_| {
             crate::dsh_engine_update::record_invalid_resource_at_stage(app_data_dir, "bundled-host-layout");
         })?;
-        // A desktop package update has its own compiled, sealed authority.
-        // Adopt only its qualified predecessors before launching any writer;
-        // retain old signed active/journal evidence and never delete user data.
-        #[cfg(not(feature = "issue189-frozen-old-fixture"))]
-        if let Err(error) = update_store.adopt_desktop_bundle(&bundled_root) {
-            crate::dsh_engine_update::record_switch_error_at_stage(app_data_dir, &error, "adopt-desktop-bundle");
-            return Err(());
+        if update_store.sealed_recovery_requested_or_present() {
+            // A separately authorized recovery must retain its exact predecessor.
+            // Normal desktop bundle adoption must not rewrite that evidence.
+            if update_store.pending_switch() { return Err(()); }
+        } else {
+            // Healthy Main uses the desktop bundle's own compiled authority.
+            #[cfg(not(feature = "issue189-frozen-old-fixture"))]
+            if let Err(error) = update_store.adopt_desktop_bundle(&bundled_root) {
+                crate::dsh_engine_update::record_switch_error_at_stage(app_data_dir, &error, "adopt-desktop-bundle");
+                return Err(());
+            }
+            if let Err(error) = update_store.complete_pending_switch(app_data_dir) {
+                crate::dsh_engine_update::record_switch_error(app_data_dir, &error);
+                return Err(());
+            }
         }
-        if let Err(error) = update_store.complete_pending_switch(app_data_dir) {
-            // Persist the redacted failure category so the settings surface
-            // can name the stage instead of reporting a generic dead host.
-            crate::dsh_engine_update::record_switch_error(app_data_dir, &error);
-            return Err(());
-        }
-        let active = update_store.load_active().map_err(|_| ())?;
-        let (root, dynamic_candidate, dynamic_pending_health) = match active {
-            Some(installed) => (installed.root, Some(installed.candidate), installed.pending_health),
-            None => (bundled_root, None, false),
+        let sealed = update_store.select_qualified_sealed(&bundled_root).map_err(|_| ())?;
+        let (root, dynamic_candidate, dynamic_pending_health) = match sealed {
+            Some((candidate, pending)) => (bundled_root, Some(candidate), pending),
+            None => match update_store.load_active().map_err(|_| ())? {
+                Some(installed) => (installed.root, Some(installed.candidate), installed.pending_health),
+                None => (bundled_root, None, false),
+            },
         };
         Self::from_verified_root_with_candidate(
             root,
@@ -2659,6 +2663,15 @@ impl DshHostService {
             .map(|candidate| candidate.version.clone())
             .or_else(crate::dsh_runtime_seal::bundled_runtime_version)?;
         Some((store, version, pending_health))
+    }
+
+    pub(crate) fn sealed_recovery_bundle(&self) -> Option<PathBuf> {
+        let descriptor = self.descriptor.get()?;
+        let store = descriptor.update_store.as_ref()?;
+        if !store.sealed_recovery_present() || descriptor.dynamic_candidate.is_none() {
+            return None;
+        }
+        Some(descriptor.root.clone())
     }
 
     /// Reserve the cold, never-started DSH generation for an app-owned update
@@ -6361,6 +6374,49 @@ pub(crate) mod tests {
             RESOURCE_PLUGIN_SHA256
         );
         let _ = std::fs::remove_file(temp);
+    }
+
+    #[cfg(all(windows, feature = "browser-host-runtime"))]
+    #[test]
+    #[ignore = "requires the exact verified bundled runtime; copies critical files into synthetic state"]
+    fn bundled_descriptor_selects_without_request_and_rejects_untrusted_recovery() {
+        fn copy_tree(source: &Path, destination: &Path) {
+            std::fs::create_dir_all(destination).unwrap();
+            for entry in std::fs::read_dir(source).unwrap() {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                assert!(!kind.is_symlink());
+                let target = destination.join(entry.file_name());
+                if kind.is_dir() { copy_tree(&entry.path(), &target); }
+                else if kind.is_file() { std::fs::copy(entry.path(), target).unwrap(); }
+                else { panic!("non-file test resource"); }
+            }
+        }
+        let input = PathBuf::from(std::env::var_os("DSH_TEST_RUNTIME_ROOT").unwrap());
+        let temp = tempfile::tempdir().unwrap();
+        let resources = temp.path().join("resources");
+        let bundle = resources.join("deepseek-harness");
+        for relative in ["node/node.exe", "host/node_modules/@deepseek-ai/dsh/lib/bin.js",
+            "host/node_modules/@deepseek-ai/dsh/package.json"] {
+            let target = bundle.join(relative);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::copy(input.join(relative), target).unwrap();
+        }
+        copy_tree(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dsh-host"), &resources.join("dsh-host"));
+        let data = temp.path().join("app-data");
+        std::fs::create_dir(&data).unwrap();
+        let descriptor = RuntimeDescriptor::resolve(&resources, &data).expect("normal bundled selection");
+        assert!(descriptor.dynamic_candidate.is_none());
+        assert_eq!(descriptor.update_store.as_ref().unwrap().selected_pending_health(None), Some(false));
+        drop(descriptor);
+        let updates = data.join("dsh-engine-updates");
+        std::fs::write(updates.join("last-switch-error.json"), b"synthetic diagnostic").unwrap();
+        std::fs::write(updates.join("sealed-recovery-request.json"), b"{}\n").unwrap();
+        assert!(RuntimeDescriptor::resolve(&resources, &data).is_err());
+        assert_eq!(std::fs::read(updates.join("last-switch-error.json")).unwrap(), b"synthetic diagnostic");
+        assert!(!updates.join("sealed-recovery.json").exists());
+        assert!(!updates.join("active.json").exists());
+        assert!(!updates.join("transaction.json").exists());
     }
 
     #[cfg(all(windows, feature = "browser-host-runtime"))]

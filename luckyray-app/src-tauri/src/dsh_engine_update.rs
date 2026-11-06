@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const MAX_ENVELOPE_BYTES: usize = 96 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
-// The exact 0.2.1-rc.2 Windows closure has 35,173 files. Keep this bounded
+// The exact 0.2.2-rc.1 Windows closure has 39,095 files. Keep this bounded
 // metadata/tree limit aligned with MAX_DSH_CLOSURE_FILE_COUNT in the verifier.
 const MAX_CLOSURE_FILE_COUNT: u32 = 40_000;
 const PLATFORM: &str = "windows-x86_64";
@@ -28,6 +28,7 @@ mod transaction;
 mod upstream;
 mod assembly;
 mod compatibility;
+mod recovery_authorization;
 #[path = "dsh_update_metadata_policy.rs"]
 mod metadata_policy;
 pub(crate) use coordinator::{DshEngineUpdater, EngineUpdateStatus};
@@ -293,6 +294,8 @@ pub(crate) struct Candidate {
     /// Absent keeps existing signed installed/ZIP envelopes unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) assembly: Option<assembly::FrozenAssemblyIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sealed_recovery: Option<recovery_authorization::RecoveryAuthorization>,
 }
 
 /// Only a verified catalog can construct this token. Download and staging
@@ -911,6 +914,12 @@ fn validate_candidate(candidate: &Candidate) -> Result<(), AdmissionError> {
             || !qualified.pre.is_empty() || !qualified.build.is_empty()
         { return Err(AdmissionError::InvalidManifest); }
     }
+    if let Some(authorization) = &candidate.sealed_recovery {
+        authorization.validate(&candidate.version, &candidate.from_versions)?;
+        if candidate.schema != 2 || !candidate.compatibility.as_ref().is_some_and(|contract|
+            contract.required_capabilities.iter().any(|name| name == "sealed-pending-health-recovery-v1"))
+        { return Err(AdmissionError::InvalidManifest); }
+    }
     if candidate.assembly.is_some() { assembly::validate_candidate_input(candidate)?; }
     let mut seen = HashSet::new();
     for version in &candidate.from_versions {
@@ -1242,7 +1251,7 @@ mod tests {
         assert_eq!(format!("{:x}", Sha256::digest(&bytes)),
             "feece42710c44ffa85169d1dd44bc26bd766b0b7246963851729828d36027cf5",
             "the input must be the exact historical public candidate, not editable user metadata");
-        assert_eq!(crate::dsh_runtime_seal::bundled_runtime_version().as_deref(), Some("0.2.1-rc.3"));
+        assert_eq!(crate::dsh_runtime_seal::bundled_runtime_version().as_deref(), Some("0.2.2-rc.1"));
         assert_eq!(verify_installed_for_this_build(&bytes).unwrap().version, "0.2.0-rc.2");
     }
 
@@ -1335,6 +1344,7 @@ mod tests {
             data_compatibility: "no-migration".into(),
             upstream: None,
             assembly: None,
+            sealed_recovery: None,
             resource_gate_sha256: "f".repeat(64),
             compatibility: None,
         };
@@ -1431,6 +1441,37 @@ mod tests {
             });
             assert_eq!(admit_with_contract(&bytes, Some(&key), Some("https://updates.example.test/feed.json"),
                 "0.1.7-rc.1", &"a".repeat(64), &"f".repeat(64), 500), Err(AdmissionError::RequiresHost));
+        }
+    }
+
+    #[test]
+    fn qualified_node24_requires_signature_and_its_exact_toolset_identity() {
+        let make = |name: &str, node_sha: &str| fixture_with(|candidate| {
+            frozen_assembly_fixture(candidate);
+            candidate.assembly = Some(assembly::FrozenAssemblyIdentity { schema: 2,
+                kind: "official-npm-qualified-win-x64-v2".into(), toolset: Some(name.into()) });
+            candidate.version = "0.2.2-rc.1".into();
+            candidate.from_versions = vec!["0.2.0-rc.2".into()];
+            candidate.node_sha256 = node_sha.into();
+            candidate.entry_sha256 = "1".repeat(64);
+            candidate.closure_file_count = 38_000;
+        });
+        let admit = |bytes: &[u8], key: Option<&[u8]>, from: &str| admit_with_contract(bytes, key,
+            Some("https://updates.example.test/feed.json"), from, &"a".repeat(64), &"f".repeat(64), 500);
+        let name = "node24.22.2-pnpm11.7.0-policy1";
+        let node24 = "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9";
+        let (signed, key) = make(name, node24);
+        assert!(admit(&signed, Some(&key), "0.2.0-rc.2").is_ok());
+        assert!(admit(&signed, None, "0.2.0-rc.2").is_err());
+        assert!(admit(&signed, Some(&key), "0.1.7-rc.2").is_err());
+        let mut tampered = signed.clone();
+        tampered[10] ^= 1;
+        assert!(admit(&tampered, Some(&key), "0.2.0-rc.2").is_err());
+        for (tool, hash) in [(name, "0".repeat(64)),
+            ("node22.19.0-pnpm11.7.0-policy1", node24.to_owned()),
+            ("node24.22.3-pnpm11.7.0-policy1", node24.to_owned())] {
+            let (bad, key) = make(tool, &hash);
+            assert_eq!(admit(&bad, Some(&key), "0.2.0-rc.2"), Err(AdmissionError::RequiresHost));
         }
     }
 
@@ -1801,6 +1842,7 @@ mod tests {
             compatibility: None,
             upstream: None,
             assembly: None,
+            sealed_recovery: None,
         };
         let store = UpdateStore::open(temp.path()).unwrap();
         let cancel = AtomicBool::new(false);

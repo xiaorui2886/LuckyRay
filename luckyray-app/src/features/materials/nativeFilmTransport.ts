@@ -12,6 +12,12 @@ export async function nativeFilmAvailable(cardFrames = false) {
   }
   catch { return false; } // Old/non-Windows host: retain the existing HTML path.
 }
+export async function nativeComfyVideoAvailable(preview = false) {
+  try {
+    const capability = await command<{ available: boolean; composition?: string; comfyResults?: boolean; comfyPreviews?: boolean }>({ op: 'capability' });
+    return capability?.available === true && capability.composition === 'webview-alpha-v1' && capability.comfyResults === true && (!preview || capability.comfyPreviews === true);
+  } catch { return false; }
+}
 
 /** One asset/revision lease. Commands serialize, including close after late open. */
 export class NativeFilmTransport {
@@ -55,6 +61,10 @@ export class NativeFilmTransport {
   open(libraryId: string, assetId: string, revision: string, bounds: NativeBounds, preview = false) {
     return this.send({ op: "open", libraryId, assetId, revision, bounds, preview });
   }
+  openComfy(resultName: string, bounds: NativeBounds, preview = false) {
+    this.silent = true;
+    return this.send({ op: 'openComfy', resultName, bounds, preview });
+  }
   previewFrame() { return this.send<{time: number; src: string}>({ op: "previewFrame" }, "previewFrame"); }
   bounds(bounds: NativeBounds) { return this.send({ op: "bounds", bounds }, "bounds"); }
   async snapshot() {
@@ -66,6 +76,7 @@ export class NativeFilmTransport {
     return this.state;
   }
   get currentTime() { return this.state.time; }
+  get duration() { return this.state.duration; }
   set currentTime(seconds: number) { this.positionVersion++; this.state = { ...this.state, time: seconds, seeking: true, ended: false }; this.act({ op: "seek", seconds }, "seek"); }
   get paused() { return this.state.paused; }
   get ended() { return this.state.ended; }

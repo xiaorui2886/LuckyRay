@@ -739,6 +739,26 @@ impl CanvasAgentService {
         Ok((document, index_warning))
     }
 
+    /// Native product reads share the same storage owner as ordinary writes.
+    /// They do not activate an Agent context or return a partial graph.
+    pub(crate) fn read_normal_canvas(&self, canvas_id: &str) -> Result<CanvasDocument, CanvasAgentError> {
+        let lock = self.canvas_lock(canvas_id)?;
+        let _guard = lock.lock().unwrap_or_else(|value| value.into_inner());
+        load_document(&self.app_data_dir, canvas_id)
+    }
+
+    pub(crate) fn list_normal_canvases(&self) -> Result<Vec<CanvasIndexEntry>, CanvasAgentError> {
+        let _guard = self.index_lock.lock().unwrap_or_else(|value| value.into_inner());
+        let path = canvas_dir(&self.app_data_dir)?.join("index.json");
+        if !path.exists() { return Ok(Vec::new()); }
+        let bytes = fs::read(path).map_err(|_| CanvasAgentError::new("canvas-agent-storage-unavailable"))?;
+        let index: CanvasIndex = serde_json::from_slice(&bytes)
+            .map_err(|_| CanvasAgentError::new("canvas-agent-storage-invalid"))?;
+        let mut entries = index.canvases;
+        entries.sort_by(|a,b| b.updated_at.cmp(&a.updated_at).then_with(|| a.id.cmp(&b.id)));
+        Ok(entries)
+    }
+
     pub(crate) fn create_normal_canvas(
         &self,
         mut document: CanvasDocument,

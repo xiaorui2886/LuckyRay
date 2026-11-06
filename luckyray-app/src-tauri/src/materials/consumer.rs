@@ -97,6 +97,49 @@ pub(crate) struct ConsumerBytesInput {
     #[serde(default)]
     pub source_page_kind: Option<String>,
 }
+/// Metadata-only consumer edits cannot name storage paths, MIME reinterpretation,
+/// thumbnails or other physical-file authority.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ConsumerMetadataPatch {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub rating: PatchValue<i64>,
+    #[serde(default)]
+    pub dominant_color: PatchValue<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ConsumerOrganization {
+    SetTags {
+        #[serde(rename = "assetId")]
+        asset_id: String,
+        #[serde(rename = "expectedRevision")]
+        expected_revision: String,
+        #[serde(rename = "tagIds")]
+        tag_ids: Vec<String>,
+    },
+    Categorize {
+        #[serde(rename = "assetId")]
+        asset_id: String,
+        #[serde(rename = "expectedRevision")]
+        expected_revision: String,
+        #[serde(rename = "folderId")]
+        folder_id: Option<String>,
+    },
+    CreateFolder {
+        name: String,
+        #[serde(rename = "parentId")]
+        parent_id: Option<String>,
+    },
+    CreateTag {
+        name: String,
+        color: Option<String>,
+    },
+}
+
 fn invalid(message: &str) -> MaterialError {
     MaterialError::new("consumer-input-invalid", message)
 }
@@ -145,7 +188,12 @@ impl MaterialConsumer {
         })
     }
     fn bind(&self, target: &ConsumerTarget, permission: &str) -> MaterialResult<MaterialCatalog> {
-        if !valid_consumer_id(&target.request_id) || target.request_id.len() > 128 {
+        if target.request_id.is_empty()
+            || target.request_id.len() > 128
+            || !target.request_id.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.')
+            })
+        {
             return Err(invalid("操作标识无效"));
         }
         let rights = self.permissions(&target.library_id)?;
@@ -168,6 +216,11 @@ impl MaterialConsumer {
     pub(crate) fn authorize_read(&self, target: &ConsumerTarget) -> MaterialResult<()> {
         self.bind(target, "read").map(|_| ())
     }
+    pub(crate) fn authorize_organize(&self, target: &ConsumerTarget) -> MaterialResult<()> {
+        self.bind(target, "organize")?;
+        self.bind(target, "read").map(|_| ())
+    }
+
     pub(crate) fn authorize_import(&self, target: &ConsumerTarget) -> MaterialResult<()> {
         self.bind(target, "import")?;
         // The full receipt contains existing metadata when content deduplicates.
@@ -223,6 +276,34 @@ impl MaterialConsumer {
             json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,"requestId":target.request_id,"items":items}),
         )
     }
+    /// Offset paging over the Catalog's existing stable ordering. This is a
+    /// current view, not a frozen snapshot across independent requests.
+    pub(crate) fn list_page(
+        &self,
+        target: &ConsumerTarget,
+        filter: &MaterialFilter,
+        offset: u64,
+    ) -> MaterialResult<Value> {
+        let catalog = self.bind(target, "read")?;
+        let requested = filter.limit.unwrap_or(50);
+        if !(1..=100).contains(&requested) || offset > (i64::MAX as u64).saturating_sub(101) {
+            return Err(invalid("分页范围无效"));
+        }
+        let page_size = if filter.recent_only { requested.min(50u64.saturating_sub(offset) as u32) } else { requested };
+        let mut query = filter.clone();
+        query.recent_only = false;
+        query.limit = Some(page_size.saturating_add(1));
+        let mut assets = if page_size == 0 { Vec::new() } else {
+            catalog.list_assets_page_scoped(&query, &MaterialQueryScope::default(), offset)?
+        };
+        let more = assets.len() > page_size as usize
+            && (!filter.recent_only || offset + u64::from(page_size) < 50);
+        assets.truncate(page_size as usize);
+        let items = assets.iter().map(|asset| asset_value(&catalog, asset)).collect::<MaterialResult<Vec<_>>>()?;
+        Ok(json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,"requestId":target.request_id,
+            "items":items,"offset":offset,"nextOffset":more.then_some(offset + u64::from(page_size))}))
+    }
+
     pub(crate) fn detail(&self, target: &ConsumerTarget, asset_id: &str) -> MaterialResult<Value> {
         if !valid_consumer_id(asset_id) {
             return Err(invalid("素材身份无效"));
@@ -239,6 +320,158 @@ impl MaterialConsumer {
             json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,"requestId":target.request_id,"asset":asset_value(&catalog,&asset)?}),
         )
     }
+    /// A bounded text preview, not a filesystem path or original-file grant.
+    pub(crate) fn preview(&self, target: &ConsumerTarget, asset_id: &str) -> MaterialResult<Value> {
+        let detail = self.detail(target, asset_id)?;
+        let catalog = self.bind(target, "read")?;
+        let preview = catalog.read_agent_text_preview(asset_id, 16 * 1024)?;
+        let (kind, content, truncated) = match preview {
+            Some((text, truncated)) => ("text", Some(text), truncated),
+            None => ("metadata", None, false),
+        };
+        Ok(
+            json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,
+            "requestId":target.request_id,"asset":detail["asset"],
+            "previewKind":kind,"content":content,"truncated":truncated}),
+        )
+    }
+
+    pub(crate) fn update_metadata(
+        &self,
+        target: &ConsumerTarget,
+        asset_id: &str,
+        expected_revision: &str,
+        patch: ConsumerMetadataPatch,
+    ) -> MaterialResult<Value> {
+        self.authorize_organize(target)?;
+        validate_asset_edit(asset_id, expected_revision)?;
+        if let Some(name) = &patch.name {
+            validate_name(name, 240)?;
+        }
+        if patch
+            .description
+            .as_ref()
+            .is_some_and(|value| value.len() > 64 * 1024)
+        {
+            return Err(invalid("描述过长"));
+        }
+        if let PatchValue::Value(Some(rating)) = &patch.rating {
+            if !(0..=5).contains(rating) {
+                return Err(invalid("评分需为0到5"));
+            }
+        }
+        if let PatchValue::Value(Some(color)) = &patch.dominant_color {
+            validate_name(color, 64)?;
+        }
+        let catalog = self.bind(target, "organize")?;
+        let changed = catalog.update_asset_with_revision(
+            asset_id,
+            MaterialAssetPatch {
+                name: patch.name,
+                description: patch.description,
+                rating: patch.rating,
+                dominant_color: patch.dominant_color,
+                ..Default::default()
+            },
+            "native-material-update",
+            Some(expected_revision),
+        )?;
+        let asset = changed.value.ok_or_else(|| {
+            MaterialError::new("consumer-asset-not-found", "素材不属于此库或已不存在")
+        })?;
+        crate::publish_catalog_change_global(&changed.change);
+        Ok(mutation_receipt(
+            target,
+            changed.change.is_some(),
+            asset_value(&catalog, &asset),
+        ))
+    }
+
+    pub(crate) fn organize(
+        &self,
+        target: &ConsumerTarget,
+        action: ConsumerOrganization,
+    ) -> MaterialResult<Value> {
+        self.authorize_organize(target)?;
+        let catalog = self.bind(target, "organize")?;
+        match action {
+            ConsumerOrganization::SetTags {
+                asset_id,
+                expected_revision,
+                tag_ids,
+            } => {
+                validate_asset_edit(&asset_id, &expected_revision)?;
+                if tag_ids.len() > 32 || tag_ids.iter().any(|id| !valid_consumer_id(id)) {
+                    return Err(invalid("标签身份或数量无效"));
+                }
+                let changed = catalog.set_asset_tags_with_revision(
+                    &asset_id,
+                    tag_ids,
+                    Some(&expected_revision),
+                )?;
+                crate::publish_catalog_change_global(&changed.change);
+                Ok(mutation_receipt(
+                    target,
+                    changed.change.is_some(),
+                    self.detail(target, &asset_id).map(|v| v["asset"].clone()),
+                ))
+            }
+            ConsumerOrganization::Categorize {
+                asset_id,
+                expected_revision,
+                folder_id,
+            } => {
+                validate_asset_edit(&asset_id, &expected_revision)?;
+                if folder_id.as_ref().is_some_and(|id| !valid_consumer_id(id)) {
+                    return Err(invalid("分类身份无效"));
+                }
+                let changed = catalog.move_asset_with_revision(
+                    &asset_id,
+                    folder_id.as_deref(),
+                    Some(&expected_revision),
+                )?;
+                if !changed.value {
+                    return Err(MaterialError::new(
+                        "consumer-asset-not-found",
+                        "素材不属于此库或已不存在",
+                    ));
+                }
+                crate::publish_catalog_change_global(&changed.change);
+                Ok(mutation_receipt(
+                    target,
+                    changed.change.is_some(),
+                    self.detail(target, &asset_id).map(|v| v["asset"].clone()),
+                ))
+            }
+            ConsumerOrganization::CreateFolder { name, parent_id } => {
+                validate_name(&name, 120)?;
+                if parent_id.as_ref().is_some_and(|id| !valid_consumer_id(id)) {
+                    return Err(invalid("父分类身份无效"));
+                }
+                let changed = catalog.create_folder(MaterialFolderInput { name, parent_id })?;
+                crate::publish_catalog_change_global(&changed.change);
+                Ok(
+                    json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,
+                    "requestId":target.request_id,"committed":true,"changed":changed.change.is_some(),
+                    "folder":{"id":changed.value.id,"name":changed.value.name,"parentId":changed.value.parent_id}}),
+                )
+            }
+            ConsumerOrganization::CreateTag { name, color } => {
+                validate_name(&name, 80)?;
+                if let Some(color) = &color {
+                    validate_name(color, 64)?;
+                }
+                let changed = catalog.create_tag(&name, color)?;
+                crate::publish_catalog_change_global(&changed.change);
+                Ok(
+                    json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,
+                    "requestId":target.request_id,"committed":true,"changed":changed.change.is_some(),
+                    "tag":{"id":changed.value.id,"name":changed.value.name,"color":changed.value.color}}),
+                )
+            }
+        }
+    }
+
     pub(crate) fn original(
         &self,
         target: &ConsumerTarget,
@@ -404,6 +637,27 @@ impl MaterialConsumer {
         )
     }
 }
+fn validate_asset_edit(asset_id: &str, revision: &str) -> MaterialResult<()> {
+    if !valid_consumer_id(asset_id)
+        || revision.len() != 64
+        || !revision.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(invalid("素材身份或版本无效"));
+    }
+    Ok(())
+}
+
+fn mutation_receipt(target: &ConsumerTarget, changed: bool, asset: MaterialResult<Value>) -> Value {
+    // The Catalog has committed. Projection/metadata failures must not look like
+    // a pre-write refusal and invite an unbound second mutation.
+    match asset {
+        Ok(asset) => json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,
+            "requestId":target.request_id,"committed":true,"changed":changed,"asset":asset}),
+        Err(_) => json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,
+            "requestId":target.request_id,"committed":true,"changed":changed,"outputUnavailable":true}),
+    }
+}
+
 fn validate_name(name: &str, max: usize) -> MaterialResult<()> {
     if name.trim().is_empty()
         || name.trim() != name
@@ -478,6 +732,7 @@ fn asset_value(catalog: &MaterialCatalog, asset: &MaterialAsset) -> MaterialResu
     Ok(
         json!({"id":asset.id,"name":asset.name,"kind":asset.kind,"mimeType":asset.mime_type,
         "sizeBytes":asset.size_bytes,"storageMode":asset.storage_mode,"description":asset.description,"folderId":asset.folder_id,
+        "rating":asset.rating,"dominantColor":asset.dominant_color,
         "tagIds":catalog.get_asset_tags(&asset.id)?,"revision":catalog.revision_for_asset(asset)?}),
     )
 }
@@ -489,9 +744,16 @@ fn receipt(
     changed: bool,
     warning: Option<&str>,
 ) -> MaterialResult<Value> {
+    // Import or deduplication already completed. A later metadata-read failure
+    // must preserve a usable receipt instead of returning a retryable error.
+    let projected = asset_value(catalog, asset);
     let mut result = json!({"consumerVersion":CONSUMER_VERSION,"libraryId":target.library_id,"requestId":target.request_id,
         "disposition":if duplicate {"duplicate"} else {"imported"},"changed":changed,"assetId":asset.id,"assetName":asset.name,
-        "asset":asset_value(catalog,asset)?,"atomic":false,"view":{"available":false,"reason":"explicit-library-view-not-connected"}});
+        "atomic":false,"view":{"available":false,"reason":"explicit-library-view-not-connected"}});
+    match projected {
+        Ok(asset) => result["asset"] = asset,
+        Err(_) => result["outputUnavailable"] = json!(true),
+    }
     if let Some(code) = warning {
         result["warning"] = json!({"code":code,"message":if code=="consumer-duplicate-folder-created" {"内容重复，保留原素材组织；本次已新建分类，请在目标库核对"} else {"素材已保存，分类标签未全部完成，请在目标库核对"}});
     }

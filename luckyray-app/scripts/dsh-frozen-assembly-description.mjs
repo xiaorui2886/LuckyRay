@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { frozenPackageInputs, frozenLockedInputs } from "./dsh-frozen-inputs.mjs";
-import { validateDshRuntimeAuthority, validateQualifiedDshRuntimeAuthority, frozenHostTemplate,
+import { validateDshRuntimeAuthority, validateQualifiedDshRuntimeAuthority, frozenHostTemplate, qualifiedNodeToolset,
   validateDshFrozenClosure, buildPublishedDshRecords, reconcileLockedClosure } from "./dsh-supply-chain.mjs";
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const invalid = () => { throw new Error("assembly-description-invalid"); };
@@ -22,8 +22,9 @@ function timestamp(value) {
 // Policy/config is host-owned. Only the lock's exact frozen dependency data is
 // supplied by the signed qualification; no npmrc/workspace/pnpmfile is accepted.
 export function qualifiedHostFiles(authority, lockfile) {
+  qualifiedNodeToolset(authority.nodeRuntime);
   return {
-    "package.json": Buffer.from(JSON.stringify(frozenHostTemplate(authority.runtimePackage.version), null, 2) + "\n"),
+    "package.json": Buffer.from(JSON.stringify(frozenHostTemplate(authority.runtimePackage.version, authority.nodeRuntime.version), null, 2) + "\n"),
     ".npmrc": Buffer.from("auto-install-peers=true\nengine-strict=true\nignore-scripts=true\nlink-workspace-packages=false\nsave-exact=true\nstrict-peer-dependencies=true\n"),
     "pnpm-lock.yaml": Buffer.from(lockfile),
     "pnpm-workspace.yaml": Buffer.from("packages: []\nminimumReleaseAge: 1440\nminimumReleaseAgeStrict: true\nminimumReleaseAgeIgnoreMissingTime: false\n"),
@@ -48,7 +49,7 @@ export function validateQualifiedAssemblyDescription({ bytes, expectedHash, expe
   if (!isDeepStrictEqual(top, ["lockfileVersion: '9.0'", "settings:", "importers:", "packages:", "snapshots:"])
       || !q.lockfile.startsWith("lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n")) invalid();
   const importer = q.lockfile.split("\nimporters:\n")[1].split("\npackages:\n")[0];
-  const dependencies = Object.entries(frozenHostTemplate(authority.runtimePackage.version).dependencies);
+  const dependencies = Object.entries(frozenHostTemplate(authority.runtimePackage.version, authority.nodeRuntime.version).dependencies);
   const escaped = value => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const expectedImporter = "^\\n  \\.:\\n    dependencies:\\n" + dependencies.map(([name, version]) =>
     `      ${name.startsWith("@") ? `'${escaped(name)}'` : escaped(name)}:\\n        specifier: ${escaped(version)}\\n        version: ${escaped(version)}(?:\\([A-Za-z0-9@/._():+-]+\\))?\\n`).join("") + "$";
@@ -96,7 +97,7 @@ export function validateFrozenAssemblyDescription({ bytes, expectedHash, expecte
   if (descriptor.schema !== 1 || descriptor.kind !== "official-npm-frozen-win-x64-v1"
       || descriptor.authorization !== "UNSIGNED_MAINTAINER_INPUT_RECORD_NOT_INSTALL_AUTHORITY"
       || !isDeepStrictEqual(descriptor.runtimePackage, authority.runtimePackage)
-      || !isDeepStrictEqual(descriptor.node, { ...authority.nodeRuntime, archiveBytes: 35424607 })
+      || !isDeepStrictEqual(descriptor.node, { ...authority.nodeRuntime, archiveBytes: qualifiedNodeToolset(authority.nodeRuntime).archiveBytes })
       || !isDeepStrictEqual(descriptor.packageManager, { ...authority.packageManager, archiveBytes: 4590455 })
       || descriptor.lockSha256 !== authority.dependencyClosure.sha256 || descriptor.lockSha256 !== hash(lockfile)
       || !isDeepStrictEqual(descriptor.finalLayout, authority.dependencyClosure.releaseLayout)) invalid();

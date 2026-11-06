@@ -1,3 +1,4 @@
+import { invokeCancellableAiCompletion } from "./core/services/aiCompletionTransport";
 import { createMaterialProvenanceStore } from "./core/canvas/materialProvenanceStore";
 import { normalizeMaterialGenerationProvenance } from "./core/canvas/materialProvenance";
 import { prepareCanvasVideoBridgeReferences } from "./core/canvas/videoGenerationAdapter";
@@ -382,7 +383,6 @@ export async function migrateLegacyNonKnowledgeDataToDb(db: Database) {
     const settings = normalizeSettings(readFallbackRecord<unknown>(FALLBACK_SETTINGS_KEY) as Partial<BridgeSettings>);
     const pairs: Array<[string, string]> = [
       ["aiProvider", settings.aiProvider ?? ""],
-      ["aiApiKey", settings.aiApiKey ?? ""],
       ["aiBaseURL", settings.aiBaseURL ?? ""],
       ["aiModel", settings.aiModel ?? ""],
       ["aiTemperature", String(settings.aiTemperature)],
@@ -393,6 +393,45 @@ export async function migrateLegacyNonKnowledgeDataToDb(db: Database) {
     for (const [key, value] of pairs) {
       await db.execute(`insert or ignore into settings (key, value) values ($1, $2)`, [key, value]);
     }
+  }
+  // Retire historical browser secrets even when SQLite already has metadata.
+  // Existing native rows (including an explicit clear) always win. A failed
+  // native save leaves browser data untouched so importing can be retried.
+  const legacySettings = readFallbackRecord<unknown>(FALLBACK_SETTINGS_KEY) as Partial<BridgeSettings>;
+  if (legacySettings.aiApiKey || legacySettings.aiImageApiKey) {
+    await invoke("ai_settings_secret_update", {
+      apiKey: legacySettings.aiApiKey || null,
+      imageApiKey: legacySettings.aiImageApiKey || null,
+      onlyIfMissing: true,
+    });
+    localStorage.setItem(FALLBACK_SETTINGS_KEY, JSON.stringify(projectAiSettingsForFrontend(legacySettings)));
+  }
+
+  const legacyHtmlSettings = readFallbackRecord<unknown>("luckyray-settings-v1");
+  const legacyHtmlAi = legacyHtmlSettings["ai"];
+  const legacyNestedAiKey = legacyHtmlAi && typeof legacyHtmlAi === "object"
+    && "apiKey" in legacyHtmlAi && typeof legacyHtmlAi.apiKey === "string" ? legacyHtmlAi.apiKey : undefined;
+  // A present flat field (including an explicit clear) wins over older nested data.
+  const legacyHtmlAiKey = typeof legacyHtmlSettings["ai.apiKey"] === "string"
+    ? legacyHtmlSettings["ai.apiKey"] : legacyNestedAiKey;
+  if (typeof legacyHtmlAiKey === "string" && (legacyHtmlAiKey || legacyNestedAiKey)) {
+    await invoke("ai_settings_secret_update", {
+      apiKey: legacyHtmlAiKey,
+      imageApiKey: null,
+      onlyIfMissing: true,
+    });
+    const latestHtmlSettings = readFallbackRecord<unknown>("luckyray-settings-v1");
+    const nextHtmlSettings = { ...latestHtmlSettings };
+    if (typeof legacyHtmlSettings["ai.apiKey"] === "string"
+      && latestHtmlSettings["ai.apiKey"] === legacyHtmlSettings["ai.apiKey"]) {
+      nextHtmlSettings["ai.apiKey"] = "";
+    }
+    const latestHtmlAi = latestHtmlSettings["ai"];
+    if (legacyNestedAiKey !== undefined && latestHtmlAi && typeof latestHtmlAi === "object"
+      && "apiKey" in latestHtmlAi && latestHtmlAi.apiKey === legacyNestedAiKey) {
+      nextHtmlSettings["ai"] = { ...latestHtmlAi, apiKey: "" };
+    }
+    localStorage.setItem("luckyray-settings-v1", JSON.stringify(nextHtmlSettings));
   }
 
   if ((await countRows(db, "ai_conversation")) === 0) {
@@ -1544,9 +1583,9 @@ type BridgeAiVideoGenerationProgress = {
   progress?: number | null;
 };
 
-async function aiChatComplete(messages: Array<{ role: string; content: BridgeAiMessageContent }>, options?: { systemPrompt?: string; temperature?: number; maxTokens?: number; model?: string }): Promise<AiChatResponse> {
+async function aiChatComplete(messages: Array<{ role: string; content: BridgeAiMessageContent }>, options?: { systemPrompt?: string; temperature?: number; maxTokens?: number; model?: string; signal?: AbortSignal }): Promise<AiChatResponse> {
   try {
-    return await invoke<AiChatResponse>("ai_chat_complete", {
+    return await invokeCancellableAiCompletion<AiChatResponse>("ai_chat_complete", {
       request: {
         messages: messages.map(m => ({ role: m.role, content: m.content })),
         system_prompt: options?.systemPrompt ?? null,
@@ -1554,7 +1593,7 @@ async function aiChatComplete(messages: Array<{ role: string; content: BridgeAiM
         max_tokens: options?.maxTokens ?? null,
         model: options?.model?.trim() || null,
       },
-    });
+    }, options?.signal);
   } catch (e: any) {
     const msg = e?.message || String(e);
     try {
@@ -1833,6 +1872,7 @@ async function notesInlineCancel() {
 
 async function aiImageGenerate(
   request: import("./core/canvas/generationTasks").CanvasGenerationRequestSnapshot,
+  _stableClientTaskId?: string,
 ): Promise<import("./core/canvas/imageGenerationAdapter").CanvasImageGenerationResponse> {
   if (request.references.some((reference) => reference.kind === "video")) {
     return { success: false, images: [], ...canvasGenerationFailure("unsupported_input") };
@@ -3503,12 +3543,14 @@ function normalizeSettings(row: Partial<BridgeSettings>): BridgeSettings {
   const maxTokens = readMaxTokens(row);
   return {
     aiProvider: row.aiProvider ?? DEFAULT_SETTINGS.aiProvider,
-    aiApiKey: row.aiApiKey ?? "",
+    aiApiKey: row.aiApiKey ?? null,
+    aiApiKeyConfigured: row.aiApiKeyConfigured ?? Boolean(row.aiApiKey),
     aiBaseURL: row.aiBaseURL ?? DEFAULT_SETTINGS.aiBaseURL,
     aiModel: row.aiModel ?? DEFAULT_SETTINGS.aiModel,
     aiTemperature: temperature,
     aiMaxTokens: maxTokens,
-    aiImageApiKey: row.aiImageApiKey ?? "",
+    aiImageApiKey: row.aiImageApiKey ?? null,
+    aiImageApiKeyConfigured: row.aiImageApiKeyConfigured ?? Boolean(row.aiImageApiKey),
     aiImageBaseURL: row.aiImageBaseURL ?? DEFAULT_SETTINGS.aiImageBaseURL,
     aiImageModel: row.aiImageModel ?? DEFAULT_SETTINGS.aiImageModel,
     aiVideoModel: row.aiVideoModel ?? DEFAULT_SETTINGS.aiVideoModel,
@@ -3534,7 +3576,7 @@ async function getStoredSettings(): Promise<BridgeSettings> {
   const db = await getDb();
   if (!db) return fallbackSettings();
   const rows = await db.select<Array<{ key: string; value: string | null }>>(
-    `select key, value from settings where key in ('aiProvider','aiProtocol','aiApiKey','aiBaseURL','aiModel','aiImageApiKey','aiImageBaseURL','aiImageModel','aiVideoModel','temperature','aiTemperature','maxTokens','aiMaxTokens')`,
+    `select key, value from settings where key in ('aiProvider','aiProtocol','aiBaseURL','aiModel','aiImageBaseURL','aiImageModel','aiVideoModel','temperature','aiTemperature','maxTokens','aiMaxTokens')`,
   );
   const map: Record<string, string> = {};
   for (const r of rows) {
@@ -3543,10 +3585,8 @@ async function getStoredSettings(): Promise<BridgeSettings> {
   // 解析字符串字段
   const result: Partial<BridgeSettings> = {};
   if (map.aiProvider !== undefined) result.aiProvider = map.aiProvider;
-  if (map.aiApiKey !== undefined) result.aiApiKey = map.aiApiKey;
   if (map.aiBaseURL !== undefined) result.aiBaseURL = map.aiBaseURL;
   if (map.aiModel !== undefined) result.aiModel = map.aiModel;
-  if (map.aiImageApiKey !== undefined) result.aiImageApiKey = map.aiImageApiKey;
   if (map.aiImageBaseURL !== undefined) result.aiImageBaseURL = map.aiImageBaseURL;
   if (map.aiImageModel !== undefined) result.aiImageModel = map.aiImageModel;
   if (map.aiVideoModel !== undefined) result.aiVideoModel = map.aiVideoModel;
@@ -3555,7 +3595,8 @@ async function getStoredSettings(): Promise<BridgeSettings> {
   if (map.aiTemperature !== undefined && result.temperature === undefined) result.aiTemperature = parseFloat(map.aiTemperature) || DEFAULT_SETTINGS.aiTemperature;
   if (map.maxTokens !== undefined) result.maxTokens = parseInt(map.maxTokens, 10) || DEFAULT_SETTINGS.maxTokens!;
   if (map.aiMaxTokens !== undefined && result.maxTokens === undefined) result.aiMaxTokens = parseInt(map.aiMaxTokens, 10) || DEFAULT_SETTINGS.aiMaxTokens;
-  return normalizeSettings(result);
+  const secrets = await invoke<{ aiApiKeyConfigured: boolean; aiImageApiKeyConfigured: boolean }>("ai_settings_secret_status");
+  return normalizeSettings({ ...result, ...secrets });
 }
 
 async function getSettings(): Promise<BridgeSettings> {
@@ -3581,16 +3622,25 @@ async function setSettings(patch: Partial<BridgeSettings>): Promise<BridgeSettin
   next.maxTokens = next.aiMaxTokens;
   const db = await getDb();
   if (!db) {
+    // A failed native/browser-secret migration may leave the only recoverable
+    // key in localStorage. Never replace it with a redacted projection or
+    // report a new key/clear as saved when no protected store is available.
+    if (isTauri() || current.aiApiKey || current.aiImageApiKey
+      || patch.aiApiKey != null || patch.aiImageApiKey != null) {
+      throw new Error("ai-secret-storage-unavailable");
+    }
     saveFallbackSettings(next);
     return projectAiSettingsForFrontend(next);
   }
-  // 6.6 双写: ai* 老键 + 通用键, 都持久化, 互为兜底
+  await invoke("ai_settings_secret_update", {
+    apiKey: patch.aiApiKey ?? null,
+    imageApiKey: patch.aiImageApiKey ?? null,
+  });
+  // Only non-secret preferences go through generic SQL.
   const pairs: Array<[string, string]> = [
     ["aiProvider", next.aiProvider ?? ""],
-    ["aiApiKey", next.aiApiKey ?? ""],
     ["aiBaseURL", next.aiBaseURL ?? ""],
     ["aiModel", next.aiModel ?? ""],
-    ["aiImageApiKey", next.aiImageApiKey ?? ""],
     ["aiImageBaseURL", next.aiImageBaseURL ?? ""],
     ["aiImageModel", next.aiImageModel ?? ""],
     ["aiVideoModel", next.aiVideoModel ?? ""],
@@ -3606,7 +3656,7 @@ async function setSettings(patch: Partial<BridgeSettings>): Promise<BridgeSettin
       [k, v],
     );
   }
-  return projectAiSettingsForFrontend(next);
+  return getSettings();
 }
 
 // ===== AI CONVERSATION BRIDGE =====

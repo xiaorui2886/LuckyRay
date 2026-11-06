@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Read, Write};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use std::time::{Duration, Instant};
 const MAX_WIRE: u64 = 2_200_000;
@@ -45,30 +45,53 @@ fn execute() -> Result<Value, String> {
     let runtime = Runtime::new().map_err(|_| "worker-engine")?;
     runtime.set_memory_limit(32 * 1024 * 1024);
     runtime.set_max_stack_size(512 * 1024);
-    let started = Instant::now();
+    // A host RPC can legitimately wait on a model. Bound script execution
+    // between host responses instead of counting the host's I/O wait as JS CPU.
+    let slice_started = Arc::new(Mutex::new(Instant::now()));
+    let interrupt_started = slice_started.clone();
     runtime.set_interrupt_handler(Some(Box::new(move || {
-        started.elapsed() > Duration::from_secs(3)
+        interrupt_started.lock().map(|started| started.elapsed() > Duration::from_secs(3)).unwrap_or(true)
     })));
     let context = Context::full(&runtime).map_err(|_| "worker-context")?;
     let count = Arc::new(AtomicUsize::new(0));
     context.with(|ctx| -> Result<Value,String> {
+        let reply_started = slice_started.clone();
         let call=Function::new(ctx.clone(),move |request:String| -> String {
             if request.len()>65536 || count.fetch_add(1,Ordering::Relaxed)>=64 {return json!({"error":"plugin-request-limit"}).to_string();}
             let message=serde_json::from_str::<Value>(&request).map_err(|_|"worker-json".to_string()).and_then(|request|emit(&json!({"kind":"call","request":request}))).and_then(|_|read_message());
+            if let Ok(mut started) = reply_started.lock() { *started = Instant::now(); }
+            message.unwrap_or_else(|_|json!({"error":"plugin-channel-closed"}).to_string())
+        }).map_err(|_|"worker-bridge")?;
+        let chunk_started = slice_started.clone();
+        let receive=Function::new(ctx.clone(),move || -> String {
+            let message = read_message();
+            if let Ok(mut started) = chunk_started.lock() { *started = Instant::now(); }
             message.unwrap_or_else(|_|json!({"error":"plugin-channel-closed"}).to_string())
         }).map_err(|_|"worker-bridge")?;
         ctx.globals().set("__lr_call",call).map_err(|_|"worker-bridge")?;
+        ctx.globals().set("__lr_receive",receive).map_err(|_|"worker-bridge")?;
         ctx.eval::<(),_>(r#"
           (() => {
             const transport = globalThis.__lr_call; delete globalThis.__lr_call;
+            const receive = globalThis.__lr_receive; delete globalThis.__lr_receive;
             let handler = null;
             const call = async (method, params = {}) => {
               const response = JSON.parse(transport(JSON.stringify({method, params})));
               if (response.error) throw new Error(String(response.error));
               return response.value;
             };
+            const stream = async (method, params, onChunk) => {
+              if (method !== 'ai.generate' || typeof onChunk !== 'function') throw Error('plugin-parameters');
+              let response = JSON.parse(transport(JSON.stringify({method:'ai.stream', params})));
+              while (typeof response.delta === 'string') {
+                onChunk(response.delta);
+                response = JSON.parse(receive());
+              }
+              if (response.error) throw new Error(String(response.error));
+              return response.value;
+            };
             Object.defineProperty(globalThis, 'LuckyRay', {value:Object.freeze({
-              apiVersion:1, call,
+              apiVersion:1, call, stream,
               register(fn) { if (handler || typeof fn !== 'function') throw Error('plugin-handler'); handler=fn; }
             }), configurable:false, writable:false});
             globalThis.__lr_run = (event) => Promise.resolve().then(() => {

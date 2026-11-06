@@ -1,0 +1,21 @@
+[package]
+name = "luckyray-cli-native-fixture"
+version = "1.9.8"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "luckyray-cli-fixture"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "=0.8.2"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking"] }
+
+[dev-dependencies]
+tempfile = "3"

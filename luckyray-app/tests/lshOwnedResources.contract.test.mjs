@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const slot = 'lr-lsh/199-1';
+const slot = 'lr-lsh/1910-2';
 const owner = 'luckyray-lsh-layout-v1.txt';
 const ownerText = 'com.luckyray.desktop|lr-lsh|v1';
 const makensis = process.env.NSIS_MAKENSIS || join(process.env.LOCALAPPDATA || '', 'tauri/NSIS/makensis.exe');
@@ -19,7 +19,7 @@ test('installed resource mapping, dev publication and native selection use the s
   const native = await readFile(join(root, 'src-tauri/src/dsh_host/installation.rs'), 'utf8');
   assert.ok(native.includes(`BUNDLE_SLOT: &str = "${slot}"`));
   const dev = await readFile(join(root, 'scripts/prepare-dsh-dev-runtime.ps1'), 'utf8');
-  assert.ok(dev.includes('src-tauri\\target\\debug\\lr-lsh\\199-1\\deepseek-harness'));
+  assert.ok(dev.includes('src-tauri\\target\\debug\\lr-lsh\\1910-2\\deepseek-harness'));
   const ownership = await readFile(join(root, 'src-tauri/src/desktop_app_update/ownership.rs'), 'utf8');
   const nodeSuffix = '\\' + slot.replaceAll('/', '\\') + '\\deepseek-harness\\node\\node.exe';
   assert.ok(ownership.includes('format!(r"{}' + nodeSuffix + '", install)'));
@@ -62,12 +62,12 @@ test('real NSIS slot preparation retains legacy and prior/partial slots and reje
   await writeFile(join(primary, slot, 'old-owned-file.txt'), 'old-owned');
   const second = await install('中文 非默认路径');
   assert.equal(second.code, 0, second.reason);
-  assert.equal(await readFile(join(primary, 'lr-lsh/199-1.saved-1/old-owned-file.txt'), 'utf8'), 'old-owned');
+  assert.equal(await readFile(join(primary, 'lr-lsh/1910-2.saved-1/old-owned-file.txt'), 'utf8'), 'old-owned');
   assert.deepEqual(await readdir(join(primary, slot)), []);
   await writeFile(join(primary, slot, 'interrupted-partial.txt'), 'partial-extraction');
   const third = await install('中文 非默认路径');
   assert.equal(third.code, 0, third.reason);
-  assert.equal(await readFile(join(primary, 'lr-lsh/199-1.saved-2/interrupted-partial.txt'), 'utf8'), 'partial-extraction');
+  assert.equal(await readFile(join(primary, 'lr-lsh/1910-2.saved-2/interrupted-partial.txt'), 'utf8'), 'partial-extraction');
   assert.equal(await readFile(join(primary, 'deepseek-harness/old-user-kept.txt'), 'utf8'), 'old-layout');
 
   const unknown = join(temp, 'unknown');

@@ -1,3 +1,17 @@
+import {compileComfyTemplate,type ComfyTemplate,type TemplateScalar} from './core/canvas/comfyTemplate';
+import {useComfyTemplates,CanvasTemplateParameters} from './features/canvas/CanvasComfyTemplates';
+import {ComfyPopover,ComfyPopoverGroup,ComfyOptionRow} from './features/canvas/CanvasComfyPopover';
+import { canvasComfyUiClient, subscribeCanvasComfyUiConfig, generateComfyVideo, type CanvasComfyUiConfig } from "./core/services/canvasComfyUi";
+import { parseComfyWorkflow, compileComfyWorkflow, COMFY_MAX_REFERENCE_IMAGES, type ComfyGenerationMode } from "./core/canvas/comfyWorkflow";
+import { buildWorkFisherVideo, buildWorkFisherImage, readWorkFisherImage, isWorkFisherVideo, isWorkFisherImagePreset, suggestedWorkFisherPrompt, WORK_FISHER_VIDEO_NAME, type WorkFisherImagePreset } from "./core/canvas/workFisherPreset";
+import { CanvasComfyUiControls, CanvasComfyUiImageControls, comfyPresetMatchesResult } from "./features/canvas/CanvasComfyUiControls";
+import { CanvasNativeVideoPreview, comfyVideoResultName, type CanvasAudioOwner } from "./features/canvas/CanvasNativeVideoPreview";
+import { CanvasVideoFrame } from './features/canvas/CanvasVideoFrame';
+import {useCanvasVideoCover} from "./features/canvas/comfyVideoCover";
+import {comfySeedAfterQueued, comfySeedForNewTask, type ComfySeedMode} from './core/canvas/comfySeed';
+import { serializeCanvasPortableExport } from "./features/canvas/canvasExport";
+import { mediaGenerationReadiness } from "./core/canvas/mediaGenerationReadiness";
+import { useGenerationConcurrencyPolicy } from "./core/services/generationConcurrencySettings";
 import { selectTaskContext } from './core/canvas/agent/contextSelection';
 import { generatorCardDimensions, storyboardAppendY, storyboardBounds } from "./core/canvas/storyboardLayout";
 import { DIRECTOR_STORYBOARD_INSETS, directorStoryboardAppendY, directorStoryboardBounds, spaceDirectorStoryboards } from "./core/canvas/director/storyboardLayout";
@@ -48,7 +62,7 @@ import {mergeImageResults,selectPrimaryResultImage} from "./core/canvas/imageRes
 import {compileMentionedPrompt,parseReferenceMentions,validateReferenceMentions,remapReferenceMentions} from "./core/canvas/referenceMentions";
 import {CanvasPromptEditor,type CanvasPromptEditorHandle} from "./features/canvas/CanvasPromptEditor";
 import {CanvasResultActions} from "./features/canvas/CanvasResultActions";
-import {buildHistoryDraft,historyHasResult,historyLibraryCandidates,resultEntryForNode,hasLiveGenerationTask} from "./core/canvas/generationIteration";
+import {buildHistoryDraft,historyHasResult,historyLibraryCandidates,historyResultContinuationMessage,resultEntryForNode,hasLiveGenerationTask} from "./core/canvas/generationIteration";
 import {CanvasReferenceHover} from "./features/canvas/CanvasReferenceHover";
 import {planReferenceReorder} from "./core/canvas/referenceReorder";
 import {useReferencePointerReorder} from "./features/canvas/useReferencePointerReorder";
@@ -127,9 +141,10 @@ import { getLuckyRayBridgeSync } from "./core/bridge/luckyRayBridge";
 import type { BridgeAiMessageContent } from "./core/bridge/bridgeTypes";
 import { focusEntity, publishCurrentCanvasContext } from "./core/services/context";
 import { getAiProviderMeta } from "./core/services/aiProviders";
+import { canvasApiModelChoices, canvasGenerationProfile, canvasProfileModelIds } from "./core/canvas/apiModelLibrary";
 import { completeCanvasProfileText, resolveCanvasTextSelection, canvasMediaProfilesClient, type CanvasMediaProfilesSnapshot, type CanvasMediaProfile } from "./core/services/canvasMediaProfiles";
 import { CanvasAspectOptions } from "./features/canvas/CanvasAspectOptions";
-import { mediaParameterKind, mediaParameterLabel, mediaPixelSize, videoParameterSummary } from "./core/canvas/mediaOptionPresentation";
+import { mediaParameterKind, mediaParameterLabel, mediaPixelSize, videoParameterSummary, imageParameterSummary } from "./core/canvas/mediaOptionPresentation";
 import { canvasGenerationSubmissionLabel } from "./core/canvas/generationTasks";
 import { mediaCapabilities, mediaOption, mediaQualityOption } from "./core/canvas/mediaCapabilities";
 import { CanvasVersionReview } from "./features/canvas/CanvasVersionReview";
@@ -159,6 +174,7 @@ import { CanvasWorkflowLibrary } from "./features/canvas/CanvasWorkflowLibrary";
 import { captureWorkflow, instantiateWorkflow, WorkflowError, type WorkflowTemplate } from "./core/canvas/workflowTemplates";
 import { isReferencePack, packMembers, usablePackMember, planReferencePack, type ReferencePackTag, type ReferencePackKind } from "./core/canvas/creativeReview";
 import { matchesGenerationHistory } from "./core/canvas/workflowHelpers";
+import { CanvasSettingsDialog, type CanvasSettingsSection } from "./features/canvas/CanvasSettingsDialog";
 import { CanvasMediaProfilesPanel } from "./features/canvas/CanvasMediaProfilesPanel";
 import {
   canConnectCanvasNodes,
@@ -190,6 +206,7 @@ import {
   type CanvasGenerationRequestSnapshot,
   type CanvasGenerationTask,
 } from "./core/canvas/generationTasks";
+import { getRuntimeGenerationScheduler, generationSlot, queuedGenerationTasks } from "./core/canvas/generationScheduler";
 import {
   executeCanvasGenerationTask,
   type CanvasGenerationAdapter,
@@ -287,12 +304,6 @@ type GenerationReference = {
   issue?: ReferenceIssue;
 };
 
-const CANVAS_GENERATION_CONCURRENCY: Record<CanvasGenerationKind, number> = {
-  text: 2,
-  image: 1,
-  video: 1,
-};
-
 type ConnectedGenerationInput = {
   edgeId: string;
   sourceNodeId: string;
@@ -355,6 +366,12 @@ type SpikeNodeData = {
   generationPrompt?: string;
   generationKind?: GenerationKind;
   generationModel?: string;
+  generationProfileId?: string;
+  generationSource?: "online" | "comfyui";
+  generationComfyWorkflow?: CanvasGenerationRequestSnapshot["comfyui"];
+  generationComfyTemplate?: ComfyTemplate;
+  generationComfyTemplateValues?: Record<string,TemplateScalar>;
+  generationComfy?: { preset?: 'configured'|'work-fisher-video'|WorkFisherImagePreset; mode?: ComfyGenerationMode; referenceModel?: string; refImageSize?: "max" | "match"; duration?: number; seed?: number; seedMode?: ComfySeedMode; aspect?: string; megapixels?: number; width?:number; height?:number; sizePreset?:string; loras?:import('./core/canvas/comfyLora').ComfyLoraValues; upscale?:boolean;upscaleResolution?:number;videoSteps?: number; audioSteps?: number; turbo?: boolean; mystic?: boolean; solAttention?: boolean };
   generationAspect?: string;
   generationDuration?: number;
   generationSound?: boolean;
@@ -538,7 +555,7 @@ type BridgeApi = {
   }) => Promise<unknown>;
   aiChatComplete?: (
     messages: Array<{ role: string; content: BridgeAiMessageContent }>,
-    options?: { systemPrompt?: string; temperature?: number; maxTokens?: number; model?: string },
+    options?: { systemPrompt?: string; temperature?: number; maxTokens?: number; signal?: AbortSignal; model?: string },
   ) => Promise<{ success: boolean; content?: string; error_kind?: string; error_message?: string; error_detail?: string }>;
   createAiConversation?: (title?: string) => Promise<{ id: string; title: string; createdAt: string; updatedAt: string }>;
   aiImageGenerate?: CanvasAiImageGeneration;
@@ -894,13 +911,6 @@ function CanvasNodeCommandIcon({ command }: { command: CanvasNodeCommand }) {
   return <ToolIcon type={iconByCommand[command.icon]} />;
 }
 
-function formatVideoTime(value: number) {
-  if (!Number.isFinite(value) || value < 0) return "0:00";
-  const minutes = Math.floor(value / 60);
-  const seconds = Math.floor(value % 60).toString().padStart(2, "0");
-  return `${minutes}:${seconds}`;
-}
-
 function parseGeneratorAspectRatio(value?: string | null): number {
   if (!value) return 1;
   const [width, height] = value.split(":").map(Number);
@@ -917,7 +927,15 @@ function generationMotionLabel(task: CanvasGenerationTask | undefined, t: I18nCo
   return progress === null ? t("editor.canvas.generation.generating") : t("editor.canvas.generation.progress", { progress });
 }
 
-function generationHistoryStatusLabel(entry: CanvasGenerationHistoryEntry, queuePosition: number | undefined, t: I18nContextValue["t"]): string {
+function generationHistoryStatusLabel(entry: CanvasGenerationHistoryEntry, queuePosition: number | undefined, t: I18nContextValue["t"], english = false): string {
+  if (entry.request.comfyui) {
+    if (entry.status === "cancelled") return english ? "Stopped watching" : "已停止跟踪";
+    if (entry.status === "failed") return english ? "Failed" : "生成失败";
+    if (entry.status === "succeeded") return english ? "Completed" : "已完成";
+    if (entry.providerStage === "downloading") return english ? "Saving video" : "正在保存视频";
+    if (entry.providerStage === "generating") return english ? "ComfyUI generating" : "ComfyUI 生成中";
+    return english ? "ComfyUI queued" : "ComfyUI 排队中";
+  }
   const progress = typeof entry.progress === "number" ? Math.max(0, Math.min(100, Math.round(entry.progress))) : 0;
   if (entry.status === "succeeded") return t("editor.canvas.history.status.completed");
   if (entry.status === "failed") return t("editor.canvas.history.status.failed");
@@ -933,43 +951,137 @@ function generationHistoryStatusLabel(entry: CanvasGenerationHistoryEntry, queue
   return t("editor.canvas.history.status.generating", { progress });
 }
 
+// Hover previews stay silent. Only one card may own user-enabled audio.
+let activeCanvasAudio: CanvasAudioOwner | null = null;
+const CanvasPlaybackVisibilityContext = createContext(true);
+
 function CanvasVideoPreview({
   source,
+  assetId,
   poster,
   selected,
   onAspectRatio,
+  variant = 'card',
 }: {
   source: string;
+  assetId?: string;
   poster?: string;
   selected: boolean;
   onAspectRatio?: (aspectRatio: number) => void;
+  variant?: 'card' | 'thumbnail';
 }) {
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasVisible = useContext(CanvasPlaybackVisibilityContext);
+  const playAttempt = useRef(0);
   const resolvedSource = resolveCanvasMediaUrl(source);
-  const resolvedPoster = resolveCanvasMediaUrl(poster);
+  const decodedCover = useCanvasVideoCover(source, assetId, canvasVisible);
+  const resolvedPoster = decodedCover?.src || resolveCanvasMediaUrl(poster);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
   const [manualPlaying, setManualPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [nativeResult, setNativeResult] = useState<string | null>(null);
+  const [mediaSize, setMediaSize] = useState<{source: string; width: number; height: number} | null>(null);
+  const dimensions = mediaSize?.source === resolvedSource ? mediaSize : decodedCover;
+  const nativeKey = assetId ? `asset:${assetId}:${resolvedSource}` : comfyVideoResultName(source);
+  const useNativePlayback = useCallback(() => {
+    if (!nativeKey) return;
+    setNativeResult(nativeKey);
+  }, [nativeKey]);
+  const claimAudio = useCallback((owner: CanvasAudioOwner, audible: boolean) => {
+    if (audible) {
+      if (activeCanvasAudio && activeCanvasAudio !== owner) {
+        activeCanvasAudio.muted = true;
+        activeCanvasAudio.pause();
+      }
+      activeCanvasAudio = owner;
+    } else if (activeCanvasAudio === owner) activeCanvasAudio = null;
+  }, []);
+
+  const setVideoMuted = useCallback((muted: boolean) => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (!muted) {
+      if (activeCanvasAudio && activeCanvasAudio !== video) {
+        activeCanvasAudio.muted = true;
+        activeCanvasAudio.pause();
+      }
+      activeCanvasAudio = video;
+    } else if (activeCanvasAudio === video) {
+      activeCanvasAudio = null;
+    }
+    video.muted = muted;
+    setIsMuted(muted);
+  }, []);
 
   const playVideo = useCallback(() => {
     const video = videoRef.current;
-    if (!video) return;
-    void video.play().catch(() => setIsPlaying(false));
-  }, []);
+    if (!video || document.hidden || !canvasVisible) return;
+    const attempt = ++playAttempt.current;
+    void video.play().catch(error => {
+      if (attempt !== playAttempt.current || video !== videoRef.current) return;
+      setIsPlaying(false);
+      setManualPlaying(false);
+      setVideoMuted(true);
+      if (nativeKey && (error?.name === 'NotSupportedError' || video.error?.code === 3 || video.error?.code === 4)) useNativePlayback();
+    });
+  }, [canvasVisible, nativeKey, setVideoMuted, useNativePlayback]);
 
   const pauseVideo = useCallback(() => {
+    ++playAttempt.current;
     videoRef.current?.pause();
   }, []);
 
   useEffect(() => {
+    const video = videoRef.current;
+    ++playAttempt.current;
+    setManualPlaying(false);
+    setIsPlaying(false);
+    setHasError(false);
+    setNativeResult(null);
+    setDuration(0);
+    setCurrentTime(0);
+    setVideoMuted(true);
+    const stopBackgroundPlayback = () => {
+      ++playAttempt.current;
+      videoRef.current?.pause();
+      setManualPlaying(false);
+      setIsHovering(false);
+      setVideoMuted(true);
+    };
+    const hide = () => {
+      if (document.hidden) stopBackgroundPlayback();
+    };
+    document.addEventListener("visibilitychange", hide);
+    // A desktop host may blur/minimize while document.hidden remains false.
+    window.addEventListener("blur", stopBackgroundPlayback);
+    return () => {
+      document.removeEventListener("visibilitychange", hide);
+      window.removeEventListener("blur", stopBackgroundPlayback);
+      ++playAttempt.current;
+      video?.pause();
+      if (activeCanvasAudio === video) activeCanvasAudio = null;
+    };
+  }, [resolvedSource, assetId, setVideoMuted]);
+
+  useEffect(() => {
+    if (canvasVisible) return;
+    pauseVideo();
+    setManualPlaying(false);
+    setIsHovering(false);
+    setVideoMuted(true);
+  }, [canvasVisible, pauseVideo, setVideoMuted]);
+
+  useEffect(() => {
     if (selected) return;
     setManualPlaying(false);
+    setVideoMuted(true);
     if (!isHovering) pauseVideo();
-  }, [isHovering, pauseVideo, selected]);
+  }, [isHovering, pauseVideo, selected, setVideoMuted]);
 
   const toggleManualPlayback = useCallback(() => {
     if (isPlaying) {
@@ -978,30 +1090,42 @@ function CanvasVideoPreview({
       return;
     }
     setManualPlaying(true);
+    setVideoMuted(false);
     playVideo();
-  }, [isPlaying, pauseVideo, playVideo]);
+  }, [isPlaying, pauseVideo, playVideo, setVideoMuted]);
 
-  const seekFromPointer = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  const toggleSound = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const muted = !video.muted;
+    setVideoMuted(muted);
+    if (!muted) {
+      setManualPlaying(true);
+      playVideo();
+    }
+  }, [playVideo, setVideoMuted]);
+
+  const seek = useCallback((fraction: number) => {
     const video = videoRef.current;
     if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    const nextTime = video.duration * ratio;
+    const nextTime = video.duration * fraction;
     video.currentTime = nextTime;
     setCurrentTime(nextTime);
   }, []);
 
-  const progress = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  if (nativeResult && nativeResult === nativeKey) return <CanvasNativeVideoPreview {...(assetId ? {assetId} : {resultName: nativeResult})} poster={resolvedPoster || undefined} metadata={dimensions ? {...dimensions, duration: decodedCover?.duration || duration} : undefined} selected={selected} visible={canvasVisible} onAspectRatio={onAspectRatio} onAudioClaim={claimAudio} mode={variant} />;
 
   if (hasError) {
     return <div className="canvas-node-media-fallback">{t("editor.canvas.node.videoUnavailable")}</div>;
   }
 
   return (
-    <div
-      className={`canvas-video-preview ${selected ? "is-selected" : ""} ${isPlaying ? "is-playing" : ""}`}
+    <CanvasVideoFrame dimensions={dimensions} selected={selected} playing={isPlaying} muted={isMuted}
+      time={currentTime} duration={duration || decodedCover?.duration || 0} variant={variant}
+      onPlayPause={toggleManualPlayback} onSound={toggleSound} onSeek={seek}
       onMouseEnter={() => {
         setIsHovering(true);
+        if (!manualPlaying) setVideoMuted(true);
         playVideo();
       }}
       onMouseLeave={() => {
@@ -1013,7 +1137,7 @@ function CanvasVideoPreview({
         ref={videoRef}
         src={resolvedSource}
         poster={resolvedPoster || undefined}
-        muted
+        muted={isMuted}
         playsInline
         preload="metadata"
         className="canvas-node-media"
@@ -1021,11 +1145,22 @@ function CanvasVideoPreview({
           setDuration(event.currentTarget.duration || 0);
           setCurrentTime(event.currentTarget.currentTime || 0);
           const { videoWidth, videoHeight } = event.currentTarget;
-          if (videoWidth > 0 && videoHeight > 0) onAspectRatio?.(videoWidth / videoHeight);
+          if (videoWidth > 0 && videoHeight > 0) {
+            setMediaSize({source: resolvedSource, width: videoWidth, height: videoHeight});
+            onAspectRatio?.(videoWidth / videoHeight);
+          }
+          else {
+            if (nativeKey) { pauseVideo(); setVideoMuted(true); useNativePlayback(); }
+          }
         }}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
+        onPause={() => {
+          ++playAttempt.current;
+          setIsPlaying(false);
+          setManualPlaying(false);
+        }}
+        onVolumeChange={(event) => setIsMuted(event.currentTarget.muted)}
         onEnded={() => {
           setManualPlaying(false);
           setIsPlaying(false);
@@ -1034,41 +1169,14 @@ function CanvasVideoPreview({
             if (video) video.currentTime = 0;
           }
         }}
-        onError={() => setHasError(true)}
+        onError={() => {
+          pauseVideo();
+          setVideoMuted(true);
+          if (nativeKey) useNativePlayback();
+          else setHasError(true);
+        }}
       />
-      <div
-        className="canvas-video-controls nodrag nopan"
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          className="canvas-video-toggle"
-          title={isPlaying ? t("editor.canvas.node.pause") : t("editor.canvas.node.play")}
-          aria-label={isPlaying ? t("editor.canvas.node.pauseVideo") : t("editor.canvas.node.playVideo")}
-          onClick={(event) => {
-            event.stopPropagation();
-            toggleManualPlayback();
-          }}
-        >
-          {isPlaying ? (
-            <svg viewBox="0 0 18 18"><path d="M6 5v8M12 5v8" /></svg>
-          ) : (
-            <svg viewBox="0 0 18 18"><path className="canvas-video-play-glyph" d="m7 5 6 4-6 4Z" /></svg>
-          )}
-        </button>
-        <div
-          className="canvas-video-progress"
-          title={t("editor.canvas.node.seekHint")}
-          onPointerDown={seekFromPointer}
-          onPointerMove={seekFromPointer}
-        >
-          <span className="canvas-video-progress-fill" style={{ width: `${progress}%` }} />
-          <i className="canvas-video-progress-thumb" style={{ left: `${progress}%` }} />
-        </div>
-        <span className="canvas-video-time">{formatVideoTime(currentTime)} / {formatVideoTime(duration)}</span>
-      </div>
-    </div>
+    </CanvasVideoFrame>
   );
 }
 
@@ -1249,6 +1357,7 @@ const SpikeNodeView = memo(function SpikeNodeView({ id, data, selected }: NodePr
           {data.refKind === "video" && videoSource ? (
             <CanvasVideoPreview
               source={videoSource}
+              assetId={data.payload?.startsWith('asset:') ? data.payload.slice(6) : undefined}
               poster={videoPoster}
               selected={selected}
             />
@@ -1614,9 +1723,9 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       if (epoch !== mediaLoadEpochRef.current) return;
       setMediaProfiles(mediaSnapshot);
       const mediaProfile = mediaSnapshot.profiles.find((entry) => entry.id === mediaSnapshot.activeProfileId)!;
-      // Only legacy text connections depend on app settings. Explicit canvas
-      // text and image/video connections remain usable when that bridge fails.
-      const settings = (mediaProfile.textProtocol ?? "legacy") === "legacy"
+      // Read legacy settings only when a saved connection uses them. Explicit
+      // connections remain independent if that optional bridge is unavailable.
+      const settings = mediaSnapshot.profiles.some(profile => (profile.textProtocol ?? "legacy") === "legacy")
         ? await bridge?.getSettings?.().catch(() => null) : null;
       if (epoch !== mediaLoadEpochRef.current) return;
       const provider = settings?.aiProvider?.trim() || "deepseek";
@@ -1724,6 +1833,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (!canvasVisibleRef.current) return;
+      if (document.querySelector(".canvas-settings-dialog[open]")) return;
       if (event.key !== "Escape" || event.isComposing || !focusSessionRef.current) return;
       event.preventDefault();
       event.stopPropagation();
@@ -1770,7 +1880,19 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
   const canvasLoadEpochRef = useRef(0);
   // 新建节点蓝色脉冲定时器
   const newHighlightTimerRef = useRef<number | null>(null);
+  const generationConcurrencyPolicy = useGenerationConcurrencyPolicy();
+  const generationSchedulerRef = useRef(getRuntimeGenerationScheduler());
+  const [generationSchedulerVersion, setGenerationSchedulerVersion] = useState(() => generationSchedulerRef.current.version);
+  useEffect(() => {
+    const scheduler = generationSchedulerRef.current;
+    const wake = () => setGenerationSchedulerVersion(version => version + 1);
+    const unsubscribe = scheduler.subscribe(wake);
+    // Cover a worker settling between render and subscription installation.
+    wake();
+    return unsubscribe;
+  }, []);
   const runningGenerationTaskIdsRef = useRef(new Set<string>());
+  const textGenerationAbortControllersRef = useRef(new Map<string, AbortController>());
   const cancelledGenerationTaskIdsRef = useRef(new Set<string>());
   const reconciledGenerationTaskIdsRef = useRef(new Set<string>());
   const generationSessionStartedAtRef = useRef(Date.now());
@@ -1827,29 +1949,11 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
   const [nodeSearchOpen, setNodeSearchOpen] = useState(false);
   const [nodeSearchQuery, setNodeSearchQuery] = useState("");
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const comfyConfig = useCanvasComfyConfig();
   const [canvasSettingsOpen, setCanvasSettingsOpen] = useState(false);
-  const [canvasSettingsTab, setCanvasSettingsTab] = useState<"generation" | "appearance">("generation");
-  const canvasSettingsAnchorRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!canvasSettingsOpen) return;
-    // Dismiss only when a gesture STARTS outside. A selection drag that starts
-    // in an input and releases outside must keep the panel and draft alive.
-    const onOutsidePointerDown = (event: PointerEvent) => {
-      if (!event.isPrimary || event.button !== 0) return;
-      const anchor = canvasSettingsAnchorRef.current;
-      if (anchor && !event.composedPath().includes(anchor)) setCanvasSettingsOpen(false);
-    };
-    const onEscape = (event: KeyboardEvent) => {
-      if (!canvasVisibleRef.current) return;
-      if (event.key === "Escape" && !event.isComposing) setCanvasSettingsOpen(false);
-    };
-    document.addEventListener("pointerdown", onOutsidePointerDown, true);
-    document.addEventListener("keydown", onEscape);
-    return () => {
-      document.removeEventListener("pointerdown", onOutsidePointerDown, true);
-      document.removeEventListener("keydown", onEscape);
-    };
-  }, [canvasSettingsOpen]);
+  const [canvasSettingsTab, setCanvasSettingsTab] = useState<CanvasSettingsSection>("generation");
+  const [canvasSettingsHasDraft, setCanvasSettingsHasDraft] = useState(false);
+  useEffect(() => { if (!visible) setCanvasSettingsOpen(false); }, [visible]);
   const [creativePanel, setCreativePanel] = useState<{ canvasId:string; kind:'review'|'packs'|'workflows'|'editImage'|'export'|'storyboard'|'director'; initialId?:string; imageEdit?:AgentImageEdit; imageNodeId?:string; imageIndex?:number; imageSource?:string }|null>(null);
   const storyboardExportController = useRef<AbortController | null>(null);
   const [storyboardExportState, setStoryboardExportState] = useState<{canvasId:string;boardId:string;busy:boolean;notice:string;error:string}|null>(null);
@@ -2583,6 +2687,11 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       generationKind: preset?.generationKind,
       generationPrompt: preset?.generationPrompt,
       generationModel: preset?.generationModel,
+      generationSource: preset?.generationSource,
+      generationComfy: preset?.generationComfy,
+      generationComfyWorkflow: preset?.generationComfyWorkflow,
+      generationComfyTemplate: preset?.generationComfyTemplate ? structuredClone(preset.generationComfyTemplate) : undefined,
+      generationComfyTemplateValues: preset?.generationComfyTemplateValues ? {...preset.generationComfyTemplateValues} : undefined,
       generationAspect: preset?.generationAspect,
       generationDuration: preset?.generationDuration,
       generationSound: preset?.generationSound,
@@ -2642,13 +2751,16 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     position?: { x: number; y: number },
     connectSource = true,
     mode: "generate" | "edit" = "generate",
+    generationSource: "online" | "comfyui" = "online",
   ) => {
     const sourceWidth = Number(source?.measured?.width || source?.style?.width || 300);
     const id = addNode("generator", {
-      label: mode === "edit"
+      label: generationSource === "comfyui" ? "ComfyUI生成" : mode === "edit"
         ? generationKind === "video" ? t("editor.canvas.node.videoEdit") : t("editor.canvas.node.imageEdit")
         : generationKind === "video" ? t("editor.canvas.node.videoGenerate") : t("editor.canvas.node.imageGenerate"),
       generationKind,
+      generationSource,
+      generationComfy: generationSource === "comfyui" && source && (source.data.refKind || getCanvasNodeCapabilities(source.data).contentKind) === "image" ? {mode:"single-image"} : undefined,
       generationPrompt: mode === "edit"
         ? generationKind === "video"
           ? t("editor.canvas.generation.defaultEditVideoPrompt")
@@ -2665,6 +2777,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
         label: generationKind === "video" ? t("editor.canvas.node.videoGenerate") : t("editor.canvas.node.imageGenerate"),
         kind: "generator",
         generationKind,
+        generationSource,
       });
       setEdges((current) => addEdge({
         id: genEdgeId(),
@@ -2680,14 +2793,14 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     return id;
   }, [addNode, t]);
 
-  const createConnectedNode = useCallback((kind: "text" | "script" | "imageGenerator" | "videoGenerator" | "imageEditor" | "videoEditor") => {
+  const createConnectedNode = useCallback((kind: "text" | "script" | "imageGenerator" | "videoGenerator" | "comfyGenerator" | "imageEditor" | "videoEditor") => {
     if (!connectDropMenu) return;
     const sourceNode = nodesRef.current.find((node) => node.id === connectDropMenu.origin.nodeId);
     let nodeId: string;
     if (kind === "imageGenerator" || kind === "imageEditor") {
       nodeId = addGeneratorNode("image", sourceNode, connectDropMenu.flowPosition, false, kind === "imageEditor" ? "edit" : "generate");
-    } else if (kind === "videoGenerator" || kind === "videoEditor") {
-      nodeId = addGeneratorNode("video", sourceNode, connectDropMenu.flowPosition, false, kind === "videoEditor" ? "edit" : "generate");
+    } else if (kind === "videoGenerator" || kind === "videoEditor" || kind === "comfyGenerator") {
+      nodeId = addGeneratorNode("video", sourceNode, connectDropMenu.flowPosition, false, kind === "videoEditor" ? "edit" : "generate", kind === "comfyGenerator" ? "comfyui" : "online");
     } else {
       nodeId = addNode("text", {
         label: t("editor.canvas.node.doubleClickEdit"),
@@ -2697,13 +2810,14 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
 
     const startsFromSource = connectDropMenu.origin.handleType === "source";
     const createdNodeData = normalizeCanvasNodeCapabilityData<SpikeNodeData>({
-      label: kind === "text" || kind === "script" ? t("editor.canvas.node.doubleClickEdit") : kind.includes("video") ? t("editor.canvas.node.videoGenerate") : t("editor.canvas.node.imageGenerate"),
+      label: kind === "comfyGenerator" ? "ComfyUI生成" : kind === "text" || kind === "script" ? t("editor.canvas.node.doubleClickEdit") : kind.includes("video") ? t("editor.canvas.node.videoGenerate") : t("editor.canvas.node.imageGenerate"),
       kind: kind.includes("Generator") || kind.includes("Editor")
         ? "generator"
         : "text",
       generationKind: kind === "imageGenerator" || kind === "imageEditor"
         ? "image"
-        : kind === "videoGenerator" || kind === "videoEditor" ? "video" : undefined,
+        : kind === "videoGenerator" || kind === "videoEditor" || kind === "comfyGenerator" ? "video" : undefined,
+      generationSource: kind === "comfyGenerator" ? "comfyui" : "online",
     });
     setEdges((current) => {
       const sourceId = startsFromSource ? connectDropMenu.origin.nodeId : nodeId;
@@ -2865,7 +2979,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
             _emptyMedia: false,
             role: "resource",
             materialGenerationProvenance: provenance,
-            generationPrompt: undefined, generationModel: undefined, generationReferences: undefined,
+            generationPrompt: undefined, generationModel: undefined, generationProfileId: undefined, generationReferences: undefined,
             generationInputOrder: undefined, generationCreativeRecipe: undefined, generationCinematography: undefined,
             ...(recoveredDraft ? {...recoveredDraft,label:asset.name || node.data.label,resultKind:provenance!.kind,resultMediaUrl:recoveredHistory?.outputMediaUrl,resultThumbnailUrl:thumbUrl,resultMediaItems:recoveredHistory?.outputMediaItems} : {}),
             ...(recoveredHistory ? {sourceGenerationTaskId:recoveredHistory.taskId,sourceGenerationHistoryId:recoveredHistory.id,sourceGenerationMediaUrl:recoveredHistory.outputMediaUrl} : {}),
@@ -2956,7 +3070,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
           : current;
         const next = withoutReplacedSlot.some((item) => item.id === reference.id)
           ? withoutReplacedSlot
-          : withoutReplacedSlot.concat(reference).slice(0, 4);
+          : node.data.generationSource === "comfyui" ? withoutReplacedSlot.concat(reference) : withoutReplacedSlot.concat(reference).slice(0, 4);
         return { ...node, data: { ...node.data, generationReferences: next } };
       }));
       setShowAssetPicker(false);
@@ -3023,9 +3137,17 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
 
   const noteReferenceKey=useMemo(()=>JSON.stringify(nodes.filter(n=>n.data.kind==='noteRef').map(n=>({nodeId:n.id,reference:parseCanvasReference(n.data.payload)})).filter(r=>r.reference?.kind==='note').map(r=>[r.nodeId,r.reference!.id]).sort()),[nodes]);
   const [noteRefreshEpoch,setNoteRefreshEpoch]=useState(0);
-  useEffect(()=>{const refresh=()=>setNoteRefreshEpoch(v=>v+1);window.addEventListener('luckyray:note-external-updated',refresh);window.addEventListener('focus',refresh);return()=>{window.removeEventListener('luckyray:note-external-updated',refresh);window.removeEventListener('focus',refresh);};},[]);
   useEffect(()=>{
-    if(!currentCanvasId||loadingCanvas||!bridge?.getNote)return;
+    // Retained canvases keep jobs/drafts alive, but must not re-render on graph
+    // focus. The hydration effect below refreshes notes when this canvas returns.
+    if(!visible||!currentCanvasId||loadingCanvas||noteReferenceKey==='[]')return;
+    const refresh=()=>{if(canvasVisibleRef.current)setNoteRefreshEpoch(v=>v+1);};
+    window.addEventListener('luckyray:note-external-updated',refresh);
+    window.addEventListener('focus',refresh);
+    return()=>{window.removeEventListener('luckyray:note-external-updated',refresh);window.removeEventListener('focus',refresh);};
+  },[visible,currentCanvasId,loadingCanvas,noteReferenceKey]);
+  useEffect(()=>{
+    if(!visible||!currentCanvasId||loadingCanvas||!bridge?.getNote)return;
     const canvasId=currentCanvasId,loadEpoch=canvasLoadEpochRef.current;
     const ids=[...new Set<string>((JSON.parse(noteReferenceKey) as string[][]).map(pair=>pair[1]))];
     return hydrateNotePreviews(ids,id=>bridge.getNote!(id),(id,note)=>{
@@ -3039,7 +3161,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       });
       if(changed){nodesRef.current=next;setNodes(next);markDirty();}
     });
-  },[bridge,currentCanvasId,loadingCanvas,noteReferenceKey,noteRefreshEpoch,markDirty]);
+  },[bridge,currentCanvasId,loadingCanvas,noteReferenceKey,noteRefreshEpoch,markDirty,visible]);
 
   const updateNodeLabel = useCallback((nodeId: string, text: string) => {
     // 主文字编辑路径：统一走 pending-edit 事务（canonical 快照 + 立即失效 redo + 800ms 合并）
@@ -3216,6 +3338,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     const multipleViews=['story-grid','blocking-board','multi-angle','character-sheet','scene-sheet','product-sheet'].includes(normalized.id);
     const data=normalizeCanvasNodeCapabilityData<SpikeNodeData>({kind:'generator',label:action.label,generationKind:'image',generationPrompt:'',
       generationModel:original.data.generationKind==='image'?original.data.generationModel:undefined,
+      generationProfileId:original.data.generationKind==='image'?original.data.generationProfileId:undefined,
       generationAspect:original.data.generationAspect||'16:9',generationQuality:original.data.generationQuality,generationResolution:original.data.generationResolution,
       generationCount:1,generationCreativeRecipe:normalized,generationCinematography:multipleViews?{...cinema,framing:'auto',angle:'auto',movement:'auto'}:cinema,
       sourceGenerationTaskId:original.data.generationTask?.id,derivedFromNodeId:sourceId});
@@ -3253,7 +3376,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
   const reorderCanvasReferences=useCallback((nodeId:string,from:string,to:string)=>{
     const target=nodesRef.current.find(node=>node.id===nodeId);if(!target)return;
     const connected=getIncomingGenerationInputs(nodeId),stored=storedCanvasReferences(target);
-    const entries=createCanvasReferencePlan(inferGenerationKind(target),connected,resolveStoredCanvasReferences(target,nodesRef.current),undefined,target.data.generationInputOrder);
+    const entries=createCanvasReferencePlan(inferGenerationKind(target),connected,resolveStoredCanvasReferences(target,nodesRef.current),undefined,target.data.generationInputOrder,target.data.generationSource === "comfyui");
     const plan=planReferenceReorder(entries,from,to);if(!plan)return;
     const changedConnected=connected.filter(input=>plan.roles.has(input.edgeId));
     const refs=stored.map((ref,index)=>{const entry=entries.find(item=>item.source==='stored'&&item.storedIndex===index);const role=entry&&plan.roles.get(entry.key);return {...ref,...(entry?{mentionKey:entry.key}:{}),...(role?{role}:{})};}).filter((_,index)=>!changedConnected.some(input=>duplicatesConnectedReference(stored[index],input)));
@@ -3311,7 +3434,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       : current;
     const next = nextBase.some((item) => item.id === reference.id)
       ? nextBase
-      : nextBase.concat(reference).slice(0, 4);
+      : target.data.generationSource === "comfyui" ? nextBase.concat(reference) : nextBase.concat(reference).slice(0, 4);
     updateNodeData(nodeId, { generationReferences: next });
   }, [updateNodeData]);
 
@@ -3397,21 +3520,34 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
 
   const executeGenerationTask = useCallback(async (task: CanvasGenerationTask) => {
     if (runningGenerationTaskIdsRef.current.has(task.id)) return;
+    const textAbortController = new AbortController();
+    if (cancelledGenerationTaskIdsRef.current.has(task.id)) textAbortController.abort();
+    textGenerationAbortControllersRef.current.set(task.id, textAbortController);
     runningGenerationTaskIdsRef.current.add(task.id);
     generationTaskSnapshotsRef.current.set(task.id, task);
     const adapters: CanvasGenerationAdapter[] = [];
     adapters.push(createCanvasTextGenerationAdapter((messages, options) => {
       if (options?.textProfileId) {
         if (!Number.isSafeInteger(options.textProfileRevision)) return Promise.resolve({success:false,error_kind:"profile_changed"});
-        return completeCanvasProfileText(options.textProfileId,options.textProfileRevision!,messages,options);
+        return completeCanvasProfileText(options.textProfileId,options.textProfileRevision!,messages,{...options,signal:textAbortController.signal});
       }
-      return bridge?.aiChatComplete ? bridge.aiChatComplete(messages,options)
+      return bridge?.aiChatComplete ? bridge.aiChatComplete(messages,{...options,signal:textAbortController.signal})
         : Promise.resolve({success:false,error_kind:"no_api_key"});
     }));
-    if (bridge?.aiImageGenerate) {
-      adapters.push(createCanvasImageGenerationAdapter((request) => bridge.aiImageGenerate!(request)));
+    if (!task.request.comfyui && bridge?.aiImageGenerate) {
+      adapters.push(createCanvasImageGenerationAdapter((request) => bridge.aiImageGenerate!(request, task.id)));
     }
-    if (bridge?.aiVideoGenerate) {
+    if (task.request.comfyui) {
+      adapters.push({id:"luckyray.comfyui",supports:request=>(request.kind === "video" || request.kind === "image") && !!request.comfyui,execute:async request=>{
+        const response = await generateComfyVideo(request,task.id,progress=>{
+          const current = generationTaskSnapshotsRef.current.get(task.id) || task;
+          if(cancelledGenerationTaskIdsRef.current.has(task.id) || ["succeeded","failed","cancelled"].includes(current.status)) return;
+          void applyGenerationTaskUpdate({...current,status:"running",providerTaskId:progress.providerTaskId || current.providerTaskId,providerStage:progress.stage,updatedAt:new Date().toISOString()});
+        },textAbortController.signal);
+        const output=request.kind==='image'?response.imageUrl:response.videoUrl;
+        return response.success && output ? {ok:true,output:{kind:request.kind,mediaUrl:output}} : {ok:false,error:{code:response.error_kind || "COMFY_OBSERVATION_INTERRUPTED",message:response.error_message || "ComfyUI 连接中断",detail:response.error_detail || undefined,retryable:!["SUBMISSION_UNKNOWN","SUBMISSION_BINDING_CHANGED"].includes(response.error_kind || "")}};
+      }});
+    } else if (bridge?.aiVideoGenerate) {
       adapters.push(createCanvasVideoGenerationAdapter(
         (request, onProgress) => bridge.aiVideoGenerate!(request, onProgress, task.providerTaskId, task.id),
         (progress) => {
@@ -3456,6 +3592,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
         },
       });
 
+      if (result.outcome === "failed") generationSchedulerRef.current.backpressure(task.id, result.error.code);
       if (result.outcome !== "succeeded") return;
       const persistedTask = generationTaskSnapshotsRef.current.get(result.task.id);
       const completedTask: CanvasGenerationTask = {
@@ -3464,9 +3601,12 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       };
       await applyGenerationTaskUpdate(completedTask, result.output);
     } finally {
+      generationSchedulerRef.current.release(task.id);
+      textGenerationAbortControllersRef.current.delete(task.id);
       runningGenerationTaskIdsRef.current.delete(task.id);
       generationTaskCanvasIdsRef.current.delete(task.id);
       generationTaskSnapshotsRef.current.delete(task.id);
+      // Runtime release notifies the currently mounted canvas, even after remount.
     }
   }, [applyGenerationTaskUpdate, bridge]);
 
@@ -3476,13 +3616,20 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
   ) => {
     const source = nodesRef.current.find((node) => node.id === nodeId);
     if (!source) return;
+    if (!retry && source.data.generationTask?.request.comfyui && ["SUBMISSION_UNKNOWN","SUBMISSION_BINDING_CHANGED"].includes(source.data.generationTask.error?.code || "")) {
+      setSaveError(locale === "en-US" ? "Check the original job in ComfyUI before creating a new draft. This card will not submit again automatically." : "请先在 ComfyUI 核对原任务，再决定是否新建草稿；当前节点不会再次提交。");setSaveStatus("error");return;
+    }
 
+    const selectedProfile = canvasGenerationProfile(mediaProfiles?.profiles, activeMediaProfile, source.data.generationProfileId);
+    const textSelection = resolveCanvasTextSelection(selectedProfile, legacyTextConfigRef.current);
+    const selectedImageModels = canvasProfileModelIds(selectedProfile, "image");
+    const selectedVideoModels = canvasProfileModelIds(selectedProfile, "video");
     if (!retry && inferGenerationKind(source) === "text" && !aiRuntimeConfig.ready) {
       setSaveError(t("editor.canvas.error.aiConfigLoading"));
       setSaveStatus("error");
       return;
     }
-    if (!retry && inferGenerationKind(source) === "text" && !aiRuntimeConfig.model) {
+    if (!retry && inferGenerationKind(source) === "text" && !textSelection.models.length) {
       setSaveError(aiRuntimeConfig.error || t("editor.canvas.error.noTextModel"));
       setSaveStatus("error");
       return;
@@ -3496,7 +3643,8 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       return;
     }
     const resolvedStoredReferences=resolveStoredCanvasReferences(source,nodesRef.current);
-    const inputPlan=createCanvasReferencePlan(inferGenerationKind(source),getIncomingGenerationInputs(nodeId),resolvedStoredReferences,inferGenerationKind(source) === "video" ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol,source.data.generationInputOrder);
+    const connectedInputs = getIncomingGenerationInputs(nodeId);
+    const inputPlan=createCanvasReferencePlan(inferGenerationKind(source),connectedInputs,resolvedStoredReferences,inferGenerationKind(source) === "video" ? selectedProfile?.videoProtocol : selectedProfile?.imageProtocol,source.data.generationInputOrder,source.data.generationSource === "comfyui");
     if(!retry&&inputPlan.some(entry=>entry.issue)){
       setSaveError(locale === "en-US" ? "Check the marked references before generating." : "请先处理引用区标出的失效或无内容素材。");setSaveStatus("error");return;
     }
@@ -3505,29 +3653,32 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     let request:CanvasGenerationRequestSnapshot;
     try { request = retry?.request || createGenerationRequestSnapshot(
       source,
-      getIncomingGenerationInputs(nodeId),
-      aiRuntimeConfig.models,
-      aiRuntimeConfig.model,
-      aiRuntimeConfig.imageModels,
-      aiRuntimeConfig.imageModel,
-      aiRuntimeConfig.videoModels,
-      aiRuntimeConfig.videoModel,
-      activeMediaProfile,
+      connectedInputs,
+      textSelection.models,
+      textSelection.model,
+      selectedImageModels,
+      selectedProfile?.imageModel || "",
+      selectedVideoModels,
+      selectedProfile?.videoModel || "",
+      selectedProfile,
       uiSettings.noteReferenceIncludeTitle,
       resolvedStoredReferences,
+      inputPlan,
+      comfyConfig,
     );
-    } catch (error) {setSaveError(error instanceof Error && error.message === "historical-model-unavailable" ? (locale==='en-US'?'The original model is unavailable in this connection. Select a model to continue.':'当前配置没有原生成模型，请选择模型后继续。') : (locale==='en-US'?'Check creative settings and their image reference before generating.':'请检查创作设定及参考图片后再生成。'));setSaveStatus('error');return;}
-    if (!retry && request.kind === "text" && activeMediaProfile?.textProtocol === "openai-chat") {
-      if (!activeMediaProfile.apiKeyConfigured) {
+    } catch (error) {if(source.data.generationSource === "comfyui"){setSaveError(error instanceof Error ? error.message : "请检查本地 ComfyUI 工作流及参数");setSaveStatus("error");return;}setSaveError(error instanceof Error && error.message === "historical-model-unavailable" ? (locale==='en-US'?'The selected connection or model is unavailable. Select a model to continue.':'所选连接或模型当前不可用，请重新选择。') : (locale==='en-US'?'Check creative settings and their image reference before generating.':'请检查创作设定及参考图片后再生成。'));setSaveStatus('error');return;}
+    if (!retry && request.kind === "text" && selectedProfile?.textProtocol === "openai-chat") {
+      if (!selectedProfile.apiKeyConfigured) {
         setSaveError(locale === "en-US" ? "Configure this connection's key first." : "请先配置这套画布连接的 Key。");setSaveStatus("error");return;
       }
-      request.textProfileId=activeMediaProfile.id;
-      request.textProfileRevision=activeMediaProfile.revision;
+      request.textProfileId=selectedProfile.id;
+      request.textProfileRevision=selectedProfile.revision;
     }
-    if (!retry && request.kind !== "text") {
-      const profile = mediaProfiles?.profiles.find((entry) => entry.id === mediaProfiles.activeProfileId);
-      if (!profile || !profile.apiKeyConfigured || !request.model || (request.kind === "image" ? profile.imageProtocol : profile.videoProtocol) === "disabled") {
-        setSaveError(t("editor.canvas.error.aiConfigUnavailable")); setSaveStatus("error"); return;
+    if (!retry && request.kind !== "text" && !request.comfyui) {
+      const profile = selectedProfile;
+      const readiness = mediaGenerationReadiness(request.kind, profile, request.model, locale === "en-US");
+      if (!readiness.ready || !profile) {
+        setSaveError(readiness.message); setSaveStatus("error"); return;
       }
       request.mediaProfileId = profile.id;
       request.mediaProfileRevision = profile.revision;
@@ -3536,10 +3687,19 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       setSaveError(t("editor.canvas.generation.enterContent")); setSaveStatus("error"); return;
     }
     const activeTask = source.data.generationTask;
-    if (hasLiveGenerationTask(generationTaskSnapshotsRef.current.values(),nodesRef.current,runningGenerationTaskIdsRef.current,nodeId,activeTask?.status==='succeeded'?activeTask.id:undefined) || (activeTask && canCancelCanvasGenerationTask(activeTask))) {
+    if (hasLiveGenerationTask([...generationTaskSnapshotsRef.current.values()].filter(task => !generationTaskCanvasIdsRef.current.has(task.id) || generationTaskCanvasIdsRef.current.get(task.id) === currentCanvasIdRef.current),nodesRef.current,runningGenerationTaskIdsRef.current,nodeId,activeTask?.status==='succeeded'?activeTask.id:undefined) || (activeTask && canCancelCanvasGenerationTask(activeTask))) {
       setSaveError(t("editor.canvas.error.generationBusy"));
       setSaveStatus("error");
       return;
+    }
+    let nextSeed: number | undefined;
+    try {
+      if (!retry && request.comfyui) {
+        request={...request,comfyui:{...request.comfyui,workflow:comfySeedForNewTask(request.kind,request.comfyui.workflow,source.data.generationComfy?.seedMode)}};
+        nextSeed = comfySeedAfterQueued(request.kind, request.comfyui!.workflow, source.data.generationComfy?.seedMode);
+      }
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '种子模式无效。'); setSaveStatus('error'); return;
     }
     // Ordinary generation always owns this card. Explicit derive commands create new cards.
     const now = new Date().toISOString();
@@ -3562,10 +3722,13 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
         payload: undefined, refMediaUrl: undefined, refThumbnailUrl: undefined,
       } : {}),
       generationTask: task,
+      ...(nextSeed !== undefined ? {generationComfy: {...source.data.generationComfy, seed: nextSeed}} : {}),
       sourceGenerationTaskId:undefined,sourceGenerationHistoryId:undefined,sourceGenerationMediaUrl:undefined,materialGenerationProvenance:undefined,
       ...(!retry ? {
       generationKind: request.kind === "image" || request.kind === "video" ? request.kind : undefined,
+      ...(!request.comfyui ? {
       generationModel: request.model,
+      generationProfileId: request.textProfileId || request.mediaProfileId || selectedProfile?.id,
       generationAspect: request.aspect,
       generationDuration: request.duration,
       generationSound: request.sound,
@@ -3573,6 +3736,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       generationResolution: request.resolution,
       generationCount: request.count,
       generationCameraStrength: request.cameraStrength,
+      } : {}),
       generationReferences: request.references.map((reference,index) => ({
         id: reference.id,
         mentionKey: inputPlan.filter(entry=>!entry.issue)[index]?.key,
@@ -3600,11 +3764,12 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     generationTaskCanvasIdsRef.current.set(task.id, currentCanvasIdRef.current);
     generationTaskSnapshotsRef.current.set(task.id, task);
     return task.id;
-  }, [activeMediaProfile, mediaProfiles, aiRuntimeConfig, commitHistory, getIncomingGenerationInputs, markDirty, recordGenerationTask, t, uiSettings.noteReferenceIncludeTitle, locale]);
+  }, [activeMediaProfile, mediaProfiles, aiRuntimeConfig, comfyConfig, commitHistory, getIncomingGenerationInputs, markDirty, recordGenerationTask, t, uiSettings.noteReferenceIncludeTitle, locale]);
 
   const cancelGenerationTask = useCallback((task: CanvasGenerationTask, nodeId?: string) => {
     if (!task || !canCancelCanvasGenerationTask(task)) return;
     cancelledGenerationTaskIdsRef.current.add(task.id);
+    textGenerationAbortControllersRef.current.get(task.id)?.abort();
     const transition = transitionCanvasGenerationTask(task, "cancelled", new Date().toISOString());
     if (!transition.ok) {
       setSaveError(transition.error.message);
@@ -3655,13 +3820,13 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     for (const node of nodes) {
       const task = node.data.generationTask;
       if (!task || task.status !== "running") continue;
-      if (runningGenerationTaskIdsRef.current.has(task.id) || reconciledGenerationTaskIdsRef.current.has(task.id)) continue;
+      if (generationSchedulerRef.current.has(task.id) || runningGenerationTaskIdsRef.current.has(task.id) || reconciledGenerationTaskIdsRef.current.has(task.id)) continue;
       const taskUpdatedAt = Date.parse(task.updatedAt || task.createdAt);
       const belongsToCurrentSession = generationTaskCanvasIdsRef.current.has(task.id)
         || (Number.isFinite(taskUpdatedAt) && taskUpdatedAt >= generationSessionStartedAtRef.current - 1000);
       if (belongsToCurrentSession) continue;
       reconciledGenerationTaskIdsRef.current.add(task.id);
-      if (task.request.kind === "video" && task.providerTaskId && bridge?.aiVideoGenerate) {
+      if (task.request.comfyui || (task.request.mediaProfileId !== "doubao-default" && task.request.kind === "video" && task.providerTaskId && bridge?.aiVideoGenerate)) {
         recoveredTasks.set(task.id, {
           ...task,
           status: "queued",
@@ -3673,9 +3838,11 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       }
       const failed = transitionCanvasGenerationTask(task, "failed", new Date().toISOString(), {
         error: {
-          code: "GENERATION_INTERRUPTED",
-          message: t("editor.canvas.error.generationInterrupted"),
-          retryable: true,
+          code: task.request.mediaProfileId === "doubao-default" ? "PROVIDER_REMOVED" : "GENERATION_INTERRUPTED",
+          message: task.request.mediaProfileId === "doubao-default"
+            ? (locale === "en-US" ? "The Doubao connector has been removed. Existing results are retained; this task will not be sent to another provider." : "豆包连接器已移除。已有结果保留，此任务不会改发到其他服务。")
+            : t("editor.canvas.error.generationInterrupted"),
+          retryable: task.request.mediaProfileId !== "doubao-default",
         },
       });
       if (failed.ok) interruptedTasks.set(task.id, failed.task);
@@ -3695,31 +3862,25 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
       }));
     }
 
-    const runningByKind: Record<CanvasGenerationKind, number> = { text: 0, image: 0, video: 0 };
-    for (const taskId of runningGenerationTaskIdsRef.current) {
-      const runningTask = nodesRef.current.find((node) => node.data.generationTask?.id === taskId)?.data.generationTask;
-      const kind = runningTask?.request.kind
-        || generationHistoryRef.current.find((entry) => entry.taskId === taskId)?.kind;
-      if (kind) runningByKind[kind] += 1;
-    }
-
-    const queuedTasks = nodes
-      .map((node) => node.data.generationTask)
-      .filter((task): task is CanvasGenerationTask => !!task && task.status === "queued")
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const queuedTasks = queuedGenerationTasks(nodes.map(node => node.data.generationTask));
 
     for (const task of queuedTasks) {
       const adapterReady = task.request.kind === "text"
         ? !!bridge?.aiChatComplete
-        : task.request.kind === "image" ? !!bridge?.aiImageGenerate : !!bridge?.aiVideoGenerate;
+        : task.request.kind === "image" ? !!task.request.comfyui || !!bridge?.aiImageGenerate : !!task.request.comfyui || !!bridge?.aiVideoGenerate;
       if (!adapterReady) continue;
       if (runningGenerationTaskIdsRef.current.has(task.id)) continue;
-      if (runningByKind[task.request.kind] >= CANVAS_GENERATION_CONCURRENCY[task.request.kind]) continue;
-      runningByKind[task.request.kind] += 1;
+      const slot = generationSlot(task, currentCanvasId, mediaProfiles?.profiles || []);
+      if (!generationSchedulerRef.current.reserve(slot, generationConcurrencyPolicy)) continue;
       generationTaskCanvasIdsRef.current.set(task.id, currentCanvasIdRef.current);
       void executeGenerationTask(task);
     }
-  }, [bridge, currentCanvasId, executeGenerationTask, loadingCanvas, markDirty, nodes, recordGenerationTask, t, uiSettings.noteReferenceIncludeTitle, locale]);
+    const wakeDelay = generationSchedulerRef.current.nextWakeDelay();
+    if (wakeDelay !== undefined) {
+      const timer = window.setTimeout(() => setGenerationSchedulerVersion(version => version + 1), wakeDelay);
+      return () => window.clearTimeout(timer);
+    }
+  }, [bridge, currentCanvasId, executeGenerationTask, loadingCanvas, markDirty, nodes, recordGenerationTask, t, uiSettings.noteReferenceIncludeTitle, locale, mediaProfiles, generationSchedulerVersion, generationConcurrencyPolicy]);
 
   const openNodeReference = useCallback((nodeId: string) => {
     const selected = nodesRef.current.find((node) => node.id === nodeId);
@@ -4071,7 +4232,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     });
     const byId = new Map(nodes.map((node) => [node.id, node]));
     const copiedNodes = nodes.filter((node) => idSet.has(node.id)).map((original) => {
-      const plan=createCanvasReferencePlan(inferGenerationKind(original),getIncomingGenerationInputs(original.id),resolveStoredCanvasReferences(original,nodesRef.current),undefined,original.data.generationInputOrder);
+      const plan=createCanvasReferencePlan(inferGenerationKind(original),getIncomingGenerationInputs(original.id),resolveStoredCanvasReferences(original,nodesRef.current),undefined,original.data.generationInputOrder,original.data.generationSource === "comfyui");
       const copiedReferences=plan.filter(entry=>entry.source==='stored'||!idSet.has(entry.sourceNodeId || "")).map(entry=>{
         const freeze=entry.sourceNodeId&&!idSet.has(entry.sourceNodeId);
         return {...entry.reference,issue:entry.reference.issue || (entry.issue==='missing-source'?entry.issue:undefined),role:entry.role,mentionKey:entry.key,...(freeze?{id:`copied:${original.id}:${entry.key}`,sourceNodeId:undefined}:{})};
@@ -4458,26 +4619,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     if (!bridge) return;
     try {
       const data = await bridge.loadCanvas(canvasId);
-      const exportNodes = Array.isArray(data.nodes)
-        ? (data.nodes as SpikeNode[]).map((node) => ({
-            ...node,
-            data: normalizeCanvasNodeCapabilityData(node.data),
-          }))
-        : [];
-      const exportData = {
-        schemaVersion: CANVAS_SCHEMA_VERSION,
-        canvasId: data.canvasId,
-        name: data.name,
-        createdAt: data.createdAt,
-        updatedAt: data.updatedAt,
-        nodes: exportNodes,
-        edges: normalizeCanvasEdgeSemantics(
-          exportNodes,
-          Array.isArray(data.edges) ? data.edges as SpikeEdge[] : [],
-        ),
-        viewport: data.viewport,
-      };
-      const json = JSON.stringify(exportData, null, 2);
+      const json = JSON.stringify(serializeCanvasPortableExport(data), null, 2);
       const defaultName = `canvas-${canvasName || data.name || canvasId}.json`;
       const filePath = await save({
         defaultPath: defaultName,
@@ -4603,7 +4745,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
         });
         if (!current()) return null;
         const messages = buildCanvasFocusMessages(prepared.dataUrl, locale);
-        const options = { model: session.model, temperature: 0, maxTokens: 100 };
+        const options = { model: session.model, temperature: 0, maxTokens: 100, signal: controller.signal };
         return session.profileId && session.profileRevision
           ? completeCanvasProfileText(session.profileId, session.profileRevision, messages, options)
           : bridge!.aiChatComplete!(messages, options);
@@ -4615,7 +4757,8 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
         }),
       ]);
       if (!current() || !response) return;
-      if (!response.success) throw Error(response.error_kind === "profile_changed" ? "focus-profile-changed" : "focus-provider-failed");
+      if (!response.success) throw Error(response.error_kind === "profile_changed" ? "focus-profile-changed"
+        : response.error_kind === "timeout" ? "focus-timeout" : "focus-provider-failed");
       const phrase = sanitizeCanvasFocusPhrase(response.content);
       if (!phrase) throw Error("focus-no-object");
       // Commit the exact source image + object token together. Re-check latest graph
@@ -4631,7 +4774,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
           return {edgeId:edge.id,sourceNodeId:edge.source,role:edge.data?.role || "generic",reference};
         });
       const entries = createCanvasReferencePlan(inferGenerationKind(target), inputs, resolveStoredCanvasReferences(target, update.nodes),
-        inferGenerationKind(target) === "video" ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, target.data.generationInputOrder);
+        inferGenerationKind(target) === "video" ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, target.data.generationInputOrder,target.data.generationSource === "comfyui");
       if (entries.find(entry => entry.key === update.edgeId)?.issue) throw Error("focus-reference-unsupported");
       commitHistory();
       nodesRef.current = update.nodes;
@@ -4785,7 +4928,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     const projectOptions=(cap:ReturnType<typeof mediaCapabilities>)=>({aspects:[...cap.aspects].slice(0,32),resolutions:[...(cap.resolutions||[])].slice(0,32),qualities:[...cap.qualities].slice(0,32),durations:[...cap.durations].slice(0,32)});
     const result:CanvasAgentContext={version:1,canvasId:id,canvasName:currentCanvasName.slice(0,256),snapshotRevision,coverage:{mode,totalNodes:raw.length,returnedNodes:contextNodes.length,offset,textComplete},nodes:contextNodes,
       connections:edgesRef.current.filter(e=>selected.has(e.source)&&selected.has(e.target)).slice(0,2048).map(e=>({source:e.source,target:e.target})),
-      generation:{imageOptions:projectOptions(imageCaps),videoOptions:projectOptions(videoCaps),imageModels:aiRuntimeConfig.imageModels.slice(0,32),videoModels:aiRuntimeConfig.videoModels.slice(0,32),imageReady:!!activeMediaProfile?.apiKeyConfigured&&activeMediaProfile.imageProtocol!=='disabled'&&!!aiRuntimeConfig.imageModel,videoReady:!!activeMediaProfile?.apiKeyConfigured&&activeMediaProfile.videoProtocol!=='disabled'&&!!aiRuntimeConfig.videoModel}};
+      generation:{imageOptions:projectOptions(imageCaps),videoOptions:projectOptions(videoCaps),imageModels:aiRuntimeConfig.imageModels.slice(0,32),videoModels:aiRuntimeConfig.videoModels.slice(0,32),imageReady:mediaGenerationReadiness('image',activeMediaProfile,aiRuntimeConfig.imageModel).ready,videoReady:mediaGenerationReadiness('video',activeMediaProfile,aiRuntimeConfig.videoModel).ready}};
     validateAgentContextCurrent(result,nodesRef.current,currentCanvasIdRef.current||'');
     if(agentGraphRevision(nodesRef.current,edgesRef.current)!==snapshotRevision)throw Error('canvas-agent-context-stale');
     return result;
@@ -4820,7 +4963,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     try{
       validateAgentContextCurrent(context,nodesRef.current,id);
       const plan=validateCanvasAgentPlan(rawPlan,context,options?.runId ?? canvasAgent.snapshot?.runId);
-      if(generate&&plan.steps.some(step=>step.kind==='image'&&(!activeMediaProfile?.apiKeyConfigured||activeMediaProfile.imageProtocol==='disabled'||!aiRuntimeConfig.imageModel)||step.kind==='video'&&(!activeMediaProfile?.apiKeyConfigured||activeMediaProfile.videoProtocol==='disabled'||!aiRuntimeConfig.videoModel)))throw Error('canvas-agent-generation-unavailable');
+      if(generate&&plan.steps.some(step=>step.kind!=='text'&&!mediaGenerationReadiness(step.kind,activeMediaProfile,step.kind==='image'?aiRuntimeConfig.imageModel:aiRuntimeConfig.videoModel).ready))throw Error('canvas-agent-generation-unavailable');
       for(const step of plan.steps){if(step.kind==='text'||!step.settings)continue;
         const target=step.targetNodeId?nodesRef.current.find(node=>node.id===step.targetNodeId):undefined;
         const cap=mediaCapabilities(step.kind,activeMediaProfile,target?.data.generationModel||(step.kind==='image'?aiRuntimeConfig.imageModel:aiRuntimeConfig.videoModel));
@@ -5310,14 +5453,14 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
   const storyboardReferenceSummary = useCallback((boardId:string,id:string)=>{
     const shot=storyboardShots(nodesRef.current,boardId).find(n=>n.id===id);if(!shot)return {count:0,invalid:0};
     const plan=createCanvasReferencePlan(inferGenerationKind(shot),getIncomingGenerationInputs(id),resolveStoredCanvasReferences(shot,nodesRef.current),
-      inferGenerationKind(shot)==='video'?activeMediaProfile?.videoProtocol:activeMediaProfile?.imageProtocol,shot.data.generationInputOrder);
+      inferGenerationKind(shot)==='video'?activeMediaProfile?.videoProtocol:activeMediaProfile?.imageProtocol,shot.data.generationInputOrder,shot.data.generationSource === "comfyui");
     return {count:plan.length,invalid:plan.filter(entry=>entry.issue).length};
   },[getIncomingGenerationInputs,activeMediaProfile]);
   const storyboardReferencePreviews = useCallback((boardId: string, id: string) => {
     const shot = storyboardShots(nodesRef.current, boardId).find(node => node.id === id);
     if (!shot) return [];
     const plan = createCanvasReferencePlan(inferGenerationKind(shot), getIncomingGenerationInputs(id), resolveStoredCanvasReferences(shot, nodesRef.current),
-      inferGenerationKind(shot) === 'video' ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, shot.data.generationInputOrder);
+      inferGenerationKind(shot) === 'video' ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, shot.data.generationInputOrder,shot.data.generationSource === "comfyui");
     return plan.filter(entry => entry.reference.kind === 'image' || !!entry.issue).map(entry => ({
       key: entry.key, label: entry.reference.label,
       url: resolveCanvasMediaUrl(entry.reference.thumbnailUrl || entry.reference.mediaUrl || '') || '',
@@ -5328,7 +5471,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     const shot = storyboardShots(nodesRef.current, boardId).find(node => node.id === id);
     if (!shot) throw Error('missing-shot');
     const plan = createCanvasReferencePlan(inferGenerationKind(shot), getIncomingGenerationInputs(id), resolveStoredCanvasReferences(shot, nodesRef.current),
-      inferGenerationKind(shot) === 'video' ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, shot.data.generationInputOrder);
+      inferGenerationKind(shot) === 'video' ? activeMediaProfile?.videoProtocol : activeMediaProfile?.imageProtocol, shot.data.generationInputOrder,shot.data.generationSource === "comfyui");
     const entry = plan.find(item => item.key === key);
     if (!entry) return;
     if (entry.source === 'connected' && entry.edgeId) { removeIncomingEdge(entry.edgeId); return; }
@@ -5406,6 +5549,13 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     }
     return deliveryItems.length===1&&deliveryItems[0].kind==='image'?deliveryItems[0]:undefined;
   },[creativePanel,nodes,deliveryItems]);
+  const openImageTools=useCallback((nodeId:string,raw:string)=>{
+    if(!currentCanvasId||loadingCanvas)return;
+    const items=selectedCanvasMedia(nodesRef.current,[nodeId],resolveCanvasMediaUrl);
+    const imageIndex=items.findIndex(item=>item.kind==='image'&&item.source===resolveCanvasMediaUrl(raw));
+    if(imageIndex<0)return;
+    setCreativePanel({canvasId:currentCanvasId,kind:'editImage',imageNodeId:nodeId,imageIndex,imageSource:items[imageIndex].source});
+  },[currentCanvasId,loadingCanvas]);
   const saveEditedImage=useCallback(async(item:DeliveryItem,blob:Blob,edit:ImageEdit)=>{
     const expectedCanvas=currentCanvasId,expectedEpoch=canvasLoadEpochRef.current;
     if(!expectedCanvas||(currentCanvasIdRef.current!==expectedCanvas||canvasLoadEpochRef.current!==expectedEpoch||loadingCanvas)||!bridge?.importAssets)throw new Error('canvas-unavailable');
@@ -5512,6 +5662,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
 
   const createGenerationDraft = useCallback((entry:CanvasGenerationHistoryEntry,mode:'result'|'parameters'='parameters',imageIndex=0,announce=true) => {
     const canvasId=currentCanvasIdRef.current;if(!canvasId||loadingCanvas||!generationHistoryRef.current.some(item=>item.id===entry.id&&item.taskId===entry.taskId))return null;
+    const blocked=mode==='result'?historyResultContinuationMessage(entry,locale==='en-US'):'';if(blocked){setGenerationHistoryNotice(blocked);return null;}
     if(mode==='parameters'&&!uiSettings.noteReferenceIncludeTitle&&entry.request.references.some(ref=>ref.kind==='note'&&ref.label!=='笔记正文')){setGenerationHistoryNotice(locale==='en-US'?'This history includes note titles. Create a fresh prompt to use body-only notes.':'这条历史包含笔记标题，请重新填写需求并引用正文。');return null;}
     const draft=buildHistoryDraft(entry,mode,imageIndex);if(!draft)return null;
     const kind:NodeKind=draft.kind;
@@ -5587,6 +5738,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     submitGenerationFromNode(source.id, {
       request: {
         ...entry.request,
+        ...(entry.request.doubaoAccountIds === undefined ? {} : {doubaoAccountIds: [...entry.request.doubaoAccountIds]}),
         references: entry.request.references.map((reference) => ({ ...reference })),
       },
       attempt: entry.attempt + 1,
@@ -5600,8 +5752,8 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
     const node = nodesRef.current.find((candidate) => candidate.data.generationTask?.id === entry.taskId);
     const task = node?.data.generationTask || generationTaskFromHistory(entry);
     cancelGenerationTask(task, node?.id);
-    setGenerationHistoryNotice(entry.status === "queued" ? t("editor.canvas.history.queuedCancelled") : t("editor.canvas.history.cancelRequested"));
-  }, [cancelGenerationTask, t]);
+    setGenerationHistoryNotice(entry.request.comfyui ? (locale === "en-US" ? "Stopped watching. The server task may still be running; resume to view its result." : "已停止跟踪，服务端任务可能仍在运行，可恢复查看结果。") : entry.status === "queued" ? t("editor.canvas.history.queuedCancelled") : t("editor.canvas.history.cancelRequested"));
+  }, [cancelGenerationTask, t, locale]);
 
   const deleteGenerationHistoryEntry = useCallback((entry: CanvasGenerationHistoryEntry) => {
     if (entry.status === "queued" || entry.status === "running") {
@@ -5750,10 +5902,10 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
             </CanvasToolButton>
             {createMenuOpen ? (
               <div className="canvas-create-panel">
-                <div className="canvas-create-panel-title">{t("editor.canvas.toolbar.addToCanvas")}</div>
                 <div className="canvas-create-panel-section">
                   <button type="button" onClick={() => { addGeneratorNode("image", undefined, getViewportCreatePosition("generator")); setCreateMenuOpen(false); }}><span><ToolIcon type="image" /></span><div><strong>{t("editor.canvas.toolbar.imageGenerate")}</strong><small>{t("editor.canvas.toolbar.imageGenerateHint")}</small></div></button>
                   <button type="button" onClick={() => { addGeneratorNode("video", undefined, getViewportCreatePosition("generator")); setCreateMenuOpen(false); }}><span><ToolIcon type="video" /></span><div><strong>{t("editor.canvas.toolbar.videoGenerate")}</strong><small>{t("editor.canvas.toolbar.videoGenerateHint")}</small></div></button>
+                  <button type="button" onClick={() => { addGeneratorNode("video", undefined, getViewportCreatePosition("generator"), true, "generate", "comfyui"); setCreateMenuOpen(false); }}><span><ToolIcon type="video" /></span><div><strong>ComfyUI生成</strong><small>本地 ComfyUI</small></div></button>
                 </div>
                 <div className="canvas-create-panel-label">{t("editor.canvas.toolbar.contentReferences")}</div>
                 <div className="canvas-create-panel-grid">
@@ -5834,14 +5986,17 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                       <Fragment key={entry.id}>
                       {entryIndex === 0 || new Date(entry.createdAt).toLocaleDateString(locale) !== new Date(filteredGenerationHistory[entryIndex - 1].createdAt).toLocaleDateString(locale) ? <div className="canvas-history-date-label">{new Date(entry.createdAt).toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" })}</div> : null}
                       <article className={`is-${entry.status} kind-${entry.kind}`}>
-                        <button type="button" className="canvas-generation-history-preview" disabled={!hasPreview} onClick={() => restoreGenerationHistoryResult(entry)} aria-label={hasPreview ? t("editor.canvas.history.restore") : t("editor.canvas.history.notReady")} title={hasPreview ? t("editor.canvas.history.restore") : t("editor.canvas.history.notReady")}>
+                        {entry.kind === 'video' && entry.status === 'succeeded' && entry.outputMediaUrl ? <div className="canvas-generation-history-preview is-video-preview" role="button" tabIndex={0} onClick={() => restoreGenerationHistoryResult(entry)} onKeyDown={event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); restoreGenerationHistoryResult(entry);}}} aria-label={t("editor.canvas.history.restore")} title={t("editor.canvas.history.restore")}>
+                          <CanvasVideoPreview source={entry.outputMediaUrl} poster={entry.outputThumbnailUrl} selected={false} variant="thumbnail" />
+                          <span className="canvas-history-kind-label">{t("editor.canvas.history.filter.video")}</span>
+                        </div> : <button type="button" className="canvas-generation-history-preview" disabled={!hasPreview} onClick={() => restoreGenerationHistoryResult(entry)} aria-label={hasPreview ? t("editor.canvas.history.restore") : t("editor.canvas.history.notReady")} title={hasPreview ? t("editor.canvas.history.restore") : t("editor.canvas.history.notReady")}>
                           {previewImage ? (
                             <img loading="lazy" src={resolveCanvasMediaUrl(previewImage)} alt={t("editor.canvas.history.result")} />
                           ) : entry.kind === "text" && entry.outputText ? <span className="canvas-history-text-thumbnail">{entry.outputText}</span> : <ToolIcon type={entry.kind === "video" ? "video" : entry.kind === "image" ? "image" : "text"} />}
                           <span className="canvas-history-kind-label">{entry.kind === "video" ? t("editor.canvas.history.filter.video") : entry.kind === "image" ? t("editor.canvas.history.filter.image") : t("editor.canvas.history.filter.text")}{entry.outputMediaItems && entry.outputMediaItems.length > 1 ? ` · ${entry.outputMediaItems.length}` : ""}</span>
-                        </button>
+                        </button>}
                         <div className="canvas-generation-history-copy">
-                          <div><strong>{entry.prompt || t("editor.canvas.history.noPrompt")}</strong>{entry.status !== "succeeded" ? <span>{generationHistoryStatusLabel(entry, generationQueuePositions.get(entry.taskId), t)}</span> : null}</div>
+                          <div><strong>{entry.prompt || t("editor.canvas.history.noPrompt")}</strong>{entry.status !== "succeeded" ? <span>{generationHistoryStatusLabel(entry, generationQueuePositions.get(entry.taskId), t, locale === "en-US")}</span> : null}</div>
                           <small>{entry.kind === "video" ? t("editor.canvas.history.filter.video") : entry.kind === "image" ? t("editor.canvas.history.filter.image") : t("editor.canvas.history.filter.text")} · {entry.model || t("editor.canvas.history.defaultModel")} · {new Date(entry.createdAt).toLocaleString(locale, { hour12: false })}</small>
                           {isActive ? <i><b style={{ width: `${progress ?? (entry.status === "running" ? 18 : 5)}%` }} /></i> : null}
                           {entry.errorMessage ? (
@@ -5861,9 +6016,9 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                           <button type="button" disabled={!hasPreview} onClick={() => setGenerationHistoryPreviewId(entry.id)}>{t("editor.canvas.history.preview")}</button>
                           <button type="button" disabled={!hasPreview} onClick={() => restoreGenerationHistoryResult(entry)}>{t("editor.canvas.history.restore")}</button>
                           {isActive ? (
-                            <button type="button" className="is-cancel" onClick={() => cancelGenerationHistoryEntry(entry)}>{t("editor.canvas.history.cancelTask")}</button>
+                            <button type="button" className="is-cancel" onClick={() => cancelGenerationHistoryEntry(entry)}>{entry.request.comfyui ? (locale === "en-US" ? "Stop watching" : "停止跟踪") : t("editor.canvas.history.cancelTask")}</button>
                           ) : (
-                            <button type="button" disabled={entry.status === "failed" && entry.errorRetryable === false} onClick={() => rerunGenerationHistoryEntry(entry)}>{entry.status === "failed" || entry.status === "cancelled" ? t("common.action.retry") : t("editor.canvas.history.generateAgain")}</button>
+                            <button type="button" disabled={entry.status === "failed" && entry.errorRetryable === false} onClick={() => rerunGenerationHistoryEntry(entry)}>{entry.request.comfyui && (entry.status === "cancelled" || entry.errorCode === "COMFY_OBSERVATION_INTERRUPTED") ? (locale === "en-US" ? "Resume viewing" : "恢复查看") : entry.status === "failed" || entry.status === "cancelled" ? t("common.action.retry") : t("editor.canvas.history.generateAgain")}</button>
                           )}
                           {!isActive&&<button type="button" onClick={()=>createGenerationDraft(entry,entry.status==='succeeded'&&entry.kind!=='video'?'result':'parameters')}>{locale==='en-US'?'New editable draft':'新建修改草稿'}</button>}
                           <button type="button" disabled={!canSaveResult||visibleHistorySavingIds.has(entry.id)} onClick={() => { void saveHistoryEntryToLibrary(entry); }}>{visibleHistorySavingIds.has(entry.id)?(locale==='en-US'?'Saving…':'保存中…'):entry.kind==='text'?(locale==='en-US'?'Save as note':'存为新笔记'):t("editor.canvas.history.saveLibrary")}</button>
@@ -5886,7 +6041,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                         {generationHistoryPreviewEntry.kind === "text" ? (
                           <pre>{generationHistoryPreviewEntry.outputText || t("editor.canvas.history.noText")}</pre>
                         ) : generationHistoryPreviewEntry.kind === "video" && generationHistoryPreviewEntry.outputMediaUrl ? (
-                          <video controls preload="metadata" src={resolveCanvasMediaUrl(generationHistoryPreviewEntry.outputMediaUrl)} poster={resolveCanvasMediaUrl(generationHistoryPreviewEntry.outputThumbnailUrl)} />
+                          <CanvasVideoPreview source={generationHistoryPreviewEntry.outputMediaUrl} poster={generationHistoryPreviewEntry.outputThumbnailUrl} selected={true} />
                         ) : (
                           <div className="canvas-generation-history-viewer-gallery">
                             {(generationHistoryPreviewEntry.outputMediaItems?.length
@@ -5911,18 +6066,12 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
           <span className="canvas-editor-divider" />
           <div
             className="canvas-settings-anchor"
-            ref={canvasSettingsAnchorRef}
           >
             <CanvasToolButton label={t("editor.canvas.settings.title")} active={canvasSettingsOpen} onClick={() => setCanvasSettingsOpen((open) => !open)}>
               <ToolIcon type="settings" />
             </CanvasToolButton>
-            <div className="canvas-settings-panel" hidden={!canvasSettingsOpen}>
-                <div className="canvas-settings-heading"><strong>{t("editor.canvas.settings.title")}</strong><small>{t("editor.canvas.settings.subtitle")}</small></div>
-                <div className="canvas-settings-tabs" role="tablist" aria-label={locale === "en-US" ? "Canvas settings" : "画布设置"}>
-                  <button type="button" role="tab" aria-selected={canvasSettingsTab === "generation"} onClick={() => setCanvasSettingsTab("generation")}>{locale === "en-US" ? "Generation" : "生成配置"}</button>
-                  <button type="button" role="tab" aria-selected={canvasSettingsTab === "appearance"} onClick={() => setCanvasSettingsTab("appearance")}>{locale === "en-US" ? "Appearance" : "画布外观"}</button>
-                </div>
-                <div hidden={canvasSettingsTab !== "appearance"}>
+            <CanvasSettingsDialog open={canvasSettingsOpen && visible} english={locale === "en-US"} section={canvasSettingsTab} onSectionChange={setCanvasSettingsTab} onClose={() => setCanvasSettingsOpen(false)} hasDraft={canvasSettingsHasDraft}>
+                <div className="canvas-settings-appearance" hidden={canvasSettingsTab !== "appearance"}>
                 <CanvasAgentOrbPositionSetting english={locale === "en-US"} />
                 <CanvasSettingToggle label={locale === "en-US" ? "Keep creation tools visible" : "始终显示创作工具"} hint={locale === "en-US" ? "Turn off to reveal tools by pausing over the Create handle or using keyboard focus." : "关闭后，在左侧创作按钮上稍作停留，或用键盘聚焦时展开。"} checked={uiSettings.creativeRailAlwaysVisible} onChange={(checked)=>updateUiSetting("creativeRailAlwaysVisible",checked)} />
                 <CanvasSettingToggle label={t("editor.canvas.settings.grid")} hint={t("editor.canvas.settings.gridHint")} checked={uiSettings.showGrid} onChange={(checked) => updateUiSetting("showGrid", checked)} />
@@ -5943,11 +6092,13 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                   </div>
                 </div>
                 </div>
-                <div hidden={canvasSettingsTab !== "generation"}>
-                <CanvasSettingToggle label={locale === "en-US" ? "Include note titles in generation" : "生成时同时引用笔记标题"} hint={locale === "en-US" ? "Off: note body only, up to 8,000 characters. Card timestamps are display-only; dates written in the body remain part of the content." : "默认仅引用正文，最多 8000 字符。卡片时间不参与生成；正文中写入的日期仍保留。"} checked={uiSettings.noteReferenceIncludeTitle} onChange={checked=>updateUiSetting("noteReferenceIncludeTitle",checked)} />
-                  <CanvasMediaProfilesPanel snapshot={mediaProfiles} onChange={applyMediaProfilesSnapshot} />
+                <div hidden={canvasSettingsTab === "appearance"}>
+                  <CanvasMediaProfilesPanel snapshot={mediaProfiles} onChange={applyMediaProfilesSnapshot} section={canvasSettingsTab === "connections" ? "connections" : "generation"} onDraftChange={setCanvasSettingsHasDraft} />
                 </div>
-              </div>
+                <div hidden={canvasSettingsTab !== "generation"} className="canvas-settings-generation-preferences">
+                <CanvasSettingToggle label={locale === "en-US" ? "Include note titles in generation" : "生成时同时引用笔记标题"} hint={locale === "en-US" ? "Off: note body only, up to 8,000 characters. Card timestamps are display-only; dates written in the body remain part of the content." : "默认仅引用正文，最多 8000 字符。卡片时间不参与生成；正文中写入的日期仍保留。"} checked={uiSettings.noteReferenceIncludeTitle} onChange={checked=>updateUiSetting("noteReferenceIncludeTitle",checked)} />
+                </div>
+            </CanvasSettingsDialog>
           </div>
         </div>
         {focusSession ? <CanvasFocusStatus host={editorBodyRef} busy={focusBusy} status={focusStatus} onExit={stopCanvasFocus} english={locale === "en-US"} /> : null}
@@ -6310,7 +6461,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
             </div>
           ) : currentCanvasId ? (
             <CanvasNodeUiContext.Provider value={nodeUiActions}>
-            {gridSource&&!canvasAgentOpen&&!gridSession&&!focusSession&&!generationHistoryOpen&&!nodeSearchOpen&&!createMenuOpen&&!showAssetPicker&&!showNotePicker ? <CanvasImageToolbar key={gridSource.node.id+gridSource.raw} nodeId={gridSource.node.id} stage={viewportStageRef} source={resolveCanvasMediaUrl(gridSource.raw)} onInteract={() => { stopCanvasFocus(); setComposerNodeId(null); }} english={locale==='en-US'} onCompare={selectedResultEntry?.kind==='image'?()=>compareGenerationResult(selectedResultEntry):undefined} onCreativeRecipe={recipe=>createImageCreativeDraft(gridSource.node.id,gridSource.raw,recipe)} onSplit={()=>{if(currentCanvasId)setGridSession({canvasId:currentCanvasId,epoch:canvasLoadEpochRef.current,raw:gridSource.raw,item:{id:gridSource.node.id,nodeId:gridSource.node.id,label:gridSource.node.data.label,kind:'image',source:resolveCanvasMediaUrl(gridSource.raw)}});}}/> : null}
+            {gridSource&&!canvasAgentOpen&&!gridSession&&!focusSession&&!generationHistoryOpen&&!nodeSearchOpen&&!createMenuOpen&&!showAssetPicker&&!showNotePicker ? <CanvasImageToolbar key={gridSource.node.id+gridSource.raw} nodeId={gridSource.node.id} stage={viewportStageRef} source={resolveCanvasMediaUrl(gridSource.raw)} onInteract={() => { stopCanvasFocus(); setComposerNodeId(null); }} english={locale==='en-US'} onEdit={()=>openImageTools(gridSource.node.id,gridSource.raw)} onCompare={selectedResultEntry?.kind==='image'?()=>compareGenerationResult(selectedResultEntry):undefined} onCreativeRecipe={recipe=>createImageCreativeDraft(gridSource.node.id,gridSource.raw,recipe)} onSplit={()=>{if(currentCanvasId)setGridSession({canvasId:currentCanvasId,epoch:canvasLoadEpochRef.current,raw:gridSource.raw,item:{id:gridSource.node.id,nodeId:gridSource.node.id,label:gridSource.node.data.label,kind:'image',source:resolveCanvasMediaUrl(gridSource.raw)}});}}/> : null}
             <CanvasCreativeRail alwaysVisible={uiSettings.creativeRailAlwaysVisible} active={canvasAgentOpen?'agent':creativePanel?.kind as CreativeAction|undefined} english={locale==="en-US"} onAction={kind=>{if(kind==='agent'){openCanvasAgent();return;}if(kind==='storyboard'){openStoryboard();return;}if(currentCanvasId){const selectedFrame=kind==='director'&&selectedNodeIds.length===1?nodesRef.current.find(node=>node.id===selectedNodeIds[0]):undefined;setCreativePanel({canvasId:currentCanvasId,kind,initialId:selectedFrame&&readDirectorShotSource(selectedFrame.data.directorShotSource)?selectedFrame.id:undefined});}}} />
             {nodes.some(isStoryboard) && creativePanel?.kind !== 'storyboard' ? <button type="button" className="canvas-storyboard-return nodrag nopan" onClick={()=>openStoryboard()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v16H3zM3 10h18M10 10v10"/></svg>{locale==='en-US'?'Return to storyboard':'返回脚本与分镜'}<small>{nodes.filter(isStoryboard).length}</small></button> : null}
 
@@ -6538,6 +6689,9 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                       <ToolIcon type="video" />
                       <span>{t("editor.canvas.toolbar.videoGenerate")}</span>
                     </button>
+                    <button type="button" onClick={() => addGeneratorNode("video", undefined, getViewportCreatePosition("generator"), true, "generate", "comfyui")}>
+                      <ToolIcon type="video" /><span>ComfyUI生成</span>
+                    </button>
                   </div>
                 </Panel>
               ) : null}
@@ -6654,6 +6808,9 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                 <span><ToolIcon type="video" /></span>
                 <div><strong>{t("editor.canvas.toolbar.videoGenerate")}</strong><small>{t("editor.canvas.quickAdd.videoHint")}</small></div>
               </button>
+              <button type="button" onClick={() => { addGeneratorNode("video", undefined, quickAddMenu.flowPosition, true, "generate", "comfyui"); setQuickAddMenu(null); }}>
+                <span><ToolIcon type="video" /></span><div><strong>ComfyUI生成</strong><small>本地 ComfyUI</small></div>
+              </button>
               <button type="button" onClick={() => createQuickNode("text")}>
                 <span><ToolIcon type="text" /></span>
                 <div><strong>{t("editor.canvas.type.text")}</strong><small>{t("editor.canvas.quickAdd.textHint")}</small></div>
@@ -6717,6 +6874,9 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                     <span><ToolIcon type="video" /></span>
                     <div><strong>{t("editor.canvas.toolbar.videoGenerate")}</strong><small>{t("editor.canvas.connect.videoReferenceHint")}</small></div>
                   </button>
+                  {(connectMenuContentKind === "text" || connectMenuContentKind === "note" || connectMenuContentKind === "image") ? <button type="button" onClick={() => createConnectedNode("comfyGenerator")}>
+                    <span><ToolIcon type="video" /></span><div><strong>ComfyUI生成</strong><small>{locale === "en-US" ? "Use connected text or reference images" : "使用连接的文字或参考图生成视频"}</small></div>
+                  </button> : null}
                   {connectMenuContentKind === "image" ? (
                     <>
                       <button type="button" onClick={() => createConnectedNode("imageEditor")}>
@@ -6798,7 +6958,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                 onCreateCreative={gridSource?.node.id===selectedNode.id?recipe=>createImageCreativeDraft(selectedNode.id,gridSource.raw,recipe):undefined}
                 focusMode={focusSession?.targetId === selectedNode.id}
                 focusBusy={focusBusy}
-                onSubmit={() => submitGenerationFromNode(selectedNode.id)}
+                onSubmit={() => canResumeComfyObservation(selectedNode.data.generationTask) ? retryGeneration(selectedNode.id) : submitGenerationFromNode(selectedNode.id)}
                 onCancel={() => cancelGeneration(selectedNode.id)}
                 textModels={aiRuntimeConfig.models}
                 textModelsReady={aiRuntimeConfig.ready}
@@ -6808,6 +6968,9 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
                 videoModels={aiRuntimeConfig.videoModels}
                 defaultVideoModel={aiRuntimeConfig.videoModel}
                 mediaProfile={activeMediaProfile}
+                mediaProfiles={mediaProfiles?.profiles}
+                legacyTextSelection={legacyTextConfigRef.current}
+                onOpenComfySettings={() => {setCanvasSettingsTab("connections");setCanvasSettingsOpen(true);}}
               />
               {selectedResultActions}
           </CanvasAnchoredSurface>
@@ -6819,7 +6982,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
         {inspectorNode ? (
           (inspectorNode.data.kind === "image" || inspectorNode.data.kind === "video") && uiSettings.fanInspector ? (
             <MaterialGenerationInspector
-              mediaProfile={activeMediaProfile}
+              mediaProfile={canvasGenerationProfile(mediaProfiles?.profiles, activeMediaProfile, inspectorNode.data.generationProfileId)}
               node={inspectorNode}
               onDataChange={updateSelectedData}
               onOpenReference={openSelectedReference}
@@ -6839,7 +7002,7 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
 
         {gridSession&&gridSession.canvasId===currentCanvasId&&gridSession.epoch===canvasLoadEpochRef.current&&!loadingCanvas ? <CanvasGridSplit key={gridSession.canvasId+gridSession.item.id+gridSession.raw} item={gridSession.item} onSplit={splitGrid} onClose={()=>setGridSession(null)} english={locale==='en-US'}/> : null}
         {creativePanel && creativePanel.canvasId===currentCanvasId && !loadingCanvas ? (
-          creativePanel.kind==='review' ? <CanvasVersionReview key={currentCanvasId+'review'} history={generationHistory} initialId={creativePanel.initialId} resolveUrl={url=>resolveCanvasMediaUrl(url)||''} onPick={pickReviewImage} onRestore={restoreGenerationHistoryResult} onContinue={(entry,index)=>createGenerationDraft(entry,'result',index)} onSave={(entry,index)=>{const image=entry.outputMediaItems?.[index]||(index===0&&entry.outputMediaUrl?{url:entry.outputMediaUrl,thumbnailUrl:entry.outputThumbnailUrl}:null);if(image)void saveHistoryEntryToLibrary({...entry,outputMediaUrl:image.url,outputMediaItems:[image]});}} savingIds={visibleHistorySavingIds} saveNotice={resultSaveNotice?.canvasId===currentCanvasId&&resultSaveNotice.epoch===canvasLoadEpochRef.current?resultSaveNotice:undefined} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
+          creativePanel.kind==='review' ? <CanvasVersionReview key={currentCanvasId+'review'} history={generationHistory} initialId={creativePanel.initialId} resolveUrl={url=>resolveCanvasMediaUrl(url)||''} onPick={pickReviewImage} onRestore={restoreGenerationHistoryResult} onContinue={(entry,index)=>{const message=historyResultContinuationMessage(entry,locale==='en-US');if(message)return message;createGenerationDraft(entry,'result',index);}} onSave={(entry,index)=>{const image=entry.outputMediaItems?.[index]||(index===0&&entry.outputMediaUrl?{url:entry.outputMediaUrl,thumbnailUrl:entry.outputThumbnailUrl}:null);if(image)void saveHistoryEntryToLibrary({...entry,outputMediaUrl:image.url,outputMediaItems:[image]});}} savingIds={visibleHistorySavingIds} saveNotice={resultSaveNotice?.canvasId===currentCanvasId&&resultSaveNotice.epoch===canvasLoadEpochRef.current?resultSaveNotice:undefined} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
           : creativePanel.kind==='director' ? <Suspense fallback={<CanvasDialogPortal><div className="canvas-creative-overlay nodrag nopan nowheel"><div className="canvas-creative-dialog" role="status">{locale==='en-US'?'Opening director…':'正在打开导演台…'}</div></div></CanvasDialogPortal>}>{directorDocument ? (visible ? <DirectorWorkspace key={currentCanvasId+'director'} document={directorDocument} onChange={updateDirectorDocument} onExportShot={exportDirectorShot} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} /> : null) : <CanvasDialogPortal><div className="canvas-creative-overlay nodrag nopan nowheel" onKeyDown={event=>event.stopPropagation()}><div className="canvas-creative-dialog" role="alertdialog" aria-modal="true" aria-label={locale==='en-US'?'Director data unavailable':'导演台数据无法读取'}><p>{locale==='en-US'?'This director document is damaged or from an unsupported version. The original data has been preserved; it will not be replaced with an empty scene.':'导演台数据损坏或版本暂不支持。原始数据已保留，不会替换为空场景。'}</p><button type="button" onClick={()=>setCreativePanel(null)}>{locale==='en-US'?'Close':'关闭'}</button></div></div></CanvasDialogPortal>}</Suspense>
           : creativePanel.kind==='editImage' ? <CanvasImageTools key={currentCanvasId+'image-tools'} initialEdit={creativePanel.imageEdit} item={creativeImageItem} onSave={saveEditedImage} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
           : creativePanel.kind==='export' ? <CanvasDeliveryPanel key={currentCanvasId+'delivery'} items={deliveryItems} onSave={saveMediaArchive} onClose={()=>setCreativePanel(null)} english={locale==='en-US'} />
@@ -7017,8 +7180,8 @@ function CanvasInner({ visible = true }: { visible?: boolean }) {
             </div>
           </div>
         ) : null}
-        {selectedNodeIds.length > 1 || canUngroupSelectedNodes ? (
-          <CanvasSelectionToolbar key={JSON.stringify([...selectedNodeIds].sort())} count={selectedNodeIds.length} layoutCount={selectedLayoutRoots(nodes,selectedNodeIds)?.length ?? 0} canGroup={canGroupSelectedNodes} canUngroup={canUngroupSelectedNodes} canLayout={canTransformSelectedNodes} allowedLayouts={(["left","centerX","right","top","centerY","bottom","distributeX","distributeY"] as LayoutCommand[]).filter(kind => !!planSelectionLayout(nodes,selectedNodeIds,kind)?.changed)} english={locale === "en-US"} onGroup={groupSelectedNodes} onUngroup={ungroupSelectedNodes} onLayout={layoutSelected} onArrange={arrangeCanvas} onDuplicate={duplicateSelected} onDelete={deleteSelectedNode} onClear={() => {setSelectedNodeIds([]);setNodes(current => synchronizeCanvasNodeSelection(current,[]));setSelectionContextMenu(null);}} context={selectionContextMenu} onDismissContext={() => setSelectionContextMenu(null)} />
+        {selectedNodeIds.length > 1 || canUngroupSelectedNodes || deliveryItems.length > 0 ? (
+          <CanvasSelectionToolbar key={JSON.stringify([...selectedNodeIds].sort())} count={selectedNodeIds.length} layoutCount={selectedLayoutRoots(nodes,selectedNodeIds)?.length ?? 0} canGroup={canGroupSelectedNodes} canUngroup={canUngroupSelectedNodes} canLayout={canTransformSelectedNodes} allowedLayouts={(["left","centerX","right","top","centerY","bottom","distributeX","distributeY"] as LayoutCommand[]).filter(kind => !!planSelectionLayout(nodes,selectedNodeIds,kind)?.changed)} english={locale === "en-US"} onGroup={groupSelectedNodes} onUngroup={ungroupSelectedNodes} onLayout={layoutSelected} onArrange={arrangeCanvas} canExport={deliveryItems.length>0} onExport={()=>{if(currentCanvasId)setCreativePanel({canvasId:currentCanvasId,kind:'export'});}} onDuplicate={duplicateSelected} onDelete={deleteSelectedNode} onClear={() => {setSelectedNodeIds([]);setNodes(current => synchronizeCanvasNodeSelection(current,[]));setSelectionContextMenu(null);}} context={selectionContextMenu} onDismissContext={() => setSelectionContextMenu(null)} />
         ) : null}
       </div>
 
@@ -7146,6 +7309,7 @@ function resolveCanvasConnectionData(
   nodes: SpikeNode[],
 ) {
   const target = nodes.find((node) => node.id === targetId);
+  if((target?.data.generationSource || targetData.generationSource)==='comfyui' && (sourceData.refKind || getCanvasNodeCapabilities(sourceData).contentKind)==='image') return {...resolveCanvasEdgeSemanticData(sourceData,targetData,targetId,current),role:'reference' as const};
   const inputs = current
     .filter(
       (edge) =>
@@ -7180,6 +7344,21 @@ function resolveCanvasConnectionData(
   ]);
 }
 
+function canResumeComfyObservation(task?: CanvasGenerationTask): boolean {
+  return !!task?.request.comfyui && (task.status === "cancelled" || (task.status === "failed" && task.error?.code === "COMFY_OBSERVATION_INTERRUPTED"));
+}
+
+function useCanvasComfyConfig() {
+  const [value, setValue] = useState<CanvasComfyUiConfig | null>(null);
+  useEffect(() => {
+    let active = true; let epoch = 0;
+    const refresh = () => { const current = ++epoch; void canvasComfyUiClient.get().then(next => {if(active && current === epoch) setValue(next);}, () => {if(active && current === epoch) setValue(null);}); };
+    const unsubscribe = subscribeCanvasComfyUiConfig(refresh); refresh();
+    return () => {active = false; unsubscribe();};
+  }, []);
+  return value;
+}
+
 function createGenerationRequestSnapshot(
   node: SpikeNode,
   connectedInputs: ConnectedGenerationInput[],
@@ -7192,8 +7371,13 @@ function createGenerationRequestSnapshot(
   mediaProfile: CanvasMediaProfile | null = null,
   includeNoteTitles = false,
   resolvedStoredReferences?: GenerationReference[],
+  preparedInputPlan?: ReferenceEntry[],
+  comfyConfig?: CanvasComfyUiConfig | null,
 ): CanvasGenerationRequestSnapshot {
   const kind = inferGenerationKind(node);
+  if (node.data.generationSource === "comfyui" && /<(?:填写主体、动作、场景和镜头|填写环境与动作声音|填写配乐，或 N\/A|Describe the subject, action, scene and camera|Describe ambient and action sounds|Describe music, or N\/A)>/.test(node.data.generationPrompt || "")) {
+    throw Error("请先填写提示词模板中的占位内容 / Complete the prompt template before generating.");
+  }
   const models = kind === "text" ? [...textModels] : kind === "video" ? [...videoModels] : [...imageModels];
   const storedReferences: GenerationReference[] = Array.isArray(node.data.generationReferences)
     ? node.data.generationReferences
@@ -7204,13 +7388,15 @@ function createGenerationRequestSnapshot(
         thumbnailUrl: node.data.refThumbnailUrl,
         mediaUrl: node.data.refMediaUrl,
       }] : [];
-  const inputPlan = createCanvasReferencePlan(kind, connectedInputs, resolvedStoredReferences ?? storedReferences,kind === "video" ? mediaProfile?.videoProtocol : mediaProfile?.imageProtocol,node.data.generationInputOrder);
-  const mentioned = compileMentionedPrompt(node.data.generationPrompt || "",inputPlan,{kind,includeNoteTitles});
+  const inputPlan = preparedInputPlan ?? createCanvasReferencePlan(kind, connectedInputs, resolvedStoredReferences ?? storedReferences,kind === "video" ? mediaProfile?.videoProtocol : mediaProfile?.imageProtocol,node.data.generationInputOrder,node.data.generationSource === "comfyui");
+  if (node.data.generationSource === "comfyui" && inputPlan.some(entry => entry.issue)) throw Error(referenceIssueText(inputPlan.find(entry => entry.issue)?.issue));
+  const mentioned = compileMentionedPrompt(node.data.generationPrompt || "",inputPlan,{kind,includeNoteTitles,imageTagStyle:node.data.generationSource === "comfyui" && !node.data.generationComfyTemplate && !node.data.generationComfyWorkflow?.template ? "comfy" : undefined});
   const references = canvasReferenceSnapshots(inputPlan);
   const editor = captureGenerationEditorSnapshot(node.data.generationPrompt || "", inputPlan.filter(entry=>!entry.issue).map(entry=>entry.key), node.data.generationCinematography, node.data.generationCreativeRecipe);
   const promptNode = {...node,data:{...node.data,generationPrompt:mentioned.prompt}};
 
-  if (node.data.sourceGenerationHistoryId && node.data.generationModel && !models.includes(node.data.generationModel)) throw Error("historical-model-unavailable");
+  if (node.data.generationSource !== "comfyui" && node.data.generationProfileId && (mediaProfile?.id !== node.data.generationProfileId || !models.includes(node.data.generationModel || ""))) throw Error("historical-model-unavailable");
+  if (node.data.generationSource !== "comfyui" && node.data.sourceGenerationHistoryId && node.data.generationModel && !models.includes(node.data.generationModel)) throw Error("historical-model-unavailable");
   const model = models.includes(node.data.generationModel || "")
     ? node.data.generationModel!
     : kind === "text" ? defaultTextModel || models[0] || ""
@@ -7255,6 +7441,43 @@ function createGenerationRequestSnapshot(
     includeNoteTitles,
     referenceAliases: mentioned.referenceAliases,
   });
+  const selectedTemplate=node.data.generationComfyTemplate??node.data.generationComfyWorkflow?.template;
+  if(node.data.generationSource==='comfyui' && selectedTemplate) {
+    const baseUrl=node.data.generationComfyWorkflow?.baseUrl??comfyConfig?.baseUrl;
+    if(!baseUrl)throw Error('请先配置本机 ComfyUI 地址。');
+    if(kind!==selectedTemplate.output.kind)throw Error('模板输出与卡片类型不匹配，请重新选择模板。');
+    if(compiled.references.some(ref=>!['text','note','image'].includes(ref.kind)))throw Error('此模板当前支持文本和图片引用。');
+    const execution=compileComfyTemplate(selectedTemplate,compiled.prompt,compiled.references.filter(ref=>ref.kind==='image').length,node.data.generationComfyTemplateValues);
+    return {kind,prompt:compiled.prompt,sourcePrompt:node.data.generationPrompt||'',editor,model:selectedTemplate.name,references:compiled.references,
+      comfyui:{baseUrl,workflowName:selectedTemplate.name,workflow:{...execution},template:{...selectedTemplate,graph:execution.graph}}};
+  }
+  if(kind==='image' && node.data.generationSource==='comfyui') {
+    const localConfig=node.data.generationComfyWorkflow?{baseUrl:node.data.generationComfyWorkflow.baseUrl,workflow:node.data.generationComfyWorkflow.workflow}:comfyConfig;
+    if(!localConfig?.baseUrl)throw Error('请先在画布连接设置中配置 ComfyUI 地址');
+    const frozen=node.data.generationComfyWorkflow?readWorkFisherImage(node.data.generationComfyWorkflow.workflow).options:null;
+    const preset=frozen?.preset??node.data.generationComfy?.preset;
+    if(!isWorkFisherImagePreset(preset))throw Error('请选择图片工作流预设。');
+    if(!compiled.prompt.trim())throw Error('请输入图片提示词。');
+    if(compiled.references.some(ref=>!['text','note','image'].includes(ref.kind)))throw Error('此图片工作流不支持视频或音频参考。');
+    const imageReferences=compiled.references.filter(ref=>ref.kind==='image');
+    if(imageReferences.some(ref=>!ref.mediaUrl?.trim()))throw Error('参考图尚无可用原图，请重新选择。');
+    const options={preset,prompt:compiled.prompt,referenceCount:imageReferences.length,seed:node.data.generationComfy?.seed??frozen?.seed,width:node.data.generationComfy?.width??frozen?.width,height:node.data.generationComfy?.height??frozen?.height,aspect:node.data.generationComfy?.aspect??frozen?.aspect,megapixels:node.data.generationComfy?.megapixels??frozen?.megapixels,loras:node.data.generationComfy?.loras??frozen?.loras,upscale:node.data.generationComfy?.upscale??frozen?.upscale??true,upscaleResolution:node.data.generationComfy?.upscaleResolution??frozen?.upscaleResolution};
+    const workflow=buildWorkFisherImage(options);
+    const workflowName=preset==='work-fisher-character'?'Work-Fisher · 角色图片':preset==='work-fisher-scene'?'Work-Fisher · 场景图片':'Work-Fisher · 角色三视图';
+    return {kind,prompt:compiled.prompt,sourcePrompt:node.data.generationPrompt||'',editor,model:workflowName,references:compiled.references,
+      comfyui:{baseUrl:localConfig.baseUrl,workflowName,workflow}};
+  }
+  if (kind === "video" && node.data.generationSource === "comfyui") {
+    const localConfig = node.data.generationComfyWorkflow ? {baseUrl:node.data.generationComfyWorkflow.baseUrl,workflowJson:JSON.stringify(node.data.generationComfyWorkflow.workflow),workflowName:node.data.generationComfyWorkflow.workflowName} : comfyConfig;
+    if (!localConfig?.baseUrl) throw Error("请先在画布连接设置中配置 ComfyUI 地址");
+    const builtin=!node.data.generationComfyWorkflow && node.data.generationComfy?.preset==='work-fisher-video';
+    if (!builtin && !localConfig.workflowJson) throw Error("请先在画布连接设置导入 MiniMax H3 API 工作流");
+    const workflowName=builtin?WORK_FISHER_VIDEO_NAME:localConfig.workflowName || "MiniMax H3";
+    const workflow = parseComfyWorkflow(builtin?buildWorkFisherVideo({prompt:'',referenceCount:1}):localConfig.workflowJson!, {id:"configured",name:workflowName});
+    const result = compileComfyWorkflow(workflow, {...node.data.generationComfy, prompt:compiled.prompt, references:compiled.references});
+    return {kind, prompt:compiled.prompt,sourcePrompt:node.data.generationPrompt || "",editor,model:"MiniMax H3 · ComfyUI",references:compiled.references,aspect:`${result.summary.width}:${result.summary.height}`,resolution:`${result.summary.width}x${result.summary.height}`,duration:result.summary.durationSeconds,sound:true,
+      comfyui:{baseUrl:localConfig.baseUrl,workflowName,workflow:result.prompt}};
+  }
   return {
     kind,
     prompt: compiled.prompt,
@@ -7285,18 +7508,21 @@ function MaterialCompactComposer({
   onReorderReferences,
   onSubmit,
   onCancel,
-  textModels = [],
+  textModels: defaultTextModels = [],
   textModelsReady = true,
   textProviderLabel = "",
-  imageModels = IMAGE_GENERATION_MODELS,
-  defaultImageModel = "",
-  videoModels = VIDEO_GENERATION_MODELS,
-  defaultVideoModel = "",
-  mediaProfile = null,
+  imageModels: fallbackImageModels = IMAGE_GENERATION_MODELS,
+  defaultImageModel: fallbackImageModel = "",
+  videoModels: fallbackVideoModels = VIDEO_GENERATION_MODELS,
+  defaultVideoModel: fallbackVideoModel = "",
+  mediaProfile: activeMediaProfile = null,
+  mediaProfiles,
+  legacyTextSelection,
   embedded = false,
   screenSpace = false,
   resolvedStoredReferences,
   includeNoteTitles = false,
+  onOpenComfySettings,
 }: {
   node: SpikeNode;
   onDataChange: (patch: Partial<SpikeNodeData>) => void;
@@ -7318,23 +7544,45 @@ function MaterialCompactComposer({
   videoModels?: readonly string[];
   defaultVideoModel?: string;
   mediaProfile?: CanvasMediaProfile | null;
+  mediaProfiles?: readonly CanvasMediaProfile[];
+  legacyTextSelection?: {model:string;models:string[];providerLabel:string};
   embedded?: boolean;
   screenSpace?: boolean;
   resolvedStoredReferences?: GenerationReference[];
   includeNoteTitles?: boolean;
+  onOpenComfySettings?: () => void;
 }) {
   const { t, locale } = useI18n();
+  const currentComfyConfig = useCanvasComfyConfig();
+  const comfyConfig = node.data.generationComfyWorkflow ? {baseUrl:node.data.generationComfyWorkflow.baseUrl,workflowJson:JSON.stringify(node.data.generationComfyWorkflow.workflow),workflowName:node.data.generationComfyWorkflow.workflowName,revision:0} : currentComfyConfig;
   const { zoom } = useViewport();
   const viewScale = embedded || screenSpace ? 1 : Math.min(2.25, Math.max(1, Math.pow(1 / Math.max(zoom, .1), .95)));
   const isVideo = node.data.kind === "video"
     || node.data.generationKind === "video"
     || (node.data.kind === "aiResult" && node.data.resultKind === "video");
+  const isComfy = node.data.generationSource === "comfyui";
   const isImage = node.data.kind === "image"
     || node.data.generationKind === "image"
     || (node.data.kind === "aiResult" && node.data.resultKind === "image");
+  const comfyImagePreset=(()=>{try{return node.data.generationComfyWorkflow&&isImage?readWorkFisherImage(node.data.generationComfyWorkflow.workflow).options.preset:node.data.generationComfy?.preset;}catch{return undefined;}})();
+  const shortDramaVideo=isVideo&&(node.data.generationComfy?.preset==='work-fisher-video'||isWorkFisherVideo(node.data.generationComfyWorkflow?.workflow));
+  const selectedTemplate=node.data.generationComfyTemplate??node.data.generationComfyWorkflow?.template;
+  const {items:customTemplates,error:templateListError}=useComfyTemplates();
+  const comfyImageLimit=selectedTemplate?selectedTemplate.images.length:isImage?(comfyImagePreset==='work-fisher-three-view'?1:0):COMFY_MAX_REFERENCE_IMAGES;
+  const lockedComfyKind=isComfy&&(!!node.data.resultMediaUrl||!!node.data.resultMediaItems?.length)?(node.data.resultKind==='image'||node.data.resultKind==='video'?node.data.resultKind:isVideo?'video':'image'):undefined;
   const isText = !isVideo && !isImage;
+  const mediaProfile = canvasGenerationProfile(mediaProfiles, activeMediaProfile, node.data.generationProfileId);
+  const textSelection = resolveCanvasTextSelection(mediaProfile, legacyTextSelection ?? {model:defaultTextModels[0] || "",models:[...defaultTextModels],providerLabel:textProviderLabel});
+  const textModels = textSelection.models;
+  const imageModels = mediaProfiles ? canvasProfileModelIds(mediaProfile, "image") : fallbackImageModels;
+  const videoModels = mediaProfiles ? canvasProfileModelIds(mediaProfile, "video") : fallbackVideoModels;
+  const defaultImageModel = mediaProfiles ? mediaProfile?.imageModel || "" : fallbackImageModel;
+  const defaultVideoModel = mediaProfiles ? mediaProfile?.videoModel || "" : fallbackVideoModel;
   const models = isText ? [...textModels] : isVideo ? [...videoModels] : [...imageModels];
-  const model = node.data.sourceGenerationHistoryId && node.data.generationModel ? node.data.generationModel : models.includes(node.data.generationModel || "")
+  const choices = canvasApiModelChoices(mediaProfiles, isText ? "text" : isVideo ? "video" : "image", activeMediaProfile, models, legacyTextSelection);
+  const [modelQuery, setModelQuery] = useState("");
+  const filteredChoices = choices.filter(choice => `${choice.model} ${choice.profileName}`.toLowerCase().includes(modelQuery.trim().toLowerCase()));
+  const model = (node.data.sourceGenerationHistoryId || node.data.generationProfileId) && node.data.generationModel ? node.data.generationModel : models.includes(node.data.generationModel || "")
     ? node.data.generationModel!
     : isImage ? defaultImageModel || models[0] || node.data.generationModel || t("editor.canvas.generation.modelUnavailable")
       : isVideo ? defaultVideoModel || models[0] || node.data.generationModel || t("editor.canvas.generation.modelUnavailable")
@@ -7361,16 +7609,18 @@ function MaterialCompactComposer({
       thumbnailUrl: node.data.refThumbnailUrl,
       mediaUrl: node.data.refMediaUrl,
     }] : [];
-  const referenceEntries=createCanvasReferencePlan(isText ? "text" : isVideo ? "video" : "image",connectedInputs,resolvedStoredReferences ?? storedReferences,isVideo ? mediaProfile?.videoProtocol : mediaProfile?.imageProtocol,node.data.generationInputOrder);
+  const referenceEntries=createCanvasReferencePlan(isText ? "text" : isVideo ? "video" : "image",connectedInputs,resolvedStoredReferences ?? storedReferences,isVideo ? mediaProfile?.videoProtocol : mediaProfile?.imageProtocol,node.data.generationInputOrder,node.data.generationSource === "comfyui");
   const inputCount=referenceEntries.length;
   const [openReference,setOpenReference]=useState<string|null>(null);
-  const [openPanel, setOpenPanel] = useState<"model" | "settings" | "camera" | "creative" | null>(null);
+  const [openPanel, setOpenPanel] = useState<"model" | "settings" | "camera" | "creative" | "workflow" | null>(null);
   const [popoverDirection, setPopoverDirection] = useState<"up" | "down">("up");
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(520);
   const promptEditorRef = useRef<CanvasPromptEditorHandle>(null);
   const pendingReferenceKeys = useRef<GenerationReference[] | null>(null);
   const stableStoredReferences = () => storedReferences.map((ref,index)=>({...ref,mentionKey:referenceEntries.find(entry=>entry.storedIndex===index)?.key || ref.mentionKey}));
   const composerRef = useRef<HTMLDivElement>(null);
+  const [comfyFooter,setComfyFooter] = useState<HTMLDivElement|null>(null);
+  const closeComposerOverlays = useCallback(() => {setOpenPanel(null);setOpenReference(null);}, []);
   const popoverAnchorRef = useRef<HTMLElement>(null);
   const popoverPortalRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -7399,7 +7649,7 @@ function MaterialCompactComposer({
     setOpenPanel(null);
     setOpenReference(null);
   }, [node.id]);
-  const togglePanel = (event: ReactMouseEvent<HTMLButtonElement>, panel: "model" | "settings" | "camera" | "creative") => {
+  const togglePanel = (event: ReactMouseEvent<HTMLButtonElement>, panel: "model" | "settings" | "camera" | "creative" | "workflow") => {
     popoverAnchorRef.current = event.currentTarget;
     setOpenReference(null);
     if (openPanel === panel) {
@@ -7418,6 +7668,12 @@ function MaterialCompactComposer({
   const commit = (patch: Partial<SpikeNodeData>) => {
     const keyed=pendingReferenceKeys.current; pendingReferenceKeys.current=null;
     onDataChange({...keyed ? {generationReferences:keyed} : {},...patch});
+  };
+  const selectComfyTemplate = (template?: ComfyTemplate) => {
+    if(template?.id===selectedTemplate?.id){setOpenPanel(null);return;}
+    if(template&&lockedComfyKind&&template.output.kind!==lockedComfyKind)return;
+    commit({generationComfyTemplate:template?structuredClone(template):undefined,...(template?.prompt&&!node.data.generationPrompt?.trim()?{generationPrompt:String(template.graph[template.prompt.nodeId].inputs[template.prompt.input])}:{}),generationComfyTemplateValues:undefined,generationComfyWorkflow:undefined,generationComfy:!template&&lockedComfyKind==='image'?{preset:'work-fisher-character'}:undefined,generationKind:template?.output.kind??lockedComfyKind??'video'});
+    setOpenPanel(null);
   };
   const removeReference = (index: number) => {
     commit({ generationReferences: stableStoredReferences().filter((_, itemIndex) => itemIndex !== index) });
@@ -7447,27 +7703,32 @@ function MaterialCompactComposer({
       <button type="button" className="canvas-composer-reference-remove" onClick={()=>{setOpenReference(null);if(entry.source==='connected'){if(entry.edgeId)onRemoveConnectedInput?.(entry.edgeId);}else if(entry.storedIndex!==undefined)removeReference(entry.storedIndex);}} aria-label={entry.source==='connected'?t("editor.canvas.generation.disconnectReference"):t("editor.canvas.generation.removeReference")}>×</button>
     </span>;
   };
-  const summary = !isText && capabilities.promptOnly ? "模型默认参数" : isVideo
+  const summary = isComfy ? (selectedTemplate?.name || comfyConfig?.workflowName || (locale === "en-US" ? "Local ComfyUI" : "本地 ComfyUI")) : !isText && capabilities.promptOnly ? (locale === "en-US" ? "Model defaults" : "模型默认参数") : isVideo
     ? videoParameterSummary({aspect,quality:mediaParameterLabel(quality, parameterKind),duration,sound:supportsSoundControl && node.data.generationSound ? t("editor.canvas.generation.sound") : undefined}) || (locale === 'en-US' ? 'Model defaults' : '模型默认参数')
-    : isText ? "1×" : t("editor.canvas.generation.imageSummary", { aspect, quality: [aspect !== "auto" ? resolution : undefined, mediaParameterLabel(quality, parameterKind)].filter(Boolean).join(" · "), count });
+    : isText ? "1×" : imageParameterSummary({aspect, resolution:aspect!=="auto"?resolution:undefined, quality:mediaParameterLabel(quality,parameterKind), countLabel:t("editor.canvas.generation.images",{count})});
   const mentionError = validateReferenceMentions(node.data.generationPrompt || "",referenceEntries);
-  let generationInputError=mentionError?.message || "";
-  let creativeNeedsInput=false;
+  const referenceError = isComfy
+    ? referenceIssueText(referenceEntries.find(entry => entry.issue)?.issue, locale === "en-US")
+    : "";
+  let generationInputError=mentionError?.message || referenceError;
   let compiledRequest:Pick<CanvasGenerationRequestSnapshot,'prompt'|'references'>={prompt:"",references:[]};
-  if(!generationInputError){try{compiledRequest=createGenerationRequestSnapshot(node, connectedInputs, textModels, textModels[0] || "", imageModels, defaultImageModel, videoModels, defaultVideoModel, mediaProfile, includeNoteTitles, resolvedStoredReferences);}catch(error){const code=error instanceof Error?error.message:'';creativeNeedsInput=code==='creative-prompt-required'||code==='creative-reference-required';generationInputError=code==='historical-model-unavailable'?(locale==='en-US'?'The original model is unavailable in this connection. Select a model to continue.':'当前配置没有原生成模型，请选择模型后继续。'):code==='creative-prompt-required'?(locale==='en-US'?'Describe your subject, or add a text/image reference.':'描述要创作的主体，或添加文本/图片参考。'):code==='creative-reference-required'?(locale==='en-US'?'Add an image reference to use this editing preset.':'此编辑预设需要先添加参考图片。'):(locale==='en-US'?'Check or remove the creative preset.':'请检查或移除该创作预设。');}}
+  if(!generationInputError){try{compiledRequest=createGenerationRequestSnapshot(node, connectedInputs, textModels, textModels[0] || "", imageModels, defaultImageModel, videoModels, defaultVideoModel, mediaProfile, includeNoteTitles, resolvedStoredReferences, undefined, comfyConfig);}catch(error){const code=error instanceof Error?error.message:'';generationInputError=isComfy ? (error instanceof Error ? error.message : '请检查 ComfyUI 工作流') : code==='historical-model-unavailable'?(locale==='en-US'?'The selected connection or model is unavailable. Select a model to continue.':'所选连接或模型当前不可用，请重新选择。'):code==='creative-prompt-required'?(locale==='en-US'?'Describe your subject, or add a text/image reference.':'描述要创作的主体，或添加文本/图片参考。'):code==='creative-reference-required'?(locale==='en-US'?'Add an image reference to use this editing preset.':'此编辑预设需要先添加参考图片。'):(locale==='en-US'?'Check or remove the creative preset.':'请检查或移除该创作预设。');}}
 
   const busy = !!node.data.generationTask && canCancelCanvasGenerationTask(node.data.generationTask);
   const submissionLabel = canvasGenerationSubmissionLabel(node.data.generationTask, locale === 'en-US');
   const hasComposerSettings = !capabilities.promptOnly && !!(capabilities.aspects.length || qualities.length || resolutions.length || capabilities.durations.length || supportsSoundControl || capabilities.camera || (!isVideo && imageGenerationCounts.length > 1));
-  const configured = isText ? textModelsReady && models.length > 0
-    : models.length > 0 && !!mediaProfile?.apiKeyConfigured && (isVideo ? mediaProfile.videoProtocol : mediaProfile.imageProtocol) !== "disabled";
-  const hasContent = !!compiledRequest.prompt.trim() || (!isText && compiledRequest.references.some(ref => ref.kind === "image" && !!ref.mediaUrl));
-  const canSubmit = configured && hasContent && !busy && !generationInputError && !referenceEntries.some(entry=>entry.issue);
+  const mediaReadiness = mediaGenerationReadiness(isVideo ? "video" : "image", mediaProfile, models.length ? model : "", locale === "en-US");
+  const configured = isComfy ? !!(node.data.generationComfyWorkflow?.baseUrl||comfyConfig?.baseUrl) && (!!selectedTemplate || !!comfyConfig?.workflowJson || (!node.data.generationComfyWorkflow && (node.data.generationComfy?.preset==='work-fisher-video'||isWorkFisherImagePreset(node.data.generationComfy?.preset)))) : isText ? textModelsReady && models.length > 0 && (!node.data.generationProfileId || !!mediaProfile) && (mediaProfile?.textProtocol !== "openai-chat" || mediaProfile.apiKeyConfigured) : mediaReadiness.ready;
+  const hasContent = !!(selectedTemplate&&!selectedTemplate.prompt) || !!compiledRequest.prompt.trim() || (!isText && compiledRequest.references.some(ref => ref.kind === "image" && !!ref.mediaUrl));
+  const resumeComfy = canResumeComfyObservation(node.data.generationTask);
+  const uncertainComfy = !!node.data.generationTask?.request.comfyui && ["SUBMISSION_UNKNOWN","SUBMISSION_BINDING_CHANGED"].includes(node.data.generationTask.error?.code || "");
+  const canSubmit = !uncertainComfy && (resumeComfy || (configured && hasContent && !busy && !generationInputError && !referenceEntries.some(entry=>entry.issue)));
+  const showInputHint = !!generationInputError && !resumeComfy && (!!node.data.generationPrompt?.trim() || referenceEntries.length > 0);
 
   return (
     <div
       ref={composerRef}
-      className={`canvas-generation-composer ${embedded ? "is-embedded" : "is-contextual"}`}
+      className={`canvas-generation-composer ${isComfy ? "is-comfy" : ""} ${embedded ? "is-embedded" : "is-contextual"}`}
       style={{ "--composer-view-scale": viewScale } as React.CSSProperties}
     >
       <div className={`canvas-composer-reference-row ${embedded ? "canvas-node-drag-handle" : ""}`}>
@@ -7479,7 +7740,7 @@ function MaterialCompactComposer({
               aria-label="焦点编辑"><ToolIcon type="focusEdit" /></button>
           </div>
           <span className="canvas-composer-vertical-divider" aria-hidden="true" />
-          {isVideo ? (
+          {isVideo && !isComfy ? (
             <>
               {firstFrameEntry ? null : (
                 <button type="button" className="canvas-composer-add-reference is-slot" data-slot-label={t("editor.canvas.generation.firstFrame")} onClick={() => onAddReference("firstFrame")} disabled={inputCount >= 4} aria-label={t("editor.canvas.generation.addFirstFrame")}><ToolIcon type="plus" /></button>
@@ -7489,6 +7750,8 @@ function MaterialCompactComposer({
                 <button type="button" className="canvas-composer-add-reference is-slot" data-slot-label={t("editor.canvas.generation.lastFrame")} onClick={() => onAddReference("lastFrame")} disabled={inputCount >= 4} aria-label={t("editor.canvas.generation.addLastFrame")}><ToolIcon type="plus" /></button>
               )}
             </>
+          ) : isComfy ? (
+            <button type="button" className="canvas-composer-add-reference is-slot" data-slot-label={locale==='en-US'?'Reference image':'参考图'} onClick={()=>onAddReference('reference')} disabled={imageEntries.length >= comfyImageLimit} title={comfyImageLimit===0?(locale==='en-US'?'This preset generates from text. Connect existing images to the views or video card.':'此预设根据文字生图，已有图片可直接连接三视图或视频卡。'):undefined} aria-label={locale==='en-US'?'Add reference image':'添加参考图'}><ToolIcon type="plus"/></button>
           ) : (
             <button type="button" className="canvas-composer-add-reference is-slot" data-slot-label={t("editor.canvas.generation.reference")} onClick={() => onAddReference("reference")} disabled={inputCount >= 4} aria-label={t("editor.canvas.generation.addReference")}>
               <ToolIcon type="plus" />
@@ -7510,40 +7773,57 @@ function MaterialCompactComposer({
           : isText ? t("editor.canvas.generation.textPrompt") : isVideo ? t("editor.canvas.generation.videoPrompt") : t("editor.canvas.generation.imagePrompt")}
       />
 
-      {generationInputError ? <small className={creativeNeedsInput?"canvas-creative-input-hint":"canvas-prompt-reference-error"} role={creativeNeedsInput?"status":"alert"}>{generationInputError}</small> : null}
+      {isComfy && isVideo && !selectedTemplate && !shortDramaVideo ? <div className="canvas-comfy-prompt-tools nodrag nopan nowheel">
+        <button type="button" className="canvas-comfy-template-button" disabled={busy || !!node.data.generationPrompt?.trim()} title={node.data.generationPrompt?.trim() ? (locale === "en-US" ? "Your existing prompt is preserved. Clear it to insert a template." : "保留你已填写的提示词；清空后可插入模板。") : undefined}
+          onClick={() => { if (!node.data.generationPrompt?.trim()) commit({generationPrompt: locale === "en-US" ? "integrated_multimodal_description: [Shot 1] <Describe the subject, action, scene and camera>\noverall_soundscape: <Describe ambient and action sounds>\nnon_diegetic_music: <Describe music, or N/A>" : "integrated_multimodal_description: [Shot 1] <填写主体、动作、场景和镜头>\noverall_soundscape: <填写环境与动作声音>\nnon_diegetic_music: <填写配乐，或 N/A>"}); }}>
+          {locale === "en-US" ? "Insert prompt template" : "插入提示词模板"}
+        </button>
+      </div> : null}
+
+      {isComfy&&templateListError?<small role="status">{templateListError}</small>:null}
+      {isComfy ? (()=>{
+        if(selectedTemplate)return <ComfyPopoverGroup owner={node.id} floating={screenSpace} onOpen={closeComposerOverlays}><ComfyOptionRow target={comfyFooter}><ComfyPopover label="模板参数" icon="adjust" disabled={busy}><CanvasTemplateParameters template={selectedTemplate} values={node.data.generationComfyTemplateValues||{}} disabled={busy} onChange={values=>commit({generationComfyTemplateValues:values})}/>{!selectedTemplate.parameters.length?<small>这个模板沿用工作流原参数。</small>:null}</ComfyPopover></ComfyOptionRow></ComfyPopoverGroup>;
+        const pinned=node.data.generationComfyWorkflow;
+        const preset=comfyImagePreset;
+        const update=({source: _source,...parameters}:import('./features/canvas/CanvasComfyUiControls').CanvasComfyUiValues)=>{if(parameters.preset&&!comfyPresetMatchesResult(parameters.preset,lockedComfyKind))return;const suggested=suggestedWorkFisherPrompt(parameters.preset,node.data.generationPrompt,locale==='en-US');commit({generationComfy:{...node.data.generationComfy,...parameters},...(parameters.preset?{generationKind:isWorkFisherImagePreset(parameters.preset)?'image':'video'}:{}),...(suggested!==undefined?{generationPrompt:suggested}:{})});};
+        return isImage&&isWorkFisherImagePreset(preset)?<CanvasComfyUiImageControls footer={comfyFooter} onOpenOptions={closeComposerOverlays} owner={node.id} floating={screenSpace} config={comfyConfig} preset={preset} workflow={pinned?.workflow} imageCount={imageEntries.length} value={{source:node.data.generationSource,...node.data.generationComfy}} disabled={busy} lockedKind={lockedComfyKind} english={locale==='en-US'} onChange={update}/>:<CanvasComfyUiControls footer={comfyFooter} onOpenOptions={closeComposerOverlays} owner={node.id} floating={screenSpace} config={comfyConfig} imageCount={imageEntries.length} value={{source:node.data.generationSource,...node.data.generationComfy}} disabled={busy} lockedKind={lockedComfyKind} workflowPinned={!!pinned} english={locale==='en-US'} onOpenSettings={onOpenComfySettings} onChange={update}/>;
+      })() : null}
+      {uncertainComfy ? <small className="canvas-prompt-reference-error" role="status">{locale === "en-US" ? "Check the original task in ComfyUI before generating again." : "请先在 ComfyUI 核对原任务，避免重复生成。"}</small> : null}
+      {showInputHint ? <small className="canvas-creative-input-hint" role="status">{generationInputError}</small> : null}
       <div className="canvas-composer-footer nodrag nopan">
         <div className="canvas-composer-options">
-          <div className="canvas-composer-anchor">
-            <button type="button" className={openPanel === "model" ? "is-active" : ""} onClick={(event) => togglePanel(event, "model")}>
+          {!isComfy ? <div className="canvas-composer-anchor">
+            <button type="button" className={openPanel === "model" ? "is-active" : ""} title={mediaProfile?.name || textSelection.providerLabel} onClick={(event) => {setModelQuery(""); togglePanel(event, "model");}}>
               <ToolIcon type="aiPrompt" /><strong>{model}</strong>
             </button>
             {openPanel === "model" ? (
-              <CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={350}><div className={`canvas-composer-popover canvas-composer-model-popover ${popoverDirection === "down" ? "opens-down" : ""}`}>
-                <small>{isText && textProviderLabel ? `${textProviderLabel} · ${t("editor.canvas.generation.selectModel")}` : t("editor.canvas.generation.selectModel")}</small>
-                {models.map((item) => (
-                  <button type="button" key={item} className={model === item ? "is-selected" : ""} aria-pressed={model === item} onClick={() => { commit({ generationModel: item }); setOpenPanel(null); }}>
-                    <span><ToolIcon type={isText ? "text" : isVideo ? "video" : "image"} /><strong>{item}</strong></span>
-                    <em>{isText ? t("editor.canvas.connect.textGenerate") : isVideo ? t("editor.canvas.toolbar.videoGenerate") : t("editor.canvas.toolbar.imageGenerate")}</em>
-                    {model === item ? <b>✓</b> : null}
-                  </button>
-                ))}
+              <CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={280}><div className={`canvas-composer-popover canvas-composer-model-popover canvas-composer-api-model-popover ${popoverDirection === "down" ? "opens-down" : ""}`}>
+                <input className="canvas-composer-model-search" aria-label={locale === "en-US" ? "Search models or connections" : "搜索模型或连接"} placeholder={locale === "en-US" ? "Search models or connections" : "搜索模型或连接"} value={modelQuery} onChange={event => setModelQuery(event.target.value)} />
+                {filteredChoices.map((item) => {
+                  const selected = model === item.model && (node.data.generationProfileId || activeMediaProfile?.id) === item.profileId;
+                  return <button type="button" key={JSON.stringify([item.profileId,item.model])} className={`canvas-composer-api-model${selected ? " is-selected" : ""}`} aria-pressed={selected} title={`${item.model}\n${item.profileName}`} onClick={() => { commit({ generationModel: item.model, generationProfileId:item.profileId }); setOpenPanel(null); }}>
+                    <span><ToolIcon type={isText ? "text" : isVideo ? "video" : "image"} /><span className="canvas-composer-model-name"><strong>{item.model}</strong><small>{item.profileName}</small></span></span>
+                    {selected ? <b>✓</b> : null}
+                  </button>;
+                })}
+                {!filteredChoices.length ? <small>{locale === "en-US" ? "No matching models. Add models in generation settings." : "没有匹配的模型，可在生成配置中添加。"}</small> : null}
               </div></CanvasComposerPopover>
             ) : null}
-          </div>
+          </div> : null}
 
-          {!isText && hasComposerSettings ? <div className="canvas-composer-anchor">
+          {!isText && !isComfy && hasComposerSettings ? <div className="canvas-composer-anchor">
             <button type="button" className={openPanel === "settings" ? "is-active" : ""} onClick={(event) => togglePanel(event, "settings")}>
               <span>{summary}</span><svg viewBox="0 0 18 18"><path d="m6 7 3 3 3-3" /></svg>
             </button>
             {openPanel === "settings" ? (
               <CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={390}><div style={{maxHeight:popoverMaxHeight}} className={`canvas-composer-popover canvas-composer-settings-popover ${popoverDirection === "down" ? "opens-down" : ""}`}>
-                <div className="canvas-composer-setting"><small>{t("editor.canvas.generation.aspect")}</small><CanvasAspectOptions options={capabilities.aspects} value={aspect} label={t("editor.canvas.generation.aspect")} onChange={(item) => commit({ generationAspect: item })} /></div>
+                {capabilities.aspects.length>0?<div className="canvas-composer-setting"><small>{t("editor.canvas.generation.aspect")}</small><CanvasAspectOptions options={capabilities.aspects} value={aspect} label={t("editor.canvas.generation.aspect")} onChange={(item) => commit({ generationAspect: item })} /></div>:null}
                 {resolutions.length > 0 && aspect !== "auto" ? <div className="canvas-composer-setting"><small>分辨率</small><div>{resolutions.map((item) => <button type="button" key={item} className={resolution === item ? "is-selected" : ""} aria-pressed={resolution === item} onClick={() => commit({ generationResolution: item })}>{item}</button>)}</div></div> : null}
                 {mediaPixelSize(isVideo ? "video" : "image", mediaProfile, model, aspect || "", resolution) ? <div className="canvas-media-pixel-readout"><span>输出尺寸</span><strong>{mediaPixelSize(isVideo ? "video" : "image", mediaProfile, model, aspect || "", resolution)}</strong></div> : null}
                 {qualities.length > 0 ? <div className="canvas-composer-setting"><small>{parameterKind === "resolution" ? "分辨率" : "画质"}</small><div>{qualities.map((item) => <button type="button" key={item} className={quality === item ? "is-selected" : ""} onClick={() => commit({ generationQuality: item })}>{mediaParameterLabel(item, parameterKind)}</button>)}</div></div> : null}
                 {isVideo ? (
                   <>
-                    <div className="canvas-composer-setting"><small>{t("editor.canvas.generation.duration")}</small><div>{capabilities.durations.map((item) => <button type="button" key={item} className={duration === item ? "is-selected" : ""} onClick={() => commit({ generationDuration: item })}>{item}s</button>)}</div></div>
+                    {capabilities.durations.length>0?<div className="canvas-composer-setting"><small>{t("editor.canvas.generation.duration")}</small><div>{capabilities.durations.map((item) => <button type="button" key={item} className={duration === item ? "is-selected" : ""} onClick={() => commit({ generationDuration: item })}>{item}s</button>)}</div></div>:null}
                     <button type="button" className={`canvas-composer-sound ${supportsSoundControl && node.data.generationSound ? "is-selected" : ""}`} disabled={!supportsSoundControl} title={!supportsSoundControl ? t("editor.canvas.generation.soundUnavailable") : undefined} onClick={() => commit({ generationSound: !node.data.generationSound })}><span>{t("editor.canvas.generation.generateSound")}</span><b>{supportsSoundControl ? (node.data.generationSound ? t("editor.canvas.generation.on") : t("editor.canvas.generation.off")) : t("editor.canvas.generation.unsupported")}</b></button>
                     {capabilities.camera ? <label className="canvas-composer-camera"><span>{t("editor.canvas.generation.cameraStrength")} <b>{cameraStrength}%</b></span><input type="range" min="0" max="100" step="10" value={cameraStrength} style={{ "--camera-strength": `${cameraStrength}%` } as React.CSSProperties} onChange={(event) => commit({ generationCameraStrength: Number(event.target.value) })} /></label> : null}
                   </>
@@ -7552,7 +7832,7 @@ function MaterialCompactComposer({
                 )}
               </div></CanvasComposerPopover>
             ) : null}
-          </div> : <span className="canvas-composer-text-count">{summary}</span>}
+          </div> : !isComfy ? <span className="canvas-composer-text-count">{summary}</span> : null}
           {!isText?<div className="canvas-composer-anchor">
             <button type="button" aria-label={locale==='en-US'?'Camera and lens':'摄影机与镜头'} title={locale==='en-US'?'Camera and lens direction':'摄影机、镜头与构图指导'} className={openPanel==='camera'||cinematographyHasDirections(node.data.generationCinematography,isVideo?'video':'image')?'is-active':''} onClick={event=>togglePanel(event,'camera')}>
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3"/><path d="m8 3 5 4m4 1-4 5m-1 4-5-4m-4-1 4-5"/></svg>
@@ -7565,20 +7845,32 @@ function MaterialCompactComposer({
             </button>
             {openPanel==='creative'?<CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={380}><CanvasImageCreativeMenu english={locale==='en-US'} currentId={normalizeCreativeRecipe(node.data.generationCreativeRecipe)?.id} context={onCreateCreative&&!node.data.generationCreativeRecipe?'derive':'draft'} hasImageReference={(!!onCreateCreative&&!node.data.generationCreativeRecipe)||imageEntries.some(entry=>!entry.issue&&!!entry.reference.mediaUrl)} onSelect={recipe=>{setOpenPanel(null);if(normalizeCreativeRecipe(node.data.generationCreativeRecipe)?.id===recipe.id)return;if(onCreateCreative&&!node.data.generationCreativeRecipe){onCreateCreative(recipe);}else{commit({generationCreativeRecipe:recipe});}}}/></CanvasComposerPopover>:null}
           </div>:null}
+          {isComfy&&(customTemplates.length>0||selectedTemplate)?<div className="canvas-composer-anchor">
+            <button type="button" aria-label={locale==='en-US'?'Workflow templates':'工作流模板'} title={selectedTemplate?.name||(locale==='en-US'?'Built-in workflows':'内置工作流')} aria-haspopup="dialog" aria-expanded={openPanel==='workflow'} disabled={busy} className={openPanel==='workflow'?'is-active':''} onClick={event=>togglePanel(event,'workflow')}>
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"><rect x="2.5" y="7.5" width="5" height="5" rx="1"/><rect x="12.5" y="2.5" width="5" height="5" rx="1"/><rect x="12.5" y="12.5" width="5" height="5" rx="1"/><path d="M7.5 10h2V5h3m-3 5v5h3"/></svg>
+            </button>
+            {openPanel==='workflow'?<CanvasComposerPopover enabled={screenSpace} owner={node.id} anchor={popoverAnchorRef} composer={composerRef} portal={popoverPortalRef} width={350}><div role="dialog" aria-label={locale==='en-US'?'Workflow templates':'工作流模板'} className={`canvas-composer-popover canvas-composer-model-popover canvas-composer-workflow-popover ${popoverDirection==='down'?'opens-down':''}`}>
+              <small>{locale==='en-US'?'Workflow templates':'工作流模板'}</small>
+              <button type="button" className={!selectedTemplate?'is-selected':''} aria-pressed={!selectedTemplate} onClick={()=>selectComfyTemplate()}><span>{locale==='en-US'?'Built-in workflows':'内置工作流'}</span>{!selectedTemplate?<b aria-hidden="true">✓</b>:null}</button>
+              {selectedTemplate&&!customTemplates.some(t=>t.id===selectedTemplate.id)?<button type="button" className="is-selected" aria-pressed="true" onClick={()=>setOpenPanel(null)}><span title={selectedTemplate.name}>{selectedTemplate.name} · 当前快照</span><b aria-hidden="true">✓</b></button>:null}
+              {customTemplates.map(template=><button type="button" key={template.id} disabled={!!lockedComfyKind&&template.output.kind!==lockedComfyKind} className={selectedTemplate?.id===template.id?'is-selected':''} aria-pressed={selectedTemplate?.id===template.id} onClick={()=>selectComfyTemplate(template)}><span title={template.name}>{selectedTemplate?.id===template.id&&JSON.stringify(selectedTemplate)!==JSON.stringify(template)?`${selectedTemplate.name} · 当前快照`:template.name}</span>{selectedTemplate?.id===template.id?<b aria-hidden="true">✓</b>:null}</button>)}
+            </div></CanvasComposerPopover>:null}
+          </div>:null}
+          {isComfy?<div ref={setComfyFooter} className="canvas-comfy-footer-options"/>:null}
         </div>
         <div className="canvas-composer-submit-wrap">
-          {submissionLabel ? <span role="status">{submissionLabel}</span> : null}
+          {submissionLabel ? <span role="status">{resumeComfy ? (locale === "en-US" ? "Resume viewing" : "恢复查看") : submissionLabel}</span> : null}
           <button
             type="button"
             className="canvas-composer-submit"
             disabled={busy ? !onCancel : !canSubmit}
-            title={busy ? t("editor.canvas.history.cancelTask") : !canSubmit
+            title={resumeComfy ? (locale === "en-US" ? "Resume the original task without submitting new parameters" : "恢复查看原任务，不提交新参数") : busy ? (isComfy ? (locale === "en-US" ? "Stop watching (server task continues)" : "停止跟踪（服务端任务继续）") : t("editor.canvas.history.cancelTask")) : !canSubmit
               ? generationInputError || (busy ? t("editor.canvas.error.generationBusy") : !textModelsReady ? t("editor.canvas.generation.loadingModels")
-                : !configured ? t("editor.canvas.generation.configureModel")
+                : !configured ? (!isText ? mediaReadiness.message : t("editor.canvas.generation.configureModel"))
                   : referenceEntries.some(entry=>entry.issue)?referenceIssueText(referenceEntries.find(entry=>entry.issue)?.issue,locale==='en-US'):t("editor.canvas.generation.enterContent"))
               : node.data.generationTask?.status==='succeeded'?(locale==='en-US'?'Generate on this card':'在当前节点生成'):undefined}
             onClick={() => { setOpenPanel(null); if (busy) { onCancel?.(); } else { onSubmit?.(); } }}
-            aria-label={busy ? t("editor.canvas.history.cancelTask") : isText ? t("editor.canvas.generation.generateText") : isVideo ? t("editor.canvas.generation.generateVideo") : t("editor.canvas.generation.generateImage")}
+            aria-label={resumeComfy ? (locale === "en-US" ? "Resume viewing" : "恢复查看") : busy ? (isComfy ? (locale === "en-US" ? "Stop watching (server task continues)" : "停止跟踪（服务端任务继续）") : t("editor.canvas.history.cancelTask")) : isText ? t("editor.canvas.generation.generateText") : isVideo ? t("editor.canvas.generation.generateVideo") : t("editor.canvas.generation.generateImage")}
           >
             {busy ? <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1" fill="currentColor" stroke="none" /></svg> : <svg viewBox="0 0 18 18"><path d="M9 14V4M5 8l4-4 4 4" /></svg>}
           </button>
@@ -7975,14 +8267,19 @@ const btn: React.CSSProperties = {
 const btnAccent: React.CSSProperties = { ...btn, background: "rgba(124,138,255,.18)", borderColor: "rgba(124,138,255,.4)", color: "#9aa4ff" };
 const btnDanger: React.CSSProperties = { ...btn, color: "#fb7185", borderColor: "rgba(251,113,133,.3)" };
 
-export default function CanvasSpike({ visible = true }: { visible?: boolean }) {
+function CanvasSpike({ visible = true }: { visible?: boolean }) {
   const locale = useSavedLocale();
   return (
     <I18nProvider locale={locale}>
-      <ReactFlowProvider>
-        <CanvasInner visible={visible} />
-      </ReactFlowProvider>
+      <CanvasPlaybackVisibilityContext.Provider value={visible}>
+        <ReactFlowProvider>
+          <CanvasInner visible={visible} />
+        </ReactFlowProvider>
+      </CanvasPlaybackVisibilityContext.Provider>
     </I18nProvider>
   );
 }
 
+// The shell retains this workspace while other pages update focus/tabs. Keep
+// those unrelated renders out; local jobs, locale and visibility still update.
+export default memo(CanvasSpike);

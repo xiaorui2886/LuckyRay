@@ -1,3 +1,4 @@
+import { DesktopMenuItems } from "../../community/DesktopExtensions";
 import {useCallback,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
 import {useI18n} from '../../../core/i18n/index';
 import type {AiWriteAction,EditorCommand} from '../../../core/services/editor';
@@ -89,7 +90,9 @@ export function EditorContextMenu({
   onEditNoteAlias,
   onRenameTag,
   onRemoveToken,
+  onDismiss,
 }: {
+  onDismiss?: () => void;
   x: number;
   y: number;
   aiBusy: boolean;
@@ -129,6 +132,7 @@ export function EditorContextMenu({
       : "";
   return (
     <div ref={menuRef} className="editor-ctx-react" style={{ left: menuPosition.left, top: menuPosition.top }} onPointerDown={(event) => event.stopPropagation()}>
+      <DesktopMenuItems target="editor" onClose={()=>onDismiss?.()} />
       {token && (
         <>
           <EditorCtxItem

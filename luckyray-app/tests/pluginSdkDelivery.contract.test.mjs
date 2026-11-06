@@ -14,7 +14,7 @@ const npmCli = process.env.LR_SDK_NPM_CLI || path.join(path.dirname(process.exec
 const tsc = process.env.LR_SDK_TSC;
 const worker = process.env.LR_SDK_WORKER;
 const workerSha = process.env.LR_SDK_WORKER_SHA256;
-const templates = ["palette", "outline", "canvas-export", "material-manifest", "page-desk", "material-reader"];
+const templates = ["palette", "outline", "canvas-export", "material-manifest", "page-desk", "material-reader", "event-ai"];
 let scratch, exported, consumer, installed, cli, tarball;
 const results = { evidence: "local npm tarball consumer; actual QuickJS with controlled RPC adapter (not native Broker/domain/GUI)", gui: "NOT_RUN", nativeBroker: "NOT_RUN", cases: [] };
 
@@ -67,11 +67,13 @@ after(async () => {
   }
 });
 
-test("local tarball contains verified public docs/types/tools and all six example sources, no host or stale packs", async () => {
+test("local tarball contains verified public docs/types/tools and all seven example sources, no host or stale packs", async () => {
   const metadata = await json(path.join(installed, "package.json"));
-  assert.equal(metadata.version, "1.0.1"); assert.equal(metadata.types, "index.d.ts");
+  assert.equal(metadata.version, "1.2.0"); assert.equal(metadata.types, "index.d.ts");
   const manifest = results.manifest;
   assert.equal(manifest.scriptApiVersion, 1);
+  assert.equal(manifest.desktopApiVersion, 2);
+  assert((await fs.readFile(path.join(installed, "cli.mjs"))).subarray(0, 20).toString().startsWith("#!/usr/bin/env node\n"));
   for (const [relative, fact] of Object.entries(manifest.files)) {
     const bytes = await fs.readFile(path.join(installed, relative));
     assert.equal(sha(bytes), fact.sha256, relative); assert.equal(bytes.length, fact.bytes);
@@ -81,7 +83,7 @@ test("local tarball contains verified public docs/types/tools and all six exampl
     await fs.access(path.join(installed, "examples", name, "main.js"));
     await assert.rejects(fs.access(path.join(installed, "examples", name, `example.${name}.lrpack.json`)));
   }
-  for (const file of ["README.zh-CN.md", "DELIVERY.md", "COMPATIBILITY.md", "export-sdk.mjs"]) await fs.access(path.join(installed, file));
+  for (const file of ["README.zh-CN.md", "DELIVERY.md", "COMPATIBILITY.md", "export-sdk.mjs", "DESKTOP.md", "desktop.d.ts", "desktop-pack.mjs"]) await fs.access(path.join(installed, file));
   assert.equal(sha((await fs.readFile(path.join(installed, "material-library-consumer.js"), "utf8")).replace(/\r\n/g, "\n")), "f404a55011dd6cab5979c2591e12b316868f1466126008866c65a247e82a4bee");
   const reexport = path.join(scratch, "second export");
   run([path.join(installed, "export-sdk.mjs"), reexport]);
@@ -90,6 +92,23 @@ test("local tarball contains verified public docs/types/tools and all six exampl
   await fs.appendFile(path.join(reexport, "README.md"), "\nchanged\n");
   run([path.join(reexport, "export-sdk.mjs"), path.join(scratch, "tampered")], scratch, 1);
   results.cases.push("package allowlist/hashes/re-export tamper refusal PASS");
+});
+
+test("source export canonicalizes a Windows CRLF CLI shebang before hashing", async () => {
+  const source = path.join(scratch, "crlf-source");
+  await fs.cp(installed, source, { recursive: true });
+  await fs.rm(path.join(source, "MANIFEST.json"));
+  const cliFile = path.join(source, "cli.mjs");
+  const bytes = await fs.readFile(cliFile);
+  const unixShebang = Buffer.from("#!/usr/bin/env node\n");
+  assert(bytes.subarray(0, unixShebang.length).equals(unixShebang));
+  await fs.writeFile(cliFile, Buffer.concat([Buffer.from("#!/usr/bin/env node\r\n"), bytes.subarray(unixShebang.length)]));
+  const target = path.join(scratch, "crlf-export");
+  run([path.join(source, "export-sdk.mjs"), target]);
+  const exportedCli = await fs.readFile(path.join(target, "cli.mjs"));
+  assert(exportedCli.subarray(0, unixShebang.length).equals(unixShebang));
+  assert.equal(sha(exportedCli), (await json(path.join(target, "MANIFEST.json"))).files["cli.mjs"].sha256);
+  results.cases.push("Windows CRLF CLI shebang canonicalization PASS");
 });
 
 test("installed CLI scaffolds, builds and packages hello plus every template with strict types", async () => {
@@ -106,7 +125,22 @@ test("installed CLI scaffolds, builds and packages hello plus every template wit
     assert(!pkg.resource.code.includes(sdk));
     assert.deepEqual(pkg.resource.contributions, config.contributions);
   }
-  results.cases.push("hello+six templates standalone check/strict build/pack PASS");
+  results.cases.push("hello+seven templates standalone check/strict build/pack PASS");
+});
+
+test("installed CLI creates, checks and packs a desktop API 2 extension", async () => {
+  const project = path.join(consumer, "desktop");
+  run([cli, "create", project, "--desktop"]);
+  run([cli, "check", project]);
+  run([cli, "pack", project]);
+  const config = await json(path.join(project, "plugin.json"));
+  const pkg = await json(path.join(project, `${config.id}.lrpack.json`));
+  assert.equal(pkg.manifest.type, "desktop");
+  assert.equal(pkg.manifest.schemaVersion, 2);
+  assert.equal(pkg.manifest.apiVersion, 2);
+  assert(pkg.resource.code.includes("export function activate"));
+  assert(!pkg.resource.code.includes(sdk));
+  results.cases.push("desktop API 2 installed CLI scaffold/check/pack PASS");
 });
 
 test("installed CLI matches native authoring negatives without executing source, grants or compatibility inference", async () => {

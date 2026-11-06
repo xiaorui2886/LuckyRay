@@ -1,3 +1,5 @@
+import { DesktopPanels, useDesktopContributions } from "../features/community/DesktopExtensions";
+import { desktopCommands, runDesktopCommand, dispatchDesktopShortcut, bindDesktopHostCommands } from "../core/extensions/desktop/contributions";
 import { Activity, Component, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties } from "react";
 import type { ComponentType, LazyExoticComponent, ReactNode } from "react";
@@ -174,6 +176,8 @@ function LocalizedAppShell() {
     },
     getRoute: () => getShellRoute(getHashRoute()),
   }), [applicationModalStore]);
+  useEffect(()=>bindDesktopHostCommands(async id=>{if(applicationModalStore.getSnapshot())throw Error("extension-host-modal-active");await runAppCommand(id as LuckyRayCommand["id"],commandContext);}),[applicationModalStore,commandContext]);
+
 
   useEffect(() => {
     const normalizeRetiredHash = () => {
@@ -280,8 +284,10 @@ function LocalizedAppShell() {
         return;
       }
     };
+    const extensionShortcut = (event: KeyboardEvent) => { dispatchDesktopShortcut(event,Boolean(applicationModalStore.getSnapshot())); };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", extensionShortcut);
+    return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keydown", extensionShortcut); };
   }, [applicationModalStore, commandContext, route]);
 
   useEffect(() => {
@@ -381,6 +387,7 @@ function LocalizedAppShell() {
         </Suspense>
       )}
       <PluginEntryMenu />
+      <DesktopPanels />
       <CommandPalette open={commandOpen && !applicationModalActive} onClose={() => setCommandOpen(false)} />
     </ApplicationModalIsolationProvider>
   );
@@ -828,6 +835,7 @@ function ReactNavShell({
         </Suspense>
       )}
       <PluginEntryMenu />
+      <DesktopPanels />
       <CommandPalette open={commandOpen && !applicationModalActive} onClose={onCloseCommand} />
       {phoneOpen && <PhoneConnectionDialog onClose={() => setPhoneOpen(false)} onMore={() => {
         setPhoneOpen(false);
@@ -1065,6 +1073,7 @@ function LoadingFallback() {
 }
 
 function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+  useDesktopContributions();
   const plugins = useScriptPackages().filter(p => p.enabled);
   const { locale, t } = useI18n();
   const [query, setQuery] = useState("");
@@ -1104,6 +1113,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
           <input value={query} onChange={(event) => setQuery(event.target.value)} autoFocus placeholder={t("shell.command.placeholder")} />
         </div>
         <div className="command-palette-list">
+          {[...desktopCommands.values()].filter(c=>c.name.toLowerCase().includes(query.toLowerCase())).map(c=><button className="command-palette-item" key={c.id} onClick={()=>{onClose();Promise.resolve().then(()=>runDesktopCommand(c.id)).catch(console.error);}}><span>{c.name}</span><kbd>{c.shortcut ?? "扩展"}</kbd></button>)}
           {plugins.flatMap(p => (p.package.resource as ScriptResource).contributions.filter(c => c.kind === "command" && `${p.package.manifest.name} ${c.label}`.toLowerCase().includes(query.toLowerCase())).map(c => <button className="command-palette-item" key={`${p.package.manifest.id}:${c.id}`} onClick={() => { openPlugin(p.package.manifest.id, c.id); onClose(); }}><span>{p.package.manifest.name} · {c.label}</span><kbd>插件</kbd></button>))}
           {visible.length === 0 ? (
             <div className="command-palette-empty">{t("shell.command.empty")}</div>

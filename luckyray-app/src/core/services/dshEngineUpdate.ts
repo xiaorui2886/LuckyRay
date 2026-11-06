@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type DshEngineUpdatePhase = "recovery_required" | "switch_incomplete" | "recovered_restart_required" | "recovered" | "verification_required" | "verification_failed" | "healthy" | "restart_required" | "exit_prepared" |
+export type DshEngineUpdatePhase = "recovery_required" | "switch_incomplete" | "recovered_restart_required" | "recovered" | "verification_required" | "verification_failed" | "healthy" | "sealed_healthy" | "restart_required" | "exit_prepared" |
   "working" | "unconfigured" | "current" | "requires_host" | "legacy_contract" | "no_candidate" | "upgrade_path" | "check_failed" |
   "untrusted" | "prepare_failed" | "cancelled" | "available" | "idle" |
   "upstream_unvalidated" | "upstream_unavailable" | "upstream_identity" | "initializing";

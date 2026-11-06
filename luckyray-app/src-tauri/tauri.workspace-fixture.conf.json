@@ -1,0 +1,7 @@
+{
+  "identifier": "com.luckyray.workspace.fixture",
+  "productName": "LuckyRay Workspace Isolated Test",
+  "build": { "devUrl": "http://127.0.0.1:1427", "beforeDevCommand": "", "beforeBuildCommand": "" },
+  "app": { "windows": [] },
+  "bundle": { "active": false, "resources": [], "externalBin": [] }
+}

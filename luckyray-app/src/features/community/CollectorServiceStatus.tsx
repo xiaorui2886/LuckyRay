@@ -37,8 +37,8 @@ export default function CollectorServiceStatus() {
   return <section className="community-collector-service" aria-busy={checking}>
     <div className="community-collector-service-heading">
       <h3>{t("settings.general.collection.service.label")}</h3>
-      <span className={`community-status${!checking && ready ? " is-on" : !checking && ready === false ? " is-unavailable" : ""}`} role="status" aria-live="polite" aria-atomic="true">
-        {checking ? t("settings.general.collection.service.checking") : ready ? t("settings.general.collection.service.ready") : t("settings.general.collection.service.unavailable")}
+      <span className={`community-status${ready ? " is-on" : ready === false ? " is-unavailable" : ""}`} role="status" aria-live="polite" aria-atomic="true">
+        {ready === null ? t("settings.general.collection.service.checking") : ready ? t("settings.general.collection.service.ready") : t("settings.general.collection.service.unavailable")}
       </span>
       <button type="button" className="lr-cap-run secondary" disabled={checking} onClick={() => void refresh()}><CommunityIcon name="refresh" />{t("common.action.refresh")}</button>
     </div>

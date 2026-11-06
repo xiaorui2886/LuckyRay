@@ -37,6 +37,8 @@ export type CanvasGenerationReferenceSnapshot = {
 
 export type CanvasGenerationRequestSnapshot = {
   kind: CanvasGenerationKind;
+  /** Local ComfyUI immutable API snapshot; never routed to an online provider. */
+  comfyui?: { baseUrl: string; workflowName: string; workflow: Record<string, unknown>; template?: import('./comfyTemplate').ComfyTemplate };
   prompt: string;
   /** Original editable prompt before connected context is compiled. */
   sourcePrompt?: string;
@@ -47,6 +49,8 @@ export type CanvasGenerationRequestSnapshot = {
   textProfileRevision?: number;
   mediaProfileId?: string;
   mediaProfileRevision?: number;
+  /** Selected account pool captured once. Missing means legacy default; [] never falls back. */
+  doubaoAccountIds?: string[];
   aspect?: string;
   quality?: string;
   resolution?: string;
@@ -56,6 +60,14 @@ export type CanvasGenerationRequestSnapshot = {
   cameraStrength?: number;
   references: CanvasGenerationReferenceSnapshot[];
 };
+
+/** Canonicalize a copied pool without upgrading legacy snapshots or repairing invalid identity. */
+export function snapshotDoubaoAccountPool(request: { doubaoAccountIds?: unknown }): { doubaoAccountIds?: string[] } {
+  if (request.doubaoAccountIds === undefined) return {};
+  const ids = request.doubaoAccountIds;
+  return { doubaoAccountIds: Array.isArray(ids) && ids.every(id => typeof id === "string" && /^(?:default|acct_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/.test(id))
+    ? [...new Set(ids as string[])].sort() : [] };
+}
 
 export type CanvasGenerationTaskError = {
   code: string;
@@ -137,6 +149,8 @@ export function createCanvasGenerationTask(input: {
     status: "queued",
     request: {
       ...input.request,
+      ...(input.request.comfyui ? {comfyui: JSON.parse(JSON.stringify(input.request.comfyui))} : {}),
+      ...snapshotDoubaoAccountPool(input.request),
       editor: normalizeGenerationEditorSnapshot(input.request.editor, input.request.references.length),
       references: input.request.references.map((reference) => ({ ...reference })),
     },
@@ -155,8 +169,9 @@ export function canCancelCanvasGenerationTask(task: CanvasGenerationTask): boole
 export function canvasGenerationSubmissionLabel(task: CanvasGenerationTask | undefined, english: boolean): string {
   if (!task) return '';
   if (task.status === 'failed') return english ? 'Request failed' : '提交失败';
-  if (task.status === 'cancelled') return english ? 'Cancelled' : '已取消';
+  if (task.status === 'cancelled') return task.request.comfyui ? (english ? 'Stopped watching · may still be running' : '已停止跟踪 · 服务端可能仍在运行') : (english ? 'Cancelled' : '已取消');
   if (task.status === 'succeeded') return english ? 'Completed' : '已完成';
+  if (task.request.comfyui && task.providerTaskId?.trim()) return task.providerStage === 'generating' ? (english ? 'ComfyUI generating' : 'ComfyUI 生成中') : task.providerStage === 'downloading' ? (task.request.kind==='image'?(english?'Saving image':'正在保存图片'):(english ? 'Saving video' : '正在保存视频')) : (english ? 'ComfyUI queued' : 'ComfyUI 排队中');
   if (task.request.kind === 'video' && task.providerTaskId?.trim()) return english ? 'Accepted by provider' : '供应商已受理';
   if (task.status === 'queued') return english ? 'Queued locally' : '本地排队';
   return task.request.kind === 'video' ? (english ? 'Submitting' : '提交中') : (english ? 'Processing' : '处理中');
@@ -164,16 +179,18 @@ export function canvasGenerationSubmissionLabel(task: CanvasGenerationTask | und
 
 export function canRetryCanvasGenerationTask(task: CanvasGenerationTask): boolean {
   // An uncertain POST is not permission to submit a second paid generation.
-  if (task.error?.code === "VIDEO_SUBMISSION_UNKNOWN" || task.error?.code === "VIDEO_SUBMISSION_BINDING_CHANGED" || task.error?.code === "VIDEO_STABLE_TASK_ID_REQUIRED") return false;
+  if (/^(?:(?:VIDEO|IMAGE)_)?(?:SUBMISSION_UNKNOWN|SUBMISSION_BINDING_CHANGED|STABLE_TASK_ID_REQUIRED)$/.test(task.error?.code || "")) return false;
   return task.status === "failed" || task.status === "cancelled";
 }
 
-/** Retry video polling using the same native submission identity and binding.
+/** Retry video polling with the same native identity.
  * Creating a genuinely new generation remains a separate explicit operation. */
 export function resumeCanvasVideoGenerationTask(
   task: CanvasGenerationTask, updatedAt: string,
 ): CanvasGenerationTask | null {
-  if (task.request.kind !== "video" || !canRetryCanvasGenerationTask(task)) return null;
+  if (task.request.comfyui && task.error?.code === "COMFY_EXECUTION_FAILED") return null;
+  const recoverableKind = (task.request.kind === "video" && task.request.mediaProfileId !== "doubao-default") || (task.request.kind === 'image' && !!task.request.comfyui);
+  if (!recoverableKind || !canRetryCanvasGenerationTask(task)) return null;
   return {
     ...task,
     status: "queued",
@@ -183,6 +200,7 @@ export function resumeCanvasVideoGenerationTask(
     providerStage: "queued",
     request: {
       ...task.request,
+      ...snapshotDoubaoAccountPool(task.request),
       references: task.request.references.map(reference => ({ ...reference })),
     },
   };

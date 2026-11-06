@@ -1,3 +1,4 @@
+import { attachDesktopEditor, refreshDesktopEditor } from "../../../core/extensions/desktop/editorRegistry";
 import { autocompletion, closeCompletion, completionKeymap, completionStatus, startCompletion } from "@codemirror/autocomplete";
 import { materialBlockSelection } from "../../../core/markdown/materialBlockInsertion";
 import { defaultKeymap, history, historyField, historyKeymap } from "@codemirror/commands";
@@ -1085,7 +1086,8 @@ export const LiveMarkdownEditor = forwardRef<LiveMarkdownEditorHandle, LiveMarkd
         .map(compartment=>compartment.reconfigure(compartment.get(currentState)||[]));
       const state = restorePortableLiveEditor(snapshot, currentState.doc.toString(), [extensions,preparedAttachments.init(()=>[])])
         .update({effects:currentCompartments}).state;
-      view.setState(state);scrollPositions.current.set(view,snapshot.scroll);
+      view.setState(state);
+      refreshDesktopEditor(view);scrollPositions.current.set(view,snapshot.scroll);
       if (snapshot.search.panelOpen && !openSearchPanel(view)) throw new Error("Search panel restore was not acknowledged");
       // Opening CM's panel may seed its query from the selected text.
       view.dispatch({effects:setSearchQuery.of(new SearchQuery(snapshot.search))});
@@ -1160,23 +1162,27 @@ export const LiveMarkdownEditor = forwardRef<LiveMarkdownEditorHandle, LiveMarkd
   useLayoutEffect(() => {
     if (!hostRef.current) return;
     const key = props.currentNoteId || "empty";
+    let detachDesktop: (()=>void) | undefined;
     const detach = (view: EditorView) => {
       const rename = pendingViewRename.current;
       if (rename?.from === key && currentNoteIdRef.current === rename.to) {
         pendingViewRename.current = null;
         return;
       }
+      detachDesktop?.();
       onSessionCaptureRef.current?.(captureSession(view, key));
       retainedViews.current.detach(view);
       if (viewRef.current === view) viewRef.current = null;
     };
     if (viewRef.current) {
       const current = viewRef.current;
+      detachDesktop = attachDesktopEditor(current,key);
       return () => detach(current);
     }
     const reused = retainedViews.current.take(key);
     if (reused) {
       viewRef.current = reused;
+      detachDesktop = attachDesktopEditor(reused,key);
       hostRef.current.appendChild(reused.dom);
       retainedViews.current.restoreScroll(reused);
       retainedViews.current.trim(key);
@@ -1476,6 +1482,7 @@ export const LiveMarkdownEditor = forwardRef<LiveMarkdownEditorHandle, LiveMarkd
       parent: hostRef.current,
       state: EditorState.create({doc: props.value, selection: session?.state.selection, extensions}),
     });
+    detachDesktop = attachDesktopEditor(view,key);
     viewExtensions.current.set(view, extensions);
     scrollPositions.current.set(view,{top:session?.scrollTop||0,left:session?.scrollLeft||0});
     view.scrollDOM.addEventListener('scroll',()=>{if(view.scrollDOM.clientHeight>0&&view.scrollDOM.clientWidth>0)scrollPositions.current.set(view,captureNoteScroll(view.scrollDOM));});

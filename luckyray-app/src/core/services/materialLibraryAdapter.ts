@@ -11,9 +11,9 @@ function imported(result: MaterialCatalogImportResult): MaterialImportResult {
   return { assets: adapt(result.assets), source: "tauri", skippedDuplicates: result.skippedDuplicateCount,
     errors: result.failedItems.map(item => ({ name: item.file, error: item.error })) };
 }
-export function createMaterialLibraryAdapter(legacy: MaterialCatalogAdapter, libraryId: string): MaterialCatalogAdapter {
+export function createMaterialLibraryAdapter(legacy: MaterialCatalogAdapter, libraryId: string, eventOrigins?: () => string[] | undefined): MaterialCatalogAdapter {
   const policy = materialLibrarySession.getSnapshot().registry?.libraries.find(library => library.id === libraryId)?.storageMode ?? "managed";
-  const call = <T>(op: string, fields: Record<string, unknown> = {}) => materialLibrarySession.request<T>({ op, ...fields }, libraryId).catch(e => { throw toMaterialCatalogError(e); });
+  const call = <T>(op: string, fields: Record<string, unknown> = {}, origins?: string[]) => materialLibrarySession.request<T>({ op, ...fields }, libraryId, origins).catch(e => { throw toMaterialCatalogError(e); });
   return {
     ...legacy,
     listAssets: async () => adapt(await call<MaterialAsset[]>("list")),
@@ -22,6 +22,7 @@ export function createMaterialLibraryAdapter(legacy: MaterialCatalogAdapter, lib
     listFolders: () => call("folders"),
     getMaterialChangeState: () => call("change"),
     importAssets: async options => {
+      const origins = eventOrigins?.();
       const target = { folderId: options?.folderId ?? null, storageMode: options?.storageMode ?? policy, managedLibraryDir: options?.managedLibraryDir ?? null };
       let paths = options?.paths;
       if (!paths?.length) {
@@ -35,15 +36,16 @@ export function createMaterialLibraryAdapter(legacy: MaterialCatalogAdapter, lib
       const progress = new Channel<MaterialImportProgress>();
       let active = true;
       progress.onmessage = value => { if (active) options?.onProgress?.(value); };
-      const result = imported(await call<MaterialCatalogImportResult>("importPaths", { paths, options: target, progress }).finally(() => { active = false; }));
+      const result = imported(await call<MaterialCatalogImportResult>("importPaths", { paths, options: target, progress }, origins).finally(() => { active = false; }));
       options?.onProgress?.({ current: paths.length, total: paths.length, phase: "done" });
       return result;
     },
     importDroppedFiles: async (files, options) => {
+      const origins = eventOrigins?.();
       const items = await Promise.all(Array.from(files).map(async file => ({ name: file.name, originalPath: `dropped:${file.name}`, mimeType: file.type, bytes: Array.from(new Uint8Array(await file.arrayBuffer())), description: null })));
-      return imported(await call<MaterialCatalogImportResult>("importBytes", { items, options: { folderId: options?.folderId ?? null, storageMode: "managed" } }));
+      return imported(await call<MaterialCatalogImportResult>("importBytes", { items, options: { folderId: options?.folderId ?? null, storageMode: "managed" } }, origins));
     },
-    importFolder: (path, options) => call("importFolder", { path, options: { ...options, storageMode: options?.storageMode ?? policy } }),
+    importFolder: (path, options) => call("importFolder", { path, options: { ...options, storageMode: options?.storageMode ?? policy } }, eventOrigins?.()),
     updateAsset: async (id, patch) => { const result = await call<MaterialAsset | null>("update", { id, patch }); return result && adaptMaterialAssetMedia(result); },
     renameAssetFile: async (id, name) => { const result = await call<MaterialAsset | null>("renameFile", { id, name }); return result && adaptMaterialAssetMedia(result); },
     relocateAsset: async (id, path, options) => { const result = await call<MaterialAsset | null>("relocate", { id, path, options: options ?? {} }); return result && adaptMaterialAssetMedia(result); },

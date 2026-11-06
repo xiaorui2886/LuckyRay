@@ -29,6 +29,10 @@ export const EXT_PACKAGE_MESSAGES = defineMessages({
   "pack.enable": { "zh-CN": "启用", "en-US": "Enable" },
   "pack.disable": { "zh-CN": "禁用", "en-US": "Disable" },
   "pack.update": { "zh-CN": "更新…", "en-US": "Update…" },
+  "pack.publisher.install": { "zh-CN": "安装“{name}”？签名只能证明密钥持有者，不能证明其真实身份。请先通过可信渠道核对完整发布者公钥：\n{newKey}", "en-US": "Install “{name}”? A signature proves control of a key, not identity. Check this entire publisher key through a trusted channel first:\n{newKey}" },
+  "pack.publisher.update": { "zh-CN": "“{name}”的发布者身份无法连续验证或已发生变化。旧公钥：{oldKey}\n新公钥：{newKey}\n请通过可信渠道核对；若为脚本或完整扩展，继续将清除其授权并停用。原插件数据会保留，新插件启用后可读取。仍要更新吗？", "en-US": "The publisher identity of “{name}” cannot be verified as continuous or has changed. Old key: {oldKey}\nNew key: {newKey}\nVerify through a trusted channel. For scripts and full desktop extensions, continuing removes their permissions and disables them. Retained data can be read by the replacement after it is enabled. Update anyway?" },
+  "pack.error.publisher": { "zh-CN": "发布者身份需要确认，更新未执行。", "en-US": "Publisher confirmation is required; the update was not applied." },
+  "pack.error.signature": { "zh-CN": "包的发布者签名无效，操作已取消。", "en-US": "The package publisher signature is invalid; the operation was cancelled." },
   "pack.uninstall": { "zh-CN": "卸载", "en-US": "Remove" },
   "pack.details": { "zh-CN": "详情", "en-US": "Details" },
   "pack.close": { "zh-CN": "关闭", "en-US": "Close" },
@@ -97,6 +101,8 @@ export type ExtCopyKey = keyof typeof EXT_PACKAGE_MESSAGES;
  * a neutral message; raw codes are never shown as primary text.
  */
 export const EXTENSION_ERROR_COPY: Record<string, ExtCopyKey> = {
+  "extension-publisher-approval-required": "pack.error.publisher",
+  "extension-signature-invalid": "pack.error.signature",
   "id-conflict": "pack.error.conflict",
   "version-conflict": "pack.error.version",
   "revision-conflict": "pack.error.revision",

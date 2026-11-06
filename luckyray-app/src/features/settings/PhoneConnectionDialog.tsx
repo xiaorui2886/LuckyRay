@@ -1,6 +1,7 @@
 import PhoneAuthorizationChoice, { PHONE_AUTHORIZATION_COPY } from "./PhoneAuthorizationChoice";
 import type { CompanionAuthorizationMode } from "../../core/services/companionGateway";
 import PhoneAccessManager from "./PhoneAccessManager";
+import PhoneEndpointRecovery from "./PhoneEndpointRecovery";
 import { companionInterfaceHint, orderedCompanionInterfaces, selectedCompanionAddress } from "../../core/services/companionAccess";
 import { useState } from "react";
 import { defineMessages, useMessages } from "../../core/i18n/index";
@@ -16,6 +17,7 @@ const COPY = defineMessages({
   "quick.title": { "zh-CN": "手机连接", "en-US": "Phone connection" },
   "quick.entry": { "zh-CN": "手机", "en-US": "Phone" },
   "quick.networkHint": { "zh-CN": "手机与电脑需连接同一局域网", "en-US": "Use the same local network on your phone and desktop" },
+  "quick.reachability": { "zh-CN": "手机与电脑需在同一局域网，并允许本机网络访问。", "en-US": "Use the same local network and allow network access on this desktop." },
   "quick.offline": { "zh-CN": "未连接", "en-US": "Not connected" },
   "quick.connected": { "zh-CN": "已连接", "en-US": "Connected" },
   "quick.online": { "zh-CN": "{count} 台在线", "en-US": "{count} online" },
@@ -86,7 +88,8 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
   const [revoke, setRevoke] = useState<PairedCompanionDevice | null>(null);
   const revokeModal = useApplicationModalSurface<HTMLDivElement>(Boolean(revoke), () => setRevoke(null));
   const running = state.status?.state === "running", pairing = state.pairingOwner === owner ? state.pairing : null;
-  const device = state.devices.find(d => d.deviceId === state.selectedDeviceId && !d.revokedAt);
+  const devices = state.devices.filter(item => !item.revokedAt);
+  const device = devices.find(d => d.deviceId === state.selectedDeviceId);
   const services = device ? state.services[device.deviceId] : undefined, lsh = device ? state.lsh[device.deviceId] : undefined;
   const count = companionOnlineCount(state);
   const presentationError = state.error || (state.pairingOwner === owner ? state.pairingError : null);
@@ -117,7 +120,7 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
         {presentationError ? <p className="phone-error" role="alert">{localError(presentationError)}</p> : null}
         <div className="phone-pairing-area">
           {running && state.status?.state === "running" && <p className="phone-listening-address">{t("gateway.listen")}: {state.status.bindAddress}:{state.status.port}</p>}
-          {running && <p>{t("gateway.reachability")}</p>}
+          {running && <p>{t("quick.reachability")}</p>}
           {running ? <>
             {pairing || preparing ? <><div className="phone-qr-frame" aria-busy={preparing}>{pairing ? <svg viewBox={`-4 -4 ${pairing.qrSize + 8} ${pairing.qrSize + 8}`}
               role="img" aria-label={t("pair.qr")} shapeRendering="crispEdges">
@@ -129,12 +132,12 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
               : <><div className="phone-pairing-intro"><PhoneIcon /><h3>{auth("pairingTitle")}</h3><p>{auth("pairingHint")}</p></div>
                 <PhoneAuthorizationChoice value={authorizationMode} onChange={setAuthorizationMode} disabled={Boolean(state.busy)} /><button type="button" className="primary phone-pair-button" disabled={Boolean(state.busy) || !authorizationMode} onClick={() => authorizationMode && void store.issuePairing(owner, false, authorizationMode)}>
                   <PhoneIcon />{state.busy === "pair" ? t("state.loading") : auth(authorizationMode === "trusted" ? "pairTrusted" : authorizationMode === "manual" ? "pairManual" : "pairChoose")}</button>
-                {!state.devices.length && <p>{t("quick.networkHint")}</p>}
                 {state.pairingState === "expired" && <p role="status">{t("quick.expired")}</p>}
                 {state.pairingState === "paired" && <p role="status">{t("quick.paired")}</p>}</>}
           </> : <>
             <h3>{t("gateway.title")}</h3>
-            {state.status?.state === "resume-failed" && <p className="phone-error">{t("gateway.resumeFailed")}</p>}
+            {state.status?.state === "resume-failed" && <p className="phone-error" role="alert">{t("gateway.resumeFailed")} {gatewayErrorMessage(state.status, t)}
+              {state.status.bindFailure && <small> · bind / {state.status.bindFailure.kind} · {state.status.bindFailure.osCode ?? "unknown"} · {state.status.bindFailure.attempts}</small>}</p>}
             <label>{t("gateway.interface")}<select value={selectedAddress} disabled={Boolean(state.busy) || resumeFailed}
               onChange={event => setAddress(event.target.value)}>
               {!interfaces.length && !resumeFailed && <option value="">{t("gateway.noInterface")}</option>}
@@ -145,18 +148,19 @@ function PhoneConnectionContents({ store }: { store: CompanionPresentationStore 
             {resumeFailed && <button type="button" disabled={Boolean(state.busy)} onClick={() => void store.run("stop", client => client.stop())}>{t("gateway.stop")}</button>}
             <p>{t("gateway.interfaceHint")}</p>
             <p>{t("quick.networkHint")}</p></>}
+          <PhoneEndpointRecovery store={store} />
         </div>
-        {state.devices.length > 0 && <h3 className="phone-device-list-title">{t("devices.title")}</h3>}
+        {devices.length > 0 && <h3 className="phone-device-list-title">{t("devices.title")}</h3>}
         <div className="phone-device-list" aria-label={t("devices.title")}>
-          {!state.devices.length && <p>{state.loading ? t("state.loading") : t("devices.empty")}</p>}
-          {state.devices.map(item => <button key={item.deviceId} type="button" aria-pressed={state.selectedDeviceId === item.deviceId}
-            className="phone-device" disabled={Boolean(item.revokedAt)} onClick={() => store.selectDevice(item.deviceId)}>
-            <PhoneIcon /><span><b>{companionDeviceDisplayLabel(item, state.devices)}</b><small>{item.revokedAt ? t("devices.revoked") :
+          {!devices.length && <p>{state.loading ? t("state.loading") : t("devices.empty")}</p>}
+          {devices.map(item => <button key={item.deviceId} type="button" aria-pressed={state.selectedDeviceId === item.deviceId}
+            className="phone-device" onClick={() => store.selectDevice(item.deviceId)}>
+            <PhoneIcon /><span><b>{companionDeviceDisplayLabel(item, devices)}</b><small>{
               count === null ? t("quick.unknown") : running && item.connected ? t("devices.online") : t("devices.offline")}</small></span></button>)}
         </div>
       </section>
       {device && <section className="phone-connection-right" aria-busy={Boolean(state.grantLoading[device.deviceId])}><div className="phone-device-heading"><span className="phone-kicker">{t("quick.permission")}</span>
-        <h3>{companionDeviceDisplayLabel(device, state.devices)}</h3></div>
+        <h3>{companionDeviceDisplayLabel(device, devices)}</h3></div>
         <PhoneAccessManager key={device.deviceId} store={store} deviceId={device.deviceId} />
         <>
           {/* Background checks retain confirmed controls; scope changes and read failures still clear them. */}

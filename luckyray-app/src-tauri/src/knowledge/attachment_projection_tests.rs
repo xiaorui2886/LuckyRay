@@ -2,10 +2,35 @@
 use super::attachment_tests::fixture;
 use super::*;
 use crate::attachment_coordination::{
-    authorize_attachment_plan, finish_attachment_projection, sync_note_attachment_index,
+    attachment_versions_with_services, authorize_attachment_plan, finish_attachment_projection, sync_note_attachment_index,
     verify_attachment_plan,
 };
 use crate::materials::MaterialCatalog;
+
+#[test]
+fn projection_attachment_versions_preserve_refresh_and_vault_checks() {
+    let (service, root, registration) = fixture("version-background");
+    let catalog = MaterialCatalog::new_for_test_at(root.parent().unwrap().join("catalog"));
+    let path = root.join("synthetic.png");
+    std::fs::write(&path, b"synthetic-v1").unwrap();
+    let asset = catalog.register_note_attachment(&path, &registration.id, None).unwrap();
+    service.activate_ui_source(&registration.id).unwrap();
+    let first = attachment_versions_with_services(&service, &catalog, &registration.id).unwrap();
+    assert_eq!(first["versions"].as_array().unwrap().len(), 1);
+    assert!(first["versions"][0]["version"].as_str().is_some());
+    let unchanged = catalog.read_change().unwrap().version;
+    assert_eq!(attachment_versions_with_services(&service, &catalog, &registration.id).unwrap(), first);
+    assert_eq!(catalog.read_change().unwrap().version, unchanged, "polling unchanged files must remain quiet");
+    std::fs::write(&path, b"synthetic-new-version").unwrap();
+    let next = attachment_versions_with_services(&service, &catalog, &registration.id).unwrap();
+    assert_eq!(next["versions"][0]["path"], first["versions"][0]["path"]);
+    assert_ne!(next["versions"][0]["version"], first["versions"][0]["version"]);
+    let refreshed = catalog.for_attachment_projection().get_assets(&[asset.id.clone()]).unwrap().remove(0);
+    assert_eq!(refreshed.size_bytes, Some(21));
+    assert_eq!(refreshed.content_hash.as_deref(), Some(format!("{:x}", sha2::Sha256::digest(b"synthetic-new-version")).as_str()));
+    assert!(catalog.read_change().unwrap().version > unchanged);
+    assert_eq!(attachment_versions_with_services(&service, &catalog, "other-vault").unwrap_err(), "knowledge-target-not-current");
+}
 
 #[test]
 fn projection_signed_plan_rejects_body_epoch_and_relocation_tampering() {

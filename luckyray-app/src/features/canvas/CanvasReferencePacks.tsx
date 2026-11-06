@@ -1,8 +1,12 @@
 import {useState} from 'react';
 import {isReferencePack,packMembers,planReferencePack,type PackNode,type ReferencePackKind} from '../../core/canvas/creativeReview';
 import type {CanvasSemanticEdge} from '../../core/canvas/edgeSemantics';
+import {getCanvasNodeContentKind} from '../../core/canvas/nodeCapabilities';
+import {splitImageSource} from '../../core/canvas/imageGrid';
 import {CanvasCreativeDialog} from './CanvasCreativeDialog';
+import {CanvasReferencePreview} from './CanvasReferencePreview';
 import './canvasCreative.css';
+import './canvasReferencePacks.css';
 
 export function CanvasReferencePacks({nodes,edges,selectedIds,resolveUrl,english=false,onCreate,onRename,onUnmark,onApply,onLocate,onClose}:{
  nodes:readonly PackNode[];edges:readonly CanvasSemanticEdge[];selectedIds:readonly string[];resolveUrl:(url:string)=>string;english?:boolean;
@@ -42,8 +46,7 @@ export function CanvasReferencePacks({nodes,edges,selectedIds,resolveUrl,english
     return <article key={pack.id} className="canvas-pack-card">
      <header><span className="canvas-pack-category">{categories[pack.data.referencePack!.kind]}</span><small>{members.length} {english?'references':'项参考'}</small></header>
      {rename?.id===pack.id?<form onSubmit={e=>{e.preventDefault();if(!rename.name.trim())return;onRename(pack.id,rename.name.trim());setRename(null);}}><input aria-label={english?'Rename pack':'重命名参考包'} maxLength={60} value={rename.name} onChange={e=>setRename({...rename,name:e.target.value})}/><button type="submit">{english?'Save':'保存'}</button><button type="button" onClick={()=>setRename(null)}>{english?'Cancel':'取消'}</button></form>:<h3>{pack.data.label}</h3>}
-     <div className="canvas-pack-preview-strip">{members.slice(0,4).map(member=><PackPreview key={member.id} member={member} resolveUrl={resolveUrl}/>)}</div>
-     <details className="canvas-pack-members"><summary>{english?`View ${members.length} references`:`查看 ${members.length} 项参考`}</summary><ul>{members.map(member=><li key={member.id}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={member.data.kind==='noteRef'||member.data.kind==='text'?'M6 3h9l3 3v15H6ZM9 10h6M9 14h6M9 18h4':'M3 4h18v16H3ZM3 16l5-5 4 4 3-3 6 6M15 8h.01'}/></svg><span>{member.data.label||member.id}</span></li>)}</ul></details>
+     <div className="canvas-pack-member-grid" aria-label={english?'Pack references':'包内参考'}>{members.map(member=><PackPreview key={member.id} member={member} resolveUrl={resolveUrl} english={english}/>)}</div>
      {!members.length?<p>{english?'Add content to the group on the canvas.':'请在画布分组中补充内容。'}</p>:null}
      <footer><button type="button" className="is-primary" disabled={!plan.ok} title={!plan.ok?errors[plan.error]:undefined} onClick={()=>{const error=onApply(pack.id,target);setNotice(error?errors[error]||error:english?'References connected. Review the prompt and generate when ready.':'参考已连接，请确认提示词后自行生成。');}}>{plan.ok&&!plan.edges.length?(english?'Already connected':'已连接'):(english?'Use pack':'应用参考包')}</button>
       <button type="button" onClick={()=>{onLocate(pack.id);onClose();}}>{english?'Locate':'定位'}</button><button type="button" onClick={()=>setRename({id:pack.id,name:pack.data.label||''})}>{english?'Rename':'改名'}</button>
@@ -57,8 +60,18 @@ export function CanvasReferencePacks({nodes,edges,selectedIds,resolveUrl,english
  </CanvasCreativeDialog>;
 }
 
-function PackPreview({member,resolveUrl}:{member:PackNode;resolveUrl:(url:string)=>string}){
- const [broken,setBroken]=useState<string|null>(null);
- const url=member.data.refThumbnailUrl||member.data.resultThumbnailUrl||((member.data.kind==='image'||member.data.generationKind==='image')?(member.data.refMediaUrl||member.data.resultMediaUrl):null);
- return <div className="canvas-pack-preview" title={member.data.label}>{url&&broken!==url?<img src={resolveUrl(url)} alt={member.data.label||''} loading="lazy" onError={()=>setBroken(url)}/>:<svg viewBox="0 0 24 24" aria-hidden="true"><path d={member.data.kind==='text'||member.data.kind==='noteRef'?'M6 3h9l3 3v15H6ZM9 10h6M9 14h6M9 18h4':'M3 4h18v16H3ZM3 16l5-5 4 4 3-3 6 6M15 8h.01'}/></svg>}</div>;
+function PackPreview({member,resolveUrl,english}:{member:PackNode;resolveUrl:(url:string)=>string;english:boolean}){
+ const kind=getCanvasNodeContentKind(member.data);
+ const media=kind==='image'||kind==='video';
+ const label=({image:english?'Image':'图片',video:english?'Video':'视频',text:english?'Text':'文本',note:english?'Note':'笔记'})[kind];
+ const name=member.data.label||label;
+ const thumbnail=media?(member.data.kind==='image'||member.data.kind==='video'?member.data.refThumbnailUrl:member.data.resultThumbnailUrl):null;
+ const original=kind==='image'?splitImageSource(member.data):null;
+ return <figure className="canvas-pack-member-card" data-reference-kind={kind}>
+  <div className="canvas-pack-member-media">
+   {media?<CanvasReferencePreview thumbnail={thumbnail?resolveUrl(thumbnail):null} original={original?resolveUrl(original):null} label={name} unavailable={english?'No preview':'暂无预览'}/>:<p>{member.data.refSummary||member.data.result||name}</p>}
+   {kind==='video'&&<svg className="canvas-pack-video-badge" viewBox="0 0 24 24" aria-label={label}><path d="m9 6 9 6-9 6Z"/></svg>}
+  </div>
+  <figcaption><strong title={name}>{name}</strong><small>{label}</small></figcaption>
+ </figure>;
 }

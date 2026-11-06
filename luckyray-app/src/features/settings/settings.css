@@ -1467,118 +1467,96 @@
 }
 
 .settings-storage-overview {
+  display: grid;
+  gap: 14px;
+  padding: 0;
+}
+
+.settings-storage-summary {
   display: flex;
-  gap: 24px;
-  align-items: center;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  margin-bottom: 16px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 24px;
 }
 
-.settings-ring {
-  width: 130px;
-  height: 130px;
-  flex-shrink: 0;
-  position: relative;
-}
-
-.settings-ring svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-
-.settings-ring-track {
-  fill: none;
-  stroke: var(--bg-active);
-  stroke-width: 10;
-}
-
-.settings-ring-progress {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 10;
-  stroke-linecap: round;
-  transition: stroke-dashoffset 600ms cubic-bezier(0.25, 0.1, 0.25, 1);
-}
-
-.settings-ring-text {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  pointer-events: none;
-}
-
-.settings-ring-used {
+.settings-storage-total {
   color: var(--text-primary);
   font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
+  font-weight: 500;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
 }
 
-.settings-ring-total {
-  color: var(--text-tertiary);
-  font-size: 10px;
-  margin-top: 2px;
+.settings-storage-counts {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.settings-bar-list {
-  flex: 1;
+.settings-storage-composition {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--bg-elevated);
 }
 
-.settings-bar-item {
+.settings-storage-composition > span {
+  flex: none;
+  height: 100%;
+  box-shadow: inset -2px 0 var(--theme-surface-panel);
+}
+
+.settings-storage-categories {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 28px;
+  margin: 0;
+}
+
+.settings-storage-category {
+  min-width: 0;
+  padding: 11px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings-storage-category dt {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 11px;
-}
-
-.settings-bar-label {
-  width: 60px;
-  flex-shrink: 0;
+  gap: 8px;
   color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
-.settings-bar-track {
-  flex: 1;
-  height: 8px;
-  background: var(--bg-base);
-  border-radius: 4px;
-  overflow: hidden;
+.settings-storage-category dt i {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
 }
 
-.settings-bar-fill {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 600ms cubic-bezier(0.25, 0.1, 0.25, 1);
+.settings-storage-category dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 5px 0 0 14px;
+  font-variant-numeric: tabular-nums;
 }
 
-.settings-bar-size {
-  width: 64px;
-  flex-shrink: 0;
-  text-align: right;
-  font-family: var(--font-mono);
-  color: var(--text-tertiary);
+.settings-storage-category dd b {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.settings-storage-category dd span {
+  color: var(--text-secondary);
   font-size: 11px;
-}
-
-.settings-bar-pct {
-  width: 36px;
-  flex-shrink: 0;
-  text-align: right;
-  font-family: var(--font-mono);
-  color: var(--text-tertiary);
-  font-size: 10px;
 }
 
 .settings-backup-list {
@@ -2834,10 +2812,6 @@
     flex-basis: 100%;
     width: 100%;
   }
-  .settings-storage-overview {
-    flex-direction: column;
-    align-items: stretch;
-  }
   .setting-row {
     align-items: flex-start;
     flex-direction: column;
@@ -2960,7 +2934,7 @@
 
 /* Appearance keeps the existing palette; hierarchy comes from semantic surfaces,
    measured whitespace and quiet separators, not another set of theme colors. */
-.settings-appearance-panel { max-width: 960px; }
+.settings-appearance-panel { max-width: none; }
 .settings-appearance-panel > .setting-group {
   margin-bottom: 16px;
   padding: 18px 20px 8px;

@@ -2,6 +2,7 @@ import {normalizeGenerationEditorSnapshot} from "./generationEditorSnapshot";
 import { materialProvenanceFromHistory, type MaterialGenerationProvenance } from "./materialProvenance";
 import {
   CANVAS_GENERATION_TASK_VERSION,
+  snapshotDoubaoAccountPool,
   type CanvasGenerationKind,
   type CanvasGenerationRequestSnapshot,
   type CanvasGenerationTask,
@@ -80,6 +81,7 @@ export function historyEntryFromTask(
     status: task.status,
     request: {
       ...task.request,
+        ...snapshotDoubaoAccountPool(task.request),
       editor: normalizeGenerationEditorSnapshot(task.request.editor, task.request.references.length),
       references: task.request.references.map((reference) => ({ ...reference })),
     },
@@ -159,6 +161,7 @@ export function normalizeGenerationHistory(value: unknown): CanvasGenerationHist
         : undefined,
       request: {
         ...request,
+        ...snapshotDoubaoAccountPool(request),
         editor: normalizeGenerationEditorSnapshot(request.editor, Array.isArray(request.references)?request.references.length:0),
         references: Array.isArray(request.references) ? request.references.map((reference) => ({ ...reference })) : [],
       },
@@ -196,6 +199,7 @@ export function generationTaskFromHistory(entry: CanvasGenerationHistoryEntry): 
     status: entry.status,
     request: {
       ...entry.request,
+        ...snapshotDoubaoAccountPool(entry.request),
       editor: normalizeGenerationEditorSnapshot(entry.request.editor, entry.request.references.length),
       references: entry.request.references.map((reference) => ({ ...reference })),
     },
