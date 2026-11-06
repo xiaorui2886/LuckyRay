@@ -4,18 +4,22 @@ import type { ReferencePackTag } from './creativeReview';
 import { parseReferenceMentions, remapReferenceMentions } from './referenceMentions';
 import { normalizeCinematographySettings, type CinematographySettings } from './cinematography';
 import { normalizeCreativeRecipe, type ImageCreativeRecipe } from './imageCreativeActions';
+import {isWorkFisherVideo,isWorkFisherImage,readWorkFisherVideo,readWorkFisherImage,WORK_FISHER_ASPECTS,suggestedWorkFisherPrompt} from './workFisherPreset';
 
 /** Portable, declarative drafts. Never serialize a live node or task by spreading it. */
 export const WORKFLOW_FORMAT = 'luckyray-canvas-workflow' as const;
 export const WORKFLOW_LIMITS = { bytes: 512_000, nodes: 64, edges: 128, text: 12_000 } as const;
 type Point = { x: number; y: number };
 export type WorkflowKind = 'text' | 'image' | 'video' | 'generator' | 'group';
+export type WorkflowComfyPreset = 'work-fisher-video'|'work-fisher-character'|'work-fisher-scene'|'work-fisher-three-view';
+export type WorkflowComfyParameters = {seed?:number;seedMode?:import('./comfySeed').ComfySeedMode;aspect?:string;megapixels?:number;duration?:number;videoSteps?:number;refImageSize?:'max'|'match';turbo?:boolean;mystic?:boolean;solAttention?:boolean;width?:number;height?:number;sizePreset?:string;upscale?:boolean;upscaleResolution?:number;loras?:Record<string,{enabled?:boolean;strength?:number}>};
 export type WorkflowNode = {
   id: string; kind: WorkflowKind; label: string; position: Point;
   parentId?: string; width?: number; height?: number; referencePack?: ReferencePackTag;
   generationKind?: 'image' | 'video'; prompt?: string; aspect?: string;
   quality?: string; resolution?: string; count?: number; duration?: number; sound?: boolean;
   cinematography?: CinematographySettings; creativeRecipe?: ImageCreativeRecipe;
+  comfyPreset?: WorkflowComfyPreset; comfyParameters?: WorkflowComfyParameters;
 };
 export type WorkflowEdge = { source: string; target: string; role: CanvasEdgeRole; order: number };
 export type WorkflowTemplate = {
@@ -42,6 +46,52 @@ function numeric(v: unknown, min: number, max: number, integer = false): number 
   if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max || (integer && !Number.isInteger(v))) return fail('invalid-number');
   return v;
 }
+const COMFY_PRESETS:readonly string[]=['work-fisher-video','work-fisher-character','work-fisher-scene','work-fisher-three-view'];
+function isPortableComfyPreset(value:unknown):value is WorkflowComfyPreset {return typeof value==='string'&&COMFY_PRESETS.includes(value);}
+function allowedComfyParameters(preset:WorkflowComfyPreset):readonly (keyof WorkflowComfyParameters)[] {
+  return preset==='work-fisher-video'?['seed','seedMode','aspect','megapixels','duration','videoSteps','refImageSize','turbo','mystic','solAttention','loras']
+    :preset==='work-fisher-three-view'?['seed','seedMode','aspect','megapixels','upscale','upscaleResolution']:['seed','seedMode','width','height','sizePreset','upscale','upscaleResolution','loras'];
+}
+/** Explicit portable values only; never include a model, path, address or task. */
+function validateComfyParameters(preset:WorkflowComfyPreset,value:unknown):WorkflowComfyParameters {
+  const raw=object(value),allowed=allowedComfyParameters(preset),out:WorkflowComfyParameters={};
+  if(Object.keys(raw).some(key=>!allowed.includes(key as keyof WorkflowComfyParameters)))fail('invalid-comfy-parameters');
+  if(raw.seed!==undefined)out.seed=numeric(raw.seed,0,Number.MAX_SAFE_INTEGER,true);
+  if(raw.seedMode!==undefined){if(!['fixed','randomize','increment','decrement'].includes(raw.seedMode as string))fail('invalid-comfy-parameters');out.seedMode=raw.seedMode as WorkflowComfyParameters['seedMode'];}
+  if(raw.sizePreset!==undefined){if(!['workflow','square','wide','tall','photo','portrait','standard','poster','custom'].includes(raw.sizePreset as string))fail('invalid-comfy-parameters');out.sizePreset=raw.sizePreset as string;}
+  if(raw.upscaleResolution!==undefined){out.upscaleResolution=numeric(raw.upscaleResolution,512,4096,true);if(out.upscaleResolution%2)fail('invalid-comfy-parameters');}
+  if(raw.loras!==undefined){
+    const slots=preset==='work-fisher-video'?['151','288']:preset==='work-fisher-character'?['240','249','250']:preset==='work-fisher-scene'?['266','273','274']:[];
+    out.loras={};for(const [id,v] of Object.entries(object(raw.loras))){const row=object(v);if(!slots.includes(id)||Object.keys(row).some(k=>!['enabled','strength'].includes(k)))fail('invalid-comfy-parameters');
+      if(row.enabled!==undefined&&typeof row.enabled!=='boolean')fail('invalid-comfy-parameters');out.loras[id]={...(row.enabled!==undefined?{enabled:row.enabled as boolean}:{}),...(row.strength!==undefined?{strength:numeric(row.strength,-10,10)}:{})};}
+  }
+  if(raw.aspect!==undefined){if(typeof raw.aspect!=='string'||!WORK_FISHER_ASPECTS.includes(raw.aspect))fail('invalid-comfy-parameters');out.aspect=raw.aspect;}
+  if(raw.megapixels!==undefined)out.megapixels=numeric(raw.megapixels,.1,2);
+  if(raw.duration!==undefined)out.duration=numeric(raw.duration,2,15);
+  if(raw.videoSteps!==undefined)out.videoSteps=numeric(raw.videoSteps,1,100,true);
+  if(raw.refImageSize!==undefined){if(raw.refImageSize!=='max'&&raw.refImageSize!=='match')fail('invalid-comfy-parameters');out.refImageSize=raw.refImageSize;}
+  for(const key of ['turbo','mystic','solAttention','upscale'] as const)if(raw[key]!==undefined){if(typeof raw[key]!=='boolean')fail('invalid-comfy-parameters');out[key]=raw[key] as boolean;}
+  for(const key of ['width','height'] as const)if(raw[key]!==undefined){const size=numeric(raw[key],256,2048,true);if(size%8)fail('invalid-comfy-parameters');out[key]=size;}
+  return out;
+}
+function portableComfy(data:Record<string,unknown>):{preset:WorkflowComfyPreset;parameters:WorkflowComfyParameters}|undefined {
+  if(data.generationSource!=='comfyui')return undefined;
+  if(data.generationComfyTemplate || (data.generationComfyWorkflow && object(data.generationComfyWorkflow).template))fail('custom-comfy-template-export');
+  const edits=data.generationComfy&&typeof data.generationComfy==='object'&&!Array.isArray(data.generationComfy)?data.generationComfy as Record<string,unknown>:{};
+  let preset:unknown=edits.preset;let base:Record<string,unknown>={};
+  if(data.generationComfyWorkflow!==undefined){
+    const frozen=object(data.generationComfyWorkflow).workflow;
+    try {
+      if(isWorkFisherVideo(frozen)){const o=readWorkFisherVideo(frozen).options;preset='work-fisher-video';base={seed:o.seed,aspect:o.aspect,megapixels:o.megapixels,duration:o.duration,videoSteps:o.steps,refImageSize:o.refImageSize,turbo:o.turbo,mystic:o.mystic,solAttention:o.solAttention,loras:o.loras};}
+      else if(isWorkFisherImage(frozen)){const o=readWorkFisherImage(frozen).options;preset=o.preset;base={seed:o.seed,aspect:o.aspect,megapixels:o.megapixels,width:o.width,height:o.height,upscale:o.upscale,upscaleResolution:o.upscaleResolution,loras:o.loras};}
+      else return undefined; // Preserve legacy export behavior; do not embed a frozen graph.
+    } catch {return fail('invalid-comfy-parameters');}
+  }
+  if(!isPortableComfyPreset(preset))return undefined;
+  const picked:Record<string,unknown>={};
+  for(const key of allowedComfyParameters(preset)) {const value=edits[key]===undefined?base[key]:edits[key];if(value!==undefined)picked[key]=key==='loras'?Object.fromEntries(Object.entries(object(value)).map(([id,v])=>{const row=object(v);return[id,{...(row.enabled!==undefined?{enabled:row.enabled}:{}),...(row.strength!==undefined?{strength:row.strength}:{})}];})):value;}
+  return {preset,parameters:validateComfyParameters(preset,picked)};
+}
 function id(v: unknown): string {
   const result = text(v, 80, true);
   if (!/^[a-zA-Z0-9_-]+$/.test(result)) fail('invalid-id');
@@ -59,7 +109,7 @@ export function validateWorkflow(value: unknown): WorkflowTemplate {
   if (!Array.isArray(v.nodes) || !v.nodes.length || v.nodes.length > WORKFLOW_LIMITS.nodes || !Array.isArray(v.edges) || v.edges.length > WORKFLOW_LIMITS.edges) fail('too-large');
   const nodes: WorkflowNode[] = (v.nodes as unknown[]).map(raw => {
     const n = object(raw);
-    keys(n, ['id', 'kind', 'label', 'position', 'parentId', 'width', 'height', 'referencePack', 'generationKind', 'prompt', 'aspect', 'quality', 'resolution', 'count', 'duration', 'sound', 'cinematography', 'creativeRecipe']);
+    keys(n, ['id', 'kind', 'label', 'position', 'parentId', 'width', 'height', 'referencePack', 'generationKind', 'prompt', 'aspect', 'quality', 'resolution', 'count', 'duration', 'sound', 'cinematography', 'creativeRecipe', 'comfyPreset', 'comfyParameters']);
     if (!['text', 'image', 'video', 'generator', 'group'].includes(String(n.kind))) fail('invalid-kind');
     const p = object(n.position); keys(p, ['x', 'y']);
     const node: WorkflowNode = { id: id(n.id), kind: n.kind as WorkflowKind, label: text(n.label, WORKFLOW_LIMITS.text), position: { x: numeric(p.x, -100_000, 100_000), y: numeric(p.y, -100_000, 100_000) } };
@@ -71,11 +121,16 @@ export function validateWorkflow(value: unknown): WorkflowTemplate {
       if (node.kind !== 'group' || pack.version !== 1 || !['character', 'product', 'style'].includes(String(pack.kind))) fail('invalid-pack');
       node.referencePack = { version: 1, kind: pack.kind as ReferencePackTag['kind'] };
     }
-    const generationFields = ['generationKind', 'prompt', 'aspect', 'quality', 'resolution', 'count', 'duration', 'sound', 'cinematography', 'creativeRecipe'];
+    const generationFields = ['generationKind', 'prompt', 'aspect', 'quality', 'resolution', 'count', 'duration', 'sound', 'cinematography', 'creativeRecipe', 'comfyPreset', 'comfyParameters'];
     if (node.kind !== 'generator' && generationFields.some(k => n[k] !== undefined)) fail('invalid-kind');
     if (node.kind === 'generator') {
       if (n.generationKind !== 'image' && n.generationKind !== 'video') fail('invalid-kind');
       node.generationKind = n.generationKind as 'image' | 'video';
+      if(n.comfyPreset!==undefined) {
+        if(!isPortableComfyPreset(n.comfyPreset) || (n.comfyPreset==='work-fisher-video')!==(node.generationKind==='video')) fail('invalid-field');
+        node.comfyPreset=n.comfyPreset;
+      }
+      if(n.comfyParameters!==undefined){if(!node.comfyPreset)fail('invalid-comfy-parameters');node.comfyParameters=validateComfyParameters(node.comfyPreset,n.comfyParameters);}
       node.prompt = text(n.prompt ?? '', WORKFLOW_LIMITS.text);
       if (n.aspect !== undefined) node.aspect = text(n.aspect, 32);
       if (n.resolution !== undefined) node.resolution = text(n.resolution, 32);
@@ -195,6 +250,7 @@ export function captureWorkflow(nodes: readonly CaptureNode[], edges: readonly C
     if (kind === 'group' && d.referencePack) result.referencePack = d.referencePack as ReferencePackTag;
     if (kind === 'generator') {
       result.generationKind = d.generationKind || 'image';
+      const comfy=portableComfy(d);if(comfy){result.comfyPreset=comfy.preset;if(Object.keys(comfy.parameters).length)result.comfyParameters=comfy.parameters;}
       const prompt = String(d.generationPrompt || d.payload || '');
       const internal = edges.filter(edge => edge.data?.relation !== 'derivation' && edge.target === n.id && selected.has(edge.source));
       const mentionKeys = new Map(internal.filter(edge => !!edge.id).map(edge => [edge.id!, portableEdgeKey(edge)]));
@@ -275,7 +331,7 @@ export function instantiateWorkflow(value: unknown, origin: Point, nextId: () =>
       data:normalizeCanvasNodeCapabilityData({kind,label:n.label,
         ...(n.referencePack?{referencePack:{...n.referencePack}}:{}),
         ...(kind==='group'?{groupMemberCount:template.nodes.filter(child=>child.parentId===n.id).length}:{}),
-        ...(kind==='generator'?{generationKind:mediaDraft?n.kind as 'image'|'video':n.generationKind,generationPrompt:remapReferenceMentions(n.prompt || '', mentionKeys),generationAspect:n.aspect||((mediaDraft?n.kind:n.generationKind)==='video'?'16:9':'1:1'),generationQuality:n.quality,generationResolution:n.resolution,generationCount:n.count,generationDuration:n.duration,generationSound:n.sound,...(n.cinematography?{generationCinematography:{...n.cinematography}}:{}),...(n.creativeRecipe?{generationCreativeRecipe:{...n.creativeRecipe,options:{...n.creativeRecipe.options}}}:{})}:{}),
+        ...(kind==='generator'?{generationKind:mediaDraft?n.kind as 'image'|'video':n.generationKind,generationPrompt:remapReferenceMentions(n.prompt || '', mentionKeys),generationAspect:n.aspect||((mediaDraft?n.kind:n.generationKind)==='video'?'16:9':'1:1'),generationQuality:n.quality,generationResolution:n.resolution,generationCount:n.count,generationDuration:n.duration,generationSound:n.sound,...(n.comfyPreset?{generationSource:'comfyui' as const,generationComfy:{preset:n.comfyPreset,...n.comfyParameters}}:{}),...(n.cinematography?{generationCinematography:{...n.cinematography}}:{}),...(n.creativeRecipe?{generationCreativeRecipe:{...n.creativeRecipe,options:{...n.creativeRecipe.options}}}:{})}:{}),
       }),
     };
   });
@@ -295,5 +351,11 @@ export function builtinWorkflows(english = false): WorkflowTemplate[] {
     base(english?'Poster directions':'海报双方案',english?'Shared brief and two image cards, each with an editable prompt.':'共用一份说明，两张图片卡各自输入方案并生成。',[brief,card('minimal',english?'Minimal poster':'简洁版',english?'Create a clean poster from the connected brief, with a clear subject and space for copy.':'根据连接的说明制作简洁海报，主体突出，层次清晰，预留文案空间。',440),card('atmosphere',english?'Atmospheric poster':'氛围版','根据连接的说明制作氛围感海报，突出光影与场景，保持主题一致。',440,510)],[edge('brief','minimal','promptContext'),edge('brief','atmosphere','promptContext')]),
     base(english?'Character shots':'角色双镜头',english?'Generate the first image, then use its result as the second image’s reference.':'先在第一张图片卡生成角色，再以它的结果作为第二张图片卡的参考。',[card('wide',english?'Character wide shot':'角色 · 全景',english?'Describe the character, clothing and setting. Generate a clear wide shot.':'填写角色外观、服装与场景，生成清晰的全景角色图。'),card('close',english?'Character close-up':'角色 · 特写',english?'Create a close-up using the connected image. Preserve the same character and clothing.':'根据连接的角色图片制作特写，保持同一角色、服装与场景连续。',760)],[edge('wide','close','reference')]),
     base(english?'Image to short video':'图片转短片',english?'Generate an image first, then use it as a video first frame with a compatible model.':'先生成图片，再将结果作为视频首帧；视频卡内直接填写运动描述，需选择支持首帧的模型。',[card('frame',english?'First frame':'首帧图片',english?'Describe the scene and main subject for the opening frame.':'填写开场画面、主体与构图要求。'),card('clip',english?'Video':'视频',english?'Use the connected first frame. Describe the desired motion; maintain scene continuity.':'以连接的图片为首帧，填写希望的镜头运动与主体动作，保持画面连续。',760,0,'video')],[edge('frame','clip','firstFrame')]),
+    base(english?'Short drama':'短剧制作',english?'Create character and scene images independently, optionally make character views, then connect your references to a sound video.':'独立生成角色和场景，可选制作角色三视图，再将需要的参考图连接到有声视频。',[
+      {...card('character',english?'Character reference':'角色参考','',0,0),comfyPreset:'work-fisher-character'},
+      {...card('scene',english?'Scene reference':'场景参考','',0,560),comfyPreset:'work-fisher-scene'},
+      {...card('views',english?'Character views (optional)':'角色三视图（可选）',suggestedWorkFisherPrompt('work-fisher-three-view','',english)!,760,0),comfyPreset:'work-fisher-three-view'},
+      {...card('video',english?'Sound video':'有声视频','',1520,240,'video'),comfyPreset:'work-fisher-video'},
+    ],[edge('character','views','reference'),edge('character','video','reference',0),edge('scene','video','reference',1)]),
   ];
 }

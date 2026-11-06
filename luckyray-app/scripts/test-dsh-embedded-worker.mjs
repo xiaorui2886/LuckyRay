@@ -5,9 +5,11 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
+import { validateDshRuntimeAuthority } from "./dsh-supply-chain.mjs";
 
 const [out, inputRecord, tarCache, bootstrap] = process.argv.slice(2);
 if (process.argv.length !== 6 || ![out, inputRecord, tarCache, bootstrap].every((path) => isAbsolute(path ?? ""))) throw new Error("explicit-new-engineering-paths-required");
+const authority = validateDshRuntimeAuthority(JSON.parse(await readFile(resolve("dsh-host/runtime-authority.json"), "utf8")));
 await mkdir(out); // Existing directory is never a target.
 const workspace = join(out, `.assembly-${randomBytes(16).toString("hex")}`);
 const stageName = `.stage-${randomBytes(16).toString("hex")}`;
@@ -23,7 +25,7 @@ for (const file of ["package.json", ".npmrc", "pnpm-lock.yaml", "pnpm-workspace.
 for (const file of ["dependency-audit.json", "sbom.cdx.json", "launch-manifest.json", "runtime-manifest.json", "THIRD-PARTY-NOTICES.txt"])
   await copyFile(resolve("dsh-host/records", file), join(bundle, "records", file));
 for (const file of ["node.exe", "LICENSE"])
-  await copyFile(join(bootstrap, "bootstrap-node/node-v22.19.0-win-x64", file), join(workspace, "node", file));
+  await copyFile(join(bootstrap, `bootstrap-node/node-v${authority.nodeRuntime.version}-win-x64`, file), join(workspace, "node", file));
 await copyFile(join(bootstrap, "cache/inputs/pnpm-11.7.0.tgz"), join(workspace, "pnpm.tgz"));
 const bytes = await readFile(inputRecord);
 const hash = createHash("sha256").update(bytes).digest("hex");

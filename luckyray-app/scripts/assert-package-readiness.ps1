@@ -39,9 +39,10 @@ if (-not $cargoVersion -or [string]$package.version -cne [string]$tauri.version 
 }
 
 $expectedResources = [ordered]@{
-  'dsh/' = 'lr-lsh/199-1/deepseek-harness/'
-  'dsh-host/' = 'lr-lsh/199-1/dsh-host/'
-  'media-engine/' = 'media-engine/'
+  'dsh/' = 'lr-lsh/1910-2/deepseek-harness/'
+  'dsh-host/' = 'lr-lsh/1910-2/dsh-host/'
+  'media-engine/' = 'media-engine/1910-1/'
+  'native-video/' = 'native-video/'
   '../third-party-notices/' = 'third-party-notices/'
 }
 $resourceProperties = @($tauri.bundle.resources.PSObject.Properties)
@@ -68,6 +69,8 @@ foreach ($relative in @(
   'scripts\dsh-supply-chain.mjs',
   'third_party\media-engine\manifest.json',
   'third_party\media-engine\runner.py',
+  'third_party\native-video\manifest.json',
+  'scripts\prepare-native-video.ps1',
   'dsh-host\runtime-authority.json',
   'dsh-host\records\dependency-audit.json',
   'dsh-host\records\launch-manifest.json',
@@ -91,6 +94,8 @@ if ($targets -notmatch '(?m)^x86_64-pc-windows-msvc$' -or $rustcHost -notmatch '
 $tauriCli = Invoke-CheckedVersion 'pnpm.cmd' @('exec','tauri','--version') 'package-tauri-cli-unavailable'
 
 if ($Phase -ceq 'Prepared') {
+  & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'prepare-native-video.ps1') -VerifyOnly
+  if ($LASTEXITCODE -ne 0) { throw 'package-native-video-materials-invalid' }
   foreach ($relative in @(
     'dist\index.html',
     'src-tauri\media-engine\runtime-manifest.json',

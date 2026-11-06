@@ -7,9 +7,9 @@ const root = path.resolve(__dirname, "..");
 const esbuild = require(require.resolve("esbuild", { paths: [fs.realpathSync(root + "/node_modules/vite")] }));
 const { chromium } = require(
   process.env.LUCKYRAY_PLAYWRIGHT_MODULE ||
-    "playwright",
+    "C:/Users/Administrator/AppData/Local/npm-cache/_npx/31e32ef8478fbf80/node_modules/playwright",
 );
-const outDir = process.env.LUCKYRAY_EXT_Z1_SHOTS || "./test-results/ext-z1-community";
+const outDir = process.env.LUCKYRAY_EXT_Z1_SHOTS || "C:/Cursor/_artifacts/ext-z1-community-20260916";
 
 const THEME = JSON.stringify({
   manifest: { schemaVersion: 0, id: "org.luckyray.paper-sage", name: "Paper Sage", version: "1.0.0", type: "theme", entry: "theme.json", minHostVersion: "1.9.2", apiVersion: 0, requiredModules: [], optionalModules: [] },

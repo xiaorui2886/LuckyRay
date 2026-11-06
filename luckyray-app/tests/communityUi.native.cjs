@@ -4,9 +4,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || "playwright");
+const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE || "C:/Users/Administrator/AppData/Local/npm-cache/_npx/31e32ef8478fbf80/node_modules/playwright");
 const root = path.resolve(__dirname, "..");
-const out = process.env.COMMUNITY_UI_EVIDENCE || "./test-results/community-ui";
+const out = process.env.COMMUNITY_UI_EVIDENCE || "D:/codex/luckyray/_delivery/community-ui-20261003";
 const report = { kind: "actual-native-community-fixture", checks: [], errors: [], screenshots: [], limitations: [] };
 fs.mkdirSync(path.join(out, "screenshots"), { recursive: true });
 (async () => {

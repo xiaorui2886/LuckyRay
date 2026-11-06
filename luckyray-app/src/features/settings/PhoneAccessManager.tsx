@@ -89,7 +89,7 @@ export default function PhoneAccessManager({ store, deviceId }: { store: Compani
   return <div className="phone-access-manager">
     <div className="phone-access-mode"><span>{services.authorizationConfigured === false ? t("legacyMode") : auth(services.authorizationMode === "trusted" ? "trusted" : "manual")}</span>
       <button type="button" className="settings-btn" disabled={busy || !state.status} onClick={() => open("trust")}>{t("changeMode")}</button></div>
-    <p className="phone-access-hint">{services.authorizationConfigured === false ? t("legacy") : services.authorizationMode === "trusted" ? auth("trustedHint") : auth("manualHint")}</p>
+    <p className="phone-access-hint">{services.authorizationConfigured === false ? t("legacy") : auth(services.authorizationMode === "trusted" ? "trustedSummary" : "manualSummary")}</p>
     <div className="phone-access-actions">
       {services.authorizationConfigured !== false && services.authorizationMode !== "trusted" && <button type="button" className="settings-btn" disabled={busy || !services.grants.length} onClick={() => open("revoke")}>{t("revokeAll")}</button>}</div>
     {services.authorizationConfigured !== false && services.authorizationMode !== "trusted" && otherVaults.length > 0 && <details className="phone-access-saved"><summary>{t("saved")} · {otherVaults.length}</summary><p>{t("savedHint")}</p>

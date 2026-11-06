@@ -8,7 +8,7 @@ import { getLuckyRayBridgeSync } from "../../core/bridge/luckyRayBridge";
 import { normalizeVaultRelativePath, realVaultMissingDocumentLocation } from "../../core/markdown/wikiTargets";
 import { focusEntity, publishCurrentGraphContext as publishMainGraphContext } from "../../core/services/context";
 import { knowledgeDocumentNoteId, parseKnowledgeDocumentNoteId } from "../../core/services/knowledge";
-import { KNOWLEDGE_SOURCE_CHANGED_EVENT } from "../../core/services/knowledgeSource";
+import { KNOWLEDGE_SOURCE_CHANGED_EVENT, readActiveKnowledgeSource } from "../../core/services/knowledgeSource";
 import { knowledgeStore } from "../../core/services/knowledgeStore";
 import { materialStore } from "../../core/services/materialStore";
 import { openInLightSeek } from "../../core/services/openInLightSeek";
@@ -57,6 +57,7 @@ import {
   type GraphPhysicsTopologyPayload,
 } from "./graphPhysics";
 import { updateGraphLabels, graphLabelDetail, graphLabelFocusAlpha, type GraphLabelState, normalizeGraphColorGroups, normalizeGraphSections, graphGroupMatches, type GraphLabelCandidate } from './graphPresentation';
+import { GraphLabelPainter } from './graphLabelPainter';
 import { GRAPH_MIN_SCALE, GRAPH_MAX_SCALE, wheelCamera, wheelZoomPoint, stepCamera, fitGraphCamera } from './graphCamera';
 import { graphSeedPositions, graphScreenRadius, graphEdgeDetail } from './graphSpatial';
 import {graphMessages} from './graphMessages';
@@ -280,15 +281,27 @@ let sharedGraphSeedRequestRevision = "";
 function readGraphDataRevision() {
   const knowledge = knowledgeStore.getSnapshot();
   const materials = materialStore.getSnapshot();
+  const activeSource = readActiveKnowledgeSource();
   if (knowledge.mode === "real-vault") {
     return [
       "real-vault",
+      activeSource?.vaultId || "none",
+      activeSource?.rootPath || "none",
       knowledge.vault?.id || knowledge.vault?.rootPath || "none",
+      knowledge.vault?.rootPath || "none",
       knowledge.markdownIndex?.version || 0,
       materials.sourceVersion ?? materials.version,
     ].join(":");
   }
-  return ["db", knowledge.version, materials.sourceVersion ?? materials.version].join(":");
+  return ["db", activeSource?.vaultId || "none", activeSource?.rootPath || "none", knowledge.version, materials.sourceVersion ?? materials.version].join(":");
+}
+
+function mainGraphSourceIsReady() {
+  const knowledge = knowledgeStore.getSnapshot();
+  const activeSource = readActiveKnowledgeSource();
+  if (!knowledge.loaded) return true; // Initial read bootstraps the shared store.
+  if (knowledge.mode !== "real-vault") return !activeSource;
+  return graphVaultsMatch(knowledge.vault, { id: activeSource?.vaultId || "", rootPath: activeSource?.rootPath || "" });
 }
 
 async function readSharedGraphSeed(refresh = false) {
@@ -298,7 +311,7 @@ async function readSharedGraphSeed(refresh = false) {
   if (!sharedGraphSeedRequest || sharedGraphSeedRequestRevision !== revision) {
     const request = graphDataProvider.buildSeed()
       .then((seed) => {
-        if (readGraphDataRevision() === revision) {
+        if (sharedGraphSeedRequest === request && readGraphDataRevision() === revision) {
           sharedGraphSeed = seed;
           sharedGraphSeedRevision = revision;
         }
@@ -319,6 +332,8 @@ async function readSharedGraphSeed(refresh = false) {
 function invalidateSharedGraphSeed() {
   sharedGraphSeed = null;
   sharedGraphSeedRevision = "";
+  sharedGraphSeedRequest = null;
+  sharedGraphSeedRequestRevision = "";
 }
 
 type GraphSceneCache = {
@@ -336,6 +351,7 @@ type GraphDirtyReason = "scene" | "viewport" | "hover" | "layout";
 type PendingPointer = {
   clientX: number;
   clientY: number;
+  at: number;
 };
 
 type PendingWheel = {
@@ -357,6 +373,7 @@ type PanGesture = {
   lastX: number;
   lastY: number;
   lastAt: number;
+  startedAt: number;
   velocityX: number;
   velocityY: number;
   moved: boolean;
@@ -427,9 +444,11 @@ function graphSimulationCadence(
     : Math.max(nodeCadence, SIMULATION_BACKGROUND_MIN_CADENCE_MS);
   return Math.min(SIMULATION_MAX_CADENCE_MS, Math.max(paneCadence, costCadence));
 }
-const CAMERA_INERTIA_FRICTION = 0.012;
-const CAMERA_INERTIA_STOP_SPEED = 0.018;
-const CAMERA_INERTIA_MAX_SPEED = 1.35;
+// Normalize the pan decay to time rather than the monitor's frame count.
+const CAMERA_INERTIA_FRICTION = -Math.log(0.9) / (1000 / 60);
+const CAMERA_INERTIA_STOP_SPEED = 0.002;
+const TOUCH_PAN_MAX_SPEED = 1.35;
+const CAMERA_INERTIA_RELEASE_WINDOW_MS = 100;
 const CAMERA_FRAME_DELAY_MS = 16;
 const GRAPH_NODE_BASE_RADIUS = 3.6;
 const GRAPH_NODE_DEGREE_STEP = 0.85;
@@ -744,6 +763,7 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
   const graphThemeAccentRef = useRef(GRAPH_THEME_ACCENT_FALLBACK);
   const graphPaletteRef = useRef({background: GRAPH_NODE_BACKGROUND, text: '#d6d9de', node: '#c3c6cc', edge: GRAPH_EDGE_BASE_STROKE, dimmed: GRAPH_EDGE_DIMMED_STROKE});
   const labelMeasurementsRef = useRef(new Map<string, number>());
+  const labelPainterRef = useRef(new GraphLabelPainter());
   const labelMemoryRef = useRef(new Map<number, GraphLabelState>());
   const labelsAnimatingRef = useRef(false);
   const colorGroupsRef = useRef(normalizeGraphColorGroups(savedView.colorGroups));
@@ -1272,15 +1292,8 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
     return changed;
   }, [invalidatePaintReadiness]);
 
-  useLayoutEffect(() => {
-    // Moving a retained canvas between equally sized groups changes its origin
-    // without firing ResizeObserver. Refresh pointer coordinates explicitly.
-    invalidatePaintReadiness();
-    if (visible) { measureViewport(); markGraphDirty('viewport'); }
-    return invalidatePaintReadiness;
-  }, [layoutRevision, visible, runtime, invalidatePaintReadiness, measureViewport, markGraphDirty]);
-
   const resetNodes = useCallback((options?: { preserveLayout?: boolean }) => {
+    labelPainterRef.current.clear();
     cancelGraphReveal();
     dragRelaxationRef.current = false;
     if (!viewportRef.current.width || !viewportRef.current.height) measureViewport();
@@ -1357,6 +1370,19 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
     }
     markGraphDirty("scene", "layout");
   }, [cancelGraphReveal, installPlaybackSession, invalidatePaintReadiness, markGraphDirty, measureViewport, setCameraImmediately]);
+
+  useLayoutEffect(() => {
+    // A retained pane may become visible before its parent restores its size.
+    // Consume a seed deferred at 0x0 when the parent commits usable geometry.
+    // This also refreshes the origin for equal-sized split moves without a resize.
+    invalidatePaintReadiness();
+    if (visible) {
+      measureViewport();
+      if (sceneSeedRef.current !== graphSeedRef.current) resetNodes({ preserveLayout: true });
+      markGraphDirty('viewport');
+    }
+    return invalidatePaintReadiness;
+  }, [layoutRevision, visible, runtime, invalidatePaintReadiness, measureViewport, resetNodes, markGraphDirty]);
 
   const findContextNode = useCallback(() => {
     if (runtime) {
@@ -1904,15 +1930,10 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
       const {labels: placed, animating} = updateGraphLabels(labels, width, height, measure, labelMemoryRef.current, timestamp, prefersReducedMotion());
       labelsAnimatingRef.current = animating;
-      let fontSize = 12;
       for (const label of placed) {
-        if (label.fontSize !== undefined && label.fontSize !== fontSize) {
-          fontSize = label.fontSize;
-          ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-        }
         ctx.globalAlpha = label.alpha * label.opacity;
-        ctx.fillStyle = label.priority === 3 ? focusAccent : palette.text;
-        ctx.fillText(label.text, label.left + 4, label.top + 2);
+        labelPainterRef.current.draw(ctx, label.text, label.left + 4, label.top + 2,
+          label.fontSize ?? 12, label.priority === 3 ? focusAccent : palette.text, dpr);
       }
       ctx.globalAlpha = 1;
     } else { labelMemoryRef.current.clear(); }
@@ -1920,17 +1941,20 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
   }, [drawArrow, invalidatePaintReadiness, reportGraphPaint]);
 
   const loadGraphData = useCallback(async (options?: { preserveLayout?: boolean; refresh?: boolean }) => {
+    if (!runtime && !mainGraphSourceIsReady()) return;
     if(!runtime && scopeVaultId && knowledgeStore.getSnapshot().vault?.id!==scopeVaultId)return;
     cancelGraphReveal();
     invalidatePaintReadiness();
     loadedGraphProofRef.current = null;
     const preserveLayout = options?.preserveLayout === true;
     const requestId = graphLoadSequenceRef.current + 1;
+    const sourceRevision = runtime ? null : readGraphDataRevision();
     graphLoadSequenceRef.current = requestId;
     if (!preserveLayout) setGraphStatus("loading");
     try {
       const seed = runtime ? await runtime.readSeed({ refresh: options?.refresh === true }) : await readSharedGraphSeed(options?.refresh === true);
       if (requestId !== graphLoadSequenceRef.current || currentRuntimeRef.current !== runtime) return;
+      if (!runtime && (sourceRevision !== readGraphDataRevision() || !mainGraphSourceIsReady())) return;
       if(!runtime && scopeVaultId && knowledgeStore.getSnapshot().vault?.id!==scopeVaultId)return;
       graphSeedRef.current = seed;
       const provenance = runtime ? null : readGraphSeedProvenance(seed);
@@ -1949,6 +1973,7 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       resetNodes({ preserveLayout });
     } catch (error) {
       if (requestId !== graphLoadSequenceRef.current || currentRuntimeRef.current !== runtime) return;
+      if (!runtime && sourceRevision !== readGraphDataRevision()) return;
       loadedGraphProofRef.current = null;
       invalidatePaintReadiness();
       console.warn("[graph] build graph failed", error);
@@ -2089,7 +2114,48 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       graphMaterialVersionRef.current = changeVersion;
       if (graphSeedRef.current.sourceKind === "real-vault") queueRealVaultSeedRefresh(320);
     });
-    void loadGraphData({ preserveLayout: nodesRef.current.length > 0 });
+    let observedSource = readActiveKnowledgeSource();
+    let observedKnowledgeRevision = "";
+    let sourcePending = false;
+    const syncKnowledgeSource = () => {
+      const source = readActiveKnowledgeSource();
+      if (source?.vaultId !== observedSource?.vaultId || source?.rootPath !== observedSource?.rootPath) {
+        observedSource = source;
+        observedKnowledgeRevision = "";
+        sourcePending = true;
+        graphLoadSequenceRef.current += 1;
+        loadedGraphProofRef.current = null;
+        mainGraphSourceRef.current = null;
+        // A source notification precedes the new index. Retire the old scene
+        // now, then load on the store's committed snapshot, not its old cache.
+        graphSeedRef.current = { source: "empty", sourceKind: "real-vault", nodes: [], edges: [] };
+        initialPositionsRef.current.clear();
+        searchScopeNodeKeysRef.current = null;
+        setGraphSearchScope(null);
+        pendingSelectionRef.current = null;
+        pendingRelationRef.current = null;
+        pendingPlaybackSnapshotRef.current = undefined;
+        focusedNodeRef.current = null;
+        hoveredRef.current = null;
+        setTooltip(null);
+        setNodeMenu(null);
+        setRelationSource(null);
+        needsInitialFitRef.current = true;
+        settledFitRef.current = true;
+        setGraphStatus("loading");
+        resetNodes();
+      }
+      if (!mainGraphSourceIsReady()) return;
+      const snapshot = knowledgeStore.getSnapshot();
+      const revision = [snapshot.mode, snapshot.vault?.id, snapshot.vault?.rootPath, snapshot.markdownIndex?.version].join(":");
+      if (revision === observedKnowledgeRevision) return;
+      observedKnowledgeRevision = revision;
+      const preserveLayout = !sourcePending && nodesRef.current.length > 0;
+      sourcePending = false;
+      void loadGraphData({ preserveLayout });
+    };
+    const unsubscribeKnowledgeStore = knowledgeStore.subscribe(syncKnowledgeSource);
+    syncKnowledgeSource();
     const handleBridgeReady = () => {
       invalidateSharedGraphSeed();
       void loadGraphData({ preserveLayout: nodesRef.current.length > 0 });
@@ -2098,8 +2164,7 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
     const handleKnowledgeSourceChange = () => {
       if (graphSeedRefreshTimerRef.current !== null) window.clearTimeout(graphSeedRefreshTimerRef.current);
       graphSeedRefreshTimerRef.current = null;
-      invalidateSharedGraphSeed();
-      void loadGraphData();
+      syncKnowledgeSource();
     };
     window.addEventListener("luckyray:bridge-ready", handleBridgeReady);
     window.addEventListener("luckyray:notes-vault-index-changed", queueRealVaultIndexRefresh);
@@ -2109,6 +2174,7 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       window.removeEventListener("luckyray:notes-vault-index-changed", queueRealVaultIndexRefresh);
       window.removeEventListener(KNOWLEDGE_SOURCE_CHANGED_EVENT, handleKnowledgeSourceChange);
       unsubscribeMaterialStore();
+      unsubscribeKnowledgeStore();
       releaseMaterialChangeProtocol();
       if (graphSeedRefreshTimerRef.current !== null) {
         window.clearTimeout(graphSeedRefreshTimerRef.current);
@@ -2116,7 +2182,7 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       }
       graphLoadSequenceRef.current += 1;
     };
-  }, [loadGraphData, runtime, invalidatePaintReadiness]);
+  }, [loadGraphData, runtime, invalidatePaintReadiness, resetNodes]);
 
   useEffect(() => {
     const onReset = (event: Event) => {
@@ -2243,14 +2309,17 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
     const deltaTime = Math.min(48, Math.max(1, previousTimestamp ? timestamp - previousTimestamp : CAMERA_FRAME_DELAY_MS));
     lastCameraFrameAtRef.current = timestamp;
 
+    let coasting = false;
     if (!panningRef.current && !reducedMotion) {
       const speed = Math.hypot(velocity.panX, velocity.panY);
       if (speed >= CAMERA_INERTIA_STOP_SPEED) {
-        target.panX += velocity.panX * deltaTime;
-        target.panY += velocity.panY * deltaTime;
         const friction = Math.exp(-CAMERA_INERTIA_FRICTION * deltaTime);
+        const travel = (1 - friction) / CAMERA_INERTIA_FRICTION;
+        target.panX += velocity.panX * travel;
+        target.panY += velocity.panY * travel;
         velocity.panX *= friction;
         velocity.panY *= friction;
+        coasting = true;
       } else {
         velocity.panX = 0;
         velocity.panY = 0;
@@ -2259,7 +2328,10 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       cancelCameraInertia();
     }
 
-    const {camera, moving} = stepCamera(params, target, cameraZoomAnchorRef.current, deltaTime, reducedMotion);
+    // The coast already decelerates. A second camera easing stage makes its
+    // first frames lag behind release. Other camera motion keeps its own easing.
+    const {camera, moving} = coasting ? {camera: {...target}, moving: true}
+      : stepCamera(params, target, cameraZoomAnchorRef.current, deltaTime, reducedMotion);
     if (params.scale !== camera.scale || params.panX !== camera.panX || params.panY !== camera.panY) {
       Object.assign(params, camera);
       cameraNeedsPersistRef.current = true;
@@ -2316,16 +2388,21 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
         const panGesture = panningRef.current;
         const panX = panGesture.panX + (pointer.clientX - panGesture.startX);
         const panY = panGesture.panY + (pointer.clientY - panGesture.startY);
-        const now = performance.now();
-        const elapsed = Math.max(1, now - panGesture.lastAt);
-        const rawVelocityX = (pointer.clientX - panGesture.lastX) / elapsed;
-        const rawVelocityY = (pointer.clientY - panGesture.lastY) / elapsed;
-        panGesture.velocityX = panGesture.velocityX * 0.4 + rawVelocityX * 0.6;
-        panGesture.velocityY = panGesture.velocityY * 0.4 + rawVelocityY * 0.6;
-        panGesture.lastX = pointer.clientX;
-        panGesture.lastY = pointer.clientY;
-        panGesture.lastAt = now;
-        panGesture.moved ||= Math.abs(pointer.clientX - panGesture.startX) > 1 || Math.abs(pointer.clientY - panGesture.startY) > 1;
+        // Pointerup commonly repeats the last coordinates. Do not turn that
+        // duplicate into a zero-speed sample or refresh an old movement time.
+        if (pointer.clientX !== panGesture.lastX || pointer.clientY !== panGesture.lastY) {
+          // RAF can drain queued input after a long task. Measure physical
+          // event time, not the compressed time spent processing that backlog.
+          const now = pointer.at;
+          const elapsed = Math.max(1, now - panGesture.lastAt);
+          const blend = elapsed > CAMERA_INERTIA_RELEASE_WINDOW_MS ? 1 : 1 - Math.exp(-elapsed / 16);
+          panGesture.velocityX += ((pointer.clientX - panGesture.lastX) / elapsed - panGesture.velocityX) * blend;
+          panGesture.velocityY += ((pointer.clientY - panGesture.lastY) / elapsed - panGesture.velocityY) * blend;
+          panGesture.lastX = pointer.clientX;
+          panGesture.lastY = pointer.clientY;
+          panGesture.lastAt = now;
+        }
+        panGesture.moved ||= Math.hypot(pointer.clientX - panGesture.startX, pointer.clientY - panGesture.startY) > 4;
         paramsRef.current.panX = panX;
         paramsRef.current.panY = panY;
         cameraTargetRef.current.panX = panX;
@@ -2436,6 +2513,7 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
 
   useEffect(()=>{
     if(!visible){
+      labelPainterRef.current.clear();
       playbackClockRef.current.hold('hidden', true, performance.now(), revealTimelineRef.current);
       physicsGenerationRef.current += 1;
       pendingPointerRef.current = null;
@@ -2462,8 +2540,10 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
     resetNodes({ preserveLayout: true });
     const container = containerRef.current;
     const observer = container ? new ResizeObserver(() => {
-      if (!measureViewport()) return;
-      if (sceneSeedRef.current !== graphSeedRef.current) resetNodes({ preserveLayout: true });
+      const changed = measureViewport();
+      const pendingSeed = sceneSeedRef.current !== graphSeedRef.current;
+      if (!changed && !pendingSeed) return;
+      if (pendingSeed) resetNodes({ preserveLayout: true });
       physicsMutationRevisionRef.current += 1;
       if (!presentationFrozenRef.current) paramsRef.current.alpha = Math.max(paramsRef.current.alpha, 0.2);
       markGraphDirty("viewport", "layout");
@@ -2480,6 +2560,7 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       if (engineTimerRef.current !== null) window.clearTimeout(engineTimerRef.current);
       engineFrameRef.current = 0;
       engineTimerRef.current = null;
+      labelPainterRef.current.clear();
       flushGraphView();
     };
   }, [flushGraphView, markGraphDirty, measureViewport, requestGraphFrame, resetNodes, runGraphFrame]);
@@ -2729,7 +2810,8 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
       panY: paramsRef.current.panY,
       lastX: event.clientX,
       lastY: event.clientY,
-      lastAt: performance.now(),
+      lastAt: event.timeStamp,
+      startedAt: event.timeStamp,
       velocityX: 0,
       velocityY: 0,
       moved: false,
@@ -2763,11 +2845,11 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current) return;
     if (activePointerIdRef.current === null && event.buttons !== 0) return;
-    pendingPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+    pendingPointerRef.current = { clientX: event.clientX, clientY: event.clientY, at: event.timeStamp };
     requestGraphFrame();
   }, [requestGraphFrame]);
 
-  const stopPointerInteraction = useCallback((canvas?: HTMLCanvasElement, pointerId?: number, allowOpen = true) => {
+  const stopPointerInteraction = useCallback((canvas?: HTMLCanvasElement, pointerId?: number, allowOpen = true, releasedAt = performance.now()) => {
     const activePointerId = activePointerIdRef.current;
     if (pointerId !== undefined && activePointerId !== null && pointerId !== activePointerId) return;
     const clickedNode = mouseDownNodeRef.current;
@@ -2776,15 +2858,22 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
     const reducedMotion = prefersReducedMotion();
     const panSpeed = panGesture ? Math.hypot(panGesture.velocityX, panGesture.velocityY) : 0;
     const shouldInertiallyPan = !!panGesture
-      // A mouse drag is precise placement. Only direct touch gestures coast.
-      && panGesture.pointerType === "touch"
+      && allowOpen
+      && (panGesture.pointerType === "mouse" || panGesture.pointerType === "touch")
       && panGesture.moved
       && !reducedMotion
+      // A compressed down/move/up packet has no usable motion history.
+      // Follow its coordinates, but do not extrapolate a multi-screen flick
+      // from a mouse displacement delivered in less than a nominal frame.
+      && (panGesture.pointerType !== "mouse" || panGesture.lastAt - panGesture.startedAt >= CAMERA_FRAME_DELAY_MS)
+      && releasedAt >= panGesture.lastAt
+      && releasedAt - panGesture.lastAt <= CAMERA_INERTIA_RELEASE_WINDOW_MS
       && panSpeed >= CAMERA_INERTIA_STOP_SPEED;
     if (shouldInertiallyPan && panGesture) {
-      const velocityScale = Math.min(1, CAMERA_INERTIA_MAX_SPEED / panSpeed);
+      const velocityScale = panGesture.pointerType === "touch" ? Math.min(1, TOUCH_PAN_MAX_SPEED / panSpeed) : 1;
       cameraVelocityRef.current.panX = panGesture.velocityX * velocityScale;
       cameraVelocityRef.current.panY = panGesture.velocityY * velocityScale;
+      lastCameraFrameAtRef.current = performance.now();
       cameraNeedsPersistRef.current = true;
     } else {
       cancelCameraInertia();
@@ -2820,9 +2909,12 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
 
   const handlePointerUp = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (activePointerIdRef.current !== event.pointerId) return;
-    pendingPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+    // Preserve a queued move's timestamp before pointerup repeats its position;
+    // otherwise a physical pause before release looks like fresh movement.
     applyPendingInputs();
-    stopPointerInteraction(event.currentTarget, event.pointerId);
+    pendingPointerRef.current = { clientX: event.clientX, clientY: event.clientY, at: event.timeStamp };
+    applyPendingInputs();
+    stopPointerInteraction(event.currentTarget, event.pointerId, true, event.timeStamp);
   }, [applyPendingInputs, stopPointerInteraction]);
 
   const handlePointerCancel = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -2862,7 +2954,7 @@ export function GraphViewport({ runtime, presentation, onRevisionReady, onRevisi
     playbackCameraFollowRef.current = false;
     // Re-hit-test the actual wheel location; do not discard a node that stays
     // under a stationary pointer throughout anchored zoom.
-    pendingPointerRef.current = {clientX: event.clientX, clientY: event.clientY};
+    pendingPointerRef.current = {clientX: event.clientX, clientY: event.clientY, at: event.timeStamp};
     const point = getCanvasPoint(event.clientX, event.clientY);
     needsInitialFitRef.current = false;
     const previous = pendingWheelRef.current;

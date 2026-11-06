@@ -40,13 +40,14 @@ export const COMPANION_COPY = defineMessages({
   "title": { "zh-CN": "连接手机", "en-US": "Connect phone" },
   "subtitle": { "zh-CN": "启动后通过当前局域网连接受信任的手机，重开应用会恢复原监听地址。点击停止可关闭服务并取消自动恢复。", "en-US": "Once enabled, trusted phones can connect over this local network. Reopening the app restores the same listening address. Stop turns off the service and automatic resume." },
   "gateway.title": { "zh-CN": "本机连接服务", "en-US": "Desktop connection service" },
+  "gateway.details": { "zh-CN": "连接详情", "en-US": "Connection details" },
   "gateway.virtual": { "zh-CN": "疑似虚拟/VPN", "en-US": "Possible virtual/VPN" },
   "gateway.interfaceHint": { "zh-CN": "优先选择与手机同网的以太网或 Wi-Fi。虚拟机、VPN 等地址可能只在电脑内部可用；名称仅作提示。", "en-US": "Choose Ethernet or Wi-Fi on the phone's network first. VM and VPN addresses may be local to this computer; names are only hints." },
   "gateway.reachability": { "zh-CN": "服务已在此地址监听。手机可达性仍取决于同网、路由和专用网络防火墙权限；列表中的地址不代表都能连接。", "en-US": "Listening on this address. Phone reachability still depends on the shared network, routing and Private-network firewall access; listed addresses are not guaranteed reachable." },
   "gateway.interface": { "zh-CN": "局域网接口", "en-US": "Local network interface" },
   "gateway.noInterface": { "zh-CN": "没有安全的局域网 IPv4 接口", "en-US": "No safe local IPv4 interface" },
   "gateway.listen": { "zh-CN": "监听地址", "en-US": "Listening address" },
-  "gateway.identity": { "zh-CN": "Desktop 身份", "en-US": "Desktop identity" },
+  "gateway.identity": { "zh-CN": "电脑身份", "en-US": "Desktop identity" },
   "gateway.fingerprint": { "zh-CN": "证书指纹", "en-US": "Certificate fingerprint" },
   "gateway.start": { "zh-CN": "启动连接服务", "en-US": "Start connection service" },
   "gateway.retry": { "zh-CN": "重试原地址", "en-US": "Retry saved address" },
@@ -183,6 +184,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
   const [authorizationMode, setAuthorizationMode] = useState<CompanionAuthorizationMode | null>(null);
   const { state, owner, seconds: secondsRemaining } = useCompanionView(store, true);
   const { status, devices, audit, services: serviceGrants, busy } = state;
+  const activeDevices = devices.filter(device => !device.revokedAt);
   const interfaces = orderedCompanionInterfaces(state.interfaces);
   const pairing = state.pairingOwner === owner ? state.pairing : null;
   const [selectedAddress, setSelectedAddress] = useState("");
@@ -256,7 +258,6 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
       <div className="companion-heading">
         <div>
           <h2 id="companion-title">{t("title")}</h2>
-          <p className="settings-panel-sub">{t("subtitle")}</p>
         </div>
         <span className={`companion-state companion-state-${status?.state || "loading"}`}>
           <i aria-hidden="true" />{stateLabel}
@@ -270,7 +271,6 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
         <article className="companion-card companion-gateway-card">
           <div className="companion-card-head">
             <div>
-              <span className="companion-kicker">DESKTOP GATEWAY</span>
               <h3>{t("gateway.title")}</h3>
             </div>
             <button className="settings-btn" type="button" disabled={Boolean(busy || state.loading)} onClick={() => void refresh()}>{t("action.refresh")}</button>
@@ -294,18 +294,9 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
             </select>
           </label>
 
-          <p className="settings-panel-sub">{t("gateway.interfaceHint")}</p>
-          {status?.state === "running" && <p className="settings-panel-sub">{t("gateway.reachability")}</p>}
-          {status?.state === "running" && (
-            <dl className="companion-endpoint-facts">
-              <div><dt>{t("gateway.listen")}</dt><dd>{status.bindAddress}:{status.port}</dd></div>
-              <div><dt>{t("gateway.identity")}</dt><dd>{status.desktopInstanceId}</dd></div>
-              <div><dt>{t("gateway.fingerprint")}</dt><dd title={status.certificateFingerprint}>{shortFingerprint(status.certificateFingerprint)}</dd></div>
-            </dl>
-          )}
-          {resumeFailed && status.bindAddress && status.port && (
-            <dl className="companion-endpoint-facts"><div><dt>{t("gateway.listen")}</dt><dd>{status.bindAddress}:{status.port}</dd></div></dl>
-          )}
+          {(isRunning || resumeFailed) && status?.bindAddress && status.port && <div className="companion-listening-address">
+            <span>{t("gateway.listen")}</span><b>{status.bindAddress}:{status.port}</b>
+          </div>}
 
           <div className="companion-actions">
             {!isRunning ? (
@@ -319,21 +310,29 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
             )}
             {(resumeFailed || status?.state === "recovery-required") && <button className="settings-btn settings-btn-danger" type="button" disabled={Boolean(busy)} onClick={stopGateway}>{t("gateway.stop")}</button>}
             {resumeFailed && status.bindAddress && status.port && ["gateway-bind-conflict", "gateway-bind-access-denied", "firewall/manual-permission-required", "gateway-local-transport-port-reserved"].includes(status.code) && <button className="settings-btn" type="button" disabled={Boolean(busy) || !interfaces.some(item => item.address === status.bindAddress)} onClick={() => setRecoveryTarget({ address: status.bindAddress!, port: status.port! })}>{t("recovery.select")}</button>}
-            {isRunning && devices.some(device => !device.revokedAt) && <button className="settings-btn" type="button" disabled={Boolean(busy)} onClick={shareRecovery}>{t("recovery.share")}</button>}
           </div>
+          {isRunning && activeDevices.length > 0 && <button className="settings-btn companion-address-recovery" type="button" disabled={Boolean(busy)} onClick={shareRecovery}>{t("recovery.share")}</button>}
 
-          <div className="companion-firewall-note">
+          <div className="companion-firewall-note" role="note">
             <span aria-hidden="true">!</span>
             <div><b>{t("firewall.title")}</b><small>{t("firewall.description")}</small></div>
           </div>
+          <details className="companion-connection-details">
+            <summary>{t("gateway.details")}</summary>
+            {isRunning && <dl className="companion-endpoint-facts">
+              <div><dt>{t("gateway.identity")}</dt><dd>{status.desktopInstanceId}</dd></div>
+              <div><dt>{t("gateway.fingerprint")}</dt><dd title={status.certificateFingerprint}>{shortFingerprint(status.certificateFingerprint)}</dd></div>
+            </dl>}
+            <p className="settings-panel-sub">{t("gateway.interfaceHint")}</p>
+          </details>
         </article>
 
-        <article className="companion-card">
-          <div className="companion-card-head"><div><span className="companion-kicker">TRUSTED DEVICES</span><h3>{t("devices.title")}</h3></div><span className="companion-count">{devices.length}</span></div>
+        <article className="companion-card companion-devices-card">
+          <div className="companion-card-head"><div><h3>{t("devices.title")}</h3></div><span className="companion-count">{activeDevices.length}</span></div>
           <div className="companion-device-list">
-            {devices.length === 0 ? (
+            {activeDevices.length === 0 ? (
               <div className="companion-empty">{t("devices.empty")}</div>
-            ) : devices.map((device) => {
+            ) : activeDevices.map((device) => {
               const deviceState = t(device.revokedAt ? "devices.revoked" : device.connected ? "devices.online" : "devices.offline");
               const services = serviceGrants[device.deviceId];
               const serviceOptions: Array<{
@@ -356,10 +355,10 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
               return (
                 <div className="companion-device" key={device.deviceId}>
                   <div className="companion-device-icon" aria-hidden="true"><span /></div>
-                  <div className="companion-device-copy"><b>{companionDeviceDisplayLabel(device, state.devices)}</b><small title={t("devices.lshRemoteHint")}>{t("devices.lastSeen", { state: deviceState, time: formatTime(device.lastAuthenticatedAt, locale, t) })}</small></div>
+                  <div className="companion-device-copy"><b>{companionDeviceDisplayLabel(device, state.devices)}</b><small title={device.lastAuthenticatedAt ? formatTime(device.lastAuthenticatedAt, locale, t) : undefined}>{device.connected || !device.lastAuthenticatedAt ? deviceState : t("devices.lastSeen", { state: deviceState, time: formatTime(device.lastAuthenticatedAt, locale, t) })}</small></div>
                   {!device.revokedAt && (
                     <button
-                      className={`settings-btn${state.lsh[device.deviceId]?.granted ? " settings-btn-primary" : ""}`}
+                      className="settings-btn companion-lsh-access"
                       type="button"
                       aria-pressed={state.lsh[device.deviceId] ? state.lsh[device.deviceId]?.granted : undefined}
                       title={t("devices.lshRemoteHint")}
@@ -399,8 +398,8 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
         </article>
       </div>
 
-      <article className="companion-card companion-audit-card">
-        <div className="companion-card-head"><div><span className="companion-kicker">RECENT SECURITY</span><h3>{t("security.title")}</h3></div><span className="companion-count">{t("security.limit")}</span></div>
+      <details className="companion-card companion-audit-card">
+        <summary className="companion-card-head companion-audit-summary"><h3>{t("security.title")}</h3><span className="companion-count">{audit.length}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg></summary>
         <div className="companion-audit-list">
           {audit.length === 0 ? <div className="companion-empty">{t("security.empty")}</div> : audit.map((entry, index) => (
             <div className="companion-audit-row" key={`${entry.occurredAt}-${index}`}>
@@ -411,7 +410,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
             </div>
           ))}
         </div>
-      </article>
+      </details>
 
       {pairViewOpen && (
         <div className="companion-pairing-overlay experience-dialog-backdrop" onPointerDown={pairingModal.onBackdropPointerDown}>
@@ -419,7 +418,7 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
             <button autoFocus className="companion-dialog-close" type="button" disabled={closingPairing} aria-label={t("pair.close")} title={t("pair.close")} onClick={() => void closePairing()}>
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 6 8 8m0-8-8 8" /></svg>
             </button>
-            <div className="companion-pairing-copy"><span className="companion-kicker">ONE-TIME PAIRING</span><h3 id="companion-pair-title">{t("pair.title")}</h3><p>{t("pair.description")}</p></div>
+            <div className="companion-pairing-copy"><h3 id="companion-pair-title">{t("pair.title")}</h3><p>{t("pair.description")}</p></div>
             {error && <div className="companion-inline-error" role="alert">{error}</div>}
             {!pairing && busy !== "pair" && <PhoneAuthorizationChoice value={authorizationMode} onChange={setAuthorizationMode} disabled={Boolean(busy) || closingPairing} />}
             {pairing ? <><div className="companion-qr-frame" aria-label={t("pair.qr")}>
@@ -464,7 +463,6 @@ function ConnectedCompanionGatewayPanel({ store }: { store: CompanionPresentatio
         <div className="companion-pairing-overlay experience-dialog-backdrop" onPointerDown={revokeModal.onBackdropPointerDown}>
           <div ref={revokeModal.surfaceRef} onKeyDown={revokeModal.onSurfaceKeyDown} className="companion-revoke-dialog experience-dialog" role="dialog" aria-modal="true" aria-labelledby="companion-revoke-title" tabIndex={-1}>
             <button autoFocus className="companion-dialog-close" type="button" aria-label={t("revoke.close")} title={t("revoke.close")} onClick={() => setRevokeTarget(null)}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 6 8 8m0-8-8 8" /></svg></button>
-            <span className="companion-kicker">REVOKE DEVICE</span>
             <h3 id="companion-revoke-title">{t("revoke.title", { name: revokeTarget.label })}</h3>
             <p>{t("revoke.description")}</p>
             <div className="companion-dialog-actions"><button className="settings-btn" type="button" onClick={() => setRevokeTarget(null)}>{t("revoke.cancel")}</button><button className="settings-btn settings-btn-danger" type="button" disabled={Boolean(busy)} onClick={confirmRevoke}>{t("revoke.confirm")}</button></div>

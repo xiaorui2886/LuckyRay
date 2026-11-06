@@ -13,7 +13,7 @@ An organized asset library · Connected Markdown notes · A canvas you can creat
 ![Platform](https://img.shields.io/badge/platform-Windows_x64-31343b?style=flat-square)
 [![Website](https://img.shields.io/badge/official-luckyray.me-806399?style=flat-square)](https://luckyray.me)
 
-[简体中文](README.md) · **English**
+**English** · [简体中文](README.zh-CN.md)
 
 </div>
 
@@ -25,7 +25,7 @@ LuckyRay-owned source is available under **[MIT](LICENSE)**. Explore, modify and
 - **Want to contribute?** [Build and test](docs/development/README.md) · [Contribution guide](CONTRIBUTING.md) · [Browse source](luckyray-app/)
 - **Building a plugin?** [Plugin SDK](sdk/README.md) · [Submit a plugin](catalog/SUBMISSION.md)
 
-The current stable desktop release is **1.9.9**. Public source snapshots and packaged releases may follow different schedules. Use the [stable Release](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.9) for packaged features and version details.
+The current stable desktop release is **1.9.10**. This branch now contains the reviewed public projection of the corresponding application source. For the exact release source package, download [LuckyRay-1.9.10-source.zip](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.10/LuckyRay-1.9.10-source.zip). See [source identity and build instructions](docs/development/README.md).
 
 
 ## Good references deserve more than a bookmark
@@ -64,15 +64,15 @@ We learn from thoughtful asset and knowledge tools, while focusing on a simple g
 
 ## Get started
 
-**Current stable release: LuckyRay 1.9.9 + Collector 1.9.6** · October 27, 2026
+**Current stable release: LuckyRay 1.9.10 + Collector 1.9.6** · November 6, 2026
 
-This release adds Canvas Agent, script/storyboard tools and the 3D Director; bundles LSH 0.2.1-rc.3; fixes overlay-install startup and streaming-reply jumps; and improves phone connection diagnostics and address recovery in Settings. [Full release notes (Chinese)](docs/releases/v1.9.9.md).
+This release adds dedicated ComfyUI workflow cards and saved-model selection, improves native video playback and overlapping canvas cards, bundles DeepSeek Harness 0.2.2-rc.1 with Node 24.22.2, and refines Canvas Agent, notes, the graph, assets and community pages. [Full release notes (Chinese)](docs/releases/v1.9.10.md).
 
 | What you need | Start here |
 | :--- | :--- |
-| **Use the desktop app** | [Official download page](https://luckyray.me/atelier/edition/download) · [Direct Windows x64 installer](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.9/LuckyRay_1.9.9_x64-setup.exe) |
+| **Use the desktop app** | [Official download page](https://luckyray.me/atelier/edition/download) · [Direct Windows x64 installer](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.10/LuckyRay_1.9.10_x64-setup.exe) |
 | **Install or update Collector** | [Extension guide](https://luckyray.me/atelier/edition/collector) · [Direct extension ZIP](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.8/LuckyRay-Collector-1.9.6.zip) |
-| **See what changed** | [What's new](https://luckyray.me/atelier/edition/changelog) · [Release files and checksums](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.9) |
+| **See what changed** | [What's new](https://luckyray.me/atelier/edition/changelog) · [Release files and checksums](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.10) |
 
 1. **Open the desktop app.** Available for Windows 10/11 x64. Read the [installation and verification guide](docs/downloads.md) and keep independent backups of important data.
 2. **Keep your first reference.** Import an image, write a note or explore a small idea on the canvas.
@@ -113,8 +113,9 @@ For release notifications, choose **Watch → Custom → Releases**. A specific 
 
 **Only official website: [https://luckyray.me](https://luckyray.me)**
 
-LuckyRay-owned source is now available under [MIT](LICENSE), including the desktop, Collector and optional MCP candidate source in `luckyray-app/`. See [build and tests](docs/development/README.md), [contributing](CONTRIBUTING.md), [third-party licenses](docs/development/third-party.md) and [branding](BRANDING.md). Third-party files retain their original licenses.
+LuckyRay-owned source is now available under [MIT](LICENSE), including desktop, Collector and optional MCP source in `luckyray-app/`. See [build and tests](docs/development/README.md), [contributing](CONTRIBUTING.md), [third-party licenses](docs/development/third-party.md) and [branding](BRANDING.md). Third-party files retain their original licenses.
 
-The source directory includes development and validation records and should not be assumed to match the latest installer exactly. See the [release notes](docs/releases/v1.9.9.md) for packaged versions and known limitations.
+The public tree preserves its own Git history and adds public build/test adapters. Exact release application source and player materials are in the [named 1.9.10 source asset](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.10/LuckyRay-1.9.10-source.zip); [Office corresponding source](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.10/LuckyRay-1.9.10-Office-corresponding-source.zip) is separate. The existing v1.9.10 tag has not been moved: GitHub’s automatic “Source code” archives still reflect its older tree. Use the named asset for this release. [Release notes](docs/releases/v1.9.10.md) · [Distribution and license notes](docs/development/source-1.9.10.md).
 
 Eagle and Obsidian belong to their respective owners. They are referenced as inspirations for working habits, not as claims of affiliation, full compatibility or feature parity. The website has a language switch; some repository documentation is currently in Chinese.
+

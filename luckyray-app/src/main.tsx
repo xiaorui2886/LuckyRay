@@ -58,6 +58,12 @@ async function boot() {
     const {getCurrentWindow}=await import('@tauri-apps/api/window');
     const nativeWindowLabel = getCurrentWindow().label;
     nativeWorkspaceWindowRole(nativeWindowLabel);
+    if (nativeWindowLabel === "main") {
+      const {startPluginEventPump} = await import("./core/extensions/events");
+      void startPluginEventPump().catch(() => {});
+      const {startDesktopExtensionHost} = await import("./core/extensions/desktop/runtime");
+      void startDesktopExtensionHost().catch(console.error);
+    }
     const {installWorkspaceLifecycle}=await import('./workspace/windowLifecycle');
     await installWorkspaceLifecycle();
     // Only the verified Main renderer owns full hidden host/surface preparation.

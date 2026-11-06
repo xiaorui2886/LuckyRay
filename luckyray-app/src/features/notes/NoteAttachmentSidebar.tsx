@@ -20,6 +20,8 @@ import { resolveMaterialPreviewTarget } from "../../core/services/materialCatalo
 import { readDecodedMediaGeometry, rememberDecodedMediaGeometry } from "./media/noteMediaReadyCache";
 import "./noteAttachmentSidebar.css";
 import { AttachmentProblem } from "./AttachmentProblem";
+import { MaterialFilePreview } from "../materials/MaterialFilePreview";
+import { NoteAttachmentFilePreview } from "./NoteAttachmentFilePreview";
 
 type Attachment = {
   asset: MaterialAsset;
@@ -58,7 +60,7 @@ export function groupNoteAttachments(
   );
 }
 
-function Thumbnail({ asset }: { asset: MaterialAsset }) {
+function Thumbnail({ asset, vaultId }: { asset: MaterialAsset; vaultId?: string }) {
   const [failed, setFailed] = useState(false);
   const target = resolveMaterialPreviewTarget(asset);
   useEffect(() => setFailed(false), [target?.url]);
@@ -70,6 +72,8 @@ function Thumbnail({ asset }: { asset: MaterialAsset }) {
   const geometry = remembered
     ? { width: remembered.width, height: remembered.height }
     : undefined;
+  if (vaultId && asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio")
+    return <MaterialFilePreview asset={asset} vaultId={vaultId} variant="card" />;
   if (!target || failed)
     return (
       <span className="note-attachment-file" aria-hidden="true">
@@ -133,6 +137,7 @@ export function NoteAttachmentSidebar({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
+  const [filePreview, setFilePreview] = useState<MaterialAsset | null>(null);
   const [visibleCount, setVisibleCount] = useState(48);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   useEffect(() => setVisibleCount(48), [tab, view, query, kind]);
@@ -256,9 +261,12 @@ export function NoteAttachmentSidebar({
         type="button"
         className="note-attachment-thumb"
         title={`预览 ${asset.name}`}
-        onClick={() => onOpenAsset(asset.id)}
+        onClick={() => {
+          if (tab === "attachments" && asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") setFilePreview(asset);
+          else onOpenAsset(asset.id);
+        }}
       >
-        <Thumbnail asset={asset} />
+        <Thumbnail asset={asset} vaultId={tab === "attachments" ? vaultId : undefined} />
         <span className="note-attachment-kind">
           {asset.kind === "video"
             ? "视频"
@@ -286,7 +294,7 @@ export function NoteAttachmentSidebar({
       ? filtered.materials
       : filtered.attachments.map((item) => item.asset);
   return (
-    <aside className="note-attachment-sidebar" aria-label="笔记附件侧栏">
+    <><aside className="note-attachment-sidebar" aria-label="笔记附件侧栏">
       <header>
         <div
           className="note-attachment-tabs"
@@ -480,6 +488,6 @@ export function NoteAttachmentSidebar({
       <footer>
         {editable ? "点击 + 插入光标位置" : "打开可编辑笔记后即可插入"}
       </footer>
-    </aside>
+    </aside>{filePreview && <NoteAttachmentFilePreview asset={filePreview} vaultId={vaultId} onClose={() => setFilePreview(null)} />}</>
   );
 }

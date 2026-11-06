@@ -47,7 +47,8 @@ async function main() {
     if (bytes.length !== input.bytes || sha256(bytes) !== input.sha256 || `sha512-${createHash("sha512").update(bytes).digest("base64")}` !== input.integrity) throw new Error("local-input-bytes-invalid");
     auditNpmTarball(bytes);
   }
-  const node = join(bootstrap, "bootstrap-node/node-v22.19.0-win-x64/node.exe");
+  const nodeDirectory = join(bootstrap, `bootstrap-node/node-v${authority.nodeRuntime.version}-win-x64`);
+  const node = join(nodeDirectory, "node.exe");
   if (sha256(await readFile(node)) !== authority.nodeRuntime.nodeExeSha256) throw new Error("local-node-invalid");
   const pnpm = join(bootstrap, "bootstrap-pnpm");
   await verifyExtractedPnpmPackage({ authorityPath: authorityFile, packageRoot: pnpm });
@@ -99,10 +100,10 @@ async function main() {
   await mkdir(stage);
   await mkdir(join(stage, "node")); await mkdir(join(stage, "host"));
   await copyFile(node, join(stage, "node/node.exe"));
-  await copyFile(join(bootstrap, "bootstrap-node/node-v22.19.0-win-x64/LICENSE"), join(stage, "node/LICENSE"));
+  await copyFile(join(nodeDirectory, "LICENSE"), join(stage, "node/LICENSE"));
   for (const name of configs) await copyFile(join(repo, "dsh-host", name), join(stage, "host", name));
   await runPnpm(join(stage, "host"), ["install", "--fetch-retries=0", "--node-linker=hoisted", "--package-import-method=copy", "--strict-peer-dependencies=true"]);
-  await projectPortableDshReleaseLayout({ stageRoot: stage, expectedShimCount: 13 });
+  await projectPortableDshReleaseLayout({ stageRoot: stage, expectedShimCount: authority.dependencyClosure.releaseLayout.normalizedShimCount });
   const verified = await verifyPortableStagedDshRuntime({ authorityPath: authorityFile, recordsDirectory: join(repo, "dsh-host/records"), stageRoot: stage });
   // This script itself must run under the pinned Node for ABI-native evidence.
   const native = await probeDshNativeModules({ stageRoot: stage });

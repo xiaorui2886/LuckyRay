@@ -15,6 +15,7 @@ for (const { path, mode } of rows) {
   assert.ok(!forbidden.test(path), 'forbidden tracked artifact: ' + path);
   assert.ok(mode === '100644' || mode === '100755', 'non-regular tracked entry: ' + path);
   assert.ok(!path.startsWith('luckyray-app/docs/integration/'), 'internal evidence path: ' + path);
+  assert.ok(!path.startsWith('luckyray-app/src-tauri/native-video/'), 'staged native runtime material: ' + path);
 }
 const newObjects = [...new Set(rows.map(row => row.oid))];
 const batch = execFileSync('git', ['cat-file', '--batch'], { input: newObjects.join('\n') + '\n', maxBuffer: 100e6 });
@@ -34,5 +35,5 @@ while (at < batch.length) {
 }
 assert.match(readFileSync('LICENSE', 'utf8'), /MIT License/);
 assert.match(readFileSync('README.md', 'utf8'), /https:\/\/luckyray\.me/);
-assert.equal(JSON.parse(readFileSync('luckyray-app/src-tauri/tauri.conf.json')).version, '1.9.9');
+assert.equal(JSON.parse(readFileSync('luckyray-app/src-tauri/tauri.conf.json')).version, '1.9.10');
 console.log(JSON.stringify({ status: 'PASS', trackedFiles: rows.length, uniqueBlobs: newObjects.length, bytes, scope: 'actual index blobs; complementary to external secret/license review' }));

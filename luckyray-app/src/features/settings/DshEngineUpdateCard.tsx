@@ -43,6 +43,7 @@ const COPY = defineMessages({
   "phase.verification_required": { "zh-CN": "新版已切换，尚未完成启动和资源链验收；不会自动用旧备份覆盖新数据。", "en-US": "New engine is active but startup and resource-chain acceptance remain unverified. Old backups will not overwrite new data." },
   "phase.verification_failed": { "zh-CN": "本机健康检查未通过。请先打开 LightSeek 旧会话并处理插件问题；当前引擎与资料均未回滚。", "en-US": "Local health check failed. Open an existing LightSeek session and resolve plugin issues; the engine and data were not rolled back." },
   "phase.healthy": { "zh-CN": "新版引擎、会话界面和插件组合已通过本机健康检查；三条资源链仍需维护端单独验收。", "en-US": "The engine, session surface, and plugin composition passed local health checks. The three resource paths still require separate maintainer acceptance." },
+  "phase.sealed_healthy": { "zh-CN": "恢复后的引擎及插件组合已验证；后续引擎升级仍需单独接续。", "en-US": "The recovered engine and plugin composition have been verified. Future engine upgrades still require a separate transition." },
   "phase.restart_required": { "zh-CN": "新版已验证暂存。冷宿主可直接重启切换；已使用 LightSeek 时，请结束任务、保存其他页面更改并核对草稿，然后准备正常退出。草稿不会自动发送。", "en-US": "Update staged. A cold host can restart directly. If LightSeek has been used, finish tasks, save changes elsewhere, and review drafts before preparing a normal quit. Drafts are never sent automatically." },
   "phase.exit_prepared": { "zh-CN": "已准备在本次正常退出后切换。请用窗口×（设置为直接退出时）或系统托盘“退出 LuckyRay”，待进程完全退出后重新打开；隐藏窗口或异常终止不会激活更新。仍可撤销未激活切换。", "en-US": "The switch is prepared for a normal quit. Use the window close button (when set to Exit) or tray Quit LuckyRay, wait for full exit, then reopen. Hiding or crashing will not activate it. You can still abandon the switch." },
   "phase.working": { "zh-CN": "正在检查或准备更新。", "en-US": "Checking or preparing the update." },
@@ -66,7 +67,7 @@ const COPY = defineMessages({
 const PHASE_KEYS: Record<DshEngineUpdatePhase, keyof typeof COPY> = {
   initializing: "phase.initializing",
   recovery_required: "phase.recovery_required", switch_incomplete: "phase.switch_incomplete", verification_required: "phase.verification_required",
-  verification_failed: "phase.verification_failed", healthy: "phase.healthy",
+  verification_failed: "phase.verification_failed", healthy: "phase.healthy", sealed_healthy: "phase.sealed_healthy",
   recovered_restart_required: "phase.recovered_restart_required",
   recovered: "phase.recovered",
   restart_required: "phase.restart_required", exit_prepared: "phase.exit_prepared", working: "phase.working", unconfigured: "phase.unconfigured",

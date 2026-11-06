@@ -2372,6 +2372,18 @@ impl MaterialCatalog {
         patch: MaterialAssetPatch,
         reason: &str,
     ) -> MaterialResult<CatalogOutcome<Option<MaterialAsset>>> {
+        self.update_asset_with_revision(id, patch, reason, None)
+    }
+
+    /// The same metadata owner with an optional caller-observed CAS revision.
+    /// The IMMEDIATE transaction covers both comparison and publication.
+    pub(crate) fn update_asset_with_revision(
+        &self,
+        id: &str,
+        patch: MaterialAssetPatch,
+        reason: &str,
+        expected_revision: Option<&str>,
+    ) -> MaterialResult<CatalogOutcome<Option<MaterialAsset>>> {
         if patch.storage_mode.is_some()
             || patch.original_path.is_some()
             || !matches!(patch.library_path, PatchValue::Missing)
@@ -2382,6 +2394,7 @@ impl MaterialCatalog {
             ));
         }
         let conn = self.open_write()?;
+        begin_transaction(&conn)?;
         let version_before = read_change(&conn)?.version;
         let mut current = match read_asset(&conn, id) {
             Ok(asset) => asset,
@@ -2393,6 +2406,7 @@ impl MaterialCatalog {
             }
             Err(error) => return Err(error),
         };
+        assert_asset_revision(&conn, &current, expected_revision)?;
         let before = current.clone();
         if let PatchValue::Value(Some(folder_id)) = &patch.folder_id {
             validate_material_folder(&conn, Some(folder_id))?;
@@ -2468,6 +2482,7 @@ impl MaterialCatalog {
         }
         let value = read_asset(&conn, id)?;
         let change = finalize_change(&conn, version_before, reason, vec![id.to_string()], false)?;
+        commit_transaction(&conn)?;
         Ok(CatalogOutcome {
             value: Some(value),
             change,
@@ -3851,8 +3866,28 @@ impl MaterialCatalog {
         id: &str,
         folder_id: Option<&str>,
     ) -> MaterialResult<CatalogOutcome<bool>> {
+        self.move_asset_with_revision(id, folder_id, None)
+    }
+
+    pub(crate) fn move_asset_with_revision(
+        &self,
+        id: &str,
+        folder_id: Option<&str>,
+        expected_revision: Option<&str>,
+    ) -> MaterialResult<CatalogOutcome<bool>> {
         let conn = self.open_write()?;
-        match read_asset(&conn,id) {Ok(_)=>{},Err(e) if e.code=="not-found"=>return Ok(CatalogOutcome{value:false,change:None}),Err(e)=>return Err(e)};
+        begin_transaction(&conn)?;
+        let current = match read_asset(&conn, id) {
+            Ok(current) => current,
+            Err(error) if error.code == "not-found" => {
+                return Ok(CatalogOutcome {
+                    value: false,
+                    change: None,
+                })
+            }
+            Err(error) => return Err(error),
+        };
+        assert_asset_revision(&conn, &current, expected_revision)?;
         validate_material_folder(&conn, folder_id)?;
         let current_folder = conn
             .query_row("SELECT folder_id FROM asset WHERE id=?1", [id], |row| {
@@ -3883,6 +3918,7 @@ impl MaterialCatalog {
             vec![id.to_string()],
             true,
         )?;
+        commit_transaction(&conn)?;
         Ok(CatalogOutcome {
             value: affected > 0,
             change,
@@ -4157,12 +4193,24 @@ impl MaterialCatalog {
         id: &str,
         tag_ids: Vec<String>,
     ) -> MaterialResult<CatalogOutcome<Vec<String>>> {
+        self.set_asset_tags_with_revision(id, tag_ids, None)
+    }
+
+    pub(crate) fn set_asset_tags_with_revision(
+        &self,
+        id: &str,
+        tag_ids: Vec<String>,
+        expected_revision: Option<&str>,
+    ) -> MaterialResult<CatalogOutcome<Vec<String>>> {
         let conn = self.open_write()?;
+        begin_transaction(&conn)?;
         let version_before = read_change(&conn)?.version;
-        read_asset(&conn, id)?;
+        let asset = read_asset(&conn, id)?;
+        assert_asset_revision(&conn, &asset, expected_revision)?;
         let mut valid = Vec::new();
         for tag_id in tag_ids {
-            read_tag(&conn, &tag_id).map_err(|_|MaterialError::new("material-library-scope","标签不属于此素材库"))?;
+            read_tag(&conn, &tag_id)
+                .map_err(|_| MaterialError::new("material-library-scope", "标签不属于此素材库"))?;
             if !valid.contains(&tag_id) {
                 valid.push(tag_id);
             }
@@ -4174,7 +4222,6 @@ impl MaterialCatalog {
                 change: None,
             });
         }
-        begin_transaction(&conn)?;
         conn.execute(
             "DELETE FROM item_tag WHERE item_type='asset' AND item_id=?1",
             [id],

@@ -1,13 +1,13 @@
 # 下载与安装
 
-当前桌面版为 **LuckyRay 1.9.9（Windows x64）**；浏览器扩展仍为 **Collector 1.9.6**，两者分别更新。[完整更新明细](releases/v1.9.9.md)。
+当前桌面版为 **LuckyRay 1.9.10（Windows x64）**；浏览器扩展仍为 **Collector 1.9.6**，两者分别更新。[完整更新明细](releases/v1.9.10.md)。
 
-## Windows x64 桌面版 1.9.9
+## Windows x64 桌面版 1.9.10
 
-- [下载 LuckyRay_1.9.9_x64-setup.exe](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.9/LuckyRay_1.9.9_x64-setup.exe)
-- [发行附件、校验清单及第三方材料](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.9)
+- [下载 LuckyRay_1.9.10_x64-setup.exe](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.10/LuckyRay_1.9.10_x64-setup.exe)
+- [发行附件、校验清单及第三方材料](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.10)
 
-安装包内置 LSH 0.2.1-rc.3，不需另走在线引擎更新取得这一随包版本。请一并查阅并保留本次发行页列出的第三方许可和对应源码材料；第三方组件保留各自许可。
+安装包内置 DeepSeek Harness 0.2.2-rc.1 与 Node 24.22.2，不需另走在线引擎更新取得这一随包版本。请一并查阅并保留本次发行页列出的第三方许可和对应源码材料；第三方组件保留各自许可。
 
 ### 从旧版更新
 
@@ -19,7 +19,7 @@
 
 ## 其他桌面历史版本
 
-最近历史版本：[v1.9.8](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.8) · [v1.9.7](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.7) · [v1.9.6](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [v1.9.5](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5)。
+最近历史版本：[v1.9.9](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.9) · [v1.9.8](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.8) · [v1.9.7](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.7) · [v1.9.6](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.6) · [v1.9.5](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.5)。
 
 更早 Windows x64 历史归档：[v1.6.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.6.0) · [v1.7.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.0) · [v1.7.1](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.1) · [v1.7.2](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.2) · [v1.7.3](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.3) · [v1.7.4](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.7.4) · [v1.8.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.8.0) · [v1.9.0](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.0) · [v1.9.1](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.1) · [v1.9.2](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.2) · [v1.9.3](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.3) · [v1.9.4](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.4)。各版更新说明见[版本历史](version-history.md)。v1.6.1–v1.6.7 仅保留更新说明，未附独立桌面安装包。
 
@@ -63,6 +63,9 @@ Collector 1.9.6 于 2026-10-11（UTC）随桌面版公开，保留原验收 ZIP 
 
 可用 PowerShell 的 `Get-FileHash -Algorithm SHA256` 核对附件，并与相应 Release 的校验清单比较。
 
-GitHub 自动生成的 Source code ZIP 是仓库源码与资源归档，不是桌面安装程序。
+精确应用源码与播放器材料：[LuckyRay-1.9.10-source.zip](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.10/LuckyRay-1.9.10-source.zip)。另需 [Office 对应源码](https://github.com/xiaorui2886/LuckyRay/releases/download/v1.9.10/LuckyRay-1.9.10-Office-corresponding-source.zip)。[源码与许可说明](development/source-1.9.10.md)。
 
-[插件 SDK 入门](../sdk/README.zh-CN.md) · [v1.9.9 版本说明](releases/v1.9.9.md)
+GitHub 自动生成的 Source code ZIP 不是桌面安装程序。v1.9.10 标签未移动，其自动归档仍是旧源码树；获取本安装包对应源码时，请使用上述具名附件。
+
+[插件 SDK 入门](../sdk/README.zh-CN.md) · [v1.9.10 版本说明](releases/v1.9.10.md)
+

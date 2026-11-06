@@ -1,3 +1,5 @@
+import { DesktopMenuItems } from "../community/DesktopExtensions";
+import { MaterialFilePreview, materialFileFormat } from "./MaterialFilePreview";
 import { materialDragPreview } from "./materialDragPreview";
 import { SelectionCheck } from "../../components/SelectionCheck";
 // D81: 素材库 React 化主组件
@@ -31,6 +33,7 @@ import {materialStore as defaultMaterialStore} from '../../core/services/materia
 import { materialNativeDetailViews, sameMaterialDetailAsset, observeMaterialDetailPaint, type MaterialNativeDetailRequest, type MaterialNativeDetailAck } from "./materialNativeDetailRegistry";
 import { MaterialAppearancePanel } from "./MaterialAppearancePanel";
 import { createMaterialDragGesture } from "./materialDragGesture";
+import { useMaterialMarquee } from "./useMaterialMarquee";
 import { materialSmartQueryMatchesKind, sortMaterialMetadata } from "./materialSearch";
 import { toMaterialCatalogError } from "../../core/services/materialCatalog";
 import type { MaterialStoreQuery, MaterialStoreSnapshot } from "../../core/services/materialStore";
@@ -1241,6 +1244,12 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
     const byId = new Map(appearanceScopeAssets.map(asset => [asset.id, asset]));
     return appearanceIds.flatMap(id => { const asset = byId.get(id); return asset ? [asset] : []; });
   }, [appearanceScopeAssets, appearanceIds]);
+
+  // Background metadata refreshes keep the gesture; a different listing does not.
+  const marqueeContext = useMemo(() => JSON.stringify([libraryId, viewMode, materialQuery.key, sortedAssets.map(asset => asset.id)]),
+    [sortedAssets, viewMode, libraryId, materialQuery.key]);
+  const marqueeRef = useMaterialMarquee({ hostRef: masonryContainerRef, selectedIds, onSelect: setSelectedIds,
+    context: marqueeContext, enabled: !viewerAsset && !loading && (scope?.visible ?? true) });
 
   const hasAvailableFilterColors = useMemo(() => {
     let source = allAssets.length ? allAssets : assets;
@@ -3415,6 +3424,8 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
       selectedIds,
       batchMode,
       focusedAssetId,
+      previewLibraryId: attachmentCollection ? undefined : libraryId ?? undefined,
+      previewVaultId: attachmentCollection ? attachmentVaultId : undefined,
     };
     // Work-view info emphasis uses ONLY existing asset metadata (dominant
     // color, kind, mime, size): design surfaces format hints for
@@ -3505,6 +3516,7 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
           {/* 素材视图 */}
           <div className="masonry-container" ref={masonryContainerRef} tabIndex={0} aria-label="素材列表" onScroll={rememberMasonryScroll}>
             {renderAssets()}
+            <div ref={marqueeRef} className="materials-marquee" hidden aria-hidden="true" />
           </div>
         </div>
       </div>
@@ -3512,6 +3524,7 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
         <AssetContextMenu
           key={contextMenu.sessionId}
           state={contextMenu}
+          extensionContext={{asset:contextMenu.asset,libraryId:libraryContext.libraryId,vaultId:attachmentVaultId||null}}
           onClose={(restoreFocus) => closeContextMenu(restoreFocus, contextMenu.sessionId)}
           onOpen={handleOpenAssetOrDetail}
           onPreview={openPreviewViewer}
@@ -3612,6 +3625,7 @@ function MaterialLibraryContents({ attachmentCollection = false }: { attachmentC
         <MaterialViewer onNativeElement={setNativeDetailElement}
           key={[libraryId,viewerAsset.id,viewerAsset.contentHash,viewerAsset.originalPath,viewerAsset.libraryPath].join('|')}
           libraryId={attachmentCollection ? undefined : libraryId ?? undefined}
+          vaultId={attachmentCollection ? attachmentVaultId : undefined}
           asset={viewerAsset}
           assets={sortedAssets}
           mode={viewerMode}
@@ -4172,6 +4186,8 @@ function MaterialsFilterPanel({
 
 type AssetCardProps = {
   asset: Asset;
+  previewLibraryId?: string;
+  previewVaultId?: string;
   selectedIds: Set<string>;
   batchMode: boolean;
   onOpen: (asset: Asset) => void;
@@ -4515,7 +4531,7 @@ function AssetHoverControls({ asset, onPreview, isFavorite, onToggleFavorite }: 
   );
 }
 
-function AssetCard({ asset, selectedIds, batchMode, focusedAssetId, onClick, onHover, onContextMenu, onPreview, onToggleSelect, onExternalDrag, onPointerDown, isFavorite, onToggleFavorite, workView }: AssetCardProps & { workView?: MaterialWorkViewPresetId }) {
+function AssetCard({ previewLibraryId, previewVaultId, asset, selectedIds, batchMode, focusedAssetId, onClick, onHover, onContextMenu, onPreview, onToggleSelect, onExternalDrag, onPointerDown, isFavorite, onToggleFavorite, workView }: AssetCardProps & { workView?: MaterialWorkViewPresetId }) {
   const beginDrag = useAssetDragGesture(asset, onExternalDrag, onPointerDown);
   const { t } = useI18n();
   const isVideo = isVideoAsset(asset);
@@ -4545,6 +4561,8 @@ function AssetCard({ asset, selectedIds, batchMode, focusedAssetId, onClick, onH
         <HoverVideoPreview asset={asset} className="asset-video-thumb-react" preserveAspectRatio />
       ) : isImage && previewUrl ? (
         <ImagePreview src={previewUrl} alt={asset.name} sourceIdentity={`${asset.id}:${asset.updatedAt || ""}`} className="asset-image-thumb-react" />
+      ) : !isImage ? (
+        <MaterialFilePreview asset={asset} libraryId={previewLibraryId} vaultId={previewVaultId} />
       ) : (
         <div className="placeholder" style={{ aspectRatio: "4/3" }}>
           <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" fill="none" strokeWidth="1.5">
@@ -4558,7 +4576,7 @@ function AssetCard({ asset, selectedIds, batchMode, focusedAssetId, onClick, onH
         <div className="card-name">{asset.name}</div>
         <div className="card-meta">
           <AssetColorSwatch color={asset.dominantColor} compact />
-          <span>{asset.kind || t("materials.card.unknown")}</span>
+          <span>{isImage || isVideo ? asset.kind || t("materials.card.unknown") : materialFileFormat(asset)}</span>
           {asset.sizeBytes && <span>{formatSize(asset.sizeBytes)}</span>}
           {workView === "video" && isVideoAsset(asset) ? <span className="workview-video-hint">{t("materials.workview.videoBadge")}</span> : null}
         </div>
@@ -4567,7 +4585,7 @@ function AssetCard({ asset, selectedIds, batchMode, focusedAssetId, onClick, onH
   );
 }
 
-function GridAssetCard({ asset, selectedIds, batchMode, focusedAssetId, onClick, onHover, onContextMenu, onPreview, onToggleSelect, onExternalDrag, onPointerDown, isFavorite, onToggleFavorite, workView }: AssetCardProps & { workView?: MaterialWorkViewPresetId }) {
+function GridAssetCard({ previewLibraryId, previewVaultId, asset, selectedIds, batchMode, focusedAssetId, onClick, onHover, onContextMenu, onPreview, onToggleSelect, onExternalDrag, onPointerDown, isFavorite, onToggleFavorite, workView }: AssetCardProps & { workView?: MaterialWorkViewPresetId }) {
   const beginDrag = useAssetDragGesture(asset, onExternalDrag, onPointerDown);
   const { t } = useI18n();
   const checked = selectedIds.has(asset.id);
@@ -4597,6 +4615,8 @@ function GridAssetCard({ asset, selectedIds, batchMode, focusedAssetId, onClick,
         <HoverVideoPreview asset={asset} className="grid-thumb" />
       ) : isImage && previewUrl ? (
         <ImagePreview className="grid-thumb" src={previewUrl} alt={asset.name} sourceIdentity={`${asset.id}:${asset.updatedAt || ""}`} />
+      ) : !isImage ? (
+        <MaterialFilePreview asset={asset} variant="grid" libraryId={previewLibraryId} vaultId={previewVaultId} />
       ) : (
         <div className="grid-thumb-placeholder">
           <FileIcon />
@@ -4606,7 +4626,7 @@ function GridAssetCard({ asset, selectedIds, batchMode, focusedAssetId, onClick,
         <div className="grid-name">{asset.name}</div>
         <div className="grid-meta">
           <AssetColorPalette color={asset.dominantColor} />
-          <span>{asset.kind || t("materials.card.unknown")}{asset.sizeBytes ? ` · ${formatSize(asset.sizeBytes)}` : ""}</span>
+          <span>{isImage || isVideo ? asset.kind || t("materials.card.unknown") : materialFileFormat(asset)}{asset.sizeBytes ? ` · ${formatSize(asset.sizeBytes)}` : ""}</span>
           {workView === "design" && asset.mimeType ? <span className="workview-design-hint">{asset.mimeType}</span> : null}
         </div>
       </div>
@@ -4614,7 +4634,7 @@ function GridAssetCard({ asset, selectedIds, batchMode, focusedAssetId, onClick,
   );
 }
 
-function ListAssetRow({ asset, selectedIds, batchMode, focusedAssetId, onOpen, onClick, onHover, onContextMenu, onToggleSelect, onExternalDrag, onPointerDown }: AssetCardProps) {
+function ListAssetRow({ previewLibraryId, previewVaultId, asset, selectedIds, batchMode, focusedAssetId, onOpen, onClick, onHover, onContextMenu, onToggleSelect, onExternalDrag, onPointerDown }: AssetCardProps) {
   const beginDrag = useAssetDragGesture(asset, onExternalDrag, onPointerDown);
   const { t } = useI18n();
   const checked = selectedIds.has(asset.id);
@@ -4641,13 +4661,13 @@ function ListAssetRow({ asset, selectedIds, batchMode, focusedAssetId, onOpen, o
     >
       <BatchCheckbox checked={checked} onClick={(event) => { event.stopPropagation(); onToggleSelect(asset.id); }} />
       <div className="list-thumb">
-        {isVideo ? <HoverVideoPreview asset={asset} /> : isImage && previewUrl ? <ImagePreview src={previewUrl} alt={asset.name} sourceIdentity={`${asset.id}:${asset.updatedAt || ""}`} /> : <FileIcon />}
+        {isVideo ? <HoverVideoPreview asset={asset} /> : isImage && previewUrl ? <ImagePreview src={previewUrl} alt={asset.name} sourceIdentity={`${asset.id}:${asset.updatedAt || ""}`} /> : !isImage ? <MaterialFilePreview asset={asset} variant="list" libraryId={previewLibraryId} vaultId={previewVaultId} /> : <FileIcon />}
       </div>
       <div className="list-info">
         <div className="list-name">{asset.name}</div>
         <div className="list-meta">
           <AssetColorPalette color={asset.dominantColor} />
-          <span>{asset.kind || t("materials.card.unknown")}</span>
+          <span>{isImage || isVideo ? asset.kind || t("materials.card.unknown") : materialFileFormat(asset)}</span>
           {asset.sizeBytes && <span>{formatSize(asset.sizeBytes)}</span>}
           <span>{formatDate(asset.updatedAt || asset.importedAt)}</span>
         </div>
@@ -5220,7 +5240,7 @@ export function MaterialsDetailPanel({
             <div className="detail-section inspector-section-react">
               <div className="detail-section-title">{t("materials.detail.fileInfo")}</div>
               <div className="detail-meta-grid-react">
-                <span>{t("materials.detail.format")}</span><b>{asset.mimeType || asset.kind || "—"}</b>
+                <span>{t("materials.detail.format")}</span><b>{isImageAsset(asset) || isVideoAsset(asset) ? asset.mimeType || asset.kind || "—" : materialFileFormat(asset)}</b>
                 <span>{t("materials.detail.size")}</span><b>{asset.sizeBytes ? formatSize(asset.sizeBytes) : "—"}</b>
                 <span>{t("materials.detail.resolution")}</span><b>{resolution ? `${resolution.width} × ${resolution.height}` : "—"}</b>
                 {mediaDuration != null && mediaDuration > 0 && <><span>时长</span><b>{Math.floor(mediaDuration / 60)}:{String(Math.floor(mediaDuration % 60)).padStart(2, "0")}</b></>}
@@ -5403,6 +5423,7 @@ function offsetTopWithin(element: HTMLElement, ancestor: HTMLElement) {
 
 function AssetContextMenu({
   state,
+  extensionContext,
   onOpen,
   onPreview,
   onCompare,
@@ -5425,6 +5446,7 @@ function AssetContextMenu({
   onClose,
 }: {
   state: ContextMenuState;
+  extensionContext: {asset: Asset;libraryId:string|null;vaultId:string|null};
   onOpen: (asset: Asset) => void;
   onPreview: (asset: Asset) => void;
   onCompare: (asset: Asset) => void;
@@ -5730,6 +5752,7 @@ function AssetContextMenu({
         onScroll={() => setSubmenu(null)}
         onPointerDown={(event) => event.stopPropagation()}
       >
+        <DesktopMenuItems target="materials" context={extensionContext} onClose={()=>onClose(false)} />
         <div className="asset-ctx-react-group">
           {renderAction(actions.open, "main")}
           {renderAction(actions.preview, "main")}
@@ -5937,6 +5960,7 @@ function IconTrash() {
 function MaterialViewer({
   onNativeElement,
   libraryId,
+  vaultId,
   asset,
   assets,
   mode,
@@ -5947,6 +5971,7 @@ function MaterialViewer({
 }: {
   onNativeElement?: (element: HTMLElement | null) => void;
   libraryId?: string;
+  vaultId?: string;
   asset: Asset;
   assets: Asset[];
   mode: MaterialViewerMode;
@@ -6189,6 +6214,7 @@ function MaterialViewer({
               />
             ) : nativeClaim ? null : isAudio ? (
               <div className="material-audio-preview">
+                <MaterialFilePreview asset={asset} variant="cover" libraryId={libraryId} vaultId={vaultId} />
                 <span>{asset.name}</span>
                 <audio
                   key={`${asset.id}:${videoSourceIdentity}:${videoPreviewUrl}`}
@@ -6224,11 +6250,7 @@ function MaterialViewer({
                 }}
               />
             ) : (
-              <div className="qp-placeholder-react">
-                <FileIcon />
-                <span>{asset.name}</span>
-                <small>{asset.mimeType || asset.kind || t("materials.viewer.unknownType")}</small>
-              </div>
+              <MaterialFilePreview asset={asset} variant="detail" libraryId={libraryId} vaultId={vaultId} onOpen={() => onOpenOriginal(asset)} />
             )}
             {!nativeClaim && isVideo && videoFailureKey === videoFailureIdentity && <div className="material-video-unavailable" role="status">当前内置播放器未能解码视频画面。原文件已保留，可通过“打开”使用外部播放器。</div>}
           </div>

@@ -144,30 +144,39 @@ impl Drop for Surface {
         });
     }
 }
+enum Source {
+    Library { catalog: crate::materials::MaterialCatalog, asset: String, revision: String, path: PathBuf, _file: std::fs::File },
+    Comfy(crate::canvas_comfyui::VideoPlaybackLease),
+}
+impl Source {
+    fn path(&self) -> &std::path::Path {
+        match self { Self::Library { path, .. } => path, Self::Comfy(lease) => &lease.path }
+    }
+    fn verify(&self) -> Result<(), String> {
+        match self {
+            Self::Comfy(lease) => lease.verify().map_err(str::to_owned),
+            Self::Library { catalog, asset, revision, path, .. } => {
+                if catalog.native_video_source(asset, revision).map_err(crate::encode_material_catalog_command_error)? != *path {
+                    return Err("native-video-source-changed".into());
+                }
+                Ok(())
+            }
+        }
+    }
+}
 struct Active {
     player: Player,
     preview: bool,
     surface: Surface,
     session: String,
-    catalog: crate::materials::MaterialCatalog,
-    asset: String,
-    revision: String,
-    path: PathBuf,
-    _source: std::fs::File,
+    source: Source,
     range: Option<Range>,
     heartbeat: Instant,
     source_check: Instant,
 }
 impl Active {
     fn verify(&self) -> Result<(), String> {
-        let path = self
-            .catalog
-            .native_video_source(&self.asset, &self.revision)
-            .map_err(crate::encode_material_catalog_command_error)?;
-        if path != self.path {
-            return Err("native-video-source-changed".into());
-        }
-        Ok(())
+        self.source.verify()
     }
     fn loop_mode(&self) -> Result<(), String> {
         self.player
@@ -245,10 +254,6 @@ fn open(
     bounds: Bounds,
     preview: bool,
 ) -> Result<Active, String> {
-    bounds.validate()?;
-    if session.len() != 36 || !session.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
-        return Err("native-video-session-invalid".into());
-    }
     let catalog = crate::material_catalog_in_library(app, caller, Some(&library))?;
     let path = catalog
         .native_video_source(&asset, &revision)
@@ -260,15 +265,20 @@ fn open(
         .share_mode(1)
         .open(&path)
         .map_err(|_| "native-video-source-unavailable")?;
-    catalog
-        .native_video_source(&asset, &revision)
-        .map_err(crate::encode_material_catalog_command_error)?;
+    open_source(caller,app,session,bounds,preview,Source::Library {catalog,asset,revision,path,_file:source})
+}
+fn open_source(caller:&tauri::Webview,app:&tauri::AppHandle,session:String,bounds:Bounds,preview:bool,source:Source)->Result<Active,String> {
+    bounds.validate()?;
+    if session.len() != 36 || !session.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
+        return Err("native-video-session-invalid".into());
+    }
+    source.verify()?;
     let surface = Surface::create(caller, preview)?;
     let player = Player::load(&dll_path(app)?)?;
     if preview { player.initialize_preview(surface.hwnd)?; }
     else { player.initialize(surface.hwnd, false)?; }
-    player.volume(0.7, preview)?;
-    player.open_local(&path)?;
+    player.volume(0.7, preview || matches!(&source,Source::Comfy(_)))?;
+    player.open_local(source.path())?;
     let start = Instant::now();
     while !player.snapshot().configured {
         if start.elapsed() > Duration::from_secs(10) {
@@ -282,11 +292,7 @@ fn open(
         preview,
         surface,
         session,
-        catalog,
-        asset,
-        revision,
-        path,
-        _source: source,
+        source,
         range: None,
         heartbeat: Instant::now(),
         source_check: Instant::now(),
@@ -333,6 +339,15 @@ fn worker(rx: mpsc::Receiver<Envelope>) {
             continue;
         }
         let result = (|| match e.request {
+            Request::OpenComfy { session,result_name,bounds,preview } => {
+                // Only a verified local materialization; never import, fetch or generate.
+                let backend=e.app.state::<Arc<crate::backend::BackendServices>>();
+                let directory=e.app.path().app_data_dir().map_err(|_|"comfyui-video-unavailable")?.join("canvas").join("generated-videos");
+                let lease=crate::canvas_comfyui::open_video_playback(backend.db_path(),&directory,&result_name).map_err(str::to_owned)?;
+                retire(&mut active);
+                active=Some(open_source(&e.caller,&e.app,session,bounds,preview,Source::Comfy(lease))?);
+                Ok(serde_json::json!({"ok":true}))
+            }
             Request::Open {
                 session,
                 library_id,
@@ -374,14 +389,24 @@ fn worker(rx: mpsc::Receiver<Envelope>) {
                         Ok(serde_json::json!({"ok":true}))
                     }
                     Request::PreviewFrame { .. } => {
-                        if !a.preview { return Err("native-video-preview-required".into()); }
+                        if !a.preview && !matches!(&a.source, Source::Comfy(_)) { return Err("native-video-preview-required".into()); }
                         // Size-limited on-demand frame; never pauses or writes media.
                         let frame = a.player.preview_frame()?;
-                        if frame.width > 512 || frame.height > 512 {
+                        if a.preview && (frame.width > 512 || frame.height > 512) {
                             return Err("native-video-preview-size-invalid".into());
                         }
                         let image = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
                             .ok_or("native-video-frame-invalid")?;
+                        if !a.preview {
+                            // The current displayed frame bridges a canvas move in
+                            // the DOM. Lossless RAM-only image, never a video proxy.
+                            let mut png = Vec::new();
+                            use image::ImageEncoder;
+                            image::codecs::png::PngEncoder::new_with_quality(&mut png, image::codecs::png::CompressionType::Fast, image::codecs::png::FilterType::NoFilter)
+                                .write_image(image.as_raw(), image.width(), image.height(), image::ExtendedColorType::Rgba8).map_err(|_| "native-video-frame-encode-failed")?;
+                            if png.len() > 32 * 1024 * 1024 { return Err("native-video-frame-too-large".into()); }
+                            return Ok(serde_json::json!({"time":frame.time,"src":format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(png))}));
+                        }
                         let rgb = image::DynamicImage::ImageRgba8(image).into_rgb8();
                         let mut jpeg = Vec::new();
                         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 82)
@@ -440,7 +465,7 @@ pub(super) fn request(caller: tauri::Webview, app: tauri::AppHandle, request: Re
         return Err("native-video-shutting-down".into());
     }
     if matches!(request, Request::Capability) {
-        return Ok(serde_json::json!({"available":dll_path(&app)?.is_file(),"composition":"webview-alpha-v1","cardFrames":true}));
+        return Ok(serde_json::json!({"available":dll_path(&app)?.is_file(),"composition":"webview-alpha-v1","cardFrames":true,"comfyResults":true,"comfyPreviews":true}));
     }
     let tx = {
         let mut slot = WORKER

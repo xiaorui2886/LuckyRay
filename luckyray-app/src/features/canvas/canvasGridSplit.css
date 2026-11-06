@@ -1,5 +1,6 @@
 .canvas-grid-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 3px;
   border: 1px solid var(--theme-border-strong);
@@ -8,9 +9,11 @@
   backdrop-filter: var(--theme-glass-filter);
   box-shadow: var(--theme-shadow-md);
   color: var(--text-primary);
+  box-sizing: border-box;
 }
 .canvas-grid-toolbar button {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 7px;
   border: 0;

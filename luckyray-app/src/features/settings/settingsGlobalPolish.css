@@ -1,7 +1,7 @@
 /* Settings-only continuation of the approved appearance surface language.
    Do not target shared controls outside this page or the appearance panel. */
 .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) {
-  max-width: 960px;
+  max-width: none;
   min-width: 0;
   line-height: 1.5;
 }
@@ -133,10 +133,9 @@
 .luckyray-settings-page .settings-secret-input { min-width: min(180px, 100%); }
 
 /* Storage: long paths and backup identifiers may wrap, never push actions out. */
-.luckyray-settings-page .settings-storage-overview { background: transparent; border: 0; padding: 8px 0 12px; margin: 0; }
 .luckyray-settings-page .settings-backup-item { flex-wrap: wrap; padding: 12px; background: var(--theme-surface-raised); }
 .luckyray-settings-page .settings-backup-name { flex-basis: 180px; white-space: normal; overflow-wrap: anywhere; }
-.luckyray-settings-page :is(.settings-backup-time, .settings-backup-size, .settings-backup-count, .settings-bar-size, .settings-bar-pct, .settings-ring-total) { color: var(--text-secondary); font-size: 11px; }
+.luckyray-settings-page :is(.settings-backup-time, .settings-backup-size, .settings-backup-count) { color: var(--text-secondary); font-size: 11px; }
 .luckyray-settings-page .settings-panel > .setting-group.settings-danger {
   border-color: color-mix(in srgb, var(--danger) 30%, var(--theme-border-strong));
   background: color-mix(in srgb, var(--danger) 3%, var(--theme-surface-panel));
@@ -152,19 +151,52 @@
 .luckyray-settings-page .settings-link-card > div { min-width: 0; overflow-wrap: anywhere; }
 .luckyray-settings-page .settings-update-panel { background: var(--theme-surface-raised); }
 
-/* Device and security details remain visible, including long endpoint names. */
+/* Phone connection follows the settings palette: primary actions first,
+   diagnostics on demand, and a quiet list of devices with current access. */
+.luckyray-settings-page .companion-console-grid { grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); align-items: start; gap: 20px; }
 .luckyray-settings-page .companion-card { padding: 20px; border-color: var(--theme-border-strong); background: var(--theme-surface-panel); box-shadow: none; }
+.luckyray-settings-page .companion-card-head { margin-bottom: 20px; }
 .luckyray-settings-page :is(.companion-kicker, .companion-empty, .companion-device-copy small, .companion-endpoint-facts dt) { color: var(--text-secondary); }
-.luckyray-settings-page :is(.companion-endpoint-facts div, .companion-device, .companion-empty, .companion-audit-list, .companion-count, .companion-pairing-meta) { background: var(--theme-surface-raised); }
-.luckyray-settings-page :is(.companion-device, .companion-endpoint-facts div):hover { background: var(--bg-hover); }
-.luckyray-settings-page .companion-device { grid-template-columns: 38px minmax(0, 1fr) auto; }
+.luckyray-settings-page :is(.companion-empty, .companion-count, .companion-pairing-meta) { background: color-mix(in srgb, var(--theme-surface-raised) 30%, var(--theme-surface-panel)); }
+.luckyray-settings-page .companion-listening-address { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin-top: 18px; color: var(--text-secondary); font-size: 12px; }
+.luckyray-settings-page .companion-listening-address b { color: var(--text-primary); font-size: 13px; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.luckyray-settings-page .companion-address-recovery { display: block; margin-top: 10px; padding-inline: 0; min-height: 30px; border-color: transparent; background: transparent; color: var(--text-secondary); text-align: start; }
+.luckyray-settings-page .companion-address-recovery:hover:not(:disabled) { color: var(--text-primary); background: transparent; }
+.luckyray-settings-page .companion-connection-details { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.luckyray-settings-page .companion-connection-details > summary { width: fit-content; color: var(--text-secondary); cursor: pointer; font-size: 12px; line-height: 1.6; }
+.luckyray-settings-page .companion-connection-details > summary:hover { color: var(--text-primary); }
+.luckyray-settings-page .companion-connection-details .settings-panel-sub { margin: 14px 0 0; font-size: 12px; }
+.luckyray-settings-page .companion-endpoint-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin-block: 14px 0; }
+.luckyray-settings-page .companion-endpoint-facts div { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: baseline; gap: 12px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; }
+.luckyray-settings-page .companion-endpoint-facts dt { margin: 0; font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.luckyray-settings-page .companion-endpoint-facts dd { font-size: 11px; }
+.luckyray-settings-page .companion-audit-list { background: transparent; }
+.luckyray-settings-page .companion-device-list { gap: 0; }
+.luckyray-settings-page .companion-device { grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px 12px; padding: 18px 0; border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; background: transparent; transition: none; }
+.luckyray-settings-page .companion-device:first-child { padding-top: 0; }
+.luckyray-settings-page .companion-device:last-child { padding-bottom: 0; border-bottom: 0; }
+.luckyray-settings-page :is(.companion-device, .companion-endpoint-facts div):hover { background: transparent; }
+.luckyray-settings-page .companion-device-icon { width: 32px; height: 36px; border: 0; border-radius: 8px; background: transparent; }
 .luckyray-settings-page .companion-device-copy { grid-column: 2 / -1; }
+.luckyray-settings-page .companion-device > .companion-service-permissions { grid-column: 2 / -1; border-top: 0; padding-top: 0; }
 .luckyray-settings-page .companion-device > .settings-btn { grid-column: 2; grid-row: 2; justify-self: start; }
 .luckyray-settings-page .companion-device > .settings-btn:last-of-type { grid-column: 3; }
+.luckyray-settings-page .companion-lsh-access { min-height: 30px; padding: 4px 10px; font-size: 12px; }
+.luckyray-settings-page .companion-lsh-access[aria-pressed=true] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 25%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, var(--theme-surface-panel)); }
+.luckyray-settings-page .companion-device > .settings-btn-danger { padding-inline: 4px; min-height: 30px; border-color: transparent; background: transparent; font-size: 12px; }
 .luckyray-settings-page .companion-device > small { grid-column: 2 / -1; line-height: 1.6; overflow-wrap: anywhere; }
 .luckyray-settings-page :is(.companion-device-copy b, .companion-device-copy small, .companion-endpoint-facts dd) { white-space: normal; overflow-wrap: anywhere; }
-.luckyray-settings-page .companion-firewall-note { border-color: color-mix(in srgb, var(--amber) 24%, var(--border)); background: color-mix(in srgb, var(--amber) 5%, var(--theme-surface-panel)); }
-.luckyray-settings-page .companion-firewall-note > span { background: color-mix(in srgb, var(--amber) 12%, transparent); }
+.luckyray-settings-page .companion-firewall-note { display: flex; margin-top: 18px; padding: 14px; gap: 10px; border: 1px solid color-mix(in srgb, var(--amber) 28%, var(--border)); border-left: 3px solid var(--amber); border-radius: 10px; background: color-mix(in srgb, var(--amber) 7%, var(--theme-surface-panel)); }
+.luckyray-settings-page .companion-firewall-note > span { background: color-mix(in srgb, var(--amber) 16%, transparent); }
+.luckyray-settings-page .companion-firewall-note b { color: var(--text-primary); font-weight: 600; }
+.luckyray-settings-page .companion-firewall-note small { font-size: 12px; }
+.luckyray-settings-page .companion-audit-summary { display: flex; align-items: center; gap: 12px; margin: 0; cursor: pointer; list-style: none; }
+.luckyray-settings-page .companion-audit-summary::-webkit-details-marker { display: none; }
+.luckyray-settings-page .companion-audit-summary h3 { flex: 1; }
+.luckyray-settings-page .companion-audit-summary svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; color: var(--text-secondary); }
+.luckyray-settings-page .companion-audit-card[open] > summary { margin-bottom: 16px; }
+.luckyray-settings-page .companion-audit-card[open] > summary svg { transform: rotate(90deg); }
+.luckyray-settings-page :is(.companion-connection-details > summary, .companion-audit-summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
 .luckyray-settings-page .companion-audit-row { grid-template-columns: 8px minmax(0, .8fr) minmax(0, 1fr) auto; padding-block: 10px; overflow-wrap: anywhere; }
 .luckyray-settings-page .companion-audit-row > span:nth-of-type(2) { display: block; }
 .luckyray-settings-page :is(.companion-inline-error, .settings-message.error) { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 25%, var(--border)); background: color-mix(in srgb, var(--danger) 6%, var(--theme-surface-panel)); overflow-wrap: anywhere; line-height: 1.6; }
@@ -177,14 +209,14 @@
 .luckyray-settings-page .settings-confirm-actions { flex-wrap: wrap; }
 
 @container (max-width: 820px) {
+  .luckyray-settings-page .companion-console-grid { grid-template-columns: minmax(0, 1fr); }
   .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .setting-row { flex-direction: column; align-items: flex-start; gap: 12px; }
   .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .setting-control { width: 100%; justify-content: flex-start; }
   .luckyray-settings-page .settings-panel:not(.settings-appearance-panel) .settings-input-path { flex: 1 1 220px; width: 100%; }
   .luckyray-settings-page .ai-profile-editor-core { grid-template-columns: minmax(0, 1fr); }
   .luckyray-settings-page .settings-secret-editor { grid-template-columns: minmax(0, 1fr); }
   .luckyray-settings-page .settings-secret-input-row.compact { width: 100%; }
-  .luckyray-settings-page .settings-storage-overview { flex-direction: column; align-items: stretch; gap: 16px; }
-  .luckyray-settings-page .settings-ring { align-self: center; }
+  .luckyray-settings-page .settings-storage-categories { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .luckyray-settings-page .companion-device > .settings-btn:last-of-type { grid-column: 3; }
 }
 @container (max-width: 520px) {
@@ -193,18 +225,17 @@
   .luckyray-settings-page :is(.settings-ai-disclosure-head, .settings-ai-disclosure-body, .companion-card) { padding: 16px 14px; }
   .luckyray-settings-page .ai-profile-form-grid { grid-template-columns: minmax(0, 1fr); }
   .luckyray-settings-page .ai-profile-form-grid label.wide { grid-column: auto; }
-  .luckyray-settings-page .companion-device { grid-template-columns: 38px minmax(0, 1fr); }
+  .luckyray-settings-page .companion-device { grid-template-columns: 32px minmax(0, 1fr) auto; }
   .luckyray-settings-page .companion-device > .settings-btn,
-  .luckyray-settings-page .companion-device > .settings-btn:last-of-type { grid-column: 2; grid-row: auto; }
+  .luckyray-settings-page .companion-device > .settings-btn:last-of-type { grid-row: 2; }
   .luckyray-settings-page .companion-audit-row { grid-template-columns: 8px minmax(0, 1fr); }
   .luckyray-settings-page .companion-audit-row > span:nth-of-type(2),
   .luckyray-settings-page .companion-audit-row > time { grid-column: 2; }
-  .luckyray-settings-page .settings-bar-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 10px; }
-  .luckyray-settings-page .settings-bar-track { grid-column: 1 / -1; grid-row: 2; }
-  .luckyray-settings-page .settings-bar-label { width: auto; }
+  .luckyray-settings-page .settings-storage-categories { gap: 0 16px; }
   .luckyray-settings-page .settings-about-links-with-updates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @container (max-width: 360px) {
+  .luckyray-settings-page .settings-storage-categories { grid-template-columns: minmax(0, 1fr); }
   .luckyray-settings-page .settings-about-links-with-updates { grid-template-columns: minmax(0, 1fr); }
 }
 :root[data-animations="off"] .luckyray-settings-page .settings-panel:not(.settings-appearance-panel),

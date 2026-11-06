@@ -7,6 +7,26 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (rea
 const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 const view = "luckyray-materials-view-v1";
 const sort = "luckyray-materials-sort-v1";
+
+test("event-origin metadata stays on the frozen library request across a switch", async () => {
+  const pending = deferred<unknown>();
+  const calls: MaterialLibraryRequest[] = [];
+  const session = new MaterialLibrarySession(async <T,>(request: MaterialLibraryRequest) => {
+    calls.push(structuredClone(request));
+    if (request.action.op === "importPaths") return await pending.promise as T;
+    if (request.action.op === "select") return null as T;
+    return registry(request.action.op === "registry" && calls.some(call => call.action.op === "select") ? "B" : "A") as T;
+  });
+  await session.initialize();
+  const importing = session.request({op:"importPaths",paths:["synthetic.txt"]}, "A", ["test.extension"]);
+  await session.select("B");
+  pending.resolve({assets:[]});
+  await importing;
+  const request = calls.find(call => call.action.op === "importPaths")!;
+  assert.equal(session.getSnapshot().libraryId, "B");
+  assert.equal(request.libraryId, "A");
+  assert.deepEqual(request.desktopEventOrigins, ["test.extension"]);
+});
 function preferenceFixture(t: TestContext) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   t.mock.method(console, "error", () => {});

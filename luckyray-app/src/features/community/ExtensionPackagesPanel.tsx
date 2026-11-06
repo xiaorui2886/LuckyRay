@@ -10,12 +10,14 @@ import {
   type PackageState,
   type TemplateResource,
   type ScriptResource,
+  type DesktopResource,
   type ThemeResource,
 } from "../../core/extensions/packages";
 import { EXTENSION_ERROR_COPY, type ExtCopyKey } from "./extensionMessages";
 import { useMessages } from "../../core/i18n/index";
 import { COMMUNITY_UI_MESSAGES } from "./communityMessages";
 import { CommunityDrawer, CommunityIcon, CommunityState, communityMatchesStatus, type CommunityStatusFilter } from "./CommunityPresentation";
+import { confirmPublisher } from "./publisherApproval";
 
 type Locale = "zh-CN" | "en-US";
 type Translate = (key: ExtCopyKey, vars?: Record<string, string>) => string;
@@ -24,7 +26,7 @@ type PackageView = {
   id: string;
   name: string;
   version: string;
-  type: "theme" | "template" | "script";
+  type: "theme" | "template" | "script" | "desktop";
   enabled: boolean;
   digest: string;
   requiredModules: string[];
@@ -108,7 +110,7 @@ export function PackagesPanel({
 }: PackagesPanelProps) {
   const { t } = copy;
   const { t: ui } = useMessages(COMMUNITY_UI_MESSAGES);
-  const [state, setState] = useState<PackageState>(() => service.snapshot());
+  const [state, setState] = useState(() => service.snapshot());
   const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   const onMessage = useCallback((kind: "info" | "error", text: string) => {
     setNotice({ kind, text });
@@ -124,7 +126,7 @@ export function PackagesPanel({
   // R6: the initial list load has its own state; an empty list is only shown
   // after a successful read. A failed read offers an explicit retry instead of
   // masquerading as "nothing installed".
-  const [load, setLoad] = useState<"loading" | "ready" | "error">("loading");
+  const [load, setLoad] = useState<"loading" | "ready" | "error">(() => service.snapshot().ready ? "ready" : "loading");
   const loadPackages = useCallback(async () => {
     setLoad("loading");
     try {
@@ -240,7 +242,9 @@ export function PackagesPanel({
       const text = await file.text();
       const parsed = parseLocalPackage(text);
       const latest = await service.refresh();
-      const next = await service.install(text, latest.revision);
+      const approved = await confirmPublisher(undefined, parsed, t);
+      if (approved === null) return;
+      const next = await service.install(text, latest.revision, approved);
       const installed = next.packages.find((entry) => entry.package.manifest.id === parsed.manifest.id);
       onMessage?.("info", t("pack.installed", { name: installed?.package.manifest.name ?? parsed.manifest.name }));
     }, `install:${file.name}`);
@@ -276,7 +280,9 @@ export function PackagesPanel({
         onMessage?.("error", t("pack.error.changed"));
         return;
       }
-      await service.update(text, latest.revision);
+      const approved = await confirmPublisher(current, parsed, t);
+      if (approved === null) return;
+      await service.update(text, latest.revision, approved);
       onMessage?.("info", t("pack.updated", { name: pkg.name }));
     }, `update:${pkg.id}`);
   }, [invoke, onMessage, service, t]);
@@ -326,7 +332,7 @@ export function PackagesPanel({
   </>;
 
   return (
-    <section className="community-section ext-packages" aria-busy={busy !== null}>
+    <section className="community-section ext-packages" aria-busy={busy !== null || load === "loading"}>
       {!compact && <div className="ext-packages-toolbar">
         <div className="ext-packages-intro">
           <h3 className="community-section-title">{t("pack.installed.title")}</h3>
@@ -358,13 +364,12 @@ export function PackagesPanel({
       </div>}
 
       {load === "error" && <CommunityState kind="error" message={t("pack.load.failed")} action={<button className="lr-cap-run secondary" onClick={() => void loadPackages()}>{t("pack.load.retry")}</button>} />}
-      {load === "loading" && <CommunityState kind="loading" message={t("pack.load.loading")} />}
+      {load === "loading" && !state.ready && <CommunityState kind="loading" message={t("pack.load.loading")} />}
       {preview && <div className="community-preview-notice" role="status"><CommunityIcon name="theme" /><span>{ui("community.previewing", { name: packages.find(pkg => pkg.id === preview.id)?.name ?? preview.id })}</span><button className="lr-cap-run secondary" disabled={busy !== null} onClick={() => setOwnedPreview(null)}>{t("pack.theme.cancel")}</button></div>}
       <div className={kind === "theme" ? "community-theme-layout" : undefined}>
-      {load === "ready" && <div className="ext-packages-groups">
+      {state.ready && <div className="ext-packages-groups">
         {kind !== "template" && <PackageGroup
           title={ui("community.themeTitle")}
-          description={ui("community.themeDesc")}
           empty={t("pack.group.themes.empty")}
           noMatch={t("pack.search.noMatch")}
           query={query}
@@ -376,7 +381,6 @@ export function PackagesPanel({
         />}
         {kind !== "theme" && <PackageGroup
           title={t("pack.group.templates")}
-          description={ui("community.packageFallback")}
           empty={t("pack.group.templates.empty")}
           noMatch={t("pack.search.noMatch")}
           query={query}
@@ -388,7 +392,7 @@ export function PackagesPanel({
         />}
       </div>}
 
-      {kind === "theme" && <aside className="community-theme-note"><CommunityIcon name="theme" /><div><h3>{ui("community.themeNote")}</h3><p>{ui("community.themeHint")}</p><p>{ui("community.themeGlobal")}</p><button className="community-text-button" onClick={() => { setOwnedPreview(null); window.location.hash = "#settings"; }}>{ui("community.themeSettingsOpen")}<CommunityIcon name="arrow" /></button></div></aside>}
+      {kind === "theme" && <aside className="community-theme-note"><CommunityIcon name="theme" /><p>{ui("community.themeGlobal")}</p><button className="community-text-button" onClick={() => { setOwnedPreview(null); window.location.hash = "#settings"; }}>{ui("community.themeSettingsOpen")}<CommunityIcon name="arrow" /></button></aside>}
       </div>
       {detail && <CommunityDrawer title={detail.name} label={t("pack.details")} icon={detail.type === "theme" ? "theme" : "note"} dismissible={busy === null} onClose={() => { setOwnedPreview(null); setDetailId(null); }} footer={manageActions(detail)}>{notice && <div className={`community-drawer-message${notice.kind === "error" ? " error" : ""}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</div>}<PackageDetail pkg={detail} t={t} resource={detailResource} /></CommunityDrawer>}
     </section>
@@ -396,10 +400,9 @@ export function PackagesPanel({
 }
 
 function PackageGroup({
-  title, description, empty, packages, total, state, onClear, busy, blocked, t, onToggle, onDetail, renderActions,
+  title, empty, packages, total, state, onClear, busy, blocked, t, onToggle, onDetail, renderActions,
 }: {
   title: string;
-  description: string;
   empty: string;
   noMatch: string;
   query: string;
@@ -417,7 +420,7 @@ function PackageGroup({
   const { t: ui } = useMessages(COMMUNITY_UI_MESSAGES);
   return (
     <div className="ext-packages-group">
-      <div className="community-section-head"><div><h2>{title}</h2><p>{description}</p></div></div>
+      <div className="community-section-head"><h2>{title}</h2></div>
       {packages.length === 0
         ? <CommunityState kind={total ? "no-match" : "empty"} message={total ? undefined : empty} action={total && onClear ? <button className="lr-cap-run secondary" onClick={onClear}>{ui("community.clear")}</button> : undefined} />
         : <div className={`community-card-list ${packages[0].type === "theme" ? "community-theme-grid" : "community-package-template-list"}`}>
@@ -438,7 +441,7 @@ function PackageGroup({
                     </div>
                     <span className={`ext-package-state${pkg.enabled ? " is-on" : ""}`}>{t(pkg.enabled ? "pack.state.enabled" : "pack.state.disabled")}</span>
                   </div>
-                  <p className="community-card-desc">{pkg.type === "theme" && resource && "base" in resource ? ui("community.themeBase", { base: ui(resource.base === "light" ? "community.light" : "community.dark") }) : ui("community.packageFallback")}</p>
+                  {pkg.type === "theme" && resource && "base" in resource && <p className="community-card-desc">{ui("community.themeBase", { base: ui(resource.base === "light" ? "community.light" : "community.dark") })}</p>}
                   {!pkg.compatible && <div className="ext-package-warn">{t("pack.incompatible", { host: pkg.minHostVersion })}</div>}
                   {pkg.unavailableOptional.length > 0 && <div className="ext-package-note">{t("pack.optionalMissing", { modules: pkg.unavailableOptional.join(", ") })}</div>}
                 </div>
@@ -494,25 +497,27 @@ function ThemeActions({
   return <button className="lr-cap-run secondary" disabled={!pkg.compatible || busy} onClick={onStart}>{t("pack.theme.preview")}</button>;
 }
 
-function PackageDetail({ pkg, t, resource }: { pkg: PackageView; t: Translate; resource: ThemeResource | TemplateResource | ScriptResource | null }) {
+function PackageDetail({ pkg, t, resource }: { pkg: PackageView; t: Translate; resource: ThemeResource | TemplateResource | ScriptResource | DesktopResource | null }) {
+  const { t: ui } = useMessages(COMMUNITY_UI_MESSAGES);
   const themeTokenCount = pkg.type === "theme" && resource && "tokens" in resource && resource.tokens
     ? Object.keys(resource.tokens).filter((key) => (THEME_TOKEN_KEYS as readonly string[]).includes(key)).length
     : 0;
   return (
     <div className="ext-package-detail">
       {pkg.type === "theme" && resource && "tokens" in resource && <ThemeThumbnail resource={resource} name={pkg.name} />}
-      <dl className="community-info ext-package-detail-grid">
+      <div className="community-detail-status"><span className={`community-status${pkg.enabled ? " is-on" : ""}`}>{t(pkg.enabled ? "pack.state.enabled" : "pack.state.disabled")}</span><span>v{pkg.version}</span></div>
+      {!pkg.compatible && <div className="ext-package-warn">{t("pack.incompatible", { host: pkg.minHostVersion })}</div>}
+      {pkg.unavailableOptional.length > 0 && <div className="ext-package-note">{t("pack.optionalMissing", { modules: pkg.unavailableOptional.join(", ") })}</div>}
+      <details className="community-detail-technical"><summary>{ui("community.moreInfo")}</summary><dl className="community-info ext-package-detail-grid">
         <dt>{t("pack.detail.id")}</dt><dd>{pkg.id}</dd>
-        <dt>{t("pack.detail.version")}</dt><dd>{pkg.version}</dd>
         <dt>{t("pack.detail.type")}</dt><dd>{t(pkg.type === "theme" ? "pack.type.theme" : "pack.type.template")}</dd>
         <dt>{t("pack.detail.host")}</dt><dd>{pkg.minHostVersion}</dd>
         <dt>{t("pack.detail.required")}</dt><dd>{pkg.requiredModules.length ? pkg.requiredModules.join(", ") : t("pack.detail.none")}</dd>
         <dt>{t("pack.detail.optional")}</dt><dd>{pkg.optionalModules.length ? pkg.optionalModules.join(", ") : t("pack.detail.none")}</dd>
       </dl>
-      {pkg.unavailableOptional.length > 0 && <div className="ext-package-note">{t("pack.optionalMissing", { modules: pkg.unavailableOptional.join(", ") })}</div>}
       <div className="ext-package-detail-theme">
         {pkg.type === "theme" && <span>{t("pack.detail.themeTokens", { count: String(themeTokenCount), total: String(THEME_TOKEN_KEYS.length) })}</span>}
-      </div>
+      </div></details>
     </div>
   );
 }

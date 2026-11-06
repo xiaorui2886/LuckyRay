@@ -14,7 +14,7 @@ pub(crate) async fn manage_extension_packages(
     if caller.label() != "main" {
         return Err("extension-host-window-required".into());
     }
-    if request.len() > 140_000 {
+    if request.len() > crate::extension_packages_store::MAX_DESKTOP_PACKAGE_BYTES + 4096 {
         return Err("extension-package-too-large".into());
     }
     let request: Request =

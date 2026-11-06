@@ -42,10 +42,6 @@
 .material-library-management .material-library-auto-import label{font-size:12px;gap:9px;cursor:pointer;line-height:1.6}
 .material-library-management .material-library-auto-import input[type=checkbox]{width:15px;height:15px;margin:0;cursor:pointer;flex:none}
 .material-library-management .material-library-auto-import input[type=checkbox]:disabled{cursor:default}
-.material-library-import-details{margin-top:8px;color:var(--text-secondary);font-size:11px;line-height:1.7}
-.material-library-import-details summary{width:fit-content;cursor:pointer;border-radius:4px;color:var(--text-secondary)}
-.material-library-import-details summary:hover{color:var(--text-primary)}
-.material-library-management .material-library-import-details :is(p,small){font-size:11px;line-height:1.7;color:var(--text-secondary)}
 .material-library-management .material-library-auto-import>small{font-size:11px;line-height:1.6;margin-top:8px}
 .material-library-management .material-library-auto-import .material-library-error{color:var(--danger,#c54c48)}
 .material-library-management .material-library-legacy-watch{padding:8px 2px 0;max-height:none;overflow:visible}

@@ -40,7 +40,7 @@ pub(crate) struct Profile {
     pub text_models: Option<Vec<String>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ProfileInput {
     pub id: String,
@@ -82,10 +82,12 @@ pub(crate) struct Snapshot { version: u32, active_profile_id: String, profiles: 
 pub(crate) struct RuntimeProfile { pub profile: Profile, pub api_key: String }
 
 fn read(conn: &Connection, key: &str) -> Result<Option<String>, &'static str> {
+    if crate::ai_secret_store::is_secret(key) { return crate::ai_secret_store::read(conn, key); }
     conn.query_row("SELECT value FROM settings WHERE key=?1", [key], |row| row.get(0))
         .optional().map_err(|_| UNAVAILABLE)
 }
 fn write(conn: &Connection, key: &str, value: &str) -> Result<(), &'static str> {
+    if crate::ai_secret_store::is_secret(key) { return crate::ai_secret_store::write(conn, key, value); }
     conn.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key,value])
         .map(|_| ()).map_err(|_| UNAVAILABLE)
 }
@@ -121,8 +123,8 @@ fn validate_profile(profile: &Profile) -> Result<(), &'static str> {
         || !text(&profile.text_model,128,true)
         || !matches!(profile.text_protocol.as_str(),"legacy"|"openai-chat"|"disabled")
         || profile.revision == 0 || profile.revision > 9_007_199_254_740_991
-        || !matches!(profile.image_protocol.as_str(),"easycli-auto"|"agnes"|"openai-image"|"gemini-image"|"12ai-task"|"disabled")
-        || !matches!(profile.video_protocol.as_str(),"agnes"|"openai-video"|"12ai-task"|"bigmodel-video"|"disabled") { return Err(INVALID); }
+        || !matches!(profile.image_protocol.as_str(),"doubao-image"|"ark-image"|"easycli-auto"|"agnes"|"openai-image"|"gemini-image"|"12ai-task"|"disabled")
+        || !matches!(profile.video_protocol.as_str(),"doubao-video"|"ark-video"|"agnes"|"openai-video"|"12ai-task"|"bigmodel-video"|"disabled") { return Err(INVALID); }
     for list in [&profile.image_models, &profile.video_models, &profile.text_models] {
         let Some(ids) = list else { continue };
         if ids.len() > 500 { return Err(INVALID); }
@@ -130,7 +132,14 @@ fn validate_profile(profile: &Profile) -> Result<(), &'static str> {
             return Err(INVALID);
         }
     }
-    validated_base(&profile.base_url)?;
+    let base = validated_base(&profile.base_url)?;
+    let doubao = profile.image_protocol == "doubao-image" || profile.video_protocol == "doubao-video";
+    if doubao && (profile.id != "doubao-default" || base != "https://www.doubao.com"
+        || profile.image_protocol != "doubao-image" || profile.video_protocol != "doubao-video"
+        || profile.text_protocol != "disabled") { return Err(INVALID); }
+    let ark = profile.image_protocol == "ark-image" || profile.video_protocol == "ark-video";
+    if ark && (!matches!(base.as_str(), "https://ark.cn-beijing.volces.com/api/plan/v3" | "https://ark.cn-beijing.volces.com/api/v3")
+        || (base.ends_with("/api/plan/v3") && profile.text_protocol != "disabled")) { return Err(INVALID); }
     Ok(())
 }
 fn save_catalog(conn: &Connection, catalog: &Catalog) -> Result<(), &'static str> {
@@ -174,7 +183,7 @@ fn load(conn: &Connection) -> Result<Catalog, &'static str> {
 fn snapshot(conn: &Connection, catalog: Catalog) -> Result<Snapshot, &'static str> {
     let mut profiles = Vec::new();
     for profile in catalog.profiles {
-        let configured = read(conn,&secret_key(&profile.id))?.is_some_and(|key| !key.trim().is_empty());
+        let configured = crate::ai_secret_store::has(conn,&secret_key(&profile.id))?;
         profiles.push(ProfileView { profile, api_key_configured:configured });
     }
     Ok(Snapshot {version:1,active_profile_id:catalog.active_profile_id,profiles})
@@ -182,6 +191,7 @@ fn snapshot(conn: &Connection, catalog: Catalog) -> Result<Snapshot, &'static st
 fn transact<T>(path: &Path, f: impl FnOnce(&Connection) -> Result<T,&'static str>) -> Result<T,&'static str> {
     let mut conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(|_| UNAVAILABLE)?;
     conn.busy_timeout(Duration::from_secs(3)).map_err(|_| UNAVAILABLE)?;
+    crate::ai_secret_store::migrate(&conn)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| UNAVAILABLE)?;
     let result = f(&tx)?;
     tx.commit().map_err(|_| UNAVAILABLE)?;
@@ -199,6 +209,9 @@ fn next_revision(conn: &Connection, catalog: &Catalog) -> Result<u64,&'static st
     Ok(next)
 }
 pub(crate) fn upsert(path: &Path,input: ProfileInput) -> Result<Snapshot,&'static str> {
+    if input.id == "doubao-default" || input.image_protocol == "doubao-image" || input.video_protocol == "doubao-video" {
+        return Err("canvas-media-provider-removed");
+    }
     transact(path,|conn| {
         let mut catalog = load(conn)?;
         let existing = catalog.profiles.iter().position(|p| p.id == input.id);
@@ -218,8 +231,9 @@ pub(crate) fn upsert(path: &Path,input: ProfileInput) -> Result<Snapshot,&'stati
         if let Some(i) = existing {
             let old = reqwest::Url::parse(&catalog.profiles[i].base_url).map_err(|_| INVALID)?;
             let new = reqwest::Url::parse(&profile.base_url).map_err(|_| INVALID)?;
-            if old.origin() != new.origin() && key.is_none() && !input.clear_api_key
-                && read(conn,&secret_key(&profile.id))?.is_some_and(|s| !s.trim().is_empty()) {
+            let ark_plan_changed = old.path().starts_with("/api/plan/") != new.path().starts_with("/api/plan/");
+            if (old.origin() != new.origin() || ark_plan_changed) && key.is_none() && !input.clear_api_key
+                && crate::ai_secret_store::has(conn,&secret_key(&profile.id))? {
                 return Err("canvas-media-profile-origin-key-required");
             }
             catalog.profiles[i] = profile.clone();
@@ -232,6 +246,7 @@ pub(crate) fn upsert(path: &Path,input: ProfileInput) -> Result<Snapshot,&'stati
     })
 }
 pub(crate) fn activate(path: &Path,id: &str) -> Result<Snapshot,&'static str> {
+    if id == "doubao-default" { return Err("canvas-media-provider-removed"); }
     transact(path,|conn| {
         let mut catalog = load(conn)?;
         if !catalog.profiles.iter().any(|p|p.id == id) { return Err("canvas-media-profile-missing"); }
@@ -259,6 +274,10 @@ pub(crate) fn resolve(path: &Path,id: Option<&str>,revision: Option<u64>) -> Res
         if id.is_some() != revision.is_some() { return Err(INVALID); }
         let id = id.unwrap_or(&catalog.active_profile_id);
         let profile = catalog.profiles.into_iter().find(|p|p.id == id).ok_or("canvas-media-profile-missing")?;
+        // Legacy metadata remains readable, but never dispatch it through another provider.
+        if profile.id == "doubao-default" || profile.image_protocol == "doubao-image" || profile.video_protocol == "doubao-video" {
+            return Err("canvas-media-provider-removed");
+        }
         if revision.is_some_and(|r|r != profile.revision) { return Err("canvas-media-profile-changed"); }
         let api_key = read(conn,&secret_key(&profile.id))?.unwrap_or_default();
         if !text(&api_key,8192,true) { return Err(INVALID); }
@@ -367,6 +386,41 @@ mod tests {
         let runtime=resolve(db.path(),None,None).unwrap();
         assert_eq!(runtime.profile.text_protocol,"legacy");
         assert!(text_runtime_config(runtime,None).is_err());
+    }
+
+    #[test]
+    fn retired_doubao_catalog_stays_readable_and_cannot_dispatch_or_be_recreated() {
+        let db=db(); let initial=list(db.path()).unwrap();
+        let conn=Connection::open(db.path()).unwrap();
+        let mut catalog=load(&conn).unwrap();
+        let retired=Profile { id:"doubao-default".into(), name:"Saved Doubao".into(),
+            base_url:"https://www.doubao.com".into(), image_model:"saved-image".into(), video_model:"saved-video".into(),
+            image_protocol:"doubao-image".into(), video_protocol:"doubao-video".into(), revision:2,
+            image_models:None, video_models:None, text_model:String::new(), text_protocol:"disabled".into(), text_models:None };
+        catalog.profiles.push(retired); catalog.active_profile_id="doubao-default".into();
+        save_catalog(&conn,&catalog).unwrap();
+        let before=read(&conn,CATALOG_KEY).unwrap();
+        let listed=list(db.path()).unwrap();
+        assert_eq!(listed.active_profile_id,"doubao-default");
+        assert_eq!(listed.profiles.len(),initial.profiles.len()+1);
+        assert_eq!(listed.profiles[1].profile.image_model,"saved-image");
+        assert!(matches!(resolve(db.path(),None,None),Err("canvas-media-provider-removed")));
+        assert!(matches!(resolve(db.path(),Some("doubao-default"),Some(2)),Err("canvas-media-provider-removed")));
+        assert!(matches!(activate(db.path(),"doubao-default"),Err("canvas-media-provider-removed")));
+        let mut p=input("doubao-default");p.api_key=None;
+        p.base_url="https://www.doubao.com".into();p.image_protocol="doubao-image".into();p.video_protocol="doubao-video".into();p.text_protocol="disabled".into();
+        assert!(matches!(upsert(db.path(),p),Err("canvas-media-provider-removed")));
+        assert_eq!(read(&conn,CATALOG_KEY).unwrap(),before);
+        assert_eq!(resolve(db.path(),Some("legacy-media"),Some(1)).unwrap().profile.id,"legacy-media");
+    }
+    #[test]
+    fn ark_plan_and_metered_keys_never_inherit_across_billing_path() {
+        let db=db();let mut p=input("ark");p.base_url="https://ark.cn-beijing.volces.com/api/plan/v3".into();
+        p.image_protocol="ark-image".into();p.video_protocol="ark-video".into();
+        assert!(upsert(db.path(),p.clone()).is_err());
+        p.text_protocol="disabled".into();upsert(db.path(),p.clone()).unwrap();
+        p.expected_revision=Some(2);p.base_url="https://ark.cn-beijing.volces.com/api/v3".into();p.api_key=None;
+        assert!(matches!(upsert(db.path(),p),Err("canvas-media-profile-origin-key-required")));
     }
 
 }

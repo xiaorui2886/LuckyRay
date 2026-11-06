@@ -23,7 +23,7 @@ pub struct ToolClientError {
 }
 
 impl ToolClientError {
-    fn new(code: impl Into<String>, message: &'static str) -> Self {
+    pub(crate) fn new(code: impl Into<String>, message: &'static str) -> Self {
         Self {
             code: code.into(),
             message,
@@ -189,6 +189,57 @@ impl ToolClient {
         self.authorized_request("GET", "/api/v1/tools/list", None)
     }
 
+    /// Read-only health check, always after the constructor's native proof.
+    /// Do not echo the transport payload: a diagnostic has a small fixed schema.
+    pub fn health(&self) -> Result<Value, ToolClientError> {
+        let data = self.authorized_request("GET", "/api/v1/health", None)?;
+        if data.get("service").and_then(Value::as_str) != Some("luckyray-local-transport")
+            || data.get("protocolVersion").and_then(Value::as_u64)
+                != Some(LOCAL_TRANSPORT_PROTOCOL_VERSION as u64)
+            || data.get("controlPlane").and_then(Value::as_str) != Some("local-transport")
+        {
+            return Err(ToolClientError::new(
+                "protocol-incompatible",
+                "Update LuckyRay or the CLI",
+            ));
+        }
+        Ok(json!({
+            "ok": true,
+            "status": "ready",
+            "service": "luckyray-local-transport",
+            "protocolVersion": LOCAL_TRANSPORT_PROTOCOL_VERSION,
+            "serverVerified": true,
+        }))
+    }
+
+    /// Look up the current native projection rather than maintaining a second
+    /// registry. Return unavailable definitions too so callers can inspect why.
+    pub fn describe_tool(&self, tool_id: &str) -> Result<Value, ToolClientError> {
+        let definitions = self.list_tools()?;
+        let definitions = definitions.as_array().ok_or_else(|| {
+            ToolClientError::new("protocol-incompatible", "Update LuckyRay or the CLI")
+        })?;
+        let mut found = None;
+        for definition in definitions {
+            let id = definition
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    ToolClientError::new("protocol-incompatible", "Update LuckyRay or the CLI")
+                })?;
+            if id == tool_id {
+                if found.is_some() {
+                    return Err(ToolClientError::new(
+                        "protocol-incompatible",
+                        "Update LuckyRay or the CLI",
+                    ));
+                }
+                found = Some(definition.clone());
+            }
+        }
+        found.ok_or_else(|| ToolClientError::new("tool-not-found", "Tool does not exist"))
+    }
+
     pub fn run_tool(
         &self,
         tool_id: &str,
@@ -251,7 +302,11 @@ impl ToolClient {
             .map_err(|_| ToolClientError::new("transport-failed", "LuckyRay request failed"))?;
         let status = response.status().as_u16();
         let payload = read_json_response(response)?;
-        if status == 401 || status == 403 {
+        // A proved native caller may receive a business permission refusal.
+        // Keep those fixed public codes distinct from invalid credentials.
+        let permission_refusal = payload.pointer("/error/code").and_then(Value::as_str)
+            .is_some_and(is_tool_permission_refusal);
+        if status == 401 || (status == 403 && !permission_refusal) {
             return Err(ToolClientError::new(
                 "authentication-failed",
                 "LuckyRay authentication failed",
@@ -273,10 +328,31 @@ impl ToolClient {
 }
 
 fn production_app_data_dir() -> Result<PathBuf, ToolClientError> {
+    let marker = match env::var("LUCKYRAY_APP_PROFILE") {
+        Ok(value) => Some(value),
+        Err(env::VarError::NotPresent) => None,
+        Err(_) => return Err(invalid_runtime_profile()),
+    };
+    let identifier = native_profile_identifier(marker.as_deref(), cfg!(debug_assertions))?;
     let root = env::var_os("APPDATA")
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ToolClientError::new("app-unavailable", "Open LuckyRay"))?;
-    Ok(PathBuf::from(root).join("com.luckyray.desktop"))
+    Ok(PathBuf::from(root).join(identifier))
+}
+
+fn invalid_runtime_profile() -> ToolClientError {
+    ToolClientError::new("runtime-profile-invalid", "Use the matching LuckyRay runtime profile")
+}
+
+fn native_profile_identifier(marker: Option<&str>, debug_build: bool) -> Result<&'static str, ToolClientError> {
+    // Keep the shipped/default production contract. Main may opt into its
+    // existing fixed development identity; never fall back across profiles or
+    // accept an arbitrary directory/host. Release binaries cannot select Main.
+    match marker.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("production") => Ok("com.luckyray.desktop"),
+        Some("development") if debug_build => Ok("com.luckyray.desktop.dev"),
+        _ => Err(invalid_runtime_profile()),
+    }
 }
 
 fn random_nonce() -> String {
@@ -315,6 +391,12 @@ fn safe_server_message(code: &str) -> &'static str {
     }
 }
 
+fn is_tool_permission_refusal(code: &str) -> bool {
+    matches!(code, "tool-risk-denied" | "capability-disabled" |
+        "consumer-library-denied" | "consumer-folder-denied" |
+        "consumer-tag-denied" | "material-library-scope")
+}
+
 fn read_json_response(response: Response) -> Result<Value, ToolClientError> {
     let mut bytes = Vec::new();
     response
@@ -334,6 +416,31 @@ fn read_json_response(response: Response) -> Result<Value, ToolClientError> {
 #[cfg(test)]
 mod tests {
     use super::ToolClient;
+
+    #[test]
+    fn business_permission_codes_do_not_relabel_invalid_credentials() {
+        for code in ["tool-risk-denied", "capability-disabled", "consumer-library-denied",
+            "consumer-folder-denied", "consumer-tag-denied", "material-library-scope"] {
+            assert!(super::is_tool_permission_refusal(code));
+        }
+        for code in ["authentication-failed", "authentication-required", "private-diagnostic", ""] {
+            assert!(!super::is_tool_permission_refusal(code));
+        }
+    }
+
+    #[test]
+    fn fixed_runtime_profile_selection_preserves_production_and_rejects_cross_build_fallback() {
+        for debug in [false,true] {
+            for marker in [None,Some("production"),Some(" ")] {
+                assert_eq!(super::native_profile_identifier(marker,debug).unwrap(),"com.luckyray.desktop");
+            }
+        }
+        assert_eq!(super::native_profile_identifier(Some("development"),true).unwrap(),"com.luckyray.desktop.dev");
+        assert_eq!(super::native_profile_identifier(Some("development"),false).unwrap_err().code(),"runtime-profile-invalid");
+        for marker in ["other","../com.luckyray.desktop","https://127.0.0.1","issue191-ux"] {
+            assert_eq!(super::native_profile_identifier(Some(marker),true).unwrap_err().code(),"runtime-profile-invalid");
+        }
+    }
     use crate::knowledge::KnowledgeVaultRegistration;
     use crate::local_transport::native_proof_message;
     use crate::tool_cli::run_with_connector;
@@ -726,7 +833,21 @@ mod tests {
             .parse::<u16>()
             .unwrap();
         let client = ToolClient::connect_with(&app_data, [port]).unwrap();
+        let health = client.health().unwrap();
+        assert_eq!(health["serverVerified"], true);
+        assert_eq!(health["protocolVersion"], 1);
+        assert!(health.get("credential").is_none());
         let definitions = client.list_tools().unwrap();
+        let described = client.describe_tool("knowledge.set_tags").unwrap();
+        assert_eq!(described["id"], "knowledge.set_tags");
+        assert!(described["inputSchema"].is_object());
+        assert_eq!(
+            client
+                .describe_tool("missing.native.tool")
+                .unwrap_err()
+                .code(),
+            "tool-not-found"
+        );
         let ids = definitions
             .as_array()
             .unwrap()
@@ -736,13 +857,32 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "canvas.create",
+                "canvas.list",
+                "canvas.read",
+                "canvas.rename",
+                "canvas.save",
                 "capability.run",
                 "knowledge.append",
                 "knowledge.create",
+                "knowledge.insert",
+                "knowledge.list",
+                "knowledge.move",
                 "knowledge.read",
+                "knowledge.relations",
+                "knowledge.replace",
                 "knowledge.search",
                 "knowledge.set_tags",
+                "knowledge.tags",
+                "materials.detail",
+                "materials.import_bytes",
+                "materials.libraries",
+                "materials.library_preview",
+                "materials.library_taxonomy",
+                "materials.list",
+                "materials.organize",
                 "materials.search",
+                "materials.update",
             ]
         );
     }
@@ -876,8 +1016,12 @@ mod tests {
         .unwrap();
         let credential = super::load_native_credential(&app_data).unwrap();
         let (proxy_url, proxy_hits, proxy_request, proxy_handle) = spawn_proxy_recorder();
-        let cli = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| manifest.join("target"));
+        let target = if target.is_absolute() { target } else { manifest.join(target) };
+        let cli = target
             .join("debug")
             .join("luckyray-cli.exe");
         assert!(cli.is_file(), "cargo must build the production CLI binary");
@@ -885,6 +1029,7 @@ mod tests {
         let output = Command::new(cli)
             .args(["tools", "list"])
             .env("APPDATA", &app_data_parent)
+            .env_remove("LUCKYRAY_APP_PROFILE")
             .env("HTTP_PROXY", &proxy_url)
             .env("HTTPS_PROXY", &proxy_url)
             .env("ALL_PROXY", &proxy_url)
@@ -914,13 +1059,32 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "canvas.create",
+                "canvas.list",
+                "canvas.read",
+                "canvas.rename",
+                "canvas.save",
                 "capability.run",
                 "knowledge.append",
                 "knowledge.create",
+                "knowledge.insert",
+                "knowledge.list",
+                "knowledge.move",
                 "knowledge.read",
+                "knowledge.relations",
+                "knowledge.replace",
                 "knowledge.search",
                 "knowledge.set_tags",
+                "knowledge.tags",
+                "materials.detail",
+                "materials.import_bytes",
+                "materials.libraries",
+                "materials.library_preview",
+                "materials.library_taxonomy",
+                "materials.list",
+                "materials.organize",
                 "materials.search",
+                "materials.update",
             ]
         );
         assert_eq!(proxy_hits.load(Ordering::SeqCst), 0);

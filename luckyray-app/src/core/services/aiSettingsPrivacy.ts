@@ -1,5 +1,5 @@
 export function projectAiSettingsForFrontend<
-  T extends { aiApiKey?: string | null; aiImageApiKey?: string | null },
+  T extends { aiApiKey?: string | null; aiImageApiKey?: string | null; aiApiKeyConfigured?: boolean; aiImageApiKeyConfigured?: boolean },
 >(settings: T): Omit<T, "aiApiKey" | "aiImageApiKey"> & {
   aiApiKey: null;
   aiApiKeyConfigured: boolean;
@@ -10,9 +10,9 @@ export function projectAiSettingsForFrontend<
   return {
     ...safe,
     aiApiKey: null,
-    aiApiKeyConfigured: Boolean(aiApiKey),
+    aiApiKeyConfigured: aiApiKey == null ? Boolean(settings.aiApiKeyConfigured) : Boolean(aiApiKey),
     aiImageApiKey: null,
-    aiImageApiKeyConfigured: Boolean(aiImageApiKey),
+    aiImageApiKeyConfigured: aiImageApiKey == null ? Boolean(settings.aiImageApiKeyConfigured) : Boolean(aiImageApiKey),
   };
 }
 

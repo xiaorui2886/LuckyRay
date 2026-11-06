@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const playwrightPath = process.env.LUCKYRAY_PLAYWRIGHT_MODULE ||
-  'playwright';
+  'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@playwright/mcp/node_modules/playwright';
 const { chromium } = require(playwrightPath);
 const esbuild = require(require.resolve('esbuild', { paths: [fs.realpathSync(path.join(root, 'node_modules', 'vite'))] }));
 const out = fs.mkdtempSync(path.join(root, 'node_modules', '.material-source-mount-'));

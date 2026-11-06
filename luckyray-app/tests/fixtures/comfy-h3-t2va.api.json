@@ -1,0 +1,241 @@
+{
+  "216": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "217": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "227": {
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader"
+  },
+  "234": {
+    "inputs": {
+      "value": "A paper boat floats on calm water. Gentle natural ambience."
+    },
+    "class_type": "PrimitiveStringMultiline"
+  },
+  "235": {
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "megapixels": 0.6,
+      "multiple": 32
+    },
+    "class_type": "ResolutionSelector"
+  },
+  "236": {
+    "inputs": {
+      "value": 10
+    },
+    "class_type": "PrimitiveFloat"
+  },
+  "238": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader"
+  },
+  "269": {
+    "inputs": {
+      "reserved": 1,
+      "mode": "manual",
+      "seed": 272763768588681,
+      "auto_max_reserved": 0,
+      "clean_gpu_before": true,
+      "anything": [
+        "227",
+        0
+      ]
+    },
+    "class_type": "ReservedVRAMSetter"
+  },
+  "291": {
+    "inputs": {
+      "model": [
+        "269",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch"
+  },
+  "296": {
+    "inputs": {
+      "av_latent": [
+        "302",
+        0
+      ],
+      "video_vae": [
+        "216",
+        0
+      ],
+      "audio_vae": [
+        "217",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3AVDecodeT8"
+  },
+  "302": {
+    "inputs": {
+      "noise": [
+        "306",
+        0
+      ],
+      "guider": [
+        "305",
+        0
+      ],
+      "sampler": [
+        "304",
+        1
+      ],
+      "sigmas": [
+        "304",
+        2
+      ],
+      "latent_image": [
+        "307",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced"
+  },
+  "303": {
+    "inputs": {
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "MiniMaxH3/exp_4v10a",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "296",
+        0
+      ],
+      "audio": [
+        "296",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine"
+  },
+  "304": {
+    "inputs": {
+      "video_steps": 10,
+      "audio_steps": 10,
+      "shift_video": 12,
+      "shift_audio": 3,
+      "model": [
+        "370",
+        0
+      ],
+      "av_latent": [
+        "307",
+        1
+      ]
+    },
+    "class_type": "MiniMaxH3MultiRateSamplerEXPT8"
+  },
+  "305": {
+    "inputs": {
+      "model": [
+        "304",
+        0
+      ],
+      "conditioning": [
+        "307",
+        0
+      ]
+    },
+    "class_type": "BasicGuider"
+  },
+  "306": {
+    "inputs": {
+      "noise_seed": 123456789
+    },
+    "class_type": "RandomNoise"
+  },
+  "307": {
+    "inputs": {
+      "prompt": [
+        "234",
+        0
+      ],
+      "width": [
+        "235",
+        0
+      ],
+      "height": [
+        "235",
+        1
+      ],
+      "length": [
+        "308",
+        1
+      ],
+      "task_type": "T2VA",
+      "audio_mode": "native",
+      "audio_denoise_strength": 1,
+      "add_source_as_reference": false,
+      "prompt_primary_audio_ordinal": 0,
+      "strict_prompt_tags": true,
+      "ref_image_size": "max",
+      "reference_video_policy": "official_2_to_15s",
+      "clip": [
+        "238",
+        0
+      ],
+      "video_vae": [
+        "216",
+        0
+      ],
+      "audio_vae": [
+        "217",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3AudioConditioningT8"
+  },
+  "308": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "236",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression"
+  },
+  "309": {
+    "inputs": {
+      "num_blocks": -1
+    },
+    "class_type": "UniBlockSwap"
+  },
+  "370": {
+    "inputs": {
+      "lora_name": "minimax_h3_turbo_4STEPS_comfyui.safetensors",
+      "strength_model": 1,
+      "model": [
+        "291",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly"
+  }
+}

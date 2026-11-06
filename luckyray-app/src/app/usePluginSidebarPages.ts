@@ -12,7 +12,7 @@ export function usePluginSidebarPages(settings: SettingsMap): PluginPage[] {
   useEffect(() => extensionPackages.subscribe(() => setTick((value) => value + 1)), []);
   const snapshot = extensionPackages.snapshot();
   const scriptPackages = useMemo(
-    () => snapshot.packages.filter((entry) => entry.package.manifest.type === "script"),
+    () => snapshot.packages.filter((entry) => ["script","desktop"].includes(entry.package.manifest.type)),
     [snapshot],
   );
   const allPluginPages = useMemo(

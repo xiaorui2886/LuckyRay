@@ -17614,7 +17614,7 @@
         }
       ],
       "noticeSupply": "Published source omits standalone license file; exact published grant, original available copyright headers and standardized license/version text supplied. No other package version substituted.",
-      "selectedLicense": "MIT WITH LLVM-exception"
+      "selectedLicense": "MIT"
     },
     {
       "name": "web-time",

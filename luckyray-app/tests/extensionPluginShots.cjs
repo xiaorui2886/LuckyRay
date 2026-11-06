@@ -9,9 +9,9 @@ const root = path.resolve(__dirname, "..");
 const esbuild = require(require.resolve("esbuild", { paths: [fs.realpathSync(root + "/node_modules/vite")] }));
 const { chromium } = require(
   process.env.LUCKYRAY_PLAYWRIGHT_MODULE ||
-    "playwright",
+    "C:/Users/Administrator/AppData/Roaming/npm/node_modules/@playwright/mcp/node_modules/playwright",
 );
-const outDir = process.env.LUCKYRAY_EXT_Z2_SHOTS || "./test-results/ext-z2-plugin";
+const outDir = process.env.LUCKYRAY_EXT_Z2_SHOTS || "C:/Cursor/_artifacts/ext-z2-plugin-20260917";
 
 const script = (id, name, required, optional, grants, enabled, minHostVersion = "1.9.2") => ({
   package: {
@@ -60,7 +60,7 @@ const NOTE = { documentRef: { vaultId: "vault-main", relativePath: "notes/素材
             if (cmd === "list_canvases") return [{ id: "c1", name: "研究主线图" }, { id: "c2", name: "人物关系" }];
             throw new Error("unexpected " + cmd);
           };`],
-          ["@tauri-apps/plugin-dialog", "export const save = async () => 'C:/synthetic-fixture/canvas-export.svg';"],
+          ["@tauri-apps/plugin-dialog", "export const save = async () => 'C:/Users/Administrator/Downloads/canvas-export.svg';"],
           ["../../core/services/materials", `export const listMaterialAssets = async () => window.__fixtures.materials;
             export const listFilteredMaterialAssets = async (f = {}) => window.__fixtures.materials.filter(m => !f.query || m.name.toLowerCase().includes(f.query.toLowerCase()));`],
           ["../../core/services/knowledge", `export const listKnowledgeDocuments = async (input = {}) => window.__fixtures.notes.slice(0, input.limit === undefined ? 200 : input.limit).map(n => ({ ...n }));

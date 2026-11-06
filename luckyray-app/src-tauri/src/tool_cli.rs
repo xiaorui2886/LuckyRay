@@ -1,6 +1,6 @@
 use crate::tool_client::{ToolClient, ToolClientError};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::io::{self, Read, Write};
 use std::path::Path;
 
@@ -46,7 +46,20 @@ struct CliProtocolEnvelope {
 }
 
 enum CliCommand {
+    Help {
+        json: bool,
+    },
+    Version {
+        json: bool,
+    },
+    ProtocolIdentity,
+    VerifyWorkspaceManifest,
     List,
+    Describe {
+        tool_id: String,
+    },
+    Status,
+    Doctor,
     Run {
         tool_id: String,
         input: Value,
@@ -72,10 +85,99 @@ fn write_error(
     let _ = writer.write_all(b"\n");
 }
 
-fn parse_command(args: Vec<String>, mut stdin: impl Read) -> Result<CliCommand, &'static str> {
+const CLI_HELP: &str = "LuckyRay CLI — use the running desktop application's native tool registry.
+
+Usage:
+  luckyray-cli --help | -h | help [--json]
+  luckyray-cli --version | -V | version [--json]
+  luckyray-cli status [--json]
+  luckyray-cli doctor [--json]
+  luckyray-cli tools list [--json]
+  luckyray-cli tools describe <tool-id> [--json]
+  luckyray-cli tools run <tool-id> (--input <JSON> | --stdin) [--request-id <id>] [--json]
+  luckyray-cli protocol identity
+  luckyray-cli verify workspace-manifest
+
+Tools, status, and doctor always return JSON on stdout; errors are JSON on stderr.
+--json selects structured help/version and may precede tools, status, or doctor.
+The fixed protocol identity and workspace verifier accept no extra arguments.
+status verifies the local server and checks health. doctor also reports tool availability.
+Neither diagnostic command repairs settings or executes a tool. An unavailable tool
+is not a broken connection; inspect its availability reason with tools describe.
+Use --stdin for sensitive input; --input may be recorded by your shell.
+No arbitrary URLs, ports, credentials, shell commands, or app-data paths are accepted.
+
+Exit codes: 0 success, 1 internal/output error, 2 usage/input error,
+            3 connection/authentication/protocol error, 4 tool/verification error.
+";
+
+fn help_requested(args: &[String]) -> bool {
+    let is_help = |value: &str| matches!(value, "--help" | "-h" | "help");
+    match args {
+        [flag] => is_help(flag),
+        [namespace, flag] => {
+            matches!(
+                namespace.as_str(),
+                "tools" | "status" | "doctor" | "protocol" | "verify"
+            ) && is_help(flag)
+        }
+        [namespace, action, flag] => {
+            is_help(flag)
+                && matches!(
+                    (namespace.as_str(), action.as_str()),
+                    ("tools", "list" | "describe" | "run")
+                        | ("protocol", "identity")
+                        | ("verify", "workspace-manifest")
+                )
+        }
+        _ => false,
+    }
+}
+
+fn parse_command(mut args: Vec<String>, mut stdin: impl Read) -> Result<CliCommand, &'static str> {
+    // Only strip a leading formatting flag. In `tools run` an option value
+    // equal to --json must still be parsed as its value, never silently removed.
+    let mut json = false;
+    if args.first().is_some_and(|arg| arg == "--json") {
+        args.remove(0);
+        json = true;
+    }
+    let is_run = args.first().is_some_and(|arg| arg == "tools")
+        && args.get(1).is_some_and(|arg| arg == "run");
+    if (!is_run || help_requested(&args[..args.len().saturating_sub(1)]))
+        && args.last().is_some_and(|arg| arg == "--json")
+    {
+        if json {
+            return Err("--json may only be specified once");
+        }
+        args.pop();
+        json = true;
+    }
+    if help_requested(&args) {
+        return Ok(CliCommand::Help { json });
+    }
     match args.as_slice() {
+        [action] if matches!(action.as_str(), "--version" | "-V" | "version") => {
+            return Ok(CliCommand::Version { json });
+        }
+        [namespace, action] if namespace == "protocol" && action == "identity" && !json => {
+            return Ok(CliCommand::ProtocolIdentity);
+        }
+        [namespace, action] if namespace == "verify" && action == "workspace-manifest" && !json => {
+            return Ok(CliCommand::VerifyWorkspaceManifest);
+        }
+        [action] if action == "status" => return Ok(CliCommand::Status),
+        [action] if action == "doctor" => return Ok(CliCommand::Doctor),
         [namespace, action] if namespace == "tools" && action == "list" => {
-            return Ok(CliCommand::List)
+            return Ok(CliCommand::List);
+        }
+        [namespace, action, tool_id] if namespace == "tools" && action == "describe" => {
+            if !is_valid_tool_id(tool_id) {
+                return Err("CLI tool id is invalid");
+            }
+            return Ok(CliCommand::Describe {
+                tool_id: tool_id.clone(),
+            });
         }
         [namespace, action, rest @ ..] if namespace == "tools" && action == "run" => {
             if rest.is_empty() || !is_valid_tool_id(&rest[0]) {
@@ -105,6 +207,10 @@ fn parse_command(args: Vec<String>, mut stdin: impl Read) -> Result<CliCommand, 
                         request_id = Some(value.clone());
                         index += 2;
                     }
+                    "--json" if !json => {
+                        json = true;
+                        index += 1;
+                    }
                     _ => return Err("CLI arguments are invalid"),
                 }
             }
@@ -133,14 +239,14 @@ fn parse_command(args: Vec<String>, mut stdin: impl Read) -> Result<CliCommand, 
         }
         _ => {}
     }
-    Err("Use `luckyray-cli tools list` or `luckyray-cli tools run`")
+    Err("Use `luckyray-cli --help` for supported commands")
 }
 
 fn is_valid_tool_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_TOOL_ID_BYTES
         && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'.' || byte == b'-'
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
         })
 }
 
@@ -158,6 +264,7 @@ fn exit_for_error(error: &ToolClientError) -> i32 {
         | "authentication-unavailable"
         | "authentication-failed"
         | "protocol-incompatible"
+        | "runtime-profile-invalid"
         | "server-verification-failed"
         | "transport-failed" => EXIT_CONNECTION,
         code if error.status().is_some()
@@ -185,6 +292,52 @@ pub(crate) fn run_with_connector(
             return EXIT_USAGE;
         }
     };
+    // Local discovery and the fixed verifier never construct a client, read
+    // credentials, or probe a server. Keep all invocations on this one parser.
+    match command {
+        CliCommand::Help { json: false } => return write_text(&mut stdout, &mut stderr, CLI_HELP),
+        CliCommand::Help { json: true } => {
+            return write_data(
+                &mut stdout,
+                &mut stderr,
+                &json!({
+                    "ok": true, "name": "luckyray-cli", "version": env!("CARGO_PKG_VERSION"),
+                    "usage": CLI_HELP,
+                    "commands": ["status", "doctor", "tools list", "tools describe", "tools run",
+                        "protocol identity", "verify workspace-manifest"],
+                    "exitCodes": {"success": 0, "internal": 1, "usage": 2, "connection": 3, "tool": 4}
+                }),
+            )
+        }
+        CliCommand::Version { json: false } => {
+            return write_text(
+                &mut stdout,
+                &mut stderr,
+                concat!("luckyray-cli ", env!("CARGO_PKG_VERSION"), "\n"),
+            )
+        }
+        CliCommand::Version { json: true } => {
+            return write_data(
+                &mut stdout,
+                &mut stderr,
+                &json!({
+                    "ok": true, "name": "luckyray-cli", "version": env!("CARGO_PKG_VERSION"),
+                    "protocol": CLI_PROTOCOL, "protocolIdentity": cli_protocol_identity()
+                }),
+            )
+        }
+        CliCommand::ProtocolIdentity => return write_protocol_identity(stdout),
+        CliCommand::VerifyWorkspaceManifest => {
+            return match std::env::current_dir() {
+                Ok(current) => run_static_manifest_check(&current, stdout),
+                Err(_) => write_manifest_check_result(
+                    stdout,
+                    ManifestCheckResult::failed(None, "unavailable"),
+                ),
+            };
+        }
+        _ => {}
+    }
     let client = match connect() {
         Ok(client) => client,
         Err(error) => {
@@ -195,23 +348,21 @@ pub(crate) fn run_with_connector(
     };
     let result = match command {
         CliCommand::List => client.list_tools(),
+        CliCommand::Describe { tool_id } => client.describe_tool(&tool_id),
+        CliCommand::Status => client.health(),
+        CliCommand::Doctor => client.health().and_then(|health| {
+            let definitions = client.list_tools()?;
+            doctor_report(health, definitions)
+        }),
         CliCommand::Run {
             tool_id,
             input,
             request_id,
         } => client.run_tool(&tool_id, input, request_id.as_deref()),
+        _ => unreachable!("local commands were handled before connection"),
     };
     match result {
-        Ok(data) => {
-            if serde_json::to_writer(&mut stdout, &data).is_err()
-                || stdout.write_all(b"\n").is_err()
-            {
-                write_error(&mut stderr, "cli-output-failed", "CLI output failed", None);
-                EXIT_INTERNAL
-            } else {
-                EXIT_OK
-            }
-        }
+        Ok(data) => write_data(&mut stdout, &mut stderr, &data),
         Err(error) => {
             let exit = exit_for_error(&error);
             write_error(&mut stderr, error.code(), error.message(), error.status());
@@ -220,32 +371,74 @@ pub(crate) fn run_with_connector(
     }
 }
 
-pub fn run() -> i32 {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    // This is intentionally a no-side-effect handshake. It exists so the
-    // desktop Backend and the registered Tauri externalBin can prove they
-    // speak the exact same narrow CLI contract before a controlled verifier
-    // result is accepted. It is never exposed as an Agent tool.
-    if args.as_slice() == ["protocol", "identity"] {
-        return write_protocol_identity(io::stdout().lock());
+fn write_data(mut stdout: impl Write, mut stderr: impl Write, data: &Value) -> i32 {
+    if serde_json::to_writer(&mut stdout, data).is_err() || stdout.write_all(b"\n").is_err() {
+        write_error(&mut stderr, "cli-output-failed", "CLI output failed", None);
+        EXIT_INTERNAL
+    } else {
+        EXIT_OK
     }
-    // This is deliberately handled before the local-transport client is
-    // constructed. It is a fixed, app-owned read-only verifier, not a route
-    // to the application's tool API and not a general CLI execution surface.
-    if args.as_slice() == ["verify", "workspace-manifest"] {
-        let current = match std::env::current_dir() {
-            Ok(current) => current,
-            Err(_) => {
-                return write_manifest_check_result(
-                    io::stdout().lock(),
-                    ManifestCheckResult::failed(None, "unavailable"),
-                )
+}
+
+fn write_text(mut stdout: impl Write, mut stderr: impl Write, text: &str) -> i32 {
+    if stdout.write_all(text.as_bytes()).is_err() {
+        write_error(&mut stderr, "cli-output-failed", "CLI output failed", None);
+        EXIT_INTERNAL
+    } else {
+        EXIT_OK
+    }
+}
+
+fn doctor_report(mut health: Value, definitions: Value) -> Result<Value, ToolClientError> {
+    let invalid = || ToolClientError::new("protocol-incompatible", "Update LuckyRay or the CLI");
+    let definitions = definitions.as_array().ok_or_else(invalid)?;
+    let mut ids = std::collections::BTreeSet::new();
+    let mut unavailable = Vec::new();
+    for definition in definitions {
+        let id = definition
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| is_valid_tool_id(id))
+            .ok_or_else(invalid)?;
+        if !ids.insert(id) {
+            return Err(invalid());
+        }
+        let available = definition
+            .pointer("/availability/available")
+            .and_then(Value::as_bool)
+            .ok_or_else(invalid)?;
+        if !available {
+            let mut summary = json!({"id": id});
+            if let Some(code) = definition
+                .pointer("/availability/code")
+                .filter(|v| !v.is_null())
+            {
+                let code = code
+                    .as_str()
+                    .filter(|code| {
+                        !code.is_empty()
+                            && code.len() <= 96
+                            && code
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                    })
+                    .ok_or_else(invalid)?;
+                summary["code"] = Value::String(code.to_string());
             }
-        };
-        return run_static_manifest_check(&current, io::stdout().lock());
+            unavailable.push(summary);
+        }
     }
+    // Only counts and validated availability codes leave diagnostics. Never echo
+    // paths, settings, credentials, health extras, or tool schemas in doctor.
+    health["toolCount"] = json!(definitions.len());
+    health["availableToolCount"] = json!(definitions.len() - unavailable.len());
+    health["unavailableTools"] = json!(unavailable);
+    Ok(health)
+}
+
+pub fn run() -> i32 {
     run_with_connector(
-        args,
+        std::env::args().skip(1).collect(),
         io::stdin().lock(),
         io::stdout().lock(),
         io::stderr().lock(),
@@ -774,6 +967,53 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn doctor_reads_the_native_registry_without_executing_a_tool() {
+        let app_data = temp_dir("doctor-native");
+        let backend = Arc::new(BackendServices::initialize(&app_data).unwrap());
+        let server = start_server(
+            ServerConfig::test(app_data.clone()),
+            Arc::new(LegacyLocalTransportAdapter::new(backend)),
+        )
+        .unwrap();
+        let port = server
+            .client_config()
+            .base_url
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .parse::<u16>()
+            .unwrap();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = run_with_connector(
+            vec!["doctor".into(), "--json".into()],
+            Cursor::new(Vec::<u8>::new()),
+            &mut stdout,
+            &mut stderr,
+            || ToolClient::connect_with(&app_data, [port]),
+        );
+        assert_eq!(code, EXIT_OK);
+        assert!(stderr.is_empty());
+        let report: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+        assert_eq!(report["serverVerified"], true);
+        assert_eq!(report["toolCount"], 26);
+        assert!(report["availableToolCount"].as_u64().unwrap() < 26);
+        let unavailable = report["unavailableTools"].as_array().unwrap();
+        assert!(unavailable
+            .iter()
+            .any(|tool| tool["id"] == "knowledge.set_tags"));
+        for tool in unavailable {
+            assert!(tool.get("reason").is_none());
+            assert!(tool.get("inputSchema").is_none());
+        }
+        let rendered = String::from_utf8(stdout).unwrap();
+        assert!(!rendered.contains(&server.client_config().credential));
+        assert!(!rendered.contains(&app_data.to_string_lossy().to_string()));
+        drop(server);
+        fs::remove_dir_all(app_data).unwrap();
     }
 
     #[test]

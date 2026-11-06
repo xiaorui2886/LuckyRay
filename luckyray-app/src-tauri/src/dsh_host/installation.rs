@@ -2,7 +2,7 @@
 //! slot. Legacy flat directories and retained backups are never fallback code.
 use super::*;
 
-pub(crate) const BUNDLE_SLOT: &str = "lr-lsh/199-1";
+pub(crate) const BUNDLE_SLOT: &str = "lr-lsh/1910-2";
 
 pub(super) fn resource_roots(resource_dir: &Path) -> Result<(PathBuf, PathBuf), ()> {
     let slot = resource_dir.join(BUNDLE_SLOT);
@@ -74,7 +74,7 @@ mod tests {
     #[test]
     fn legacy_and_backup_trees_never_become_an_installed_resource_fallback() {
         let root = tempfile::tempdir().unwrap();
-        for name in ["deepseek-harness", "dsh-host", "lr-lsh/199-1.saved-1/deepseek-harness", "lr-lsh/199-1.saved-1/dsh-host"] {
+        for name in ["deepseek-harness", "dsh-host", "lr-lsh/1910-1/deepseek-harness", "lr-lsh/1910-1/dsh-host", "lr-lsh/1910-2.saved-1/deepseek-harness", "lr-lsh/1910-2.saved-1/dsh-host"] {
             std::fs::create_dir_all(root.path().join(name)).unwrap();
         }
         assert!(resource_roots(root.path()).is_err());

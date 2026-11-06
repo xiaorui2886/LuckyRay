@@ -28,6 +28,11 @@ export function videoParameterSummary(options: {aspect?: string; quality?: strin
     options.sound?.trim()].filter(Boolean).join(' · ');
 }
 
+/** Image summaries also omit unavailable fields instead of rendering empty separators. */
+export function imageParameterSummary(options:{aspect?:string;quality?:string;resolution?:string;countLabel?:string}):string {
+  return [options.aspect?.trim(),options.resolution?.trim(),options.quality?.trim(),options.countLabel?.trim()].filter(Boolean).join(' · ');
+}
+
 /** Pixel readout for existing fixed-size GPT/DALL-E request mappings, not a fabricated K selector. */
 export function mediaPixelSize(kind: 'image' | 'video', profile: CanvasMediaProfile | null | undefined, model: string, aspect: string, resolution?:string): string | undefined {
   if (kind !== 'image') return undefined;

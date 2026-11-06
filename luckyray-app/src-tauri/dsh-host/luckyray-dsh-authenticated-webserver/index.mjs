@@ -4,6 +4,8 @@ import { Agent, createServer, request as httpRequest } from "node:http";
 import { closeSync, createReadStream, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import {
   createBuiltInProviderExportRegistry,
   projectProviderSync,
@@ -625,6 +627,41 @@ function stripAuthCookies(headerValues, desktopCookieName) {
 function validPath(path) {
   return typeof path === "string" && /^\/[\x21-\x7e]*$/u.test(path)
     && !path.includes("?") && !path.includes("#") && !path.includes("\\");
+}
+
+// DSH 0.2.2 resources use the Fetch API. This adapter only runs after the
+// carrier's ordinary origin, cookie and protected-path checks have passed.
+async function serveResource(request, response, resource) {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    response.writeHead(405, { allow: "GET, HEAD" });
+    response.end();
+    return;
+  }
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers)) {
+    for (const item of typeof value === "string" ? [value] : value ?? []) headers.append(name, item);
+  }
+  const abort = new AbortController();
+  const onClose = () => { if (!response.writableFinished) abort.abort(); };
+  response.on("close", onClose);
+  try {
+    // The placeholder authority matches upstream's resource contract. A
+    // request target cannot choose a different authority through //host.
+    const target = new URL(`http://x${request.url ?? "/"}`);
+    const result = await resource(new Request(target, { method: request.method, headers, signal: abort.signal }));
+    const resultHeaders = Object.fromEntries(result.headers);
+    const cookies = result.headers.getSetCookie();
+    if (cookies.length > 0) resultHeaders["set-cookie"] = cookies;
+    response.writeHead(result.status, resultHeaders);
+    if (request.method === "HEAD" || result.body === null) {
+      await result.body?.cancel();
+      response.end();
+    } else {
+      await pipeline(Readable.fromWeb(result.body), response, { signal: abort.signal });
+    }
+  } finally {
+    response.off("close", onClose);
+  }
 }
 
 export function canonicalizeCarrierPath(rawPath) {
@@ -1323,6 +1360,16 @@ export async function apply(ctx, config = {}) {
     upstream.end(head.length > 0 ? head : undefined);
   };
 
+  const match = (pathname) => {
+    if (exact.has(pathname)) return exact.get(pathname);
+    let best;
+    for (const [prefix, route] of prefixes) {
+      if ((pathname === prefix || pathname.startsWith(`${prefix}/`))
+        && (best === undefined || prefix.length > best.path.length)) best = route;
+    }
+    return best;
+  };
+
   const service = {
     get port() { return listenedPort; },
     get host() { return "127.0.0.1"; },
@@ -1330,7 +1377,9 @@ export async function apply(ctx, config = {}) {
     getOrigin() { return carrierOrigin(listenedPort); },
     register(route) {
       const table = route?.kind === "exact" ? exact : route?.kind === "prefix" ? prefixes : null;
-      if (!table || !validPath(route.path) || table.has(route.path) || typeof route.handler !== "function") {
+      const handler = typeof route?.handler === "function";
+      const resource = typeof route?.resource === "function";
+      if (!table || !validPath(route.path) || table.has(route.path) || handler === resource) {
         throw new Error("dsh-native-carrier-route-invalid");
       }
       table.set(route.path, route);
@@ -1343,10 +1392,26 @@ export async function apply(ctx, config = {}) {
       upgrades.set(route.path, route);
       return () => upgrades.delete(route.path);
     },
-    registerFallback(handler) {
-      if (fallback || typeof handler !== "function") throw new Error("dsh-native-carrier-route-invalid");
-      fallback = handler;
+    registerFallback(responder) {
+      if (fallback || !(typeof responder === "function" || typeof responder?.resource === "function")) {
+        throw new Error("dsh-native-carrier-route-invalid");
+      }
+      fallback = responder;
       return () => { fallback = undefined; };
+    },
+    async readResource(request, peer) {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return new Response(null, { status: 405, headers: { allow: "GET, HEAD" } });
+      }
+      const canonical = canonicalizeCarrierPath(new URL(request.url).pathname);
+      if (!canonical.accepted) return new Response(null, { status: 404 });
+      const route = match(canonical.path);
+      const responder = route ?? (canonical.protected ? undefined : fallback);
+      if (typeof responder?.resource !== "function") return new Response(null, { status: 404 });
+      const result = await responder.resource(request, peer);
+      if (request.method === "GET") return result;
+      await result.body?.cancel();
+      return new Response(null, { status: result.status, statusText: result.statusText, headers: result.headers });
     },
     tapIndex(transform) {
       if (typeof transform !== "function") throw new Error("dsh-native-carrier-route-invalid");
@@ -1354,14 +1419,14 @@ export async function apply(ctx, config = {}) {
       return () => { const at = indexTaps.indexOf(transform); if (at >= 0) indexTaps.splice(at, 1); };
     },
     applyIndexTaps(html) { return indexTaps.reduce((value, tap) => tap(value), html); },
-    collectIndexInjections() {
+    collectIndexInjections(peer) {
       const table = [];
-      ctx.emit("webserver/index-inject", table);
+      ctx.emit("webserver/index-inject", table, peer);
       return table;
     },
-    renderIndex(html) {
+    renderIndex(html, peer) {
       const early = textDraftStore ? [{ kind: "script", placement: "head", text: `(${installTextDraftBridge.toString()})();` }] : [];
-      return service.applyIndexTaps(renderIndexInjections(html, [...early, ...service.collectIndexInjections()]));
+      return service.applyIndexTaps(renderIndexInjections(html, [...early, ...service.collectIndexInjections(peer)]));
     },
   };
 
@@ -1534,16 +1599,6 @@ export async function apply(ctx, config = {}) {
     },
   });
 
-  const match = (pathname) => {
-    if (exact.has(pathname)) return exact.get(pathname);
-    let best;
-    for (const [prefix, route] of prefixes) {
-      if ((pathname === prefix || pathname.startsWith(`${prefix}/`))
-        && (best === undefined || prefix.length > best.path.length)) best = route;
-    }
-    return best;
-  };
-
   const server = createServer(async (request, response) => {
     if (authority?.active === true && request.headers.host === authority.host) {
       const translated = nativeBrowserCookieHeader(request.headers.cookie, authority.host);
@@ -1647,7 +1702,10 @@ export async function apply(ctx, config = {}) {
     // bounded, sanitized error instead of leaving the browser request hanging
     // on an unreadable socket; the server itself stays fully alive.
     try {
-      await (route?.handler ?? fallback)(request, response);
+      const responder = route ?? fallback;
+      if (typeof responder === "function") await responder(request, response);
+      else if (typeof responder.resource === "function") await serveResource(request, response, responder.resource);
+      else await responder.handler(request, response);
     } catch {
       console.error("dsh-carrier-route-error");
       if (response.writableEnded || response.destroyed) return;

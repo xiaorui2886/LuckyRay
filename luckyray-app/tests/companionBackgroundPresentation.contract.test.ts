@@ -31,6 +31,7 @@ function component(store: presentation.CompanionPresentationStore, file: string,
     if (id.endsWith("companionPresentationStore")) return presentation;
     if (id.endsWith("CompanionGatewayPanel")) return { COMPANION_COPY: {}, gatewayErrorMessage: () => "error" };
     if (id.endsWith("PhoneAccessManager")) return { default: () => null };
+    if (id.endsWith("PhoneEndpointRecovery")) return { default: () => null };
     if (id.endsWith("PhoneAuthorizationChoice")) return { default: () => null, PHONE_AUTHORIZATION_COPY: {} };
     if (id.endsWith("CompanionPresentation")) return { useCompanionSnapshot: () => store.getSnapshot(), useCompanionStore: () => store, useCompanionView: () => ({ state: store.getSnapshot(), owner: null, seconds: 60 }) };
     if (id.endsWith("i18n/index")) return { defineMessages: (value: any) => value, useMessages: () => ({ locale: "en-US", t: (key: string) => key }) };

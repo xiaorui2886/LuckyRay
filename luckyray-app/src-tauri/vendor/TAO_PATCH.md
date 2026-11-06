@@ -20,6 +20,8 @@ Regression evidence (2026-10-04): the same isolated hidden-window probe uses a
 thread-local WH_CALLWNDPROC hook and a worker's synchronous WM_KILLFOCUS during
 WM_KEYDOWN. Original 0.35.3 deadlocks and reaches its 12-second test timeout;
 patched 0.35.3 completes 20 iterations. Only the probe's own HWND receives input.
-The source patch keeps the original Tao license and copyright. Build and
-behavioral checks do not establish all real input-method sequences; actual
-Windows focus/IME acceptance remains a separate check.
+The original hung Main was terminated only after explicit human permission.
+Probe sources and baseline logs are retained at
+`C:/Cursor/_coordination/collector-notes-r7-20261004/native-probe` and
+`native-baseline`. Default-feature cargo check/build and capture receipt tests
+also pass. Actual Main focus/IME acceptance remains a separate human check.

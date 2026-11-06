@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {CanvasAnchoredSurface} from "./CanvasAnchoredSurface";
 import { CanvasComposerPopover } from "./CanvasComposerPopover";
 import { CanvasImageCreativeMenu, CreativeActionIcon } from "./CanvasImageCreativeMenu";
@@ -32,6 +32,7 @@ export function CanvasImageToolbar({
   stage,
   source,
   onSplit,
+  onEdit,
   onCompare,
   onCreativeRecipe,
   onInteract,
@@ -41,6 +42,7 @@ export function CanvasImageToolbar({
   stage: RefObject<HTMLDivElement|null>;
   source: string;
   onSplit: () => void;
+  onEdit?: () => void;
   onCompare?: () => void;
   onCreativeRecipe?: (recipe: ImageCreativeRecipe) => void;
   onInteract?: () => void;
@@ -68,6 +70,7 @@ export function CanvasImageToolbar({
     return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape, true); };
   }, [creativeOpen]);
   const [decodedSource, setDecodedSource] = useState<string | null>(null);
+  const [toolbarWidth, setToolbarWidth] = useState(400);
   useEffect(() => {
     let active = true;
     setDecodedSource(null);
@@ -83,8 +86,28 @@ export function CanvasImageToolbar({
       active = false;
     };
   }, [source]);
+  // Anchor the toolbar using its actual buttons, including localized labels.
+  // Measuring unshrunk buttons keeps it able to expand again after a narrow view.
+  useLayoutEffect(() => {
+    const element = toolbar.current;
+    if (!element) return;
+    const buttons = Array.from(element.querySelectorAll<HTMLButtonElement>(':scope > button'));
+    const measure = () => {
+      const style = getComputedStyle(element);
+      const pixels = (value: string) => parseFloat(value) || 0;
+      const width = Math.ceil(buttons.reduce((sum, button) => sum + button.getBoundingClientRect().width, 0)
+        + Math.max(0, buttons.length - 1) * pixels(style.columnGap)
+        + pixels(style.paddingLeft) + pixels(style.paddingRight)
+        + pixels(style.borderLeftWidth) + pixels(style.borderRightWidth));
+      if (width > 0) setToolbarWidth(current => current === width ? current : width);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    buttons.forEach(button => observer.observe(button));
+    return () => observer.disconnect();
+  }, [decodedSource, english, !!onEdit, !!onCompare, !!onCreativeRecipe]);
   return decodedSource === source ? (
-    <CanvasAnchoredSurface nodeId={nodeId} stage={stage} width={(onCompare ? 264 : 152) + (onCreativeRecipe ? 86 : 0)} preferred="top" avoidNodeHeader className="canvas-image-tools-surface">
+    <CanvasAnchoredSurface nodeId={nodeId} stage={stage} width={toolbarWidth} preferred="top" avoidNodeHeader className="canvas-image-tools-surface">
       <div
         ref={toolbar}
         className="canvas-grid-toolbar nodrag nopan"
@@ -93,6 +116,10 @@ export function CanvasImageToolbar({
         onPointerDown={(e) => e.stopPropagation()}
       >
         {onCreativeRecipe && <button ref={creativeAnchor} type="button" aria-expanded={creativeOpen} aria-label={english ? 'Creative tools' : '创作工具'} onClick={() => { onInteract?.(); setCreativeOpen(v => !v); }}><CreativeActionIcon />{english ? 'Create' : '创作'}</button>}
+        {onEdit && <button type="button" onClick={() => { onInteract?.(); setCreativeOpen(false); onEdit(); }}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v13a2 2 0 0 0 2 2h13M3 6h13a2 2 0 0 1 2 2v13M10 10h4v4"/></svg>
+          {english ? 'Refine image' : '图片精修'}
+        </button>}
         <button type="button" onClick={() => { onInteract?.(); onSplit(); }}>
           <GridIcon />
           {english ? "Split grid" : "宫格切分"}

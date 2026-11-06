@@ -157,13 +157,16 @@ export function MaterialAttachmentSection({
   // endpoint reports only registered note-attachment locations, not the
   // catalog's preview/source path. A null path is not an external location.
   const hasRegisteredPath = Boolean(details?.absolutePath?.trim());
+  // Empty ordinary references add no useful UI. Keep attachment recovery and
+  // promotion available, and never conceal a failed read as an empty result.
+  if (details?.ordinary && details.referenceCount === 0 && !hasRegisteredPath && !discoveredMove && !error) return null;
   return (
     <section
       className="detail-section inspector-section-react material-attachment-details"
       aria-label="笔记引用"
     >
       <div className="detail-section-title">
-        {details ? `被 ${details.referenceCount} 篇笔记引用` : "笔记引用"}
+        {details ? details.referenceCount > 0 ? `被 ${details.referenceCount} 篇笔记引用` : "附件位置" : "笔记引用"}
       </div>
       {error ? (
         <div className="material-attachment-error" role="alert">
@@ -254,14 +257,10 @@ export function MaterialAttachmentSection({
                 ))}
               </div>
             </details>
-          ) : (
-            <p className="detail-linked-empty-react">
-              {details.ordinary ? "暂无已登记笔记引用；素材仍保留。" : "暂无已登记笔记引用，附件仍保留。"}
-            </p>
-          )}
-          <p className="material-attachment-footnote">
+          ) : null}
+          {details.referenceCount > 0 && <p className="material-attachment-footnote">
             仅统计已登记知识库。移除引用不会删除原文件。
-          </p>
+          </p>}
         </>
       )}
     </section>

@@ -1,6 +1,8 @@
+> SDK 1.2 候选：本文原有接口描述的是 API 1 轻量脚本。API 2 完整桌面扩展使用相同社区注册表，支持自定义 UI、编辑器和后台能力，见 [DESKTOP.md](DESKTOP.md)。它是显式全信任模式，不是沙箱；不是已发布 npm 版本。
+
 # LuckyRay 插件 SDK 入门（中文）
 
-当前作者工具包版本 **1.0.1**，Script Plugin API 仍为 **1**。先看 [独立交付与本地包安装](./DELIVERY.md) 和 [版本/权限分界](./COMPATIBILITY.md)：npm 安装只是获得类型/CLI，不会安装桌面插件，也不提供可 import 的 LuckyRay JS 运行时。SDK 产物不代表某个正式宿主版本已经提供相关能力。
+当前作者工具包候选版本 **1.2.0**；本文介绍的 Script Plugin API 仍为 **1**，完整桌面扩展 API 2 见 [DESKTOP.md](DESKTOP.md)。先看 [独立交付与本地包安装](./DELIVERY.md) 和 [版本/权限分界](./COMPATIBILITY.md)：npm 安装只是获得类型/CLI，不会安装桌面插件，也不提供可 import 的 LuckyRay JS 运行时。SDK 产物不代表已发布 npm，或某个正式宿主版本已经提供相关能力。
 
 LuckyRay 插件 SDK 让你用**纯 JavaScript** 为 LuckyRay 桌面应用编写可安装的功能插件。插件代码运行在宿主提供的受限引擎里：没有 DOM、没有网络、没有文件系统和 Node 接口，只能通过本 SDK 公开的方法访问用户**明确授权**的数据。本目录（SDK）可独立使用；你只需要 [Node.js](https://nodejs.org) 来开发和打包。
 
@@ -70,6 +72,8 @@ LuckyRay.register(async event => {
 
 ## 宿主版本注意
 
+`event-ai` 模板演示素材导入订阅与受授权的 AI 调用：需要明确选择素材库和模型，并单独同意事件自动调用 AI。示例只发送固定的虚构提示，不发送事件元数据或用户内容；旧宿主可能不支持这些新增方法。
+
 `minHostVersion` 只是最低宿主要求的声明，**不等于**某个正式发布版本已经包含插件 API。当前插件 API（API1）随本仓库对应的候选/主开发线交付；拿到本 SDK 只说明你可以开发与打包，还需要一个支持 API1 的 LuckyRay 宿主才能安装运行。开发期可用宿主请向 LuckyRay 方获取对应候选版本。
 
 ## 支持与不支持
@@ -84,7 +88,7 @@ LuckyRay.register(async event => {
 
 ## 参考样例
 
-`examples/` 下六个普通样例，可通过 `lr-plugin create <新目录> --template <样例名>` 复制后 check/pack，不需要私有源码；完整素材/知识方法类型以index.d.ts为准：
+`examples/` 下七个样例，可通过 `lr-plugin create <新目录> --template <样例名>` 复制后 check/pack，不需要私有源码；完整方法类型以 index.d.ts 为准：
 
 | 样例 | 演示 |
 | --- | --- |
@@ -94,7 +98,8 @@ LuckyRay.register(async event => {
 | `canvas-export` | 画布结构读取、宿主代管 SVG 导出 |
 | `page-desk` | EXT-PAGE 双页面、自有数据、保存后即时回显；旧宿主可能不支持page |
 | `material-reader` | 素材单域可用，可选知识连接需明确授权/选Vault，unknown不重试 |
+| `event-ai` | 授权范围内的导入事件与固定合成提示的 AI 调用；需单独启用事件自动调用 |
 
 ## 许可证
 
-SDK 以 MIT 许可证发布（见 [LICENSE](./LICENSE)）；你的插件代码归你所有。
+SDK 候选采用 MIT 许可证（见 [LICENSE](./LICENSE)）；你的插件代码归你所有。

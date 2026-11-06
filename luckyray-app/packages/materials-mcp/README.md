@@ -1,6 +1,8 @@
-# LuckyRay 素材 MCP — 开源候选 0.1.0-candidate.4
+# LuckyRay 素材 MCP — 私有候选 0.1.0-candidate.4
 
-## 推荐：LuckyRay 桌面界面连接
+> **历史候选，已退役：** 本文保留早期素材 MCP 的实现与验收记录，不是当前接入教程；下文“设置 → 存储 → 连接 AI 客户端”等入口已撤下，不应照此恢复。当前桌面原生 CLI/MCP 请参阅 [原生 MCP 文档](../../docs/mcp.md)。原生 MCP、SDK 和 DSH 扩展是不同接口，不要求版本号统一。
+
+## 历史方案：LuckyRay 桌面界面连接
 
 包含本轮桌面接线的候选中，进入 **设置 → 存储 → 连接 AI 客户端**，选择 Codex 和素材库，审阅配置位置与权限，然后勾选确认并点击 **授权并连接**。无需复制 JSON、运行终端或自行安装 Node。应用复用随包分发且校验 SHA-256 的 Node 22.19.0，只复制通用 Node 运行时和此素材客户端，不安装 LSH/Gateway 权限。
 
@@ -12,7 +14,7 @@
 
 **以下 npm/PowerShell/JSON 内容仅供高级手动排错，不是 GUI 用户步骤。**
 
-Windows + Node.js >=22 + Windows PowerShell 5.1。本地 stdio 客户端按需启动；没有服务、自启或公网监听。源码采用根目录 MIT，尚未在 npm 发布；这不自动创建配对或授权。
+Windows + Node.js >=22 + Windows PowerShell 5.1。本地 stdio 客户端按需启动；没有服务、自启或公网监听。仅私库候选，未公开发布。
 
 ## 功能与兼容
 
@@ -23,7 +25,7 @@ Windows + Node.js >=22 + Windows PowerShell 5.1。本地 stdio 客户端按需�
 |环境|要求或状态|
 |---|---|
 |Windows 本地 stdio 客户端|一次配置，使用时自动启动，断开关闭进程|
-|LuckyRay 桌面|需包含专用 materials-mcp-scoped-v1 协议、GUI 配对与物理 profile 身份证明；本仓库候选源码已包含|
+|LuckyRay 桌面|Sol 授权提交 c6de81aec4a101243dffe6a94b3a7c09b440e20d；部署基线 569ead5f54c856f93349afe38cd1ea49d6be8d4f|
 |旧桌面/缺专用授权|明确拒绝，不读取旧 native 凭据|
 |Codex MSIX|新 GUI v2 配对由桌面证明原 profile；旧 v1 配对仍会拒绝客户端路径重定向|
 |网页 ChatGPT|仍需官方隧道与真实网页验收，不能使用 localhost/stdio 代替|
@@ -31,7 +33,7 @@ Windows + Node.js >=22 + Windows PowerShell 5.1。本地 stdio 客户端按需�
 
 ## 安装、一次授权与安全配对
 
-1. 从已核对的源码运行 `npm pack --ignore-scripts`，记录 tgz SHA-256，在专用安装目录执行 `npm install --ignore-scripts --no-audit --no-fund <tgz绝对路径>`。不要从不明来源复制配置或凭据。
+1. 核对私库回执中的 tgz SHA-256，在专用安装目录执行 `npm install --ignore-scripts --no-audit --no-fund <tgz绝对路径>`。
 2. 在目标 LuckyRay **设置 → 存储 → 素材 MCP 授权**，选择一个合成测试库，客户端命名为你信任的本地客户端，确认搜索、读取、文件夹读取和导入四项权限。30 天到期，可随时撤权。不要选择日常真实资料库进行本轮导入验收。
 3. 在**普通 Windows PowerShell**运行下面的入口。Destination 必须是新的本地私有目录，不要放进项目、Git 或同步盘。它会明确询问是否保存本机绑定；不自动授权桌面。
 
@@ -59,7 +61,7 @@ powershell.exe -NoProfile -File "C:/YOUR_INSTALL/node_modules/@luckyray/material
 
 检查配对/搜索/文件夹 → PNG/PPTX 导入 → inspect 和搜索回查原名/kind/assetId → 重复导入同 assetId。报告不含密钥。首次如果库里已存在同内容不同名称的文件，去重正确但名称断言可能失败，需按已有素材解释，不能为测试改写原名。
 
-随后在桌面正式入口撤销该客户端，再运行同一命令加 `-ExpectRevoked`、另选新报告名；必须得到 not-authorized。需要继续使用时由用户重新正式配对到新的私有目录。新 stdio 进程会重新核对 PID、端口和 proof。实际桌面重启/端口变动须另做真实验证，合成测试不能替代。
+随后在桌面正式入口撤销该客户端，再运行同一命令加 `-ExpectRevoked`、另选新报告名；必须得到 not-authorized。需要继续使用时由用户重新正式配对到新的私有目录。新 stdio 进程会重新核对 PID、端口和 proof。实际桌面重启/端口变动本轮由 Sol 管理，当前只具备合成测试覆盖，不冒充真实重启验收。
 
 ## 保护与故障
 

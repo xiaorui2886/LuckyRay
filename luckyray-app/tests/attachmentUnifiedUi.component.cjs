@@ -143,7 +143,7 @@ const { chromium } = require(
     await page.goto(
       "http://127.0.0.1:" + server.address().port + "/?mode=linked",
     );
-    await page.getByText("暂无已登记笔记引用，附件仍保留。").waitFor();
+    await page.getByRole("button", { name: "加入素材库", exact: true }).waitFor();
     assert.equal(
       await page.getByText("移动或重命名文件", { exact: true }).count(),
       0,
@@ -152,10 +152,11 @@ const { chromium } = require(
     await page.getByRole('button',{name:'预览更新引用'}).waitFor();
     assert.equal(await page.getByRole('dialog').count(),0,'discovery never opens a dialog without a user action');
     await page.goto('http://127.0.0.1:' + server.address().port + '/?moves=2');
-    await page.getByText('暂无已登记笔记引用，附件仍保留。').waitFor();
+    await page.getByRole('button', { name: '加入素材库', exact: true }).waitFor();
     assert.equal(await page.getByRole('button',{name:'预览更新引用'}).count(),0,'ambiguous discovery never chooses a candidate');
     await page.goto('http://127.0.0.1:' + server.address().port + '/?noPath=1&ordinary=1');
-    await page.getByText('暂无已登记笔记引用；素材仍保留。').waitFor();
+    await page.waitForFunction(() => !document.querySelector('.material-attachment-details'));
+    assert.equal(await page.getByText('被 0 篇笔记引用', { exact: true }).count(), 0, 'empty references do not add a section to ordinary materials');
     assert.equal(await page.getByText('外部位置', { exact: true }).count(), 0, 'an ordinary material without a note-identity path is not an external attachment');
     assert.equal(await page.getByText('尚未登记位置', { exact: true }).count(), 0);
     assert.equal(await page.getByText('移动或重命名文件', { exact: true }).count(), 0, 'no move action without registered attachment location');

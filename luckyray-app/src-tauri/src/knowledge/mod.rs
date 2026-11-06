@@ -1258,6 +1258,33 @@ impl KnowledgeService {
         self.index.snapshot(&vault)
     }
 
+    /// Lazily builds the first snapshot for the exact Vault captured by this request.
+    pub(crate) fn ensure_index_snapshot(&self) -> Result<KnowledgeIndexSnapshot, KnowledgeError> {
+        let (vault, root_guard, identity, generation) = {
+            let _guard = self.mutation_lock.lock()
+                .map_err(|_| error("knowledge-lock-poisoned", "Knowledge service lock failed"))?;
+            let vault = self.current_vault_unlocked()?;
+            let root_guard = filesystem_directory_identity_guard(&vault.root)
+                .map_err(map_filesystem_identity_error)?;
+            root_guard.verify_current_path(&vault.root).map_err(map_filesystem_identity_error)?;
+            let identity = knowledge_target_identity(&vault, root_guard.identity())?;
+            let generation = self.index.generation()?;
+            (vault, root_guard, identity, generation)
+        };
+        let snapshot = self.index.ensure_snapshot_for_generation(&vault, generation)?;
+        {
+            let _guard = self.mutation_lock.lock()
+                .map_err(|_| error("knowledge-lock-poisoned", "Knowledge service lock failed"))?;
+            let current = self.current_vault_unlocked()?;
+            root_guard.verify_current_path(&current.root).map_err(map_filesystem_identity_error)?;
+            if knowledge_target_identity(&current, root_guard.identity())? != identity {
+                return Err(knowledge_target_not_current());
+            }
+            self.index.ensure_generation(generation)?;
+        }
+        Ok(snapshot)
+    }
+
     pub(crate) fn document_relations(
         &self,
         document_ref: &KnowledgeDocumentRef,
@@ -5637,6 +5664,98 @@ try {
             .unwrap_err();
         assert_eq!(failure.code, "knowledge-path-reparse-forbidden");
         assert_eq!(std::fs::read_to_string(outside).unwrap(), "outside");
+    }
+
+    #[test]
+    fn cold_index_snapshot_is_built_once_and_reused() {
+        let (service, root, vault) = registered_service("cold-index-ensure");
+        std::fs::write(root.join("Alpha.md"), "# Alpha\n").unwrap();
+        assert_eq!(service.index_snapshot().unwrap_err().code, "knowledge-index-not-ready");
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let service = service.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(std::thread::spawn(move || { barrier.wait(); service.ensure_index_snapshot() }));
+        }
+        barrier.wait();
+        for worker in workers {
+            let result = worker.join().unwrap().unwrap();
+            assert_eq!(result.vault_id, vault.id);
+            assert_eq!(result.documents.len(), 1);
+        }
+        assert_eq!(service.index_document_read_count(), 1);
+        service.ensure_index_snapshot().unwrap();
+        assert_eq!(service.index_document_read_count(), 1);
+    }
+
+    #[test]
+    fn warm_ensure_returns_snapshot_while_refresh_is_scanning() {
+        let (service, root, vault) = registered_service("warm-index-ensure-during-refresh");
+        std::fs::write(root.join("Alpha.md"), "# Before\n").unwrap();
+        let initial = service.refresh_index().unwrap();
+        std::fs::write(root.join("Alpha.md"), "# After\nchanged\n").unwrap();
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        service.set_before_index_document_read({
+            let entered = Arc::clone(&entered);
+            let release = Arc::clone(&release);
+            move || { entered.wait(); release.wait(); }
+        });
+        let refreshing = service.clone();
+        let refresh = std::thread::spawn(move || refreshing.refresh_index());
+        entered.wait();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reading = service.clone();
+        let read = std::thread::spawn(move || { let _ = sender.send(reading.ensure_index_snapshot()); });
+        let warm = receiver.recv_timeout(std::time::Duration::from_secs(3));
+        // Always release the scanner before asserting, so a regression fails
+        // rather than leaving the test process blocked on its worker threads.
+        release.wait();
+        refresh.join().unwrap().unwrap();
+        read.join().unwrap();
+        let warm = warm.expect("warm snapshot blocked on an ongoing index scan").unwrap();
+        assert_eq!(warm.vault_id, vault.id);
+        assert_eq!(warm.version, initial.version);
+        assert_eq!(warm.documents, initial.documents);
+    }
+
+    #[test]
+    fn cold_index_ensure_rejects_stale_generation_and_preserves_errors() {
+        let (service, root, vault) = registered_service("cold-index-stale");
+        std::fs::write(root.join("Alpha.md"), "# Alpha\n").unwrap();
+        let old_vault = service.current_vault_unlocked().unwrap();
+        let old_generation = service.index.generation().unwrap();
+        let (_, other) = create_registered_vault("cold-index-other");
+        service.register_current_vault(&other).unwrap();
+        service.register_current_vault(&vault).unwrap();
+        assert_eq!(service.index.ensure_snapshot_for_generation(&old_vault, old_generation).unwrap_err().code,
+            "knowledge-index-generation-stale");
+        service.index.fail_next_refresh();
+        assert_eq!(service.ensure_index_snapshot().unwrap_err().code, "knowledge-index-refresh-failed");
+        assert_eq!(service.ensure_index_snapshot().unwrap().vault_id, vault.id);
+    }
+
+    #[test]
+    fn cold_ensure_rejects_switch_during_scan_even_if_switched_back() {
+        let (service, root, vault) = registered_service("cold-index-switch");
+        std::fs::write(root.join("Alpha.md"), "# Alpha\n").unwrap();
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        service.set_before_index_document_read({
+            let entered = Arc::clone(&entered);
+            let release = Arc::clone(&release);
+            move || { entered.wait(); release.wait(); }
+        });
+        let worker = service.clone();
+        let pending = std::thread::spawn(move || worker.ensure_index_snapshot());
+        entered.wait();
+        let (_, other) = create_registered_vault("cold-index-switch-other");
+        service.register_current_vault(&other).unwrap();
+        service.register_current_vault(&vault).unwrap();
+        release.wait();
+        assert_eq!(pending.join().unwrap().unwrap_err().code, "knowledge-index-generation-stale");
+        assert_eq!(service.index_snapshot().unwrap_err().code, "knowledge-index-not-ready");
     }
 
     #[test]

@@ -85,11 +85,9 @@ function loadSettings(): SettingsMap {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     const loaded = raw ? { ...SETTINGS_DEFAULTS, ...flattenLegacy(JSON.parse(raw)) } : { ...SETTINGS_DEFAULTS };
-    const sanitized = sanitizeAiSettingsForBrowserStorage(loaded);
-    if (loaded["ai.apiKey"]) {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(sanitized));
-    }
-    return sanitized;
+    // Reading preferences (including startup locale) must not delete the sole
+    // legacy key before App confirms its protected native import succeeded.
+    return sanitizeAiSettingsForBrowserStorage(loaded);
   } catch {
     return { ...SETTINGS_DEFAULTS };
   }
@@ -119,7 +117,21 @@ export function useSavedLocale(): Locale {
 
 function saveSettings(data: SettingsMap) {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(sanitizeAiSettingsForBrowserStorage(data)));
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    const previous = raw ? JSON.parse(raw) : {};
+    const sanitized = sanitizeAiSettingsForBrowserStorage(data);
+    const nestedKey = previous.ai && typeof previous.ai === "object" && previous.ai.apiKey;
+    if (previous["ai.apiKey"] || nestedKey) {
+      // Persist ordinary preferences without replacing the existing recovery
+      // source. Only already-stored key fields survive, never new input keys.
+      const preserved = { ...previous, ...sanitized };
+      if (typeof previous["ai.apiKey"] === "string") preserved["ai.apiKey"] = previous["ai.apiKey"];
+      else delete preserved["ai.apiKey"];
+      if (previous.ai && typeof previous.ai === "object" && previous.ai.apiKey) preserved.ai = previous.ai;
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(preserved));
+    } else {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(sanitized));
+    }
   } catch {
     // Ignore storage failures in restricted webviews.
   }

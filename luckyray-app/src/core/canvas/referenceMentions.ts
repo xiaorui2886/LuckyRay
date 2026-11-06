@@ -93,8 +93,8 @@ export class ReferenceMentionError extends Error {
 export function resolveReferenceMentions(
   value: string,
   entries: readonly ReferenceEntry[],
+  labels = referenceMentionLabels(entries),
 ) {
-  const labels = referenceMentionLabels(entries);
   const mentions: { key: string; label: string; entry: ReferenceEntry; focus?: ReferenceFocus }[] = [];
   const prompt = parseReferenceMentions(value)
     .map((part) => {
@@ -129,10 +129,16 @@ export function compileMentionedPrompt(
   entries: readonly ReferenceEntry[],
   options: {
     includeNoteTitles?: boolean;
+    imageTagStyle?: "comfy";
     kind?: "text" | "image" | "video";
   } = {},
 ) {
-  const resolved = resolveReferenceMentions(value, entries);
+  const labels=referenceMentionLabels(entries);
+  if(options.imageTagStyle==='comfy') {
+    let imageNumber=0;
+    for(const entry of entries)if(!entry.issue&&entry.reference.kind==='image')labels.set(entry.key,`<Picture ${++imageNumber}>`);
+  }
+  const resolved = resolveReferenceMentions(value, entries,labels);
   if (options.kind === "text") {
     const focus = resolved.mentions.find((mention) => mention.focus);
     if (focus) throw new ReferenceMentionError(focus.key, "invalid");
@@ -151,7 +157,6 @@ export function compileMentionedPrompt(
   const mentionedKeys = new Set(
     resolved.mentions.map((mention) => mention.key),
   );
-  const labels = referenceMentionLabels(entries);
   const referenceAliases = valid.map((entry) =>
     mentionedKeys.has(entry.key) ? labels.get(entry.key)! : "",
   );

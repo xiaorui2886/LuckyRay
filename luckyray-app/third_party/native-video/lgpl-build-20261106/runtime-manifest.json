@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 2,
+  "status": "audited-local-lgpl-build",
+  "redistributionApproved": true,
+  "distributionScope": "private-acceptance-only",
+  "completeCorrespondingSource": true,
+  "component": "libmpv",
+  "sourceCommit": "3186d369f9f090cd1363be0ac46a037824b702c6",
+  "sourceUrl": "https://github.com/mpv-player/mpv/tree/3186d369f9f090cd1363be0ac46a037824b702c6",
+  "buildRepository": "LuckyRay local source build",
+  "buildId": "lgpl-1910-20261106",
+  "dll": {
+    "fileName": "libmpv-2.dll",
+    "size": 52959744,
+    "sha256": "6938419e82922251619c274c20b33186e70ad2408bb16b30f490433e8c1cbb17"
+  },
+  "files": {
+    "BUILD-INFO.json": {
+      "size": 3092,
+      "sha256": "e0ba00f27ebf4a911a37ae5ea86a8a4941b202277cb23a85dce6bfc665f5b236"
+    },
+    "build-lgpl.sh": {
+      "size": 8476,
+      "sha256": "389cd582b4ab090e0be6313634837ff81f0c58262a7d2f882fd22a7828d8451f"
+    },
+    "libmpv-2.dll": {
+      "size": 52959744,
+      "sha256": "6938419e82922251619c274c20b33186e70ad2408bb16b30f490433e8c1cbb17"
+    },
+    "licenses/bzip2-COPYING.txt": {
+      "size": 1895,
+      "sha256": "452871c08826ffb38b1a77960f23ef9c4b8b457887c3a6b691b7d42e882426e3"
+    },
+    "licenses/dav1d-BSD.txt": {
+      "size": 1317,
+      "sha256": "dd92c3c2247c5651606fc23a5e2d6a1ebc5ace9a3e49cbde0e12f05ad1cb1ee5"
+    },
+    "licenses/FFmpeg-LGPL-2.1.txt": {
+      "size": 26517,
+      "sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30"
+    },
+    "licenses/FFmpeg-LGPL-3.0.txt": {
+      "size": 7651,
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
+    },
+    "licenses/FFmpeg-LICENSE.md": {
+      "size": 4352,
+      "sha256": "e6dc72d5665a1ebd6dcc841de59278dad4ca77ecc47b03f1064a55c3e9ea8bb8"
+    },
+    "licenses/FreeType-BDF.txt": {
+      "size": 5972,
+      "sha256": "7984455e7e5a9faba3797c8bf095fbe10cc846316b7320aff8c58402e22b82fe"
+    },
+    "licenses/FreeType-FTL.txt": {
+      "size": 6743,
+      "sha256": "5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f"
+    },
+    "licenses/FreeType-LICENSE.txt": {
+      "size": 2149,
+      "sha256": "bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b"
+    },
+    "licenses/FreeType-PCF.txt": {
+      "size": 3311,
+      "sha256": "18d9782898d9eac04476e2f744678137b2a889689ed3e923e052fc396a86f86b"
+    },
+    "licenses/FriBidi-LGPL-2.1.txt": {
+      "size": 26440,
+      "sha256": "32434afcc8666ba060e111d715bfdb6c2d5dd8a35fa4d3ab8ad67d8f850d2f2b"
+    },
+    "licenses/GCC-GPL-3.0.txt": {
+      "size": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    "licenses/GCC-Runtime-Exception-3.1.txt": {
+      "size": 3323,
+      "sha256": "28e85c5aa4af9b4f1dfe6b4817aa3eefb3eaaee7fd735045016f29ccf50276a1"
+    },
+    "licenses/glslang-LICENSE.txt": {
+      "size": 54615,
+      "sha256": "17e70c676e1521ff3e4686f04a2053d93a7e28a33be8de7ec37ab0ff72feb677"
+    },
+    "licenses/GPL-3.0.txt": {
+      "size": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    "licenses/HarfBuzz-COPYING.txt": {
+      "size": 1971,
+      "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64"
+    },
+    "licenses/LCMS2-MIT.txt": {
+      "size": 1080,
+      "sha256": "6dbd60437f8ef91d8de1f08ad75882547fd4931bfcc3566a0735f28db1484d31"
+    },
+    "licenses/libass-ISC.txt": {
+      "size": 755,
+      "sha256": "f7e30699d02798351e7f839e3d3bfeb29ce65e44efa7735c225464c4fd7dfe9c"
+    },
+    "licenses/libplacebo-LGPL-2.1.txt": {
+      "size": 24478,
+      "sha256": "b3aa400aca6d2ba1f0bd03bd98d03d1fe7489a3bbb26969d72016360af8a5c9d"
+    },
+    "licenses/Lua-MIT.txt": {
+      "size": 1272,
+      "sha256": "ccdb1d380437ff52fe0763e02cb893f408f7baf743dea90198da230f1cdd363e"
+    },
+    "licenses/mingw-AUTHORS.txt": {
+      "size": 2398,
+      "sha256": "8f308316e7a94b8410f871868bd3948f126526dc1775aeee97a0e365f9a0fd9f"
+    },
+    "licenses/mingw-COPYING.txt": {
+      "size": 2326,
+      "sha256": "99a69660981156c21336fdb5661f89341b013c94e4bf9e1c7467b4745718397f"
+    },
+    "licenses/mingw-mingw-w64-libraries-winpthreads-COPYING.txt": {
+      "size": 2883,
+      "sha256": "63263614cdd29f2f93cba85e992f041b31f9fc7b4033692f31269489a8a1b177"
+    },
+    "licenses/mingw-w64-COPYING.txt": {
+      "size": 2326,
+      "sha256": "99a69660981156c21336fdb5661f89341b013c94e4bf9e1c7467b4745718397f"
+    },
+    "licenses/mpv-Copyright.txt": {
+      "size": 4096,
+      "sha256": "bfe9ee4cceabcb8ecbfadf208d04156f73d801e6a57369a5606bb8341e204a23"
+    },
+    "licenses/mpv-LGPL-2.1.txt": {
+      "size": 26410,
+      "sha256": "72b672113d642cbb8ef5dcc76938db801983c56e50b1400ab930f1a64d6dc8d9"
+    },
+    "licenses/shaderc-Apache-2.0.txt": {
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    "licenses/SPIRV-Cross-LICENSE.txt": {
+      "size": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "licenses/SPIRV-Headers-LICENSE.txt": {
+      "size": 23503,
+      "sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613"
+    },
+    "licenses/SPIRV-Tools-Apache-2.0.txt": {
+      "size": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "licenses/Vulkan-Headers-LICENSE.txt": {
+      "size": 495,
+      "sha256": "95ad366d23fadf701d355bc45fb8b82ae2d700239471d35d41286ac3b08ff903"
+    },
+    "licenses/winpthreads-COPYING.txt": {
+      "size": 2883,
+      "sha256": "63263614cdd29f2f93cba85e992f041b31f9fc7b4033692f31269489a8a1b177"
+    },
+    "licenses/zlib-ng-LICENSE.txt": {
+      "size": 867,
+      "sha256": "6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee"
+    },
+    "LICENSES.md": {
+      "size": 3177,
+      "sha256": "1bfb5efd747dfade748031152dabf1c0b22a50a1c2c1ac377cc7ce14e32bdb48"
+    },
+    "README.md": {
+      "size": 751,
+      "sha256": "54a826478bfa2b3673279576f4854801d3a695b5f24a827277e163240aa26ced"
+    },
+    "RELINK.zh-CN.md": {
+      "size": 2712,
+      "sha256": "7576837eeeabfbdccd943b90ebbaed81a38dd19bf50c6ef057c6f3915ce09e34"
+    },
+    "SOURCE-INDEX.json": {
+      "size": 5362045,
+      "sha256": "a80bdbf7f2aa6dd45ab4dee659d9d50a6f0bbdfccb53cab3ccbb11f6132a711f"
+    },
+    "sources.tar.xz": {
+      "size": 90803416,
+      "sha256": "6ef285e376973ac682553c77aa1518f31fac7b65219fb3332b36d96294f84d83"
+    }
+  },
+  "patentReview": "NOT_ASSESSED",
+  "publicReleaseApproved": false,
+  "applicationCodeAsset": "LuckyRay-1.9.10-source.zip",
+  "releaseGates": [
+    "Corresponding application source asset must accompany this installer",
+    "Private acceptance only; public/commercial codec patent assessment remains separate"
+  ]
+}

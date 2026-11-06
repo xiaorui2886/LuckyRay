@@ -19,7 +19,7 @@ $expectedNodeHash = [string]$authority.nodeRuntime.nodeExeSha256
 $expectedVersion = [string]$authority.runtimePackage.version
 
 if (-not $DestinationRoot) {
-  $DestinationRoot = Join-Path $repoRoot 'src-tauri\target\debug\lr-lsh\199-1\deepseek-harness'
+  $DestinationRoot = Join-Path $repoRoot 'src-tauri\target\debug\lr-lsh\1910-2\deepseek-harness'
 }
 if (-not $InputRoot) {
   $InputRoot = Join-Path $env:LOCALAPPDATA ("LuckyRay\verified-runtime-cache\inputs\{0}" -f $expectedVersion)
@@ -135,7 +135,9 @@ $validateRuntime = {
 }
 $publishRuntime = {
   param([string]$Root)
-  $nodeArchive = Join-Path $inputs 'node-v22.19.0-win-x64.zip'
+  $nodeVersion = [string]$authority.nodeRuntime.version
+  if ($nodeVersion -cnotin @('22.19.0', '24.22.2')) { throw 'dsh-dev-node-version-invalid' }
+  $nodeArchive = Join-Path $inputs ("node-v{0}-win-x64.zip" -f $nodeVersion)
   $pnpmTarball = Join-Path $inputs 'pnpm-11.7.0.tgz'
   $offlineStore = Join-Path $inputs 'offline-store'
   if (-not (Test-Path -LiteralPath $nodeArchive -PathType Leaf) -or

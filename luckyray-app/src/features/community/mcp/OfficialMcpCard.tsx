@@ -18,8 +18,8 @@ const copy = defineMessages({
   title: { "zh-CN": "LuckyRay MCP", "en-US": "LuckyRay MCP" },
   official: { "zh-CN": "官方插件", "en-US": "Official plugin" },
   intro: {
-    "zh-CN": "把网页里的灵感，直接带进你的素材库与知识库。",
-    "en-US": "Bring ideas from the web straight into your libraries.",
+    "zh-CN": "连接网页 AI 与素材库、知识库。",
+    "en-US": "Connect web AI to your materials and notes.",
   },
   detail: {
     "zh-CN":
@@ -362,7 +362,6 @@ export default function OfficialMcpCard() {
             <p>{t("intro")}</p>
           </div>
         </div>
-        <p className="community-card-desc">{t("detail")}</p>
         <div className="community-card-actions">
           <span
             className={`community-status${label === "ready" ? " is-on" : ""}`}

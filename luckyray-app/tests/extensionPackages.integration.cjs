@@ -36,7 +36,13 @@ let child;
  }
  await assert.rejects(()=>packages.enable(themeId,state.revision-1),/revision-conflict/);
  const badTemplate=JSON.parse(template);badTemplate.resource.markdown='![remote](https://example.invalid/x)';await assert.rejects(()=>packages.update(JSON.stringify(badTemplate),state.revision),/unsafe-template/);
- await assert.rejects(()=>packages.install('x'.repeat(131073),state.revision),/too-large/);
+ // API 2 desktop envelopes may be 16 MiB; theme/script/template packages
+ // still have the native 128 KiB budget. Verify both gates without treating
+ // a short malformed JSON document as an oversized desktop envelope.
+ await assert.rejects(()=>packages.install('x'.repeat(16*1024*1024+1),state.revision),/too-large/);
+ const largeTheme=JSON.parse(theme);largeTheme.resource.padding='x'.repeat(131073);
+ await assert.rejects(()=>packages.install(JSON.stringify(largeTheme),state.revision),/too-large/);
+ assert.deepEqual(await packages.refresh(),state,'both budget failures preserve the registry');
  console.log('PASS native install, idempotence, module compatibility, bad paths/resources/types, stale revisions');
  const saved=api.writeSavedSettingsPatch({'general.theme':'rose-tea','appearance.accentColor':'#123456','appearance.fontSize':'lg'});
  // The shared singleton is the same instance read by applyGlobalSettings.
@@ -51,7 +57,7 @@ let child;
  state=await packages.disable(themeId,state.revision);apply();assert.equal(document.documentElement.dataset.theme,'rose-tea');assert.deepEqual(Object.fromEntries(document.documentElement.styles),before);
  packages.previewTheme(themeId);state=await packages.uninstall(themeId,state.revision);assert.equal(packages.activeTheme(),null);apply();assert.deepEqual(Object.fromEntries(document.documentElement.styles),before);
  state=await packages.install(theme,state.revision);state=await packages.enable(themeId,state.revision);
- const nextTheme=JSON.parse(theme);nextTheme.manifest.version='1.0.1';nextTheme.resource.tokens['--theme-app-bg']='#e0eadd';state=await packages.update(JSON.stringify(nextTheme),state.revision);assert.equal(packages.activeTheme().tokens['--theme-app-bg'],'#e0eadd');assert.equal(state.packages.find(p=>p.package.manifest.id===themeId).enabled,true);
+ const nextTheme=JSON.parse(theme);nextTheme.manifest.version='1.0.1';nextTheme.resource.tokens['--theme-app-bg']='#e0eadd';await assert.rejects(()=>packages.update(JSON.stringify(nextTheme),state.revision),/publisher-approval-required/);state=await packages.update(JSON.stringify(nextTheme),state.revision,true);assert.equal(packages.activeTheme().tokens['--theme-app-bg'],'#e0eadd');assert.equal(state.packages.find(p=>p.package.manifest.id===themeId).enabled,true);
  console.log('PASS preview full restore, persistent enabled theme, disable/uninstall restore, atomic version update');
  state=await packages.enable(templateId,state.revision);
  api.source.activateKnowledgeWritesForVault({mode:'real-vault',vaultId:'browser-preview'});

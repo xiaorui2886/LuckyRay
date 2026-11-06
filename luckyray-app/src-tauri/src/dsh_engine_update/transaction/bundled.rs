@@ -7,6 +7,9 @@ use crate::dsh_runtime_seal::BundledRuntimeIdentity;
 const BUNDLED_ACTIVE_SCHEMA: u8 = 2;
 const BUNDLED_KIND: &str = "sealed-desktop-bundle";
 const QUALIFIED_FROM: &[&str] = &["0.2.0-rc.2", "0.2.1-rc.2"];
+const PREVIOUS_BUNDLE_VERSION: &str = "0.2.1-rc.3";
+const PREVIOUS_LAUNCH_SHA256: &str = "4f6f3330a056b58f8ffa67d4598cac8be621ad1cbb2d46ec2ba09714226c158a";
+const PREVIOUS_RUNTIME_SHA256: &str = "9158395f1af30cd19fa45ac95854767fc1cb3f875ddadf3728f6fa8b3db61f2d";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -33,8 +36,8 @@ fn read_record(path: &Path) -> Result<Vec<u8>, StoreError> {
 
 impl UpdateStore {
     /// Called while holding the existing single-writer lock, before any host
-    /// process can read or write this profile. Only the two reviewed rc.2 data
-    /// contracts may advance to this rc.3 bundle. Unknown/newer state blocks.
+    /// process can read or write this profile. Only the reviewed rc.2 data
+    /// contracts and the exact previous rc.3 desktop seal may advance to rc.1.
     pub(crate) fn adopt_desktop_bundle(&self, bundle_root: &Path) -> Result<(), StoreError> {
         let identity = crate::dsh_runtime_seal::bundled_runtime_identity()
             .map_err(|_| StoreError::Invalid)?;
@@ -50,14 +53,15 @@ impl UpdateStore {
         verify_bundle: impl FnOnce() -> Result<(), StoreError>,
     ) -> Result<(), StoreError> {
         // This qualification must be explicitly renewed for a later bundle.
-        if identity.launch.package_version != "0.2.1-rc.3" {
+        if identity.launch.package_version != "0.2.2-rc.1" {
             return Err(StoreError::RecoveryRequired);
         }
-        if self.bundled_active_with(identity, &verify)?.is_some() { return Ok(()); }
+        let previous_bundle = self.qualified_previous_bundle(identity, &verify)?;
+        if previous_bundle.is_none() && self.bundled_active_with(identity, &verify)?.is_some() { return Ok(()); }
         if self.pending_switch() || self.root.join(QUIESCENT_SWITCH_FILE).exists() {
             return Err(StoreError::RecoveryRequired);
         }
-        let previous = self.load_active_with_verifier(&verify)?;
+        let previous = if previous_bundle.is_some() { None } else { self.load_active_with_verifier(&verify)? };
         if let Some(installed) = &previous {
             // A separately admitted equal/newer engine remains selected. A
             // desktop reinstall must never downgrade it to its older bundle.
@@ -73,12 +77,20 @@ impl UpdateStore {
         }
         // No current marker + no journal is the pre-update bundled/clean-install
         // path. A missing pointer after an activation is rejected by load_active.
-        let previous_active = previous.as_ref().map(|_| read_record(&self.root.join(ACTIVE_FILE))).transpose()?;
-        let previous_journal = previous.as_ref().map(|_| read_record(&self.root.join(JOURNAL_FILE))).transpose()?;
+        let (previous_active, previous_journal) = if let Some(old) = &previous_bundle {
+            // Retain the original signed ancestry rather than inventing a new
+            // recursive pointer format. The old desktop marker is archived too.
+            (old.previous_active_sha256.as_deref().map(|sha| self.archived_bundle_record(sha)).transpose()?,
+             old.previous_journal_sha256.as_deref().map(|sha| self.archived_bundle_record(sha)).transpose()?)
+        } else {
+            (previous.as_ref().map(|_| read_record(&self.root.join(ACTIVE_FILE))).transpose()?,
+             previous.as_ref().map(|_| read_record(&self.root.join(JOURNAL_FILE))).transpose()?)
+        };
         verify_bundle()?;
         // Immutable copies precede the single atomic commit. An interruption
         // here leaves the old selection untouched. After the commit only this
         // exact bundle may open the profile; there is no old-engine fallback.
+        if previous_bundle.is_some() { self.archive_bundle_record(&read_record(&self.root.join(ACTIVE_FILE))?)?; }
         let active_sha = previous_active.as_deref().map(|bytes| self.archive_bundle_record(bytes)).transpose()?;
         let journal_sha = previous_journal.as_deref().map(|bytes| self.archive_bundle_record(bytes)).transpose()?;
         atomic_write_json(&self.root.join(ACTIVE_FILE), &BundledActive {
@@ -92,6 +104,27 @@ impl UpdateStore {
         // Keep transaction.json and all versions/data intact. The archive binds
         // its exact previous bytes; the schema-2 active marker also makes older
         // desktop executables fail closed rather than silently downgrade.
+    }
+
+    fn qualified_previous_bundle(
+        &self,
+        target: &BundledRuntimeIdentity,
+        verify: impl Fn(&[u8]) -> Result<Candidate, super::super::AdmissionError>,
+    ) -> Result<Option<BundledActive>, StoreError> {
+        let path = self.root.join(ACTIVE_FILE);
+        if !path.exists() { return Ok(None); }
+        let header: serde_json::Value = serde_json::from_slice(&read_record(&path)?)
+            .map_err(|_| StoreError::RecoveryRequired)?;
+        if header["schema"] != BUNDLED_ACTIVE_SCHEMA || header["version"] != PREVIOUS_BUNDLE_VERSION {
+            return Ok(None);
+        }
+        let mut previous = target.clone();
+        previous.launch.package_version = PREVIOUS_BUNDLE_VERSION.into();
+        previous.launch_manifest_sha256 = PREVIOUS_LAUNCH_SHA256.into();
+        previous.runtime_manifest_sha256 = PREVIOUS_RUNTIME_SHA256.into();
+        // This also validates every archived signed record and the exact live
+        // journal. A name or version alone never qualifies an old installation.
+        self.bundled_active_with(&previous, verify)
     }
 
     fn archive_bundle_record(&self, bytes: &[u8]) -> Result<String, StoreError> {
@@ -220,6 +253,74 @@ mod tests {
         store.mark_healthy(&installed).unwrap();
         key
     }
+    fn previous_rc3_identity() -> BundledRuntimeIdentity {
+        let mut identity = crate::dsh_runtime_seal::bundled_runtime_identity().unwrap();
+        identity.launch.package_version = "0.2.1-rc.3".into();
+        identity.launch_manifest_sha256 = "4f6f3330a056b58f8ffa67d4598cac8be621ad1cbb2d46ec2ba09714226c158a".into();
+        identity.runtime_manifest_sha256 = "9158395f1af30cd19fa45ac95854767fc1cb3f875ddadf3728f6fa8b3db61f2d".into();
+        identity
+    }
+    #[test]
+    fn qualified_previous_rc3_bundle_advances_without_changing_data_or_archived_evidence() {
+        for signed_predecessor in [false, true] {
+            let target = crate::dsh_runtime_seal::bundled_runtime_identity().unwrap();
+            let old = previous_rc3_identity();
+            let temp = tempfile::tempdir().unwrap();
+            let original = user_files(temp.path());
+            let store = UpdateStore::open(temp.path()).unwrap();
+            let key = if signed_predecessor { healthy(&store, "0.2.1-rc.2") } else { vec![] };
+            let active_sha = if signed_predecessor {
+                Some(store.archive_bundle_record(&read_record(&store.root.join(ACTIVE_FILE)).unwrap()).unwrap())
+            } else { None };
+            let journal_sha = if signed_predecessor {
+                Some(store.archive_bundle_record(&read_record(&store.root.join(JOURNAL_FILE)).unwrap()).unwrap())
+            } else { None };
+            atomic_write_json(&store.root.join(ACTIVE_FILE), &BundledActive {
+                schema: BUNDLED_ACTIVE_SCHEMA, kind: BUNDLED_KIND.into(),
+                version: old.launch.package_version.clone(), launch_manifest_sha256: old.launch_manifest_sha256,
+                runtime_manifest_sha256: old.runtime_manifest_sha256, data_compatibility: "no-migration".into(),
+                previous_active_sha256: active_sha.clone(), previous_journal_sha256: journal_sha.clone(),
+            }).unwrap();
+            let old_record = read_record(&store.root.join(ACTIVE_FILE)).unwrap();
+            let mut checked = false;
+            store.adopt_bundle_with(&target, |b| verify(b, &key), || { checked = true; Ok(()) }).unwrap();
+            assert!(checked, "new target must pass full closure admission");
+            let current = store.bundled_active_with(&target, |b| verify(b, &key)).unwrap().unwrap();
+            assert_eq!(store.archived_bundle_record(&digest(&old_record)).unwrap(), old_record);
+            assert_eq!(current.previous_active_sha256, active_sha, "original signed ancestry is retained");
+            assert_eq!(current.previous_journal_sha256, journal_sha);
+            drop(store);
+            let store = UpdateStore::open(temp.path()).unwrap();
+            store.adopt_bundle_with(&target, |b| verify(b, &key), || panic!("same target already admitted")).unwrap();
+            assert!(store.bundled_active_with(&target, |b| verify(b, &key)).unwrap().is_some());
+            for (path, bytes) in original { assert_eq!(fs::read(path).unwrap(), bytes); }
+        }
+    }
+    #[test]
+    fn unqualified_previous_bundle_and_pending_state_never_advance() {
+        for mode in ["launch", "runtime", "data", "unknown", "pending"] {
+            let target = crate::dsh_runtime_seal::bundled_runtime_identity().unwrap();
+            let old = previous_rc3_identity();
+            let temp = tempfile::tempdir().unwrap(); let store = UpdateStore::open(temp.path()).unwrap();
+            let mut record = BundledActive {
+                schema: BUNDLED_ACTIVE_SCHEMA, kind: BUNDLED_KIND.into(), version: old.launch.package_version,
+                launch_manifest_sha256: old.launch_manifest_sha256, runtime_manifest_sha256: old.runtime_manifest_sha256,
+                data_compatibility: "no-migration".into(), previous_active_sha256: None, previous_journal_sha256: None,
+            };
+            match mode {
+                "launch" => record.launch_manifest_sha256 = "f".repeat(64),
+                "runtime" => record.runtime_manifest_sha256 = "f".repeat(64),
+                "data" => record.data_compatibility = "unknown".into(),
+                "unknown" => record.version = "0.2.1-rc.99".into(),
+                "pending" => fs::write(store.root.join(PENDING_FILE), b"pending").unwrap(),
+                _ => unreachable!(),
+            }
+            atomic_write_json(&store.root.join(ACTIVE_FILE), &record).unwrap();
+            let before = read_record(&store.root.join(ACTIVE_FILE)).unwrap();
+            assert!(store.adopt_bundle_with(&target, |_| panic!("not a signed predecessor"), || panic!("unqualified")).is_err(), "{mode}");
+            assert_eq!(read_record(&store.root.join(ACTIVE_FILE)).unwrap(), before, "{mode}");
+        }
+    }
     #[test]
     fn qualified_rc2_adoption_preserves_signed_records_and_all_data_and_reopens() {
         let identity = crate::dsh_runtime_seal::bundled_runtime_identity().unwrap();
@@ -264,7 +365,7 @@ mod tests {
             artifact_sha256: "b".repeat(64), signed_envelope: "not-activated".into(),
         }).unwrap();
         store.write_journal(&Journal { schema: 1, from_version: identity.launch.package_version.clone(),
-            to_version: "0.2.2-rc.1".into(), artifact_sha256: "b".repeat(64),
+            to_version: "0.2.2-rc.2".into(), artifact_sha256: "b".repeat(64),
             previous_artifact_sha256: None, backup_receipt_sha256: "d".repeat(64), phase: Phase::Prepared,
         }).unwrap();
         let prepared = read_record(&store.root.join(JOURNAL_FILE)).unwrap();

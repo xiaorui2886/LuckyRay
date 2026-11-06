@@ -40,7 +40,7 @@ use windows::Win32::System::JobObjects::{
 use windows::Win32::System::Pipes::CreatePipe;
 #[cfg(all(windows, feature = "browser-host-runtime"))]
 use windows::Win32::System::Threading::{
-    CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess, InitializeProcThreadAttributeList,
+    CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess, GetProcessTimes, InitializeProcThreadAttributeList,
     TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject, CREATE_NO_WINDOW,
     CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST,
     PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
@@ -181,6 +181,22 @@ impl OwnedProcess {
     }
     /// Command workers require an actual successful exit, not just a final
     /// stdout row. Product readiness remains owned by its existing protocol.
+    pub(crate) fn exit_code(&self) -> Result<Option<u32>,OwnedProcessError> {
+        if self.is_running() {return Ok(None);}
+        let mut code=0;
+        unsafe {GetExitCodeProcess(self.handle.raw(),&mut code).map_err(|_|OwnedProcessError)?;}
+        Ok(Some(code))
+    }
+    /// The OS-recorded primary-process exit time, independent of polling order.
+    pub(crate) fn exit_time(&self) -> Result<u64, OwnedProcessError> {
+        if self.is_running() { return Err(OwnedProcessError); }
+        let mut created = windows::Win32::Foundation::FILETIME::default();
+        let mut exited = windows::Win32::Foundation::FILETIME::default();
+        let mut kernel = windows::Win32::Foundation::FILETIME::default();
+        let mut user = windows::Win32::Foundation::FILETIME::default();
+        unsafe { GetProcessTimes(self.handle.raw(), &mut created, &mut exited, &mut kernel, &mut user).map_err(|_| OwnedProcessError)?; }
+        Ok((u64::from(exited.dwHighDateTime) << 32) | u64::from(exited.dwLowDateTime))
+    }
     pub(crate) fn succeeded(&self) -> bool {
         if self.is_running() { return false; }
         let mut code = u32::MAX;
@@ -349,43 +365,87 @@ pub(crate) fn spawn_in_owned_job(
     environment: Vec<(OsString, OsString)>,
     force_prelaunch_job_failure: bool,
 ) -> Result<AtomicSpawn, OwnedProcessError> {
-    let job = OwnedJob::create()?;
-    let mut attributes = ProcThreadAttributeList::new(2)?;
+    for argument in arguments {
+        let text=argument.to_string_lossy();
+        if text.is_empty() || text.len()>128 || !text.bytes().all(|b|b.is_ascii_alphanumeric() || matches!(b,b'-'|b'_'|b'.')) { return Err(OwnedProcessError); }
+    }
+    spawn_in_owned_job_with_argv(executable,arguments,current_dir,environment,force_prelaunch_job_failure)
+}
+
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+pub(crate) fn spawn_in_owned_job_with_argv(
+    executable: &Path,
+    arguments: &[OsString],
+    current_dir: &Path,
+    environment: Vec<(OsString, OsString)>,
+    force_prelaunch_job_failure: bool,
+) -> Result<AtomicSpawn, OwnedProcessError> {
+    spawn_in_owned_job_with_argv_detailed(executable, arguments, current_dir, environment, force_prelaunch_job_failure)
+        .map_err(|_| OwnedProcessError)
+}
+
+/// Safe diagnostics: stage and optional Windows error code only; no paths,
+/// arguments, environment values, or OS error text are returned to extensions.
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+#[derive(Debug)]
+pub(crate) struct OwnedSpawnError {
+    pub(crate) stage: &'static str,
+    pub(crate) code: Option<i32>,
+}
+
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+impl OwnedSpawnError {
+    fn step(stage: &'static str) -> Self { Self { stage, code: None } }
+    fn windows(stage: &'static str, error: windows::core::Error) -> Self {
+        Self { stage, code: Some(error.code().0) }
+    }
+}
+
+#[cfg(all(windows, feature = "browser-host-runtime"))]
+pub(crate) fn spawn_in_owned_job_with_argv_detailed(
+    executable: &Path,
+    arguments: &[OsString],
+    current_dir: &Path,
+    environment: Vec<(OsString, OsString)>,
+    force_prelaunch_job_failure: bool,
+) -> Result<AtomicSpawn, OwnedSpawnError> {
+    let job = OwnedJob::create().map_err(|_| OwnedSpawnError::step("job"))?;
+    let mut attributes = ProcThreadAttributeList::new(2).map_err(|_| OwnedSpawnError::step("attributes"))?;
     let job_handle = job.raw();
     attributes.update(
         PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
         (&job_handle as *const HANDLE).cast(),
         std::mem::size_of::<HANDLE>(),
-    )?;
+    ).map_err(|_| OwnedSpawnError::step("job-attribute"))?;
 
     // This test seam fails before CreateProcessW. It proves child code cannot
     // run when atomic Job binding setup is rejected.
     if force_prelaunch_job_failure {
-        return Err(OwnedProcessError);
+        return Err(OwnedSpawnError::step("prelaunch"));
     }
 
-    let stdin_pipe = WindowsPipe::create()?;
-    let stdout_pipe = WindowsPipe::create()?;
-    let stderr_pipe = WindowsPipe::create()?;
+    let stdin_pipe = WindowsPipe::create().map_err(|_| OwnedSpawnError::step("stdin-pipe"))?;
+    let stdout_pipe = WindowsPipe::create().map_err(|_| OwnedSpawnError::step("stdout-pipe"))?;
+    let stderr_pipe = WindowsPipe::create().map_err(|_| OwnedSpawnError::step("stderr-pipe"))?;
     unsafe {
         SetHandleInformation(
             stdout_pipe.read.raw(),
             HANDLE_FLAG_INHERIT.0,
             HANDLE_FLAGS(0),
         )
-        .map_err(|_| OwnedProcessError)?;
+        .map_err(|e| OwnedSpawnError::windows("stdout-handle", e))?;
         SetHandleInformation(
             stderr_pipe.read.raw(),
             HANDLE_FLAG_INHERIT.0,
             HANDLE_FLAGS(0),
         )
-        .map_err(|_| OwnedProcessError)?;
+        .map_err(|e| OwnedSpawnError::windows("stderr-handle", e))?;
         SetHandleInformation(
             stdin_pipe.write.raw(),
             HANDLE_FLAG_INHERIT.0,
             HANDLE_FLAGS(0),
         )
-        .map_err(|_| OwnedProcessError)?;
+        .map_err(|e| OwnedSpawnError::windows("stdin-handle", e))?;
     }
     let inherited = [
         stdin_pipe.read.raw(),
@@ -396,29 +456,21 @@ pub(crate) fn spawn_in_owned_job(
         PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
         inherited.as_ptr().cast(),
         std::mem::size_of_val(&inherited),
-    )?;
+    ).map_err(|_| OwnedSpawnError::step("handle-attribute"))?;
 
-    let executable_wide = encode_wide_null(executable.as_os_str())?;
-    let current_dir_wide = encode_wide_null(current_dir.as_os_str())?;
+    let executable_wide = encode_wide_null(executable.as_os_str()).map_err(|_| OwnedSpawnError::step("executable"))?;
+    let current_dir_wide = encode_wide_null(current_dir.as_os_str()).map_err(|_| OwnedSpawnError::step("cwd"))?;
     let mut command_line = Vec::with_capacity(executable_wide.len() + 64);
     command_line.push(b'"' as u16);
     command_line.extend_from_slice(&executable_wide[..executable_wide.len() - 1]);
     command_line.push(b'"' as u16);
     for argument in arguments {
-        let bytes = argument.to_string_lossy();
-        if bytes.is_empty()
-            || bytes.len() > 128
-            || !bytes
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        {
-            return Err(OwnedProcessError);
-        }
         command_line.push(b' ' as u16);
-        command_line.extend(argument.encode_wide());
+        command_line.extend(quote_windows_argument(&argument.encode_wide().collect::<Vec<_>>()).map_err(|_| OwnedSpawnError::step("argument"))?);
     }
+    if command_line.len()>32766 {return Err(OwnedSpawnError::step("command-length"));}
     command_line.push(0);
-    let environment = encode_environment(environment)?;
+    let environment = encode_environment(environment).map_err(|_| OwnedSpawnError::step("environment"))?;
 
     let mut startup = STARTUPINFOEXW::default();
     startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
@@ -446,10 +498,10 @@ pub(crate) fn spawn_in_owned_job(
             &startup.StartupInfo,
             &mut process,
         )
-        .map_err(|_| OwnedProcessError)?;
+        .map_err(|e| OwnedSpawnError::windows("create-process", e))?;
     }
-    let process_handle = OwnedWindowsHandle::new(process.hProcess)?;
-    let thread_handle = OwnedWindowsHandle::new(process.hThread)?;
+    let process_handle = OwnedWindowsHandle::new(process.hProcess).map_err(|_| OwnedSpawnError::step("process-handle"))?;
+    let thread_handle = OwnedWindowsHandle::new(process.hThread).map_err(|_| OwnedSpawnError::step("thread-handle"))?;
     drop(thread_handle);
     let owned_process = OwnedProcess {
         handle: process_handle,
@@ -547,5 +599,33 @@ Start-Sleep -Seconds 120
         assert!(result.is_err());
         assert_eq!(CREATE_PROCESS_ATTEMPTS.load(Ordering::Acquire), before);
         let _ = fs::remove_dir_all(temp);
+    }
+}
+
+
+/// Standard Windows CRT quoting; no command shell is involved.
+pub(crate) fn quote_windows_argument(input:&[u16])->Result<Vec<u16>,OwnedProcessError>{
+    if input.contains(&0){return Err(OwnedProcessError);}
+    let mut out=vec![34];let mut slashes=0;
+    for &ch in input {
+        if ch==92 {slashes+=1;continue;}
+        if ch==34 {out.extend(std::iter::repeat(92).take(slashes*2+1));out.push(ch);}
+        else {out.extend(std::iter::repeat(92).take(slashes));out.push(ch);}
+        slashes=0;
+    }
+    out.extend(std::iter::repeat(92).take(slashes*2));out.push(34);Ok(out)
+}
+
+#[cfg(test)]
+mod desktop_argument_tests {
+    use super::quote_windows_argument;
+    fn quote(value:&str)->String{String::from_utf16(&quote_windows_argument(&value.encode_utf16().collect::<Vec<_>>()).unwrap()).unwrap()}
+    #[test] fn trusted_arguments_preserve_empty_spaces_quotes_unicode_and_trailing_slash(){
+        assert_eq!(quote(""),"\"\"");
+        assert_eq!(quote("a b"),"\"a b\"");
+        assert_eq!(quote("a\"b"),"\"a\\\"b\"");
+        assert_eq!(quote("C:\\folder\\"),"\"C:\\folder\\\\\"");
+        assert_eq!(quote("中文"),"\"中文\"");
+        assert!(quote_windows_argument(&[0]).is_err());
     }
 }

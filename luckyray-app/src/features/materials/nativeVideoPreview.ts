@@ -32,6 +32,10 @@ function request<T>(input: object, signal: AbortSignal, foreground = false): Pro
 }
 export const nativeVideoMetadata = (libraryId: string, assetId: string, signal: AbortSignal, foreground = false) => request<NativeVideoMetadata>({ op: "metadata", libraryId, assetId }, signal, foreground);
 export const nativeVideoThumbnail = (libraryId: string, assetId: string, revision: string, seconds: number, signal: AbortSignal, purpose: "filmstrip" | "cover" = "filmstrip") => request<{ src: string; time: number }>({ op: "thumbnail", libraryId, assetId, revision, seconds, cover: purpose === "cover" }, signal);
+// Canvas covers use the same two host slots as library/filmstrip thumbnails.
+// A separate canvas queue would allow a third decode at page entry, which the
+// host rejects as busy. Visible canvas stills precede queued background tiles.
+export const nativeComfyVideoCover = (resultName: string, signal: AbortSignal) => request<NativeVideoMetadata & {src: string}>({op: 'comfyCover', resultName}, signal, true);
 
 export async function nativeFilmstrip(libraryId: string, assetId: string, revision: string, signal: AbortSignal, count: number, onProgress: (rows: FilmThumbnail[]) => void): Promise<FilmThumbnail[]> {
   const rows: FilmThumbnail[] = [], local = new AbortController();

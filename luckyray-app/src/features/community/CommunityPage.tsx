@@ -1,3 +1,4 @@
+import { DesktopPackagesPanel } from "./DesktopExtensions";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -21,6 +22,7 @@ import OfficialMcpCard from "./mcp/OfficialMcpCard";
 import CollectorServiceStatus from "./CollectorServiceStatus";
 import { ScriptPackagesPanel } from "./ScriptPlugins";
 import { PackagesPanel, extensionErrorCopyKey } from "./ExtensionPackagesPanel";
+import { confirmPublisher } from "./publisherApproval";
 import { TemplateFlow } from "./TemplateFlow";
 import { EXT_PACKAGE_MESSAGES } from "./extensionMessages";
 import "./community.css";
@@ -180,6 +182,8 @@ function CommunityPageContent() {
   const [activeTab, setActiveTab] = useState<CommunityTab>(initialCommunityTab);
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [loading, setLoading] = useState(true);
+  const [capabilityReady, setCapabilityReady] = useState(false);
+  const capabilityInFlight = useRef(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<{ text: string; scope?: "copy" } | null>(null);
   const copyAttempt = useRef(0);
@@ -272,15 +276,18 @@ function CommunityPageContent() {
   }, [notifyPackages, t]);
 
   const load = useCallback(async () => {
+    if (capabilityInFlight.current) return;
+    capabilityInFlight.current = true;
     setLoading(true);
-    setCapabilityFailed(false);
     setError(null);
     try {
       setCapabilities(await listCapabilities());
+      setCapabilityReady(true);
+      setCapabilityFailed(false);
     } catch {
-      setCapabilities([]);
       setCapabilityFailed(true);
     } finally {
+      capabilityInFlight.current = false;
       setLoading(false);
     }
   }, [t]);
@@ -305,9 +312,11 @@ function CommunityPageContent() {
     try {
       const text = await file.text(); const parsed = parseLocalPackage(text);
       const current = await extensionPackages.refresh();
-      const existing = current.packages.some((entry) => entry.package.manifest.id === parsed.manifest.id);
-      await (existing ? extensionPackages.update(text, current.revision) : extensionPackages.install(text, current.revision));
-      selectTab(parsed.manifest.type === "script" ? "extensions" : parsed.manifest.type === "theme" ? "packages" : "templates");
+      const existing = current.packages.find((entry) => entry.package.manifest.id === parsed.manifest.id);
+      const approved = await confirmPublisher(existing, parsed, t);
+      if (approved === null) return;
+      await (existing ? extensionPackages.update(text, current.revision, approved) : extensionPackages.install(text, current.revision, approved));
+      selectTab(["script","desktop"].includes(parsed.manifest.type) ? "extensions" : parsed.manifest.type === "theme" ? "packages" : "templates");
       setQuery("");
       notifyPackages("info", t(existing ? "pack.updated" : "pack.installed", { name: parsed.manifest.name }));
     } catch (error) { notifyPackages("error", t(extensionErrorCopyKey(error))); }
@@ -348,13 +357,13 @@ function CommunityPageContent() {
   }, [locale, notifyPackages, t]);
 
   const clearFilters = () => { setQuery(""); setFilter("all"); setTemplateFilter("all"); searchRef.current?.focus(); };
-  const packageCount = (type: "script" | "theme" | "template") => registry.packages.filter(item => item.package.manifest.type === type).length;
-  const counts: Record<CommunityTab, number> = { extensions: packageCount("script"), packages: packageCount("theme"), templates: TEMPLATES.length + packageCount("template") + groups.workflows.length, skills: groups.skills.length, status: groups.extensions.length };
-  const countReady = (tab: CommunityTab) => tab === "templates" ? registry.ready && !loading && !capabilityFailed : tab === "extensions" || tab === "packages" ? registry.ready : !loading && !capabilityFailed;
-  const statusItems = activeTab === "skills" ? groups.skills : activeTab === "status" ? groups.extensions : registry.packages.filter(item => item.package.manifest.type === (activeTab === "packages" ? "theme" : "script"));
+  const packageCount = (type: "script" | "theme" | "template" | "desktop") => registry.packages.filter(item => item.package.manifest.type === type).length;
+  const counts: Record<CommunityTab, number> = { extensions: packageCount("script") + packageCount("desktop"), packages: packageCount("theme"), templates: TEMPLATES.length + packageCount("template") + groups.workflows.length, skills: groups.skills.length, status: groups.extensions.length };
+  const countReady = (tab: CommunityTab) => tab === "templates" ? registry.ready && capabilityReady : tab === "extensions" || tab === "packages" ? registry.ready : capabilityReady;
+  const statusItems = activeTab === "skills" ? groups.skills : activeTab === "status" ? groups.extensions : registry.packages.filter(item => activeTab === "packages" ? item.package.manifest.type === "theme" : ["script","desktop"].includes(item.package.manifest.type));
   const enabledCount = statusItems.filter(item => item.enabled).length;
   const filteredTemplates = TEMPLATES.filter(template => `${template.id} ${t(template.nameKey)} ${t(template.descKey)}`.toLowerCase().includes(query.trim().toLowerCase()));
-  const capabilityProps = { loading, failed: capabilityFailed, query, filter, onRetry: load, onClear: clearFilters, onDetail: setCapabilityDetail };
+  const capabilityProps = { loading, ready: capabilityReady, failed: capabilityFailed, query, filter, onRetry: load, onClear: clearFilters, onDetail: setCapabilityDetail };
   const templateFilters: Array<{ id: CommunityTemplateFilter; label: string; count?: number }> = [
     { id: "all", label: t("community.all"), count: counts.templates },
     { id: "builtin", label: t("community.builtin"), count: TEMPLATES.length },
@@ -372,7 +381,7 @@ function CommunityPageContent() {
       <div className="community-rail">
       <div className="community-toolbar">
       <header className="page-header editorial-page-heading">
-        <div><h1>{t("header.title")}</h1><p>{t("header.description")}</p></div>
+        <div><h1>{t("header.title")}</h1></div>
         <label className="lr-cap-run secondary community-install plugin-file-button"><CommunityIcon name="plus" />{t("header.install")}<input type="file" aria-label={t("header.install")} accept=".json,.lrpack.json,application/json" disabled={installBusy || packagesBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void install(file); }} /></label>
       </header>
       <div className="community-library-head">
@@ -391,8 +400,8 @@ function CommunityPageContent() {
       </div>
       {(message || error) && <div className={`community-message${error ? " error" : ""}`} role={error ? "alert" : "status"}>{error?.text || message}{error && <button className="lr-cap-run secondary" onClick={() => void refreshAll()}>{t("action.refresh")}</button>}</div>}
       {activeTab === "skills" && <ReadOnlyCapabilitySection title={t("skills.title")} items={groups.skills} {...capabilityProps} />}
-      {activeTab === "templates" && (templateFilter === "all" || templateFilter === "builtin") && <CommunitySection title={t("templates.title")} desc={t("templates.desc")}><div className="community-card-list community-template-grid">{filteredTemplates.map(template => <article className="community-card community-note-template" key={template.id}>
-        <div className="community-note-preview" aria-hidden="true"><strong>{t(template.nameKey)}</strong>{templateContent(template.id, locale).split("\n").filter(line => line.startsWith("## ")).slice(0, 3).map(line => <span key={line}>{line.slice(3)}</span>)}</div>
+      {activeTab === "templates" && (templateFilter === "all" || templateFilter === "builtin") && <CommunitySection title={t("templates.title")}><div className="community-card-list community-template-grid">{filteredTemplates.map(template => <article className="community-card community-note-template" key={template.id}>
+        <div className="community-note-preview" aria-hidden="true"><CommunityIcon name="note" />{templateContent(template.id, locale).split("\n").filter(line => line.startsWith("## ")).slice(0, 3).map(line => <span key={line}>{line.slice(3)}</span>)}</div>
         <h3 className="community-card-title">{t(template.nameKey)}</h3><p className="community-card-desc">{t(template.descKey)}</p>
         <div className="community-card-actions"><button className="lr-cap-run secondary" disabled={templateBusy || !templateTarget.insertAvailable} title={templateTarget.insertAvailable ? undefined : t("pack.template.insertUnavailable")} onClick={() => void useTemplate(template, false)}>{t("action.insert")}</button><button className="lr-cap-run" disabled={templateBusy || !templateTarget.target} title={templateTarget.target ? undefined : t("community.knowledgeRequired")} onClick={() => void useTemplate(template, true)}>{t("action.create")}</button></div>
       </article>)}</div>{filteredTemplates.length === 0 && <CommunityState kind="no-match" action={<button className="lr-cap-run" onClick={clearFilters}>{t("community.clear")}</button>} />}</CommunitySection>}
@@ -441,11 +450,16 @@ function CommunityPageContent() {
         )}
       {activeTab === "extensions" && <>
             <OfficialMcpCard />
-        <ScriptPackagesPanel search={query} statusFilter={filter} onClearFilters={clearFilters} onBusyChange={setPackagesBusy} compact />
+        <DesktopPackagesPanel search={query} statusFilter={filter} />
+        <ScriptPackagesPanel suppressEmpty={packageCount("desktop")>0} search={query} statusFilter={filter} onClearFilters={clearFilters} onBusyChange={setPackagesBusy} compact />
         <CommunityGuide onOpen={setGuide} />
       </>}
       {activeTab === "status" && <>
-        <section className="community-collector"><div className="community-collector-copy"><span className="community-eyebrow">LUCKYRAY / COLLECTOR</span><h2>{t("community.collectorTitle")}</h2><p>{t("community.collectorDesc")}</p><CollectorServiceStatus /><div className="community-source-path"><span>{t("community.collectorSource")}</span><code tabIndex={0}>{EXTENSION_DIR}</code></div><button className="lr-cap-run secondary" onClick={() => void copyExtensionDir()}><CommunityIcon name="copy" />{t("action.copyPath")}</button></div><div className="community-collector-art" aria-hidden="true"><div className="community-collector-mini"><div className="community-collector-mini-head"><CommunityIcon name="browser" /><strong>{t("community.collectorPreview")}</strong><small>{t("community.illustration")}</small></div><div className="community-collector-mini-tabs"><span>{t("community.images")}</span><span>{t("community.article")}</span><span>{t("community.link")}</span></div><div className="community-collector-mini-items"><i /><i /><i /></div><div className="community-collector-mini-location">{t("community.previewLocation")}</div><div className="community-collector-mini-action">{t("community.previewSave")}</div></div></div></section>
+        <section className="community-collector"><div className="community-collector-copy">
+          <div className="community-card-top"><CommunityIcon name="browser" tile /><h2>{t("community.collectorTitle")}</h2></div>
+          <CollectorServiceStatus />
+          <details className="community-detail-technical"><summary>{t("community.collectorSource")}</summary><div className="community-source-path"><code tabIndex={0}>{EXTENSION_DIR}</code><button className="community-text-button" onClick={() => void copyExtensionDir()}><CommunityIcon name="copy" />{t("action.copyPath")}</button></div></details>
+        </div></section>
         <ReadOnlyCapabilitySection title={t("extensions.capabilities")} items={groups.extensions} {...capabilityProps} />
       </>}
       {activeTab === "templates" && (templateFilter === "all" || templateFilter === "workflows") && <ReadOnlyCapabilitySection title={t("workflows.title")} items={groups.workflows} {...capabilityProps} filter="all" />}
@@ -458,20 +472,21 @@ function CommunityPageContent() {
   );
 }
 
-function ReadOnlyCapabilitySection({ title, items, loading, failed, query, filter, onRetry, onClear, onDetail }: { title: string; items: Capability[]; loading: boolean; failed: boolean; query: string; filter: CommunityStatusFilter; onRetry: () => void; onClear: () => void; onDetail: (item: Capability) => void }) {
+function ReadOnlyCapabilitySection({ title, items, loading, ready, failed, query, filter, onRetry, onClear, onDetail }: { title: string; items: Capability[]; loading: boolean; ready: boolean; failed: boolean; query: string; filter: CommunityStatusFilter; onRetry: () => void; onClear: () => void; onDetail: (item: Capability) => void }) {
   const { t } = useMessages(COPY);
   const shown = items.filter(item => communityMatchesStatus(Boolean(item.enabled), filter) && `${item.id} ${item.name} ${item.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
-  return <CommunitySection title={title} desc={t("capability.desc")} badge={t("community.readOnly")}>
-    {loading ? <CommunityState kind="loading" /> : failed ? <CommunityState kind="error" message={t("error.load")} action={<button className="lr-cap-run secondary" onClick={onRetry}>{t("pack.load.retry")}</button>} /> : shown.length === 0 ? <CommunityState kind={items.length ? "no-match" : "empty"} message={items.length ? undefined : t("capability.empty")} action={items.length ? <button className="lr-cap-run" onClick={onClear}>{t("community.clear")}</button> : undefined} /> : <div className="community-card-list community-capability-grid">{shown.map(item => <article className="community-card community-capability-card" key={item.id}><div className="community-card-top"><CommunityIcon name={item.type === "workflow" ? "workflow" : item.type === "extension" ? "browser" : "note"} tile /><h3 className="community-card-title">{item.name}</h3></div><p className="community-card-desc">{item.description || t("capability.noDescription")}</p><div className="community-card-actions"><span className={`community-status${item.enabled ? " is-on" : ""}`}>{item.enabled ? t("capability.registered") : t("capability.disabled")}</span><button className="community-text-button" onClick={() => onDetail(item)}>{t("community.viewCapability")}<CommunityIcon name="arrow" /></button></div></article>)}</div>}
-    <p className="community-catalog-note"><CommunityIcon name="info" />{t("community.readOnlyHint")}</p>
+  return <CommunitySection title={title} badge={t("community.readOnly")} busy={loading}>
+    {failed && <CommunityState kind="error" message={t("error.load")} action={<button className="lr-cap-run secondary" disabled={loading} onClick={onRetry}>{t("pack.load.retry")}</button>} />}
+    {loading && !ready && !failed && <CommunityState kind="loading" />}
+    {ready && (shown.length === 0 ? <CommunityState kind={items.length ? "no-match" : "empty"} message={items.length ? undefined : t("capability.empty")} action={items.length ? <button className="lr-cap-run" onClick={onClear}>{t("community.clear")}</button> : undefined} /> : <div className="community-card-list community-capability-grid">{shown.map(item => <article className="community-card community-capability-card" key={item.id}><div className="community-card-top"><CommunityIcon name={item.type === "workflow" ? "workflow" : item.type === "extension" ? "browser" : "note"} tile /><h3 className="community-card-title">{item.name}</h3></div>{item.description && <p className="community-card-desc">{item.description}</p>}<div className="community-card-actions"><span className={`community-status${item.enabled ? " is-on" : ""}`}>{item.enabled ? t("capability.registered") : t("capability.disabled")}</span><button className="community-text-button" onClick={() => onDetail(item)}>{t("community.viewCapability")}<CommunityIcon name="arrow" /></button></div></article>)}</div>)}
   </CommunitySection>;
 }
 
-function CommunitySection({ title, desc, children, badge }: { title: string; desc: string; children: ReactNode; badge?: string }) {
-  return <section className="community-section"><div className="community-section-head"><div><h2>{title}</h2><p>{desc}</p></div>{badge && <span className="community-readonly">{badge}</span>}</div>{children}</section>;
+function CommunitySection({ title, children, badge, busy }: { title: string; children: ReactNode; badge?: string; busy?: boolean }) {
+  return <section className="community-section" aria-busy={busy}><div className="community-section-head"><h2>{title}</h2>{badge && <span className="community-readonly">{badge}</span>}</div>{children}</section>;
 }
 
 function CommunityGuide({ onOpen }: { onOpen: (guide: "install" | "permissions") => void }) {
   const { t } = useMessages(COMMUNITY_UI_MESSAGES);
-  return <aside className="community-guide"><CommunityIcon name="plugin" /><div><h3>{t("community.guideTitle")}</h3><p>{t("community.guideDesc")}</p></div><div className="community-guide-links"><button className="community-text-button" onClick={() => onOpen("install")}>{t("community.guideInstall")}<CommunityIcon name="arrow" /></button><button className="community-text-button" onClick={() => onOpen("permissions")}>{t("community.guidePermissions")}<CommunityIcon name="arrow" /></button></div></aside>;
+  return <aside className="community-guide"><CommunityIcon name="plugin" /><h3>{t("community.guideTitle")}</h3><div className="community-guide-links"><button className="community-text-button" onClick={() => onOpen("install")}>{t("community.guideInstall")}<CommunityIcon name="arrow" /></button><button className="community-text-button" onClick={() => onOpen("permissions")}>{t("community.guidePermissions")}<CommunityIcon name="arrow" /></button></div></aside>;
 }

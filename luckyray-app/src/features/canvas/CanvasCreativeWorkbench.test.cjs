@@ -39,7 +39,26 @@ test('failed insertion does not record successful use; corrupt preferences do no
 test('reference browser filters categories and member names without changing the graph',async()=>{
  let mutations=0;const nodes=[{id:'pack-a',data:{kind:'group',label:'Hero',referencePack:{version:1,kind:'character'}}},{id:'a',parentId:'pack-a',data:{kind:'text',label:'Blue coat'}},{id:'pack-b',data:{kind:'group',label:'Product',referencePack:{version:1,kind:'product'}}},{id:'b',parentId:'pack-b',data:{kind:'text',label:'Silver watch'}}];
  const unmount=await mount(Packs,{nodes,edges:[],selectedIds:[],resolveUrl:x=>x,english:true,onCreate(){mutations++;return null},onRename(){mutations++},onUnmark(){mutations++},onApply(){mutations++;return null},onLocate(){},onClose(){}});
- try{assert.equal(all('.canvas-pack-card').length,2);await click(button('Character'));assert.equal(all('.canvas-pack-card').length,1);await click(button('All'));await edit(q('input[type=search]'),'WATCH');assert.equal(all('.canvas-pack-card').length,1);assert.match(q('.canvas-pack-card h3').textContent,/Product/);assert.equal(mutations,0);assert.equal(q('.canvas-pack-members').open,false);await click(q('.canvas-pack-members summary'));assert.equal(q('.canvas-pack-members').open,true);}finally{await unmount();}
+ try{assert.equal(all('.canvas-pack-card').length,2);await click(button('Character'));assert.equal(all('.canvas-pack-card').length,1);await click(button('All'));await edit(q('input[type=search]'),'WATCH');assert.equal(all('.canvas-pack-card').length,1);assert.match(q('.canvas-pack-card h3').textContent,/Product/);assert.equal(mutations,0);assert.equal(all('.canvas-pack-member-card').length,1);assert.match(q('.canvas-pack-member-card').textContent,/Silver watch/);assert.equal(q('.canvas-pack-members'),null);}finally{await unmount();}
+});
+
+test('reference cards show every member, recover an image from its original, and keep video URLs out of image inputs',async()=>{
+ const nodes=[{id:'pack',data:{kind:'group',label:'Synthetic references',referencePack:{version:1,kind:'character'}}},
+  {id:'image',parentId:'pack',data:{kind:'image',label:'Red square',refThumbnailUrl:'https://fixture.invalid/thumbnail.png',refMediaUrl:'https://fixture.invalid/original.png'}},
+  {id:'video',parentId:'pack',data:{kind:'video',label:'Synthetic clip',refMediaUrl:'https://fixture.invalid/clip.mp4'}},
+  ...Array.from({length:4},(_,index)=>({id:`text-${index}`,parentId:'pack',data:{kind:'text',label:`Note ${index}`}}))];
+ let mutations=0;
+ const unmount=await mount(Packs,{nodes,edges:[],selectedIds:[],resolveUrl:x=>x,english:true,onCreate(){mutations++;return null},onRename(){mutations++},onUnmark(){mutations++},onApply(){mutations++;return null},onLocate(){},onClose(){}});
+ try{
+  assert.equal(all('.canvas-pack-member-card').length,6);
+  assert.equal(q('[data-reference-kind=image] img').getAttribute('src'),'https://fixture.invalid/thumbnail.png');
+  await React.act(()=>q('[data-reference-kind=image] img').dispatchEvent(new Event('error')));
+  assert.equal(q('[data-reference-kind=image] img').getAttribute('src'),'https://fixture.invalid/original.png');
+  assert.equal(q('[data-reference-kind=video] img'),null);
+  assert.match(q('[data-reference-kind=video]').textContent,/No preview/);
+  assert.equal(all('img').some(img=>img.src.endsWith('.mp4')),false);
+  assert.equal(mutations,0);
+ }finally{await unmount();}
 });
 
 test('dialog traps focus around closed details, restores origin and dismisses only genuine backdrop clicks',async()=>{

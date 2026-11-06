@@ -109,6 +109,29 @@ fn tool_dir(resources: &Path) -> Result<PathBuf, String> {
 fn run(exe: &Path, args: &[String], cancel: &AtomicBool) -> Result<Vec<u8>, String> {
     run_before(exe, args, cancel, Instant::now() + Duration::from_secs(8))
 }
+/// Decode the catalog-owned local audio to a real waveform using the same
+/// pinned, bounded media runtime as video previews. No cover art or network IO.
+pub(crate) fn audio_waveform(resources: &Path, file: &std::fs::File) -> Result<Vec<u8>, String> {
+    use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+    use windows::Win32::{Foundation::HANDLE, Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED}};
+    let mut path = vec![0u16; 32768];
+    let length = unsafe { GetFinalPathNameByHandleW(HANDLE(file.as_raw_handle()), &mut path, FILE_NAME_NORMALIZED) } as usize;
+    if length == 0 || length >= path.len() { return Err("audio-waveform-source-unavailable".into()); }
+    let path = crate::companion_gateway::content::preview::shell_parsing_path(&path[..length])
+        .ok_or("audio-waveform-source-unavailable")?;
+    let path = PathBuf::from(std::ffi::OsString::from_wide(&path[..path.len() - 1]));
+    let tools = tool_dir(resources).map_err(|_| "audio-waveform-tools-unavailable")?;
+    let args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "2",
+        "-protocol_whitelist", "file,pipe", "-format_whitelist", "mp3,wav,flac,ogg,mov,aac,ac3,eac3,wv,aiff,asf,ape",
+        "-i", &path.to_string_lossy(), "-filter_complex",
+        "[0:a:0]aformat=channel_layouts=mono,showwavespic=s=768x192:colors=0x9389ff:scale=sqrt[wave]",
+        "-map", "[wave]", "-map_metadata", "-1", "-frames:v", "1", "-threads", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1"]
+        .map(str::to_owned);
+    let bytes = run(&tools.join("ffmpeg.exe"), &args, &AtomicBool::new(false))
+        .map_err(|_| "audio-waveform-decode-unavailable")?;
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") { return Err("audio-waveform-output-invalid".into()); }
+    Ok(bytes)
+}
 fn run_before(exe: &Path, args: &[String], cancel: &AtomicBool, deadline: Instant) -> Result<Vec<u8>, String> {
     if Instant::now() >= deadline { return Err("native-video-preview-timeout".into()); }
     if cancel.load(Ordering::Acquire) {
@@ -228,7 +251,8 @@ pub(super) fn request(
     request: PreviewRequest,
 ) -> Result<Value, String> {
     let id = match &request {
-        PreviewRequest::Metadata { job, .. }
+        PreviewRequest::ComfyCover { job, .. }
+        | PreviewRequest::Metadata { job, .. }
         | PreviewRequest::Thumbnail { job, .. }
         | PreviewRequest::Cancel { job } => job,
     };
@@ -263,6 +287,22 @@ pub(super) fn request(
         return Err("native-video-preview-busy".into());
     }
     let _permit = Permit;
+    if let PreviewRequest::ComfyCover { result_name, .. } = &request {
+        let backend = app.state::<Arc<crate::backend::BackendServices>>();
+        let output = app.path().app_data_dir().map_err(|_| "comfyui-video-unavailable")?.join("canvas/generated-videos");
+        let lease = crate::canvas_comfyui::open_video_playback(backend.db_path(), &output, result_name).map_err(str::to_owned)?;
+        let key = serde_json::to_string(&("comfy-cover-v1", backend.db_path(), &lease.path, lease.revision())).map_err(|_| "native-video-cache-key-invalid")?;
+        if let Some(value) = cached(&key) { return Ok(value); }
+        let tools = tool_dir(&app.path().resource_dir().map_err(|_| "native-video-resources-unavailable")?)?;
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut metadata = decode_sized(&tools, &lease.path, lease.revision(), None, &flag, true, false, deadline)?;
+        let cover = decode_sized(&tools, &lease.path, lease.revision(), Some(0.), &flag, true, false, deadline)?;
+        if flag.load(Ordering::Acquire) { return Err("native-video-preview-cancelled".into()); }
+        lease.verify().map_err(str::to_owned)?;
+        metadata["src"] = cover["src"].clone();
+        retain(key, &metadata);
+        return Ok(metadata);
+    }
     let (library, asset, expected, seconds, cover) = match request {
         PreviewRequest::Metadata {
             library_id,

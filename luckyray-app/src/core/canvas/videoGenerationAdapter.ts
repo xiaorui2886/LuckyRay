@@ -2,7 +2,7 @@
 
 import { canvasGenerationTaskError } from "./generationErrors";
 import type { CanvasGenerationAdapter } from "./generationRunner";
-import type { CanvasGenerationRequestSnapshot } from "./generationTasks";
+import { snapshotDoubaoAccountPool, type CanvasGenerationRequestSnapshot } from "./generationTasks";
 
 export type CanvasVideoGenerationProgress = {
   stage: "submitting" | "queued" | "generating" | "downloading";
@@ -47,6 +47,7 @@ export function createCanvasVideoGenerationAdapter(
       try {
         response = await generate({
           ...request,
+          ...snapshotDoubaoAccountPool(request),
           prompt,
           references: request.references.map((reference) => ({ ...reference })),
         }, onProgress);

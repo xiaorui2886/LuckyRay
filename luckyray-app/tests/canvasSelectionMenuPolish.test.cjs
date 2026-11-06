@@ -58,6 +58,13 @@ test('outside click dismisses only the right-click menu, not the selected nodes'
   assert.deepEqual(h.calls,['dismiss']);
  }finally{await h.unmount();}
 });
+
+test('export opens once from the selection toolbar and is disabled for selections without original media',async()=>{
+ let exports=0;let h=await mount(null,{onExport:()=>exports++,canExport:true});
+ try{await click(button('成品导出'));assert.equal(exports,1);assert.deepEqual(h.calls,['dismiss']);}finally{await h.unmount();}
+ h=await mount({x:300,y:200},{onExport:()=>exports++,canExport:false});
+ try{assert.equal(button('成品导出').disabled,true);await click(button('成品导出'));assert.equal(exports,1);assert.deepEqual(h.calls,[]);}finally{await h.unmount();}
+});
 test('context-only column CSS is scoped; ordinary selection rule and arrange implementation stay unchanged',()=>{
  const css=fs.readFileSync(app+'/src/features/canvas/canvasEditingSurfaces.css','utf8');
  assert.match(css,/\.canvas-selection-tools\{position:absolute;left:50%;bottom:65px;transform:translateX\(-50%\);[^}]*display:flex;align-items:center;gap:4px;/);

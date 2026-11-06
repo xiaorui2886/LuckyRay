@@ -1,0 +1,7 @@
+{
+  "230": {"class_type":"SeedVR2LoadVAEModel","inputs":{"model":"ema_vae_fp16.safetensors","device":"cuda:0","encode_tiled":true,"encode_tile_size":1024,"encode_tile_overlap":128,"decode_tiled":true,"decode_tile_size":1024,"decode_tile_overlap":128,"tile_debug":"false","offload_device":"cpu","cache_model":false}},
+  "231": {"class_type":"SeedVR2VideoUpscaler","inputs":{"image":["234",0],"dit":["233",0],"vae":["230",0],"seed":0,"resolution":["237",0],"max_resolution":6000,"batch_size":5,"uniform_batch_size":false,"color_correction":"lab","temporal_overlap":0,"prepend_frames":0,"input_noise_scale":0,"latent_noise_scale":0,"offload_device":"cpu","enable_debug":false}},
+  "233": {"class_type":"SeedVR2LoadDiTModel","inputs":{"model":"seedvr2_ema_7b-Q8_0.gguf","device":"cuda:0","blocks_to_swap":32,"swap_io_components":true,"offload_device":"cpu","cache_model":false,"attention_mode":"sdpa"}},
+  "234": {"class_type":"ImageScaleToTotalPixels","inputs":{"image":["236",0],"upscale_method":"lanczos","megapixels":0.30000000000000004,"resolution_steps":1}},
+  "237": {"class_type":"INTConstant","inputs":{"value":2560}}
+}

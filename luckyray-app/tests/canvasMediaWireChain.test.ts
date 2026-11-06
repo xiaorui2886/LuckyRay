@@ -2,7 +2,8 @@ import {captureGenerationEditorSnapshot} from "../src/core/canvas/generationEdit
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {transformSync} from 'esbuild';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url),{transformSync}=createRequire(require.resolve('vite'))('esbuild');
 import {mediaCapabilities,mediaOption,mediaQualityOption} from '../src/core/canvas/mediaCapabilities';
 import {compileCinematographyPrompt} from '../src/core/canvas/cinematography';
 import {compileCreativeRecipePrompt,validateCreativeRecipeInput} from '../src/core/canvas/imageCreativeActions';
@@ -11,12 +12,28 @@ import {compileMentionedPrompt,parseReferenceMentions} from '../src/core/canvas/
 import {compileCanvasGenerationInputs} from '../src/core/canvas/generationInputCompiler';
 import {createCanvasImageGenerationAdapter} from '../src/core/canvas/imageGenerationAdapter';
 import {createCanvasVideoGenerationAdapter,prepareCanvasVideoBridgeReferences} from '../src/core/canvas/videoGenerationAdapter';
+import {buildWorkFisherVideo,buildWorkFisherImage,readWorkFisherImage,isWorkFisherImagePreset,WORK_FISHER_VIDEO_NAME} from '../src/core/canvas/workFisherPreset';
+import {parseComfyWorkflow,compileComfyWorkflow} from '../src/core/canvas/comfyWorkflow';
 const root=readFileSync('src/CanvasSpike.tsx','utf8'),app=readFileSync('src/App.tsx','utf8');
 function extract(source:string,start:string,end:string,name:string,deps:Record<string,unknown>){
  const a=source.indexOf(start),b=source.indexOf(end,a);assert.ok(a>=0&&b>a);
  return Function(...Object.keys(deps),transformSync(source.slice(a,b),{loader:'tsx',target:'es2022'}).code+`;return ${name};`)(...Object.values(deps));
 }
-const compile=extract(root,'function createGenerationRequestSnapshot(','\nfunction MaterialCompactComposer','createGenerationRequestSnapshot',{captureGenerationEditorSnapshot,mediaCapabilities,mediaOption,mediaQualityOption,compileCinematographyPrompt,compileCreativeRecipePrompt,validateCreativeRecipeInput,createCanvasReferencePlan,canvasReferenceSnapshots,compileMentionedPrompt,parseReferenceMentions,compileCanvasGenerationInputs,inferGenerationKind:(n:any)=>n.data.generationKind});
+const compile=extract(root,'function createGenerationRequestSnapshot(','\nfunction MaterialCompactComposer','createGenerationRequestSnapshot',{captureGenerationEditorSnapshot,mediaCapabilities,mediaOption,mediaQualityOption,compileCinematographyPrompt,compileCreativeRecipePrompt,validateCreativeRecipeInput,createCanvasReferencePlan,canvasReferenceSnapshots,compileMentionedPrompt,parseReferenceMentions,compileCanvasGenerationInputs,buildWorkFisherVideo,buildWorkFisherImage,readWorkFisherImage,isWorkFisherImagePreset,WORK_FISHER_VIDEO_NAME,parseComfyWorkflow,compileComfyWorkflow,referenceIssueText:()=> 'bad-reference',inferGenerationKind:(n:any)=>n.data.generationKind});
+test('production snapshot selects independent Work-Fisher graphs and ordered live references',()=>{
+ const config={baseUrl:'http://127.0.0.1:8188',workflowJson:'legacy remains untouched',workflowName:'original',revision:1};
+ const node=(kind:string,preset:string,extra:any={})=>({id:'n',data:{kind:'generator',generationKind:kind,generationSource:'comfyui',generationPrompt:'Synthetic subject',generationComfy:{preset,...extra}}});
+ const ref=(id:string)=>({edgeId:`edge-${id}`,sourceNodeId:id,role:'reference',reference:{id:`node:${id}`,label:id,kind:'image',mediaUrl:`C:/synthetic/${id}.png`}});
+ const call=(n:any,inputs:any[])=>compile(n,inputs,[],'',[],'',[],'',null,false,undefined,undefined,config);
+ const character=call(node('image','work-fisher-character'),[]);assert.equal(character.kind,'image');assert.equal(character.comfyui.workflow['241'].class_type,'SaveImage');
+ const views=call(node('image','work-fisher-three-view'),[ref('character')]);assert.equal(views.comfyui.workflow['206'].inputs['images.image_1'][0],'9000');assert.equal(views.references[0].mediaUrl,'C:/synthetic/character.png');
+ const videoNode=node('video','work-fisher-video',{megapixels:.2,duration:4});videoNode.data.generationInputOrder=['edge-b','edge-a'];
+ const video=call(videoNode,[ref('a'),ref('b')]);assert.deepEqual(video.references.map((r:any)=>r.label),['b','a']);assert.equal(video.comfyui.workflow['136'].inputs['ref_images.ref_image_0'][0],'9000');assert.equal(video.duration,107/24);
+ assert.equal(config.workflowJson,'legacy remains untouched');
+ const missing=()=>call(node('image','work-fisher-three-view'),[]);assert.throws(missing,/一张/);
+ const frozen={...node('image','configured'),data:{...node('image','configured').data,generationComfyWorkflow:views.comfyui}};
+ const restored=call(frozen,[ref('character')]);assert.equal(restored.comfyui.workflowName,'Work-Fisher · 角色三视图');
+});
 async function wire(kind:string,model:string,protocol:string,data:any,baseUrl='https://example.test/v1'){
  const profile={imageProtocol:kind==='image'?protocol:'disabled',videoProtocol:kind==='video'?protocol:'disabled',baseUrl};
  const request=compile({id:'n',data:{kind:'generator',generationKind:kind,generationModel:model,generationPrompt:'Synthetic subject',...data}},[],[],'',kind==='image'?[model]:[] ,kind==='image'?model:'',kind==='video'?[model]:[],kind==='video'?model:'',profile,false);
@@ -100,4 +117,23 @@ test('restored history cannot silently switch an unavailable original model to c
  assert.throws(()=>compile(node,[],[],'',['different-model'],'different-model',[],'',{imageProtocol:'openai-image'},false),/historical-model-unavailable/);
  const restored=compile(node,[],[],'',['original-model'],'original-model',[],'',{imageProtocol:'openai-image'},false);
  assert.equal(restored.model,'original-model');
+});
+
+test('Ark actual compiler → adapter → App strips stale image controls and preserves exact model',async()=>{
+ for(const base of ['https://ark.cn-beijing.volces.com/api/plan/v3','https://ark.cn-beijing.volces.com/api/v3']) {
+  const {payload}=await wire('image','exact-seedream-model-ID','ark-image',{
+   generationAspect:'16:9',generationQuality:'高清',generationResolution:'4K',generationCount:4,
+  },base);
+  assert.equal(payload.model,'exact-seedream-model-ID');
+  assert.equal(payload.aspect,null);assert.equal(payload.resolution,null);
+  assert.equal(payload.quality,'2K');assert.equal(payload.count,1);
+ }
+});
+test('Ark actual video wire omits unsupported resolution/camera but retains supported controls',async()=>{
+ const {request,payload}=await wire('video','exact-seedance-model-ID','ark-video',{
+  generationAspect:'9:16',generationQuality:'1080p',generationDuration:10,generationSound:true,generationCameraStrength:80,
+ },'https://ark.cn-beijing.volces.com/api/plan/v3');
+ assert.equal(payload.model,'exact-seedance-model-ID');assert.equal(payload.aspect,'9:16');
+ assert.equal(payload.quality,null);assert.equal(payload.duration,10);assert.equal(payload.sound,true);
+ assert.equal(request.cameraStrength,undefined);
 });

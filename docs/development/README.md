@@ -1,23 +1,21 @@
-# Building LuckyRay
+# Building LuckyRay 1.9.10
 
-This is the **1.9.15 update-acceptance candidate source**, not a stable release or
-a claim that the two installed upgrade scenarios passed. Existing downloads and
-the website are unchanged. See [updater validation](updater-validation.md).
+This branch contains the public application-source projection for desktop **1.9.10**.
+It keeps the public repository's history, licenses and public build checks. See
+[source identity and differences](source-1.9.10.md) for the exact release source
+archive and the small public-only adapters. It is not a new installer build or
+an assertion that all installed-app scenarios have been retested.
 
-## Layout and basic checks
+## Layout and frontend checks
 
 `luckyray-app/src` contains React/TypeScript, `src-tauri` the Rust/Tauri host,
-`browser-extension-prototype` the Collector snapshot, and `packages` the optional MCP
-connection code. `dsh-host` records the frozen public runtime inputs. `sdk/` is the
-existing public SDK. Native independent windows and the old standalone workspace
-experience remain withdrawn; do not reconnect historical internal entry points.
+`browser-extension-prototype` the Collector source, and `packages` the optional
+MCP code. `dsh-host` records frozen runtime inputs; `sdk/` contains the public SDK.
+Collector 1.9.6 remains an independently released ZIP. Its desktop-source manifest
+may retain a development version; use the official Collector download to install it.
 
-The frozen desktop source's Collector manifest is 1.9.5. Comparing all 61 source
-files against the separately published Collector 1.9.6 ZIP shows only manifest
-version/name differences after CRLF normalization. No extension ZIP is replaced
-or new extension version claimed by this source export.
-
-Use Node.js **24.14.1** and pnpm **11.3.0**. From the repository root:
+Public CI uses Node.js **24.14.1**, pnpm **11.3.0**, and Rust **1.95.0**.
+From the repository root:
 
 ```powershell
 cd luckyray-app
@@ -28,54 +26,57 @@ pnpm run test:desktop-signed-update
 node --test tests/dshDesktopUpdateLifecycle.test.mjs
 ```
 
-No private repository access, account, installed LuckyRay, model key or pairing
-credential is needed. Tests use synthetic data. These bounded checks do not imply
-that every historical component or native/visual integration test passes.
+No private repository, installed profile, model key or pairing credential is needed.
+Tests use synthetic data. These bounded checks do not cover every historical test
+or real desktop, model, GPU and mobile combination.
 
-## Windows desktop and installer
+## Windows native checks and installer
 
-Use Windows x64, Rust **1.95.0** MSVC, Visual Studio C++ Build Tools and Windows SDK,
-Windows PowerShell 5.1, WebView2 Runtime, and the Node/pnpm versions above. Install
-them from official sources. Use a short independent checkout, such as `D:\lr-src`:
-NSIS rejects resource source paths longer than 259 characters.
+Use Windows x64, Visual Studio C++ Build Tools, Windows SDK, Windows PowerShell 5.1
+and WebView2. Install tools from official sources. Keep the checkout path short
+(for example `D:\lr-src`): NSIS rejects resource paths longer than 259 characters.
+
+The player is a fixed LGPL source build. Its **43 runtime and corresponding-source
+material files** are kept in the release asset, not committed to this repository.
+From the repository root, first stage those verified materials:
 
 ```powershell
+& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-public-native-video.ps1
 cd luckyray-app
 pnpm install --frozen-lockfile
-& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\scripts\prepare-media-engine.ps1
-& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\scripts\prepare-dsh-package-runtime.ps1
-cargo check --locked --manifest-path src-tauri/Cargo.toml
+& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-media-engine.ps1
+& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-dsh-package-runtime.ps1
+cargo check --locked --manifest-path src-tauri/Cargo.toml --lib --no-default-features --features browser-host-runtime,lsh-background-surface-preload
 & .\scripts\build-nsis.ps1 -LshBackgroundPreload
 ```
 
-Tauri checks its declared resource paths even during `cargo check`, so run the
-two real staging commands above first; do not create empty resource directories.
-Keep `luckyray-app/.gitattributes`: sealed LSH metadata/notice files require LF.
-Windows `autocrlf` must not rewrite them. `tests/publicBuildInputs.test.mjs`
-checks this cheaply before assembling the runtime; the verification itself stays strict.
-The existing before-build entry also downloads public fixed-hash inputs, verifies the
-LSH closure, stages media, builds four owned sidecars and matching identity receipts,
-builds the frontend and runs readiness gates. Do not copy another build's receipts
-or invent placeholder release resources. Output: `src-tauri/target/release/bundle/nsis/`.
-Read [third-party redistribution requirements](third-party.md) before distributing
-any resulting installer; a successful compile is not license or upgrade acceptance.
+The public staging helper checks the exact archive size and SHA-256, extracts only
+allowlisted player materials, and invokes the existing product verifier for every
+file's size/hash and full runtime-manifest binding. It refuses an existing destination
+rather than overwriting an unreviewed staged runtime. Never create empty resources,
+replace receipts, weaken verification, or substitute a different FFmpeg package.
+Keep both `.gitattributes` files: sealed LSH metadata and notices must retain LF.
 
-Runtime versions remain official **DeepSeek Harness 0.1.7-rc.2**, Node **22.19.0**,
-and separate frozen-assembly pnpm **11.7.0**. They do not replace the frontend tool
-versions. Public URLs, versions and hashes are in `dsh-host/runtime-authority.json`,
-`dsh-host/pnpm-lock.yaml`, and `third_party/media-engine/manifest.json`.
+Bundled runtime authority is **DeepSeek Harness 0.2.2-rc.1**, **Node 24.22.2** and
+frozen-assembly **pnpm 11.7.0**. These are separate from the frontend tools above.
+Exact public URLs and hashes are in `dsh-host/runtime-authority.json`, its lockfile,
+`third_party/media-engine/manifest.json` and `third_party/native-video/manifest.json`.
 
-No production signing private key is included or needed to build. Verification
-public keys remain public and unchanged. Local builds cannot produce official
-update signatures. Production-identity installers must be tested on an independent
-disposable Windows OS, not beside a real LuckyRay profile under the same user.
+The before-build chain verifies LSH, stages media, builds owned sidecars and the
+frontend, and runs readiness gates. Output is under
+`src-tauri/target/release/bundle/nsis/`. A source checkout has its own commit identity;
+do not forge the official release's build identity. Official update-signing private
+keys are neither included nor required for a self-build.
 
-## Development safety
+## Development and distribution safety
 
-`scripts/start-luckyray-dev.ps1` owns checkout/frontend identity and the physical
-development profile. Read its guards; do not disable them or copy AppData around
-them. `pnpm dev` alone is only a frontend and does not prove native behavior.
+Use `pnpm dev:desktop` for the isolated development profile. `pnpm dev` alone is only
+a frontend. Do not disable checkout/profile guards or copy production AppData into
+a development instance. Test production-identity installers on a separate disposable
+Windows OS, not alongside a real profile under the same user.
 
-Public CI runs cheap bounded checks first. Installed updater acceptance is separate
-and uses frozen reviewed inputs, not freshly substituted binaries. Each report
-must distinguish PASS, FAIL, BLOCKED and NOT_RUN.
+Read [third-party redistribution requirements](third-party.md) and the current
+[source/distribution notes](source-1.9.10.md). Source availability and successful
+compilation do not establish patent clearance, byte-for-byte reproduction, or full
+upgrade acceptance. Historical frozen updater fixtures remain under
+`tests/formal-update/`; they are not new 1.9.10 installed acceptance results.

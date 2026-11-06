@@ -270,7 +270,7 @@ function CanvasAgentRunSettings({ english, disabled, mode, allowGeneration, medi
 }
 
 function CanvasAgentPanelContent({
-  canvasName, snapshot, contextChips, execution, busy, error, english = false,
+  snapshot, contextChips, execution, busy, error, english = false,
   models, selectedModel, onSelectModel, modelsError, modelSelectionUnavailable, modelSelectionLocked,
   availability = 'ready', availabilityMessage, draftKey, formatError, onSend, onCancel, onApply, onLocate,
   executionNodeIds = [], onLocateExecution,
@@ -583,7 +583,6 @@ function CanvasAgentPanelContent({
         aria-label={english ? 'Collapse Agent' : '收起 Agent'} title={english ? 'Collapse Agent' : '收起 Agent'} onClick={toggleCollapsed}><AgentIcon kind="collapse" /></button>
     </header>
     <div id={`${id}-body`} className="canvas-r1-agent-body" hidden={collapsed}>
-      <div className="canvas-r1-agent-canvas-label"><span className="canvas-r1-agent-canvas-symbol" aria-hidden="true" /><span title={canvasName}>{canvasName || (english ? 'Untitled canvas' : '未命名画布')}</span><small>{english ? 'CURRENT CANVAS' : '当前画布'}</small></div>
       <div className="canvas-agent-transcript-shell">
       <div ref={transcript} tabIndex={0} aria-label={english ? 'Conversation content' : '对话内容'} className="canvas-r1-agent-transcript" style={{overflowAnchor:scrolledAway ? 'auto' : 'none'}} onWheel={event => {
         if (event.deltaY < 0) { stickToBottom.current = false; setScrolledAway(true); }

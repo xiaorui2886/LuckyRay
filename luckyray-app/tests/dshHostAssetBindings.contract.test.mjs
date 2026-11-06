@@ -38,7 +38,7 @@ test("Windows checkout keeps the host authority LF within the unchanged native b
 
 test("R11 carrier reuses the separately pinned creation validator without widening asset admission", () => {
   const carrier = readFileSync(new URL("luckyray-dsh-host.mjs", assetRoot), "utf8");
-  assert.match(carrier, /import \{ validCreationPayload \} from "\.\/luckyray-dsh-authenticated-webserver\/luckyray-dsh-canvas-agent\.mjs";/);
+  assert.match(carrier, /import \{ validCreationPayload, canvasAgentErrorDetail \} from "\.\/luckyray-dsh-authenticated-webserver\/luckyray-dsh-canvas-agent\.mjs";/);
   assert.match(nativeHost, /CANVAS_AGENT_SHA256/);
   assert.doesNotMatch(carrier, /const CREATION_SCHEMAS = /);
 });
@@ -92,8 +92,8 @@ for (const [name, path] of [
 
 test("the packaged dsh-host directory is the asset authority and build checks every pinned asset", () => {
   const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
-  assert.equal(config.bundle.resources["dsh-host/"], "lr-lsh/199-1/dsh-host/");
-  assert.equal(config.bundle.resources["dsh/"], "lr-lsh/199-1/deepseek-harness/");
+  assert.equal(config.bundle.resources["dsh-host/"], "lr-lsh/1910-2/dsh-host/");
+  assert.equal(config.bundle.resources["dsh/"], "lr-lsh/1910-2/deepseek-harness/");
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(pkg.scripts["test:dsh-host-assets"], "node --test tests/dshHostAssetBindings.contract.test.mjs");
   assert.ok(pkg.scripts.build.startsWith("npm run test:dsh-host-assets && "));

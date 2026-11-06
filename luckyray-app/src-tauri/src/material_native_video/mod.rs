@@ -87,6 +87,13 @@ pub(crate) enum Control {
 )]
 pub(crate) enum Request {
     Capability,
+    OpenComfy {
+        session: String,
+        result_name: String,
+        bounds: Bounds,
+        #[serde(default)]
+        preview: bool,
+    },
     Open {
         session: String,
         library_id: String,
@@ -123,6 +130,8 @@ mod mpv;
 #[cfg(all(windows, feature = "browser-host-runtime"))]
 mod preview;
 #[cfg(all(windows, feature = "browser-host-runtime"))]
+pub(crate) use preview::audio_waveform;
+#[cfg(all(windows, feature = "browser-host-runtime"))]
 mod surface_region;
 #[cfg(all(windows, feature = "browser-host-runtime"))]
 mod windows_player;
@@ -135,6 +144,10 @@ mod windows_player;
     deny_unknown_fields
 )]
 pub(crate) enum PreviewRequest {
+    ComfyCover {
+        job: String,
+        result_name: String,
+    },
     Metadata {
         job: String,
         library_id: String,
@@ -203,6 +216,23 @@ pub(crate) fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn comfy_playback_request_cannot_supply_arbitrary_path_or_commands() {
+        let valid=serde_json::json!({"op":"openComfy","session":"synthetic","resultName":"comfy-test.mp4","bounds":{"x":0,"y":0,"width":640,"height":360}});
+        assert!(serde_json::from_value::<Request>(valid.clone()).is_ok());
+        for key in ["path","url","command","libraryId","outputDir"] {
+            let mut value=valid.clone();value[key]=serde_json::json!("not-allowed");
+            assert!(serde_json::from_value::<Request>(value).is_err());
+        }
+        let mut preview=valid.clone();preview["preview"]=serde_json::json!(true);
+        assert!(serde_json::from_value::<Request>(preview).is_ok());
+        let cover=serde_json::json!({"op":"comfyCover","job":"00000000-0000-0000-0000-000000000000","resultName":"comfy-test.mp4"});
+        assert!(serde_json::from_value::<PreviewRequest>(cover.clone()).is_ok());
+        for key in ["path","url","command","libraryId","outputDir"] {
+            let mut value=cover.clone();value[key]=serde_json::json!("not-allowed");
+            assert!(serde_json::from_value::<PreviewRequest>(value).is_err());
+        }
+    }
     #[test]
     fn native_media_rejects_unbounded_geometry_and_ranges() {
         let viewport = Bounds {

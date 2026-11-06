@@ -78,13 +78,15 @@ function Invoke-TestNode([string]$Node, [string]$Working, [string]$Label, [strin
   $process.Dispose()
 }
 
-$nodeArchive = Join-Path $inputs 'node-v22.19.0-win-x64.zip'
+$nodeVersion = [string]$authority.nodeRuntime.version
+if ($nodeVersion -cnotin @('22.19.0', '24.22.2')) { throw 'clean-assembly-node-version-invalid' }
+$nodeArchive = Join-Path $inputs "node-v$nodeVersion-win-x64.zip"
 $pnpmArchive = Join-Path $inputs 'pnpm-11.7.0.tgz'
 Save-TestInput ([string]$authority.nodeRuntime.archive) $nodeArchive ([string]$authority.nodeRuntime.archiveSha256)
 Save-TestInput ([string]$authority.packageManager.tarball) $pnpmArchive ([string]$authority.packageManager.sha256)
 $nodeExtract = Join-Path $root 'bootstrap-node'
 Expand-Archive -LiteralPath $nodeArchive -DestinationPath $nodeExtract
-$node = Join-Path $nodeExtract 'node-v22.19.0-win-x64\node.exe'
+$node = Join-Path $nodeExtract "node-v$nodeVersion-win-x64\node.exe"
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$authority.nodeRuntime.nodeExeSha256) {
   throw 'clean-assembly-node-invalid'
 }
@@ -112,7 +114,7 @@ foreach ($label in @('a','b')) {
   $stages += [ordered]@{ label=$label; milliseconds=$timer.ElapsedMilliseconds; authority='passed'; native='passed' }
 }
 [ordered]@{
-  outcome='CLEAN_OFFICIAL_FROZEN_ASSEMBLY'; runtime='0.1.7-rc.2'
+  outcome='CLEAN_OFFICIAL_FROZEN_ASSEMBLY'; runtime=[string]$authority.runtimePackage.version
   cacheInitiallyEmpty=$true; acquisition='official-node-and-npm-frozen-fetch'
   storeCopiedFromMachine=$false; offlineAssemblyRoots=2
   completeBaselineSealMatched=$true; stages=$stages

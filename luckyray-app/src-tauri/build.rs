@@ -393,7 +393,7 @@ fn stage_dev_media_engine(manifest_dir: &std::path::Path) -> Option<String> {
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .expect("derive Cargo profile directory from OUT_DIR");
-    let destination = profile_dir.join("media-engine");
+    let destination = profile_dir.join("media-engine").join("1910-1");
     let destination_matches = destination.join("runtime-manifest.json").is_file()
         && sha256_file(&destination.join("runtime-manifest.json")) == source_manifest_sha
         && tree_shape(&destination) == Some(source_shape);
@@ -410,6 +410,8 @@ fn stage_dev_media_engine(manifest_dir: &std::path::Path) -> Option<String> {
         if destination.exists() {
             std::fs::remove_dir_all(&destination).expect("replace stale dev media engine");
         }
+        std::fs::create_dir_all(destination.parent().expect("media engine slot parent"))
+            .expect("create dev media engine slot parent");
         std::fs::rename(stage, destination).expect("activate staged dev media engine");
     }
     println!("cargo:rerun-if-changed=media-engine/runtime-manifest.json");

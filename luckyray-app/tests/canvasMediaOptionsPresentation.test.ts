@@ -2,7 +2,9 @@ import {captureGenerationEditorSnapshot} from "../src/core/canvas/generationEdit
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {transformSync} from 'esbuild';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url);
+const {transformSync}=createRequire(require.resolve('vite'))('esbuild');
 import {aspectFrame,mediaParameterKind,mediaParameterLabel,mediaPixelSize} from '../src/core/canvas/mediaOptionPresentation';
 import {mediaCapabilities,mediaOption,mediaQualityOption} from '../src/core/canvas/mediaCapabilities';
 import {compileCinematographyPrompt} from '../src/core/canvas/cinematography';

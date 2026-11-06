@@ -331,7 +331,9 @@ impl ExternalMediaResolver {
         else {
             return Ok(None);
         };
-        let root = resource_dir.join("media-engine");
+        // Keep a complete runtime in its own release slot. An overlay install may
+        // retain older tools beside this slot; none may enter this inventory.
+        let root = resource_dir.join("media-engine").join("1910-1");
         let manifest_path = root.join("runtime-manifest.json");
         if !root.is_dir() || !manifest_path.is_file() {
             return Ok(None);

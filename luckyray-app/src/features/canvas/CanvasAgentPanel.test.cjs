@@ -13,6 +13,8 @@ for (const key of ['window', 'document', 'HTMLElement', 'HTMLImageElement', 'Ele
 }
 // This DOM suite exercises the existing SVG fallback; real WebGL belongs to the browser suite.
 dom.window.HTMLCanvasElement.prototype.getContext = () => null;
+// JSDOM has no layout observer; these DOM tests do not measure resizing.
+global.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const React = require('react');
 const { createRoot } = require('react-dom/client');
@@ -96,7 +98,8 @@ test('empty panel is nonmodal and offers three editable, non-sending creative st
     assert.equal(query('[role="dialog"]'), null);
     assert.equal(query('[aria-modal]'), null);
     assert.equal(query('.canvas-r1-agent-starters').children.length, 3);
-    assert.match(query('.canvas-r1-agent-canvas-label').textContent, /Watch campaign/);
+    assert.equal(query('.canvas-r1-agent-canvas-label'), null);
+    assert.equal(query('.canvas-r1-agent-body').textContent.includes('Watch campaign'), false);
     assert.equal(button('Send request').disabled, true);
     await click(button('Develop a storyScript, scenes and pacing↗'));
     assert.match(input().value, /story, script and shot list/);

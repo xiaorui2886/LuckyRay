@@ -1,6 +1,6 @@
 [package]
 name = "luckyray-app"
-version = "1.9.9"
+version = "1.9.10"
 description = "A Tauri App"
 authors = ["xiaorui2886 (xiaorui liang)"]
 license = "MIT"
@@ -17,7 +17,7 @@ issue189-frozen-old-fixture = ["issue189-isolated-fixture"]
 # UI-only isolated debug identity; no engine-update test trust or old runtime.
 issue191-isolated-fixture = []
 default = ["sidecar-binaries"]
-browser-host-runtime = ["dep:url", "dep:webview2-com", "dep:windows"]
+browser-host-runtime = ["dep:url", "dep:webview2-com"]
 # Explicit Windows preview opt-in until hidden-child/DPI/IME native QA passes.
 lsh-background-surface-preload = ["browser-host-runtime"]
 sidecar-binaries = ["browser-host-runtime"]
@@ -105,7 +105,7 @@ rand = "0.8"
 qrcode = { version = "=0.14.1", default-features = false }
 rmcp = { version = "=2.0.0", default-features = false, features = ["server", "transport-io"] }
 webview2-com = { version = "=0.38.2", optional = true }
-windows = { version = "=0.61.3", optional = true, features = [
+windows = { version = "=0.61.3", features = [
   "Win32_Foundation", "Win32_Security",
   "Win32_Graphics_Gdi",
   "Win32_NetworkManagement_IpHelper",

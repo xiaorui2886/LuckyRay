@@ -26,6 +26,29 @@ pub struct Scope {
     pub knowledge: Option<KnowledgeScope>,
     pub canvas_ids: Vec<String>,
     pub theme: BTreeMap<String, String>,
+    #[serde(default)]
+    pub ai_selection: Option<AiSelection>,
+    #[serde(default)]
+    pub events_allowed: Vec<String>,
+    #[serde(default)]
+    pub event_material_library_id: Option<String>,
+    #[serde(default)]
+    pub event_delivery: bool,
+    #[serde(default)]
+    pub event_allow_ai: bool,
+    #[serde(default)]
+    pub event_digest: Option<String>,
+    #[serde(default)]
+    pub event_epoch: Option<u64>,
+    #[serde(default)]
+    pub event_subscription_generation: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiSelection {
+    pub provider: String,
+    pub model: String,
+    pub fingerprint: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -47,10 +70,12 @@ pub struct Session {
     live: Arc<AtomicBool>,
     pub package: Installed,
     pub scope: Scope,
+    pub contribution: String,
     pub images: BTreeMap<String, Value>,
     worker: Worker,
     pending: Option<Rpc>,
     started: Instant,
+    timeout: Duration,
     pub receipts: Vec<Value>,
 }
 #[derive(Clone)]
@@ -63,8 +88,11 @@ pub struct SessionHandle {
     digest: String,
     epoch: u64,
     started: Instant,
+    timeout: Duration,
+    event_kind: Option<String>,
 }
 impl SessionHandle {
+    pub fn plugin_id(&self)->&str { &self.id }
     pub fn retire(&self) {
         self.live.store(false, Ordering::SeqCst);
         self.control.terminate();
@@ -108,6 +136,11 @@ impl Session {
     pub fn require_current(&self, root: &Path, host: &str) -> Result<(), String> {
         current(root, host, self)
     }
+    pub fn live_flag(&self) -> Arc<AtomicBool> { self.live.clone() }
+    pub fn stream_chunk(&mut self, delta: &str) -> Result<(), String> {
+        if !self.live.load(Ordering::SeqCst) { return Err("plugin-retired".into()); }
+        self.worker.reply(&json!({"delta": delta}))
+    }
 }
 
 fn entry(root: &Path, host: &str, id: &str) -> Result<Installed, String> {
@@ -122,7 +155,7 @@ fn current(root: &Path, host: &str, s: &Session) -> Result<(), String> {
     if !s.live.load(Ordering::SeqCst)
         || now.digest != s.package.digest
         || now.epoch != s.package.epoch
-        || s.started.elapsed() > Duration::from_secs(10)
+        || s.started.elapsed() > s.timeout
     {
         return Err("plugin-retired".into());
     }
@@ -149,6 +182,8 @@ pub fn authorize(session: &Session, rpc: &Rpc) -> Result<(), String> {
         "knowledge.create" => &["title", "content"],
         "knowledge.insert" => &["path", "revision", "offset", "text"],
         "canvas.export" => &["id", "digest"],
+        "ai.generate" | "ai.stream" => &["prompt"],
+        "events.subscribe" | "events.unsubscribe" => &["type"],
         _ => return Err("plugin-method-unavailable".into()),
     };
     if !rpc.params.is_object()
@@ -174,6 +209,8 @@ pub fn authorize(session: &Session, rpc: &Rpc) -> Result<(), String> {
         "knowledge.insert" => "knowledge.insert",
         "canvas.read" => "canvas.read",
         "canvas.export" => "canvas.export",
+        "ai.generate" | "ai.stream" => "ai.generate",
+        "events.subscribe" | "events.unsubscribe" => "events.subscribe",
         _ => return Err("plugin-method-unavailable".into()),
     };
     if [
@@ -189,6 +226,22 @@ pub fn authorize(session: &Session, rpc: &Rpc) -> Result<(), String> {
     }
     if !session.package.grants.iter().any(|p| p == permission) {
         return Err("plugin-permission-denied".into());
+    }
+    if matches!(rpc.method.as_str(), "ai.generate" | "ai.stream") && session.scope.ai_selection.is_none() {
+        return Err("plugin-ai-not-selected".into());
+    }
+    if session.scope.event_delivery && matches!(rpc.method.as_str(), "events.subscribe" | "events.unsubscribe") {
+        return Err("plugin-event-recursion-denied".into());
+    }
+    if rpc.method == "events.subscribe" && !session.scope.events_allowed.iter().any(|kind| kind == id(rpc, "type").unwrap_or("")) {
+        return Err("plugin-event-not-selected".into());
+    }
+    // Imported IDs are scoped to their library; a legacy default-library call
+    // must never reinterpret them in a different catalog.
+    if session.scope.event_delivery && session.scope.material_library_id.is_some()
+        && rpc.method.starts_with("materials.")
+        && !matches!(rpc.method.as_str(), "materials.library.list" | "materials.library.read") {
+        return Err("plugin-object-denied".into());
     }
     if matches!(rpc.method.as_str(), "materials.library.list" | "materials.library.read") {
         let library = session.scope.material_library_id.as_deref().ok_or("plugin-object-denied")?;
@@ -288,7 +341,7 @@ impl Broker {
         host: &str,
         executable: &Path,
         id: &str,
-        scope: Scope,
+        mut scope: Scope,
         event: Value,
     ) -> Result<String, String> {
         self.sweep(root, host);
@@ -298,6 +351,16 @@ impl Broker {
         if scope.material_library_id.as_deref().is_some_and(|id| !crate::materials::consumer::valid_consumer_id(id)) {
             return Err("plugin-scope".into());
         }
+        if scope.ai_selection.as_ref().is_some_and(|s| s.provider.is_empty() || s.provider.len() > 64 || s.model.is_empty() || s.model.len() > 256 || s.fingerprint.len() != 64 || !s.fingerprint.bytes().all(|b| b.is_ascii_hexdigit())) {
+            return Err("plugin-scope".into());
+        }
+        if scope.event_material_library_id.as_deref().is_some_and(|id| !crate::materials::consumer::valid_consumer_id(id)) {
+            return Err("plugin-scope".into());
+        }
+        if scope.events_allowed.len() > 2 || scope.events_allowed.iter().any(|kind| !["knowledge.saved", "materials.imported"].contains(&kind.as_str())) {
+            return Err("plugin-scope".into());
+        }
+        if scope.event_delivery { scope.writes = false; scope.export_path = None; scope.events_allowed.clear(); }
         if scope.material_ids.len() > 32
             || scope.canvas_ids.len() > 8
             || scope
@@ -316,6 +379,9 @@ impl Broker {
             return Err("plugin-scope-limit".into());
         }
         let package = entry(root, host, id)?;
+        if scope.event_delivery && (scope.event_digest.as_deref() != Some(package.digest.as_str()) || scope.event_epoch != Some(package.epoch)) {
+            return Err("plugin-retired".into());
+        }
         if !store::compatible(&package.package, host) {
             return Err("plugin-incompatible".into());
         }
@@ -338,8 +404,15 @@ impl Broker {
             .iter()
             .map(|n| format!("{n:02x}"))
             .collect::<String>();
+        let contribution = event.get("contribution").and_then(Value::as_str).ok_or("plugin-contribution-unavailable")?.to_string();
+        let event_kind = if scope.event_delivery {
+            Some(event.get("notification").and_then(|v|v.get("type")).and_then(Value::as_str).ok_or("plugin-event-unavailable")?.to_string())
+        } else { None };
         let event = json!({"input":event,"capabilities":package.grants,"objects":{"materials":scope.material_ids,"materialLibraryId":scope.material_library_id,"knowledge":scope.knowledge.as_ref().map(|s|json!({"documents":s.documents,"vaultId":s.vault_id})),"canvases":scope.canvas_ids},"theme":scope.theme});
-        let worker = Worker::launch(executable, &resource.code, &event, Duration::from_secs(10))?;
+        let timeout = if scope.ai_selection.is_some() && package.grants.iter().any(|p| p == "ai.generate") {
+            Duration::from_secs(90)
+        } else { Duration::from_secs(10) };
+        let worker = Worker::launch(executable, &resource.code, &event, timeout)?;
         let live = Arc::new(AtomicBool::new(true));
         let started = Instant::now();
         let control = worker.control();
@@ -351,14 +424,18 @@ impl Broker {
             digest: package.digest.clone(),
             epoch: package.epoch,
             started,
+            timeout,
+            event_kind,
             session: Arc::new(Mutex::new(Session {
                 live,
                 package,
                 scope,
+                contribution,
                 images: BTreeMap::new(),
                 worker,
                 pending: None,
                 started,
+                timeout,
                 receipts: Vec::new(),
             })),
         };
@@ -367,7 +444,7 @@ impl Broker {
     }
     pub fn sweep(&mut self, root: &Path, host: &str) {
         self.sessions.retain(|_, s| {
-            let valid = s.started.elapsed() < Duration::from_secs(10)
+            let valid = s.started.elapsed() < s.timeout
                 && entry(root, host, &s.id)
                     .is_ok_and(|p| p.digest == s.digest && p.epoch == s.epoch);
             if !valid {
@@ -386,6 +463,13 @@ impl Broker {
         if let Some(s) = self.sessions.remove(token) {
             s.retire();
         }
+    }
+    pub fn cancel_event(&mut self, id:&str, kind:&str) {
+        self.sessions.retain(|_,session| {
+            let remove = session.id == id && session.event_kind.as_deref() == Some(kind);
+            if remove { session.retire(); }
+            !remove
+        });
     }
     pub fn close_all(&mut self) {
         for s in self.sessions.values() {

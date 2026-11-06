@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $sourceManifestPath = Join-Path $repoRoot "third_party\media-engine\manifest.json"
 $runnerPath = Join-Path $repoRoot "third_party\media-engine\runner.py"
+$nativeVideoRoot = Join-Path $repoRoot "src-tauri\native-video"
 if (-not $OutputRoot) {
     $OutputRoot = Join-Path $repoRoot "src-tauri\media-engine"
 }
@@ -71,6 +72,9 @@ function Test-Runtime([string]$Root) {
 
 $sourceManifest = Get-Content -Raw -LiteralPath $sourceManifestPath | ConvertFrom-Json
 if ($sourceManifest.schemaVersion -ne 1) { throw "media-engine-source-manifest-invalid" }
+if ($sourceManifest.ffmpeg.distribution -cne 'native-video-corresponding-source') {
+    throw 'media-engine-ffmpeg-corresponding-source-required'
+}
 if ($PlanOnly) {
     [pscustomobject]@{
         outputRoot = $outputFull
@@ -90,6 +94,23 @@ if (Test-Runtime $outputFull) {
     exit 0
 }
 
+# The tool programs are produced by the same audited source recipe as libmpv.
+# Verify that closure before executing or copying either program; never fall
+# back to the old third-party ZIP merely because its filename says LGPL.
+& (Join-Path $PSScriptRoot 'prepare-native-video.ps1') -VerifyOnly | Out-Null
+$nativeSpec = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'third_party\native-video\manifest.json') | ConvertFrom-Json
+if ([string]$nativeSpec.files.'sources.tar.xz'.sha256 -cne [string]$sourceManifest.ffmpeg.sourceArchiveSha256) {
+    throw 'media-engine-ffmpeg-source-archive-binding-invalid'
+}
+foreach ($tool in @('ffmpeg.exe','ffprobe.exe')) {
+    $expected=$sourceManifest.ffmpeg.files.PSObject.Properties[$tool].Value
+    $nativeEntry=$nativeSpec.files.PSObject.Properties[$tool].Value
+    if ([string]$expected.sha256 -cne [string]$nativeEntry.sha256 -or $expected.size -ne $nativeEntry.size) {
+        throw 'media-engine-ffmpeg-binary-binding-invalid'
+    }
+    Assert-ExactFile (Join-Path $nativeVideoRoot $tool) ([string]$expected.sha256)
+}
+
 $stage = Join-Path $allowedParent (".media-engine-stage-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
@@ -101,7 +122,7 @@ try {
     $denoRuntime = Join-Path $runtime "deno"
     New-Item -ItemType Directory -Path $downloads,$runtime,$wheels,$licenses,$ffmpegRuntime,$denoRuntime | Out-Null
 
-    $artifacts = @($sourceManifest.python, $sourceManifest.ytDlp, $sourceManifest.ytDlpEjs, $sourceManifest.deno, $sourceManifest.ffmpeg)
+    $artifacts = @($sourceManifest.python, $sourceManifest.ytDlp, $sourceManifest.ytDlpEjs, $sourceManifest.deno)
     foreach ($artifact in $artifacts) {
         $destination = Join-Path $downloads ([string]$artifact.fileName)
         Invoke-WebRequest -UseBasicParsing -Uri ([string]$artifact.url) -OutFile $destination
@@ -133,15 +154,15 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $licenses "cpython") | Out-Null
     Copy-Item -LiteralPath (Join-Path $pythonExpanded "LICENSE.txt") -Destination (Join-Path $licenses "cpython\LICENSE.txt")
 
-    $ffmpegExpanded = Join-Path $stage "ffmpeg-expanded"
-    Expand-Archive -LiteralPath (Join-Path $downloads $sourceManifest.ffmpeg.fileName) -DestinationPath $ffmpegExpanded
-    $ffmpegExe = Get-ChildItem -Recurse -File -Filter "ffmpeg.exe" $ffmpegExpanded | Where-Object { $_.Directory.Name -eq "bin" } | Select-Object -First 1
-    if (-not $ffmpegExe) { throw "media-engine-ffmpeg-layout-invalid" }
-    Get-ChildItem -LiteralPath $ffmpegExe.Directory.FullName | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $ffmpegRuntime -Recurse
+    foreach ($tool in @('ffmpeg.exe','ffprobe.exe')) {
+        Copy-Item -LiteralPath (Join-Path $nativeVideoRoot $tool) -Destination (Join-Path $ffmpegRuntime $tool)
     }
     $configuration = & (Join-Path $ffmpegRuntime "ffmpeg.exe") -hide_banner -version 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or $configuration -notmatch "--enable-shared" -or $configuration -match "--enable-gpl" -or $configuration -match "--enable-nonfree") {
+    if ($LASTEXITCODE -ne 0 -or $configuration -notmatch '--enable-static' -or
+        $configuration -notmatch '--disable-shared' -or $configuration -notmatch '--disable-autodetect' -or
+        $configuration -notmatch '--disable-gpl' -or $configuration -notmatch '--disable-nonfree' -or
+        $configuration -notmatch '--disable-version3' -or
+        $configuration -match '--enable-(gpl|nonfree|version3|liblensfun)') {
         throw "media-engine-ffmpeg-license-gate-failed"
     }
 
@@ -156,10 +177,8 @@ try {
         Invoke-WebRequest -UseBasicParsing -Uri ([string]$license.url) -OutFile $destination
         Assert-ExactFile $destination ([string]$license.sha256)
     }
-    $archiveLicense = Get-ChildItem -Recurse -File $ffmpegExpanded | Where-Object { $_.Name -match '^LICENSE' } | Select-Object -First 1
-    if ($archiveLicense) {
-        Copy-Item -LiteralPath $archiveLicense.FullName -Destination (Join-Path $licenses "FFmpeg-LICENSE.txt")
-    }
+    Copy-Item -LiteralPath (Join-Path $nativeVideoRoot 'licenses\FFmpeg-LGPL-2.1.txt') -Destination (Join-Path $licenses 'FFmpeg-LGPL-2.1.txt')
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'third_party\media-engine\FFMPEG-TOOLS.md') -Destination (Join-Path $licenses 'FFmpeg-corresponding-source.md')
 
     $files = @()
     foreach ($file in Get-ChildItem -Recurse -File $runtime | Sort-Object FullName) {

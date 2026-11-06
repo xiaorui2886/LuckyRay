@@ -20,6 +20,7 @@ fn sample(root: &Path, text: &str) {
         "1.9.2",
         Request::Install {
             package,
+            publisher_approved: false,
             expected_revision: state.revision,
         },
     )
@@ -585,7 +586,8 @@ pub fn community_fixture_setup(
     )
     .title(format!("LuckyRay 插件隔离测试实例 · {short}"))
     .inner_size(1120.0, 900.0)
-    .visible(true)
+    // The lifecycle fixture can run unattended without taking the user's screen.
+    .visible(std::env::var_os("LUCKYRAY_EXTENSION_FIXTURE_HIDDEN").is_none())
     .data_directory(webview_dir)
     .build()?;
     let handle = app.handle().clone();

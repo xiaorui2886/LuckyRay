@@ -1,0 +1,9 @@
+(c) 2009 Sun Microsystems Inc.
+THERE DOES NOT EXIST (c) 2011 Julien Nabet
+PRECEDES <-> DOES NOT SUCCEED (c) 2011 Olivier Hallot
+PRIME <-> TRIPLE PRIME (c) 2013 Mathias Hasselmann
+phi <-> phi1 (c) 2015 Khaled Hosny
+(c) 2016 Mike Kaganski
+zero, one, two, three, four, five, six, seven, eight, nine, question, underscore, copyright, registered, uni2215, angle, therefore, lozenge (c) 2010 Google Corporation
+uni20D1 (c) 2019 Takeshi Abe
+uniF030 <-> uniF039 (c) 2020 Ming Hua

@@ -7,6 +7,11 @@
 //! initialization is unsupported unless a future design adds cross-process OS
 //! locking, registry generation leases, and cross-process idempotency.
 
+mod native;
+mod native_materials;
+#[cfg(test)]
+mod native_tests;
+
 use crate::backend::BackendServices;
 use crate::knowledge::{
     KnowledgeCreateInput, KnowledgeDocumentRef, KnowledgeSetTagsInput, KnowledgeWriteInput,
@@ -278,6 +283,8 @@ pub(crate) struct ToolCallContext {
     max_risk: ToolRisk,
     deadline: Option<Instant>,
     principal: ToolPrincipal,
+    // Present only for the proof-authenticated native transport, never Agent or extension input.
+    native_principal: Option<Arc<crate::local_transport::VerifiedTransportPrincipal>>,
     web_scope: Option<[u8; 32]>,
     browser_scope: Option<[u8; 32]>,
     canvas_scope: Option<[u8; 32]>,
@@ -322,6 +329,7 @@ impl ToolCallContext {
             max_risk: ToolRisk::Read,
             deadline: Some(Instant::now() + Duration::from_secs(30)),
             principal: ToolPrincipal(principal_digest),
+            native_principal: None,
             web_scope: None,
             browser_scope: None,
             canvas_scope: None,
@@ -794,6 +802,7 @@ impl ToolCallContext {
             max_risk: ToolRisk::Dangerous,
             deadline: Some(Instant::now() + Duration::from_secs(30)),
             principal: ToolPrincipal(principal_digest),
+            native_principal: None,
             web_scope: None,
             browser_scope: None,
             canvas_scope: None,
@@ -808,6 +817,18 @@ impl ToolCallContext {
         }
     }
 
+    pub(crate) fn native_transport_verified(
+        principal_digest: [u8; 32],
+        principal: &crate::local_transport::VerifiedTransportPrincipal,
+    ) -> Self {
+        let mut context = Self::local_transport_verified(principal_digest);
+        // The principal owns this test: no JSON field can request native rights.
+        if principal.is_native_tool_principal() {
+            context.native_principal = Some(Arc::new(principal.clone()));
+        }
+        context
+    }
+
     #[cfg(test)]
     fn future_cli() -> Self {
         Self {
@@ -816,6 +837,7 @@ impl ToolCallContext {
             max_risk: ToolRisk::Dangerous,
             deadline: Some(Instant::now() + Duration::from_secs(30)),
             principal: ToolPrincipal::namespace(b"luckyray-tool-principal:test-cli:v1"),
+            native_principal: None,
             web_scope: None,
             browser_scope: None,
             canvas_scope: None,
@@ -838,6 +860,7 @@ impl ToolCallContext {
             max_risk: ToolRisk::Dangerous,
             deadline: Some(Instant::now() + Duration::from_secs(30)),
             principal: ToolPrincipal::namespace(b"luckyray-tool-principal:test-mcp:v1"),
+            native_principal: None,
             web_scope: None,
             browser_scope: None,
             canvas_scope: None,
@@ -860,6 +883,7 @@ impl ToolCallContext {
             max_risk: ToolRisk::Dangerous,
             deadline: Some(Instant::now() + Duration::from_secs(30)),
             principal: ToolPrincipal::namespace(b"luckyray-tool-principal:tauri-ui:v1"),
+            native_principal: None,
             web_scope: None,
             browser_scope: None,
             canvas_scope: None,
@@ -1066,14 +1090,16 @@ impl ToolError {
 
     pub(crate) fn status(&self) -> u16 {
         match self.code {
-            "tool-not-found" | "knowledge-document-not-found" => 404,
-            "tool-unavailable" | "knowledge-vault-required" => 503,
-            "tool-risk-denied" | "capability-disabled" => 403,
+            "tool-not-found" | "knowledge-document-not-found" | "consumer-asset-not-found" => 404,
+            "tool-unavailable" | "knowledge-vault-required" | "material-catalog-error" => 503,
+            "tool-risk-denied" | "capability-disabled" | "authentication-failed"
+            | "consumer-library-denied" | "consumer-folder-denied" | "consumer-tag-denied" | "material-library-scope" => 403,
             "request-id-conflict"
             | "knowledge-revision-conflict"
             | "knowledge-name-conflict"
-            | "knowledge-vault-not-current" => 409,
-            "tool-input-too-large" | "tool-output-too-large" => 413,
+            | "knowledge-vault-not-current" | "canvas-agent-revision-conflict"
+            | "material-revision-conflict" | "library-unavailable" | "library-offline" => 409,
+            "tool-input-too-large" | "tool-output-too-large" | "consumer-capture-too-large" => 413,
             "tool-request-capacity" => 429,
             _ => 400,
         }
@@ -1520,6 +1546,10 @@ impl ToolRegistry {
                     )
             });
         }
+        if context.native_principal.is_some() {
+            definitions.extend(native::definitions(has_vault));
+            definitions.extend(native_materials::definitions());
+        }
         definitions.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(definitions)
     }
@@ -1610,6 +1640,10 @@ impl ToolRegistry {
                 request_id,
                 input_digest,
             );
+        }
+        if context.native_principal.is_some() {
+            let result = self.execute_checked(backend, context, definition, request.input.clone(), None, None);
+            return self.handoff_cached_result(backend, context, definition, &request.input, "", result);
         }
         self.execute_checked(backend, context, definition, request.input, None, None)
     }
@@ -2244,6 +2278,19 @@ impl ToolRegistry {
         if !current_definition.availability.available && current_definition.id != "materials.search"
         {
             return Err(unavailable_tool_error(&current_definition));
+        }
+        if native::handles(&current_definition.id) || native_materials::handles(&current_definition.id) {
+            let principal = context.native_principal.as_deref().ok_or_else(|| {
+                ToolError::new("tool-not-found", "Tool does not exist")
+            })?;
+            principal.material_admission().map_err(|_| {
+                ToolError::new("authentication-failed", "Native tool authorization is no longer current")
+            })?;
+            return if native::handles(&current_definition.id) {
+                native::authorize(backend, &current_definition.id, input)
+            } else {
+                native_materials::authorize(backend, principal, &current_definition.id, input)
+            };
         }
         match current_definition.id.as_str() {
             "materials.search"
@@ -3350,6 +3397,19 @@ fn execute_tool(
     input: &Value,
     cancelled: Option<&(dyn Fn() -> bool + Send + Sync)>,
 ) -> Result<Value, ToolError> {
+    if native::handles(tool_id) || native_materials::handles(tool_id) {
+        let principal = context.native_principal.as_deref().ok_or_else(|| {
+            ToolError::new("tool-not-found", "Tool does not exist")
+        })?;
+        if native_materials::handles(tool_id) {
+            return native_materials::execute(backend, principal, tool_id, input);
+        }
+        // Serialize short native domain operations with credential revocation.
+        let _admission = principal.material_admission().map_err(|_| {
+            ToolError::new("authentication-failed", "Native tool authorization is no longer current")
+        })?;
+        return native::execute(backend, tool_id, input);
+    }
     match tool_id {
         "knowledge.search" => execute_knowledge_search(backend, context, input),
         "knowledge.read" => execute_knowledge_read(backend, context, input),
@@ -4656,6 +4716,13 @@ fn committed_output_fallback(
     original: &ToolRunResult,
 ) -> Result<ToolRunResult, ToolError> {
     let warning = json!({"code":"tool-output-redacted"});
+    if native_materials::handles(&definition.id) || native::handles(&definition.id) {
+        return Ok(ToolRunResult {
+            tool_id: original.tool_id.clone(), version: original.version,
+            request_id: original.request_id.clone(),
+            result: json!({"committed":true,"outputUnavailable":true}),
+        });
+    }
     let result = match definition.id.as_str() {
         "knowledge.create" => bounded_document_fallback(&original.result, input, warning)?,
         "knowledge.append" | "knowledge.set_tags" => {
@@ -4946,6 +5013,20 @@ fn expected_handoff_vault(
     input: &Value,
     result: &ToolRunResult,
 ) -> Result<Option<String>, ToolError> {
+    if native_materials::handles(&definition.id) || definition.id.starts_with("canvas.") && native::handles(&definition.id) {
+        return Ok(None);
+    }
+    if native::handles(&definition.id) {
+        return if matches!(definition.id.as_str(), "knowledge.list" | "knowledge.tags") {
+            result.result.get("vaultId").and_then(Value::as_str)
+                .map(|id| Some(id.to_owned()))
+                .ok_or_else(|| ToolError::new("tool-output-invalid", "Tool Vault identity is missing"))
+        } else if definition.id == "knowledge.relations" {
+            Ok(Some(parse_document_ref(input)?.vault_id))
+        } else {
+            Ok(Some(required_string(input, "expectedVaultId")?.to_owned()))
+        };
+    }
     match definition.id.as_str() {
         "materials.search"
         | "materials.inspect"

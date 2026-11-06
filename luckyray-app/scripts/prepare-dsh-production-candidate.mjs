@@ -5,7 +5,7 @@ import { readFile, writeFile, readdir, lstat, realpath } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateQualifiedAssemblyDescription } from "./dsh-frozen-assembly-description.mjs";
-import { verifyPortableStagedDshRuntime } from "./dsh-supply-chain.mjs";
+import { verifyPortableStagedDshRuntime, qualifiedNodeToolset } from "./dsh-supply-chain.mjs";
 import { ORIGIN, sha256, validateCandidate } from "./dsh-production-maintenance.mjs";
 import { compatibilityDeclaration } from "./dsh-host-compatibility.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,13 +23,9 @@ export async function hostContract(sourceRoot = root) {
     adapterFingerprint: await fingerprint("luckyray-dsh-host-adapter-v1", ["src-tauri/dsh-host/luckyray-dsh-host.mjs", "src-tauri/src/dsh_host.rs", "src-tauri/src/lib.rs", "src-tauri/src/dsh_resource_broker.rs"]),
     resourceGateSha256: await fingerprint("luckyray-dsh-resource-gate-v1", ["src/core/services/openInLightSeek.ts", "src/features/ai/DshNativeSurfacePage.tsx", "src/features/ai/LightSeekContentBrowser.tsx", "tests/openInLightSeek.contract.test.ts", "tests/dshNativeSurfaceImageIntent.contract.test.mjs"]) };
 }
-export async function prepareCandidate(descriptorFile, baseline, fromVersions, now = Math.floor(Date.now() / 1000)) {
-  if (!Array.isArray(fromVersions) || !fromVersions.length) throw new Error("explicit-qualified-upgrade-origins-required");
-  const descriptor = await readFile(descriptorFile), artifactSha256 = sha256(descriptor);
-  const qualified = validateQualifiedAssemblyDescription({ bytes: descriptor, expectedHash: artifactSha256, expectedBytes: descriptor.length });
-  // Reuse actual existing seal, not package-version labels or assertions in a
-  // synthetic JSON fixture. No historical transaction rerun is needed here.
-  await verifyPortableStagedDshRuntime({ stageRoot: baseline, qualifiedAuthority: qualified.authority, qualifiedRecords: qualified.records });
+// Update admission uses a different canonical digest than the JS portable
+// layout audit: bytewise path order and size are part of this identity.
+export async function updateClosureIdentity(baseline) {
   const files = [];
   async function walk(directory) {
     for (const item of await readdir(directory, { withFileTypes: true })) {
@@ -40,17 +36,29 @@ export async function prepareCandidate(descriptorFile, baseline, fromVersions, n
       else throw new Error("candidate-baseline-shape");
     }
   }
-  await walk(baseline); files.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  // Rust compares UTF-8 strings by bytes; JavaScript's default UTF-16 order
+  // differs for supplementary Unicode paths. Keep both formats identical.
+  await walk(baseline); files.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
   const closure = createHash("sha256");
   for (const [path, size, hash] of files) closure.update(path).update("\0").update(String(size)).update("\0").update(hash).update("\n");
+  return { sha256: closure.digest("hex"), fileCount: files.length };
+}
+export async function prepareCandidate(descriptorFile, baseline, fromVersions, now = Math.floor(Date.now() / 1000)) {
+  if (!Array.isArray(fromVersions) || !fromVersions.length) throw new Error("explicit-qualified-upgrade-origins-required");
+  const descriptor = await readFile(descriptorFile), artifactSha256 = sha256(descriptor);
+  const qualified = validateQualifiedAssemblyDescription({ bytes: descriptor, expectedHash: artifactSha256, expectedBytes: descriptor.length });
+  // Reuse actual existing seal, not package-version labels or assertions in a
+  // synthetic JSON fixture. No historical transaction rerun is needed here.
+  await verifyPortableStagedDshRuntime({ stageRoot: baseline, qualifiedAuthority: qualified.authority, qualifiedRecords: qualified.records });
+  const closure = await updateClosureIdentity(baseline);
   const contract = await hostContract();
   const { interfaces, ...audit } = contract;
   const candidate = { schema: 2, channel: "preview", runtimePackage: "@deepseek-ai/dsh", issuedAt: now - 60, expiresAt: now + 14 * 86400,
     ...audit, compatibility: compatibilityDeclaration(), platform: "windows-x86_64", fromVersions: [...fromVersions], version: qualified.authority.runtimePackage.version,
     nodeSha256: qualified.authority.nodeRuntime.nodeExeSha256, entrySha256: qualified.records.dependencyAudit.entryPoint.fileSha256,
     artifactUrl: `${ORIGIN}descriptors/${artifactSha256}.json`, artifactSha256, artifactBytes: descriptor.length,
-    closureSha256: closure.digest("hex"), closureFileCount: files.length, dataCompatibility: "no-migration",
-    assembly: { schema: 2, kind: "official-npm-qualified-win-x64-v2", toolset: "node22.19.0-pnpm11.7.0-policy1" } };
+    closureSha256: closure.sha256, closureFileCount: closure.fileCount, dataCompatibility: "no-migration",
+    assembly: { schema: 2, kind: "official-npm-qualified-win-x64-v2", toolset: qualifiedNodeToolset(qualified.authority.nodeRuntime).name } };
   validateCandidate(candidate, descriptor, contract, now);
   return { candidate, contract, descriptor };
 }

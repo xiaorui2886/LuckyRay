@@ -1,9 +1,11 @@
 /** Safe media-generation diagnostics. Never persist provider text, URLs or request bodies. */
 const failures = {
+  "canvas-media-provider-removed": ["PROVIDER_REMOVED", "豆包连接器已移除。已有结果保留，此任务不会改发到其他服务", false],
   bigmodel_reference_invalid: ["BIGMODEL_REFERENCE_INVALID", "智谱参考图需为 PNG/JPEG，且不超过 5 MB", false],
   bigmodel_prompt_too_long: ["BIGMODEL_PROMPT_TOO_LONG", "智谱 CogVideoX-Flash 的提示词最多 512 个字符，请缩短后重新生成", false],
   submission_binding_changed: ["SUBMISSION_BINDING_CHANGED", "原视频任务的配置或输入已改变，无法安全恢复；请检查原任务后再决定是否重新生成", false],
   stable_task_id_required: ["STABLE_TASK_ID_REQUIRED", "缺少可恢复的视频任务标识，请更新客户端后重新操作", false],
+  observation_timeout: ["OBSERVATION_TIMEOUT", "结果等待已超时，但远端可能仍在生成或计费。请继续原任务，不要重复提交", false],
   submission_unknown: ["SUBMISSION_UNKNOWN", "提交结果尚未确认。为避免重复生成，请先在服务端确认原任务状态，不要重新提交", false],
   profile_changed: ["PROFILE_CHANGED", "原生成配置已更改、删除或未绑定，请检查配置后重新发起", false],
   no_api_key: ["NOT_CONFIGURED", "尚未配置画布生成服务", false],

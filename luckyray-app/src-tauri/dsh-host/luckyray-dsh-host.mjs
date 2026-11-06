@@ -8,7 +8,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { zstdDecompressSync } from "node:zlib";
 import { createChildResourceRouter } from "./luckyray-dsh-resource-tools/index.mjs";
-import { validCreationPayload } from "./luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs";
+import { validCreationPayload, canvasAgentErrorDetail } from "./luckyray-dsh-authenticated-webserver/luckyray-dsh-canvas-agent.mjs";
 import {
   COMPAT_CHECKER_VERSION,
   PLUGIN_COMPAT_GUARD_FILENAME,
@@ -344,7 +344,7 @@ export function validateCanvasAgentResult(payload, canvasId) {
   const value = decodeCanvasAgentPayload(payload);
   if (!value || typeof value !== "object" || Array.isArray(value)) throw canvasAgentError("canvas-agent-invalid-response");
   if (Object.keys(value).join(",") === "error") throw canvasAgentError(CANVAS_AGENT_PUBLIC_ERRORS.has(value.error) ? value.error : "canvas-agent-request-failed");
-  const allowed = new Set(["canvasId", "conversationId", "activity", "sessionId", "runId", "requestId", "status", "messages", "context", "plan", "error", "model", "models", "pendingAction", "conversations", "stream", "progress", "tools", "updatedAt", "execution"]);
+  const allowed = new Set(["canvasId", "conversationId", "activity", "sessionId", "runId", "requestId", "status", "messages", "context", "plan", "error", "errorDetail", "model", "models", "pendingAction", "conversations", "stream", "progress", "tools", "updatedAt", "execution"]);
   if (Object.keys(value).some(key => !allowed.has(key)) || value.canvasId !== canvasId
     || typeof value.conversationId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u.test(value.conversationId)
     || ![value.sessionId, value.runId].every(id => id === null || typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u.test(id))
@@ -383,6 +383,11 @@ export function validateCanvasAgentResult(payload, canvasId) {
         || item.inputModalities.length>2 || item.inputModalities.some(value=>!["text","image"].includes(value))))
       throw canvasAgentError("canvas-agent-invalid-response");
   }
+  if (value.errorDetail !== undefined && (value.status !== "failed" || typeof value.error !== "string"
+    || !canvasKeys(value.errorDetail,["message"]) || !canvasText(value.errorDetail.message,2000,false)
+    || Buffer.byteLength(value.errorDetail.message,"utf8") > 2000
+    || canvasAgentErrorDetail(value.errorDetail)?.message !== value.errorDetail.message))
+    throw canvasAgentError("canvas-agent-invalid-response");
   if (!validateCanvasAgentExtensions(value, canvasId)) throw canvasAgentError("canvas-agent-invalid-response");
 
   return value;

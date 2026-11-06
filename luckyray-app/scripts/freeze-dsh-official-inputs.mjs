@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { validateDshRuntimeAuthority, validateQualifiedDshRuntimeAuthority, validateDshFrozenClosure } from "./dsh-supply-chain.mjs";
+import { validateDshRuntimeAuthority, validateQualifiedDshRuntimeAuthority, validateDshFrozenClosure, qualifiedNodeToolset } from "./dsh-supply-chain.mjs";
 import { frozenPackageInputs } from "./dsh-frozen-inputs.mjs";
 
 const hash = (bytes, algorithm = "sha256") => createHash(algorithm).update(bytes).digest("hex");
@@ -56,7 +56,7 @@ async function main() {
   }));
   const description = {
     schema: 1, kind: "official-npm-frozen-win-x64-v1", runtimePackage: authority.runtimePackage,
-    node: { ...authority.nodeRuntime, archiveBytes: 35424607 },
+    node: { ...authority.nodeRuntime, archiveBytes: qualifiedNodeToolset(authority.nodeRuntime).archiveBytes },
     packageManager: { ...authority.packageManager, archiveBytes: 4590455 },
     lockSha256: authority.dependencyClosure.sha256,
     hostFiles: ["package.json", ".npmrc", "pnpm-lock.yaml", "pnpm-workspace.yaml"].map((path, i) => ({

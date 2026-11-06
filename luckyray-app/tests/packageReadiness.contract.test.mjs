@@ -18,14 +18,15 @@ test("formal NSIS readiness owns every production resource and keeps one version
     read("src-tauri/windows/native-messaging-hooks.nsh"),
   ]);
 
-  assert.equal(packageJson.version, "1.9.9");
+  assert.match(packageJson.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
   assert.equal(tauri.version, packageJson.version);
-  assert.match(cargo, /^version = "1\.9\.9"$/m);
-  assert.match(cargoLock, /\[\[package\]\]\r?\nname = "luckyray-app"\r?\nversion = "1\.9\.9"\r?\n/);
+  assert.equal(cargo.match(/^version = "([^"]+)"$/m)?.[1], packageJson.version);
+  assert.equal(cargoLock.match(/\[\[package\]\]\r?\nname = "luckyray-app"\r?\nversion = "([^"]+)"\r?\n/)?.[1], packageJson.version);
   assert.deepEqual(tauri.bundle.resources, {
-    "dsh/": "lr-lsh/199-1/deepseek-harness/",
-    "dsh-host/": "lr-lsh/199-1/dsh-host/",
-    "media-engine/": "media-engine/",
+    "dsh/": "lr-lsh/1910-2/deepseek-harness/",
+    "dsh-host/": "lr-lsh/1910-2/dsh-host/",
+    "media-engine/": "media-engine/1910-1/",
+    "native-video/": "native-video/",
     "../third-party-notices/": "third-party-notices/",
   });
   assert.doesNotMatch(JSON.stringify(tauri.bundle), /agent-engine|hermes/i);
@@ -53,12 +54,13 @@ test("the real beforeBuild child performs input and prepared gates around all ow
   assert.deepEqual(plan.steps.map(({ name }) => name), [
     "readiness-inputs",
     "media-engine",
+    "native-video",
     "dsh-runtime",
     "external-bins",
     "frontend",
     "readiness-prepared",
   ]);
-  assert.deepEqual(plan.steps[2], {
+  assert.deepEqual(plan.steps[3], {
     name: "dsh-runtime",
     script: "scripts/prepare-dsh-package-runtime.ps1",
     output: "src-tauri/dsh",

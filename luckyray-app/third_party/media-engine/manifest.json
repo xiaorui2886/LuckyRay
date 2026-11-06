@@ -29,12 +29,23 @@
     "license": "MIT"
   },
   "ffmpeg": {
-    "version": "9.0.1",
-    "variant": "x64-windows-shared-lgpl",
-    "fileName": "ffmpeg-9.0.1_x64-windows-shared-lgpl.zip",
-    "url": "https://github.com/System233/ffmpeg-msvc-prebuilt/releases/download/ffmpeg-9.0.1/ffmpeg-9.0.1_x64-windows-shared-lgpl.zip",
-    "sha256": "8e363a656460dfcbd3cddfc906ddb8c1f2bee99e38a3f8cfc2d008a36b0a189d",
-    "license": "LGPL-2.1-or-later"
+    "version": "8.0.git-0b01ed76",
+    "variant": "x86_64-windows-static-lgpl-local-source-build",
+    "distribution": "native-video-corresponding-source",
+    "sourceCommit": "0b01ed76aa6a64e95ec4b87297aaa374a72de34e",
+    "sourceUrl": "https://github.com/FFmpeg/FFmpeg/tree/0b01ed76aa6a64e95ec4b87297aaa374a72de34e",
+    "sourceArchiveSha256": "6ef285e376973ac682553c77aa1518f31fac7b65219fb3332b36d96294f84d83",
+    "license": "LGPL-2.1-or-later with GCC Runtime Library Exception and permissive dependency notices",
+    "files": {
+      "ffmpeg.exe": {
+        "size": 34188288,
+        "sha256": "602112ab4a82ee5cec271b3658cc0d8c7ee829fdcf4b9dcc856537df98821b36"
+      },
+      "ffprobe.exe": {
+        "size": 33975808,
+        "sha256": "a5be5ef6a81af32040cf58ac112ed3d4c1a9efad8b9d2b43977072c422da338e"
+      }
+    }
   },
   "supportedSitePacks": [
     "youtube.com",

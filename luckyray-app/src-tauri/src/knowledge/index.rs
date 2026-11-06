@@ -391,12 +391,43 @@ impl KnowledgeIndex {
         &self,
         vault: &TrustedVault,
     ) -> Result<KnowledgeIndexSnapshot, KnowledgeError> {
-        let (request_generation, observed_refreshes) = {
-            let state = self
-                .state
-                .lock()
+        self.refresh_for_generation(vault, self.generation()?, false)
+    }
+
+    pub(crate) fn generation(&self) -> Result<u64, KnowledgeError> {
+        self.state.lock().map(|state| state.generation)
+            .map_err(|_| error("knowledge-lock-poisoned", "Knowledge index lock failed"))
+    }
+
+    pub(crate) fn ensure_snapshot_for_generation(
+        &self, vault: &TrustedVault, generation: u64,
+    ) -> Result<KnowledgeIndexSnapshot, KnowledgeError> {
+        {
+            let state = self.state.lock()
                 .map_err(|_| error("knowledge-lock-poisoned", "Knowledge index lock failed"))?;
-            (state.generation, state.completed_refreshes)
+            if state.generation != generation {
+                return Err(error("knowledge-index-generation-stale", "Knowledge index request belongs to a stale Vault generation"));
+            }
+            if state.version > 0
+                && state.vault_id.as_deref() == Some(vault.registration.id.as_str())
+                && state.root.as_deref() == Some(vault.root.as_path())
+            {
+                return snapshot_from_state(&state);
+            }
+        }
+        self.refresh_for_generation(vault, generation, true)
+    }
+
+    fn refresh_for_generation(
+        &self, vault: &TrustedVault, request_generation: u64, only_if_missing: bool,
+    ) -> Result<KnowledgeIndexSnapshot, KnowledgeError> {
+        let observed_refreshes = {
+            let state = self.state.lock()
+                .map_err(|_| error("knowledge-lock-poisoned", "Knowledge index lock failed"))?;
+            if state.generation != request_generation {
+                return Err(error("knowledge-index-generation-stale", "Knowledge index request belongs to a stale Vault generation"));
+            }
+            state.completed_refreshes
         };
         let _refresh_guard = self.refresh_lock.lock().map_err(|_| {
             error(
@@ -416,7 +447,8 @@ impl KnowledgeIndex {
                     "Knowledge index request belongs to a stale Vault generation",
                 ));
             }
-            if state.completed_refreshes > observed_refreshes
+            if (only_if_missing || state.completed_refreshes > observed_refreshes)
+                && state.version > 0
                 && state.vault_id.as_deref() == Some(vault.registration.id.as_str())
                 && state.root.as_deref() == Some(vault.root.as_path())
             {
@@ -629,7 +661,7 @@ impl KnowledgeIndex {
         Ok(())
     }
 
-    fn ensure_generation(&self, generation: u64) -> Result<(), KnowledgeError> {
+    pub(crate) fn ensure_generation(&self, generation: u64) -> Result<(), KnowledgeError> {
         let state = self
             .state
             .lock()

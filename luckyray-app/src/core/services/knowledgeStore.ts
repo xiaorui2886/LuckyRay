@@ -6,7 +6,7 @@ import type {
 import { getLuckyRayBridgeSync, type LuckyRayBridge } from "../bridge/luckyRayBridge";
 import type { KnowledgeTreeNode } from "../bridge/knowledgeTypes";
 import { refreshKnowledgeIndex, type KnowledgeIndexSnapshot } from "./knowledge";
-import { clearActiveKnowledgeSource, setActiveKnowledgeSource, type ActiveKnowledgeSourceMode } from "./knowledgeSource";
+import { clearActiveKnowledgeSource, readActiveKnowledgeSource, setActiveKnowledgeSource, type ActiveKnowledgeSourceMode } from "./knowledgeSource";
 import { VaultFileChangeQueue, markdownContentChanges, type VaultFileChangeBatch } from "./vaultFileChanges";
 import { invalidateKnowledgeAttachmentInventory } from "./vaultAttachments";
 import { clearAttachmentResolutionReads } from "./vaultAttachmentResolution";
@@ -195,7 +195,13 @@ type ActiveRequest = {
   sequence: number;
   controller: AbortController;
   promise: Promise<KnowledgeStoreSnapshot>;
+  source: ReturnType<typeof readActiveKnowledgeSource>;
 };
+
+function sameRequestSource(source: ActiveRequest["source"]) {
+  const current = readActiveKnowledgeSource();
+  return source?.vaultId === current?.vaultId && source?.rootPath === current?.rootPath;
+}
 
 const INVALIDATION_BATCH_MS = 64;
 const TAG_INDEX_CACHE_KEY = "luckyray:notes-vault-frontmatter-tag-index-v1";
@@ -280,7 +286,9 @@ export class KnowledgeStore {
   }
 
   revalidate(input: KnowledgeStoreInvalidation) {
-    if (this.activeRequest && !input.force) return this.activeRequest.promise;
+    // A non-forced Notes read after switching vaults must not join an old
+    // vault's watcher/read request or let that request restore the old source.
+    if (this.activeRequest && !input.force && sameRequestSource(this.activeRequest.source)) return this.activeRequest.promise;
     if (this.activeRequest) this.activeRequest.controller.abort();
 
     const bridge = this.readBridge();
@@ -298,6 +306,7 @@ export class KnowledgeStore {
       sequence,
       controller,
       promise: Promise.resolve(this.snapshot),
+      source: readActiveKnowledgeSource(),
     };
     request.promise = (async () => {
       try {
@@ -396,7 +405,7 @@ export class KnowledgeStore {
   }
 
   private isCurrent(request: ActiveRequest) {
-    return this.activeRequest?.sequence === request.sequence && !request.controller.signal.aborted;
+    return this.activeRequest?.sequence === request.sequence && !request.controller.signal.aborted && sameRequestSource(request.source);
   }
 
   private publishReady(

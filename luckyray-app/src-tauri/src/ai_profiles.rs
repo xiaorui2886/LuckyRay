@@ -534,6 +534,7 @@ fn catalog_path(app_data_dir: &Path) -> PathBuf {
 }
 
 fn load_or_migrate(backend: &BackendServices) -> Result<StoredCatalog, &'static str> {
+    crate::ai_secret_store::migrate(&Connection::open(backend.db_path()).map_err(|_| "ai-model-profiles-unavailable")?)?;
     let path = catalog_path(backend.app_data_dir());
     if path.exists() {
         let bytes = std::fs::read(&path).map_err(|_| "ai-model-profiles-unavailable")?;
@@ -593,7 +594,7 @@ fn migrate_legacy_settings(db_path: &Path) -> Result<StoredCatalog, &'static str
         source_provider: None,
         model_capabilities: Vec::new(),
     })?;
-    if let Some(key) = read("aiApiKey").filter(|value| !value.trim().is_empty()) {
+    if let Some(key) = crate::ai_secret_store::read(&connection, "aiApiKey")?.filter(|value| !value.trim().is_empty()) {
         write_setting(&connection, &secret_key(&profile.id), &key)?;
     }
     write_setting(&connection, ACTIVE_PROFILE_KEY, &profile.id)?;
@@ -850,13 +851,7 @@ fn secret_configured(db_path: &Path, profile_id: &str) -> Result<bool, &'static 
 
 fn read_secret(db_path: &Path, profile_id: &str) -> Result<String, &'static str> {
     let connection = Connection::open(db_path).map_err(|_| "ai-model-profiles-unavailable")?;
-    let value = connection
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            params![secret_key(profile_id)],
-            |row| row.get::<_, String>(0),
-        )
-        .unwrap_or_default();
+    let value = crate::ai_secret_store::read(&connection, &secret_key(profile_id))?.unwrap_or_default();
     let value = value.trim().to_owned();
     if value.len() > 8192 || value.chars().any(char::is_control) {
         return Err("ai-model-profile-invalid");
@@ -959,13 +954,7 @@ async fn discover_models(
 
 fn apply_active_profile(db_path: &Path, profile: &StoredProfile) -> Result<(), &'static str> {
     let connection = Connection::open(db_path).map_err(|_| "ai-model-profiles-unavailable")?;
-    let api_key: String = connection
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            params![secret_key(&profile.id)],
-            |row| row.get(0),
-        )
-        .unwrap_or_default();
+    let api_key = crate::ai_secret_store::read(&connection, &secret_key(&profile.id))?.unwrap_or_default();
     let transaction = connection
         .unchecked_transaction()
         .map_err(|_| "ai-model-profiles-unavailable")?;
@@ -981,7 +970,7 @@ fn apply_active_profile(db_path: &Path, profile: &StoredProfile) -> Result<(), &
         ("maxTokens", profile.max_output_tokens.to_string()),
         (ACTIVE_PROFILE_KEY, profile.id.clone()),
     ] {
-        transaction.execute("INSERT INTO settings(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, value]).map_err(|_| "ai-model-profiles-unavailable")?;
+        write_setting(&transaction, key, &value)?;
     }
     transaction
         .commit()
@@ -989,6 +978,7 @@ fn apply_active_profile(db_path: &Path, profile: &StoredProfile) -> Result<(), &
 }
 
 fn write_setting(connection: &Connection, key: &str, value: &str) -> Result<(), &'static str> {
+    if crate::ai_secret_store::is_secret(key) { return crate::ai_secret_store::write(connection, key, value); }
     connection.execute("INSERT INTO settings(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, value]).map_err(|_| "ai-model-profiles-unavailable")?;
     Ok(())
 }

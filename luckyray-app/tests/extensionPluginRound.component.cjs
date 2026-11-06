@@ -26,6 +26,10 @@ const PACKAGE = {
   },
   enabled: true, digest: "d-round", epoch: 1, grants: ["materials.read", "materials.tags", "knowledge.create"],
 };
+const EVENT_PACKAGE = {
+  package: { manifest: { schemaVersion: 1, id: "test.events", name: "Synthetic event + AI fixture", version: "1.0.0", type: "script", entry: "main.js", minHostVersion: "1.9.2", apiVersion: 1, requiredModules: ["materials", "events", "ai"], optionalModules: [] }, resource: { code: "// synthetic", requiredPermissions: ["materials.read", "events.subscribe", "ai.generate"], optionalPermissions: [], dataVersion: 1, contributions: [{ id: "settings", label: "Event settings", kind: "settings" }] } },
+  enabled: true, digest: "d-events", epoch: 1, grants: ["materials.read", "events.subscribe", "ai.generate"],
+};
 const TAGS = (id) => ({ id, name: `asset-${id}.png`, tagIds: ["blue"], revision: "r2" });
 
 (async () => {
@@ -59,15 +63,20 @@ const TAGS = (id) => ({ id, name: `asset-${id}.png`, tagIds: ["blue"], revision:
           "second-ok": { polls: [ok({ title: "B", text: "second run" })], dispatch: [] },
           "name-conflict": { polls: [call("knowledge.create", { title: "T", content: "" }), ok({ title: "done" })], dispatch: [() => ({ response: { error: JSON.stringify({ code: "knowledge-name-conflict", message: "A document with this name already exists" }) } })] },
           "settings-form": { polls: [ok({ title: "Round settings", fields: [{ id: "title", label: "Title", value: "before" }], actions: [{ id: "save", label: "Save" }] }), call("data.set", { schemaVersion: 1, revision: 1, settings: { title: "after" }, cache: {} }), ok({ title: "Round settings", text: "saved", fields: [{ id: "title", label: "Title", value: "after" }], actions: [{ id: "save", label: "Save" }] })], dispatch: [() => ({ response: { value: { schemaVersion: 1, revision: 1 } } })] },
+          "event-settings": { polls: [ok({ title: "Event settings", fields: [{ id: "prompt", label: "Prompt", value: "one\\ntwo", kind: "multiline" }], actions: [{ id: "save", label: "Save" }] }), ok({ title: "Event settings", fields: [{ id: "prompt", label: "Prompt", value: "default", kind: "multiline" }], actions: [{ id: "save", label: "Save" }] })], dispatch: [] },
           "deferred-write": { polls: [call("data.set", { schemaVersion: 1, revision: 1, settings: {}, cache: {} }), { kind: "pending" }], pendingForever: true, dispatch: [() => new Promise(resolve => { window.__deferred.dispatch = () => resolve({ response: { value: { schemaVersion: 1, revision: 1 } } }); })] },
         };
         let current = null; let polls = 0; let dispatches = 0;
         window.__useScenario = (name) => { current = scenarios[name]; polls = 0; dispatches = 0; if (!current) throw new Error("unknown scenario " + name); };
         window.__invoke = async (cmd, args) => {
-          if (cmd === "manage_extension_packages") return { revision: 1, hostVersion: "1.9.2", packages: [${JSON.stringify(PACKAGE)}] };
+          if (cmd === "material_library_command") return {libraries:[{id:"synthetic",name:"合成素材库",rootPath:null,storageMode:"managed",visible:true,state:"ready",preferences:{},version:1}],legacyId:"synthetic",activeId:"synthetic"};
+          if (cmd === "manage_extension_packages") return { revision: 1, hostVersion: "1.9.2", packages: [${JSON.stringify(PACKAGE)},${JSON.stringify(EVENT_PACKAGE)}] };
           if (cmd === "list_canvases") return [];
           if (cmd !== "extension_runtime") throw new Error("unexpected " + cmd);
           const req = JSON.parse(args.request);
+          if (req.op === "aiSelection") return {provider:"模拟供应商",model:"模拟模型",fingerprint:"synthetic"};
+          if (req.op === "eventSubscriptions") return window.__eventSubscriptions || [];
+          if (req.op === "cancelEventSubscription") { window.__eventSubscriptions = (window.__eventSubscriptions || []).filter(kind => kind !== req.kind); return null; }
           if (req.op === "start") return { token: "t" };
           if (req.op === "close") return {};
           if (req.op === "poll") { const m = current.polls[polls]; if (m === undefined) { return current.pendingForever ? { kind: "pending" } : fail("scenario-exhausted"); } if (m.kind !== "pending") polls++; else if (!current.pendingForever) polls++; return m; }
@@ -80,6 +89,7 @@ const TAGS = (id) => ({ id, name: `asset-${id}.png`, tagIds: ["blue"], revision:
         createRoot(document.getElementById("root")).render(<I18nProvider locale="zh-CN"><PluginEntryMenu /></I18nProvider>);
         window.__open = () => openPlugin("test.round", "run");
         window.__openSettings = () => openPlugin("test.round", "settings");
+        window.__openEventSettings = () => openPlugin("test.events", "settings");
         document.body.dataset.ready = "1";
       `,
       resolveDir: root, loader: "tsx",
@@ -90,6 +100,7 @@ const TAGS = (id) => ({ id, name: `asset-${id}.png`, tagIds: ["blue"], revision:
       name: "stubs", setup(b) {
         const map = new Map([
           ["@tauri-apps/api/core", "export const invoke = (cmd, args) => window.__invoke(cmd, args);"],
+          ["@tauri-apps/api/event", "export const listen = async () => () => {};"],
           ["@tauri-apps/plugin-dialog", "export const confirm = (m) => window.__confirm(m); export const save = async () => 'C:/out/c.svg';"],
           ["../../core/services/materials", "export const listLegacyMaterialAssets = async () => [{ id: 'm1', name: 'asset-m1.png', kind: 'image', mimeType: 'image/png', revision: 'r1', storageMode: 'managed', tagIds: [] }, { id: 'm2', name: 'asset-m2.png', kind: 'image', mimeType: 'image/png', revision: 'r1', storageMode: 'managed', tagIds: [] }, { id: 'm3', name: 'asset-m3.png', kind: 'image', mimeType: 'image/png', revision: 'r1', storageMode: 'managed', tagIds: [] }]; export const listLegacyFilteredMaterialAssets = listLegacyMaterialAssets;"],
           ["../../core/services/knowledge", "export const listKnowledgeDocuments = async () => []; export const searchKnowledgeDocuments = async () => []; export const ensureActiveKnowledgeUiSource = async () => ({ vaultId: 'v', sourceEpoch: 1 }); export const knowledgeDocumentNoteId = (ref) => 'kdoc-' + ref.relativePath;"],
@@ -290,6 +301,33 @@ const TAGS = (id) => ({ id, name: `asset-${id}.png`, tagIds: ["blue"], revision:
     await round(page).locator("li.is-confirmed").waitFor({ timeout: 8000 });
     assert.match(await round(page).locator("li.is-confirmed").innerText(), /已保存插件自有设置/);
     assert.equal(await dialog(page).locator(".plugin-field input").inputValue(), "after", "saved value echoed");
+  });
+
+  await scenario("event-panel-unsubscribe-and-multiline", async (page) => {
+    await page.evaluate(() => { window.__eventSubscriptions = ["materials.imported"]; window.__useScenario("event-settings"); window.__openEventSettings(); });
+    await dialog(page).waitFor();
+    const panel = dialog(page).locator(".plugin-event-panel");
+    await panel.locator('button:has-text("取消订阅")').waitFor();
+    const textarea = dialog(page).locator(".plugin-field textarea");
+    await textarea.waitFor();
+    assert.equal(await textarea.inputValue(), "one\ntwo");
+    await textarea.fill("synthetic\ninput");
+    assert.equal(await textarea.inputValue(), "synthetic\ninput");
+    await dialog(page).locator('label:has-text("允许本次运行使用当前配置的 AI 模型") input').check();
+    await dialog(page).getByText("已选择：模拟供应商 · 模拟模型").waitFor();
+    await dialog(page).locator('label:has-text("允许订阅当前素材库的导入") input').check();
+    await dialog(page).getByText("合成素材库", {exact:false}).waitFor();
+    const autoAi = dialog(page).locator('label:has-text("允许这些事件自动调用所选 AI 模型") input');
+    await autoAi.waitFor();
+    assert.equal(await autoAi.isChecked(), false, "event-triggered AI is separately opt-in");
+    await dialog(page).locator('.plugin-stale').waitFor();
+    await dialog(page).getByRole("button", {name:"按新选择重新运行"}).click({timeout:4000});
+    await dialog(page).locator('.plugin-stale').waitFor({state:"detached"});
+    assert.equal(await textarea.inputValue(), "synthetic\ninput", "refresh preserves typed values");
+    assert.equal(await dialog(page).locator('.plugin-actions button:has-text("Save")').isEnabled(), true);
+    await panel.locator('button:has-text("取消订阅")').click();
+    await panel.getByText("当前没有订阅", {exact:false}).waitFor();
+    assert.deepEqual(await page.evaluate(() => window.__eventSubscriptions), []);
   });
 
   await browser.close(); server.close();

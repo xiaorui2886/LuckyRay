@@ -9,7 +9,7 @@ const bundle = await esbuild.build({
   bundle: true, format: "esm", write: false,
   plugins: [{ name: "controlled-transport", setup(b) { b.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({ path: "transport", namespace: "fixture" })); b.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: "export const invoke=(...a)=>globalThis.fixtureInvoke(...a)" })); } }],
 });
-const { runPlugin, PluginRunError, isPreExecutionRefusal } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+const { runPlugin, PluginRunError, isPreExecutionRefusal, validatePluginUi } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
 
 /** Scripted broker: each poll returns the next message; dispatch answers from the table. */
 function broker(messages, answers) {
@@ -26,6 +26,14 @@ function broker(messages, answers) {
   return ops;
 }
 const scope = (extra = {}) => ({ materialIds: [], canvasIds: [], knowledge: null, writes: true, exportPath: null, theme: {}, ...extra });
+
+test("bounded multiline fields accept plain text and reject unknown component kinds", () => {
+  const result = validatePluginUi({title:"fixture",fields:[{id:"prompt",label:"Prompt",value:"first\nsecond",kind:"multiline"}]});
+  assert.equal(result.fields[0].kind,"multiline");
+  assert.equal(result.fields[0].value,"first\nsecond");
+  assert.throws(() => validatePluginUi({title:"fixture",fields:[{id:"x",label:"X",value:"",kind:"html"}]}),/plugin-ui-invalid/);
+  assert.throws(() => validatePluginUi({title:"fixture",fields:[{id:"x",label:"X",value:"x".repeat(1001),kind:"multiline"}]}),/plugin-ui-invalid/);
+});
 
 test("committed write responses become outcomes carrying the host value; reads and errors do not", async () => {
   const note = { documentRef: { vaultId: "v", relativePath: "notes/a.md" }, title: "A", content: "", revision: "1" };

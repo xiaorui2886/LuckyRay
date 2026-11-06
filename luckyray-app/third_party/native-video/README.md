@@ -1,4 +1,21 @@
-# Native video runtime — local development only
+# Native video runtime — 1.9.10 private acceptance
+
+The active runtime is now a locally compiled LGPL build, with the same mpv and
+FFmpeg source commits and a complete hashed source/license/build bundle. See
+`lgpl-build-20261106/BUILD-INFO.json`, `LICENSES.md` and `RELINK.zh-CN.md` there.
+The installer includes `native-video/sources.tar.xz`; the corresponding private
+Release must also supply the complete application source archive. The preparation
+and Rust build gates verify all 43 material files, not just an approval flag.
+The same source recipe also produces the independent FFmpeg/ffprobe tools;
+their exact hashes and corresponding-source binding replace the old FFmpeg 9
+tool bundle. No model, workflow or original media is changed.
+
+The old DLL's material gap below remains historical; that DLL is not shipped.
+Default DLL hash checks and local-source restrictions remain. No public release
+or patent clearance is implied. The application-source/relink procedure is
+provided instead of an unchecked runtime override.
+
+## Historical October runtime (not the current artifact)
 
 LuckyRay uses libmpv's separate DLL through its public client API. No upstream
 source modification is made by the client integration. The pinned artifact comes

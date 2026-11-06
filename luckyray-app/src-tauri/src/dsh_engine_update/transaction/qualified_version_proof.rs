@@ -78,6 +78,7 @@ fn candidate_from_real_input(path: &Path, baseline: &Path, from: &str, pair: &Ed
         closure_sha256: format!("{:x}", closure.finalize()), closure_file_count: files.len() as u32,
         data_compatibility: "no-migration".into(), upstream: None,
         compatibility: None,
+        sealed_recovery: None,
         assembly: Some(super::super::assembly::FrozenAssemblyIdentity { schema: 2, kind: "official-npm-qualified-win-x64-v2".into(),
             toolset: Some("node22.19.0-pnpm11.7.0-policy1".into()) }),
     };

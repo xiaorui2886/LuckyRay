@@ -4,6 +4,7 @@ use crate::materials::{MaterialAsset, MaterialFilter, MaterialQueryScope};
 use std::io::{Seek, SeekFrom};
 pub(crate) mod materials;
 pub(crate) mod notes;
+pub(crate) mod preview;
 
 /// Shared result type for every Content V1 route (read and mutate).
 pub(super) type ContentResult<T> = Result<T, (u16, &'static str)>;
@@ -215,6 +216,14 @@ fn json_route(gateway: &CompanionGateway, request: &HttpRequest) -> ContentResul
         }
         _ => {
             query(&request.path, &[])?;
+            if let Some(id) = path.strip_prefix("/v1/assets/").and_then(|rest| rest.strip_suffix("/preview")) {
+                if !valid_id(id) { return Err((404, "NOT_FOUND")); }
+                let (text, truncated) = catalog.read_agent_text_preview(id, 4096)
+                    .map_err(|_| (404, "PREVIEW_UNAVAILABLE"))?
+                    .ok_or((404, "PREVIEW_UNAVAILABLE"))?;
+                let (text, truncated) = preview::text_excerpt(&text, truncated);
+                return Ok(json!({"kind": "text", "text": text, "truncated": truncated}));
+            }
             let id = path
                 .strip_prefix("/v1/assets/")
                 .filter(|s| valid_id(s))
@@ -301,6 +310,55 @@ fn mime(name: &str) -> &'static str {
     }
 }
 
+/// Display names are editable labels, not file-format metadata. Only emit
+/// canonical known types; never copy untrusted metadata into HTTP headers.
+fn asset_mime(asset: &MaterialAsset) -> &'static str {
+    match asset.mime_type.trim().to_ascii_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => "image/jpeg",
+        "image/png" => "image/png",
+        "image/gif" => "image/gif",
+        "image/webp" => "image/webp",
+        "image/svg+xml" => "image/svg+xml",
+        "image/bmp" | "image/x-ms-bmp" => "image/bmp",
+        "image/tiff" => "image/tiff",
+        "image/avif" => "image/avif",
+        "image/heic" => "image/heic",
+        "image/heif" => "image/heif",
+        "video/mp4" | "video/x-m4v" => "video/mp4",
+        "video/webm" => "video/webm",
+        "video/quicktime" => "video/quicktime",
+        "video/x-matroska" => "video/x-matroska",
+        "video/x-msvideo" => "video/x-msvideo",
+        "video/mpeg" => "video/mpeg",
+        "audio/mpeg" | "audio/mp3" => "audio/mpeg",
+        "audio/wav" | "audio/x-wav" | "audio/wave" => "audio/wav",
+        "audio/mp4" | "audio/x-m4a" => "audio/mp4",
+        "audio/aac" => "audio/aac",
+        "audio/flac" | "audio/x-flac" => "audio/flac",
+        "audio/ogg" => "audio/ogg",
+        "audio/webm" => "audio/webm",
+        "application/pdf" => "application/pdf",
+        "text/plain" | "text/plain; charset=utf-8" | "text/markdown" => "text/plain; charset=utf-8",
+        "application/msword" => "application/msword",
+        "application/vnd.ms-excel" => "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint" => "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => {
+            // Older records may have no MIME. Use the catalog-owned path that
+            // companion_resource has already authorized and opened, not a URL
+            // or a path supplied by the request. No extra file is opened here.
+            let stored_path = match asset.storage_mode.as_str() {
+                "managed" | "source" => asset.library_path.as_deref().filter(|s| !s.is_empty()).unwrap_or(&asset.original_path),
+                "linked" => &asset.original_path,
+                _ => return "application/octet-stream",
+            };
+            mime(stored_path)
+        }
+    }
+}
+
 /// Keep a Windows read handle stable while allowing the owner's atomic rename.
 /// In-place writers are excluded until the short streaming read finishes.
 pub(crate) fn open_resource(path: impl AsRef<Path>) -> io::Result<std::fs::File> {
@@ -332,7 +390,7 @@ fn resource(
         return Err((404, "NOT_FOUND"));
     }
     // JSON mutations share the asset prefix but are not downloadable resources.
-    if matches!(suffix, "favorite" | "tags" | "folder") {
+    if matches!(suffix, "favorite" | "tags" | "folder" | "preview") {
         return Ok(None);
     }
     if !matches!(suffix, "file" | "thumbnail") {
@@ -364,7 +422,7 @@ fn resource(
     );
     if thumbnail {
         // Decode with allocation limits; emit a small PNG, never return the full original as a thumbnail.
-        if !matches!(asset.kind.as_str(), "image" | "video") || metadata.len() > 64 * 1024 * 1024 {
+        if metadata.len() > 64 * 1024 * 1024 {
             return Err((404, "PREVIEW_UNAVAILABLE"));
         }
         let root = gateway.backend.app_data_dir().join("companion-previews");
@@ -372,16 +430,17 @@ fn resource(
         let key = format!("{:x}", Sha256::digest(version.as_bytes()));
         let path = root.join(format!("{key}.png"));
         if !path.exists() {
-            let mut reader = image::ImageReader::new(std::io::BufReader::new(file))
-                .with_guessed_format()
-                .map_err(|_| (404, "PREVIEW_UNAVAILABLE"))?;
-            let mut limits = image::Limits::default();
-            limits.max_alloc = Some(128 * 1024 * 1024);
-            reader.limits(limits);
-            let image = reader
-                .decode()
-                .map_err(|_| (404, "PREVIEW_UNAVAILABLE"))?
-                .thumbnail(384, 384);
+            let image = if matches!(asset.kind.as_str(), "image" | "video") {
+                let mut reader = image::ImageReader::new(std::io::BufReader::new(file))
+                    .with_guessed_format()
+                    .map_err(|_| (404, "PREVIEW_UNAVAILABLE"))?;
+                let mut limits = image::Limits::default();
+                limits.max_alloc = Some(128 * 1024 * 1024);
+                reader.limits(limits);
+                reader.decode().map_err(|_| (404, "PREVIEW_UNAVAILABLE"))?.thumbnail(384, 384)
+            } else {
+                preview::file_thumbnail(&mut file, &asset.name).ok_or((404, "PREVIEW_UNAVAILABLE"))?
+            };
             let temporary = root.join(format!("{key}-{}.png", random_hex(8)));
             let result = image
                 .save_with_format(&temporary, image::ImageFormat::Png)
@@ -399,7 +458,11 @@ fn resource(
         file = std::fs::File::open(path).map_err(|_| (503, "CONTENT_UNAVAILABLE"))?;
         return Ok(Some((file, "image/png".into(), version)));
     }
-    Ok(Some((file, mime(&asset.name).into(), version)))
+    let mime = asset_mime(&asset);
+    // A corrected media type must invalidate an old octet-stream response.
+    // Keep the thumbnail cache/version unchanged.
+    let version = format!("\"{:x}\"", Sha256::digest(format!("{version}:{mime}")));
+    Ok(Some((file, mime.into(), version)))
 }
 
 /// Legacy requests keep their paired-device semantics until an explicit off

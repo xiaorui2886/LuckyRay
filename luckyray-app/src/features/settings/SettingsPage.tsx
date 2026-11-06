@@ -1388,48 +1388,40 @@ function ConnectionState({ state, bridgeAvailable }: { state: "idle" | "loading"
 }
 
 function StorageOverview({ usage }: { usage: BridgeStorageUsage | null }) {
-  const { plural, t } = useI18n();
+  const { locale, plural, t } = useI18n();
   const total = usage?.total_size_bytes ?? 0;
   const safeTotal = Math.max(total, 1);
-  const radius = 50;
-  const circumference = 2 * Math.PI * radius;
-  const usedPct = usage ? Math.min(1, total / safeTotal) : 0;
-  const offset = circumference * (1 - usedPct);
-  const pct = (value: number) => Math.max(0, Math.min(100, Math.round((value / safeTotal) * 100)));
-  const bars = [
-    { label: t("settings.storage.category.assets"), size: formatSize(usage?.asset_library_size_bytes), pct: pct(usage?.asset_library_size_bytes ?? 0), color: "linear-gradient(90deg,var(--accent),var(--accent-hover))" },
-    { label: t("settings.storage.category.database"), size: formatSize(usage?.db_size_bytes), pct: pct(usage?.db_size_bytes ?? 0), color: "linear-gradient(90deg,#4ade80,#22c55e)" },
-    { label: t("settings.storage.category.thumbnails"), size: formatSize(usage?.thumbnail_size_bytes), pct: pct(usage?.thumbnail_size_bytes ?? 0), color: "linear-gradient(90deg,#fbbf24,#f59e0b)" },
-    { label: t("settings.storage.category.canvas"), size: formatSize(usage?.canvas_size_bytes), pct: pct(usage?.canvas_size_bytes ?? 0), color: "linear-gradient(90deg,#a78bfa,#7c8aff)" },
-    { label: t("settings.storage.category.generated"), size: formatSize(usage?.generated_media_size_bytes), pct: pct(usage?.generated_media_size_bytes ?? 0), color: "linear-gradient(90deg,#38bdf8,#0ea5e9)" },
-    { label: t("settings.storage.category.other"), size: formatSize(usage?.other_data_size_bytes), pct: pct(usage?.other_data_size_bytes ?? 0), color: "linear-gradient(90deg,#94a3b8,#64748b)" },
-    { label: t("settings.storage.category.backups"), size: formatSize(usage?.backup_size_bytes), pct: pct(usage?.backup_size_bytes ?? 0), color: "linear-gradient(90deg,#f472b6,#db2777)" },
+  const share = (bytes: number) => Math.max(0, Math.min(1, bytes / safeTotal));
+  const percentage = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 });
+  const categories = [
+    { label: t("settings.storage.category.assets"), bytes: usage?.asset_library_size_bytes ?? 0, color: "var(--accent)" },
+    { label: t("settings.storage.category.generated"), bytes: usage?.generated_media_size_bytes ?? 0, color: "#38bdf8" },
+    { label: t("settings.storage.category.database"), bytes: usage?.db_size_bytes ?? 0, color: "var(--mint)" },
+    { label: t("settings.storage.category.thumbnails"), bytes: usage?.thumbnail_size_bytes ?? 0, color: "var(--amber)" },
+    { label: t("settings.storage.category.canvas"), bytes: usage?.canvas_size_bytes ?? 0, color: "#a78bfa" },
+    { label: t("settings.storage.category.other"), bytes: usage?.other_data_size_bytes ?? 0, color: "#94a3b8" },
+    { label: t("settings.storage.category.backups"), bytes: usage?.backup_size_bytes ?? 0, color: "#f472b6" },
   ];
   return (
-    <div className="settings-storage-overview">
-      <div className="settings-ring">
-        <svg viewBox="0 0 120 120">
-          <circle className="settings-ring-track" cx="60" cy="60" r={radius} />
-          <circle className="settings-ring-progress" cx="60" cy="60" r={radius} strokeDasharray={circumference} strokeDashoffset={offset} />
-        </svg>
-        <div className="settings-ring-text">
-          <div className="settings-ring-used">{formatSize(total)}</div>
-          <div className="settings-ring-total">{usage ? [
+    <div className="settings-storage-overview" aria-busy={!usage}>
+      <div className="settings-storage-summary">
+        <strong className="settings-storage-total">{usage ? formatSize(total) : "—"}</strong>
+        <div className="settings-storage-counts">{usage ? [
             plural(usage.asset_count, { one: "settings.storage.assets.one", other: "settings.storage.assets.other" }),
             plural(usage.note_count, { one: "settings.storage.notes.one", other: "settings.storage.notes.other" }),
           ].join(" · ") : t("common.label.loading")}</div>
-        </div>
       </div>
-      <div className="settings-bar-list">
-        {bars.map((bar) => (
-          <div className="settings-bar-item" key={bar.label}>
-            <div className="settings-bar-label">{bar.label}</div>
-            <div className="settings-bar-track"><div className="settings-bar-fill" style={{ width: `${bar.pct}%`, background: bar.color }} /></div>
-            <div className="settings-bar-size">{bar.size}</div>
-            <div className="settings-bar-pct">{bar.pct}%</div>
+      <div className="settings-storage-composition" aria-hidden="true">
+        {categories.filter(category => category.bytes > 0).map(category => <span key={category.label} style={{ width: `${share(category.bytes) * 100}%`, background: category.color }} />)}
+      </div>
+      <dl className="settings-storage-categories">
+        {categories.map(category => (
+          <div className="settings-storage-category" key={category.label}>
+            <dt><i style={{ background: category.color }} aria-hidden="true" />{category.label}</dt>
+            <dd><b>{usage ? formatSize(category.bytes) : "—"}</b><span>{usage ? category.bytes > 0 && share(category.bytes) < .001 ? "<0.1%" : percentage.format(share(category.bytes)) : "—"}</span></dd>
           </div>
         ))}
-      </div>
+      </dl>
     </div>
   );
 }

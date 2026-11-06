@@ -1,0 +1,752 @@
+{
+  "video": {
+    "115": {
+      "class_type": "ResolutionSelector",
+      "inputs": {
+        "aspect_ratio": "16:9 (Widescreen)",
+        "megapixels": 0.6,
+        "multiple": 32
+      }
+    },
+    "121": {
+      "class_type": "VAEDecodeAudio",
+      "inputs": {
+        "samples": [
+          "125",
+          0
+        ],
+        "vae": [
+          "150",
+          0
+        ]
+      }
+    },
+    "122": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "125",
+          0
+        ],
+        "vae": [
+          "149",
+          0
+        ]
+      }
+    },
+    "123": {
+      "class_type": "KSamplerSelect",
+      "inputs": {
+        "sampler_name": "euler"
+      }
+    },
+    "124": {
+      "class_type": "BasicScheduler",
+      "inputs": {
+        "scheduler": "simple",
+        "steps": [
+          "163",
+          0
+        ],
+        "denoise": 1,
+        "model": [
+          "151",
+          0
+        ]
+      }
+    },
+    "125": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+        "noise": [
+          "129",
+          0
+        ],
+        "guider": [
+          "126",
+          0
+        ],
+        "sampler": [
+          "123",
+          0
+        ],
+        "sigmas": [
+          "124",
+          0
+        ],
+        "latent_image": [
+          "136",
+          1
+        ]
+      }
+    },
+    "126": {
+      "class_type": "BasicGuider",
+      "inputs": {
+        "model": [
+          "151",
+          0
+        ],
+        "conditioning": [
+          "136",
+          0
+        ]
+      }
+    },
+    "129": {
+      "class_type": "RandomNoise",
+      "inputs": {
+        "noise_seed": 0
+      }
+    },
+    "131": {
+      "class_type": "ComfyMathExpression",
+      "inputs": {
+        "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+        "values.a": [
+          "132",
+          0
+        ]
+      }
+    },
+    "132": {
+      "class_type": "PrimitiveFloat",
+      "inputs": {
+        "value": 8
+      }
+    },
+    "136": {
+      "class_type": "MiniMaxH3ReferenceToVideo",
+      "inputs": {
+        "prompt": [
+          "138",
+          0
+        ],
+        "width": [
+          "115",
+          0
+        ],
+        "height": [
+          "115",
+          1
+        ],
+        "length": [
+          "131",
+          1
+        ],
+        "ref_image_size": "match",
+        "clip": [
+          "148",
+          0
+        ],
+        "vae": [
+          "149",
+          0
+        ],
+        "audio_vae": [
+          "150",
+          0
+        ],
+        "ref_images.ref_image_0": [
+          "137",
+          0
+        ]
+      }
+    },
+    "137": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "luckyray-reference-0.png"
+      }
+    },
+    "138": {
+      "class_type": "PrimitiveStringMultiline",
+      "inputs": {
+        "value": ""
+      }
+    },
+    "148": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "type": "minimax",
+        "device": "default"
+      }
+    },
+    "149": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      }
+    },
+    "150": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+      }
+    },
+    "151": {
+      "class_type": "LoraLoaderBypassModelOnly",
+      "inputs": {
+        "lora_name": "minimax_h3_turbo_4STEPS_comfyui.safetensors",
+        "strength_model": 1.0000000000000002,
+        "model": [
+          "288",
+          0
+        ]
+      }
+    },
+    "153": {
+      "class_type": "ModelAttentionBackend",
+      "inputs": {
+        "attention": "pytorch attention",
+        "model": [
+          "154",
+          0
+        ]
+      }
+    },
+    "154": {
+      "class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch",
+      "inputs": {
+        "model": [
+          "157",
+          0
+        ]
+      }
+    },
+    "155": {
+      "class_type": "SolAttnMiniMax",
+      "inputs": {
+        "tau": 1.3,
+        "start_percent": 0.2,
+        "end_percent": 0.9,
+        "min_tokens": 12288,
+        "sink_conditioning": "exact_kv_and_rows",
+        "morton": false,
+        "morton_curve": "2d_frame",
+        "centroid_tail": true,
+        "routed_cap_percent": 0,
+        "reuse_qkv_memory": false,
+        "verbose": false,
+        "dense_blocks": "",
+        "model": [
+          "153",
+          0
+        ]
+      }
+    },
+    "156": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "LuckyRay/short-drama",
+        "format": "video/h265-mp4",
+        "pix_fmt": "yuv420p10le",
+        "crf": 22,
+        "save_metadata": true,
+        "pingpong": false,
+        "save_output": true,
+        "images": [
+          "122",
+          0
+        ],
+        "audio": [
+          "121",
+          0
+        ]
+      }
+    },
+    "157": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "minimax_h3_fl2va_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "163": {
+      "class_type": "INTConstant",
+      "inputs": {
+        "value": 12
+      }
+    },
+    "288": {
+      "class_type": "LoraLoaderBypassModelOnly",
+      "inputs": {
+        "lora_name": "MysticXXX_MMH3-V1.safetensors",
+        "strength_model": 0.6,
+        "model": [
+          "155",
+          0
+        ]
+      }
+    }
+  },
+  "threeView": {
+    "202": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "211",
+          0
+        ],
+        "vae": [
+          "219",
+          0
+        ]
+      }
+    },
+    "206": {
+      "class_type": "TextEncodeQwenImage21",
+      "inputs": {
+        "prompt": [
+          "214",
+          0
+        ],
+        "negative_prompt": "",
+        "resolution": 1024,
+        "clip": [
+          "225",
+          0
+        ],
+        "images.image_1": [
+          "215",
+          0
+        ],
+        "vae": [
+          "219",
+          0
+        ]
+      }
+    },
+    "207": {
+      "class_type": "ComfySwitchNode",
+      "inputs": {
+        "switch": true,
+        "on_false": [
+          "206",
+          2
+        ],
+        "on_true": [
+          "209",
+          0
+        ]
+      }
+    },
+    "209": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": [
+          "213",
+          0
+        ],
+        "height": [
+          "213",
+          1
+        ],
+        "batch_size": 1
+      }
+    },
+    "211": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 25,
+        "cfg": 1,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1,
+        "model": [
+          "217",
+          0
+        ],
+        "positive": [
+          "206",
+          0
+        ],
+        "negative": [
+          "206",
+          1
+        ],
+        "latent_image": [
+          "207",
+          0
+        ]
+      }
+    },
+    "212": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "LuckyRay/short-drama",
+        "images": [
+          "202",
+          0
+        ]
+      }
+    },
+    "213": {
+      "class_type": "ResolutionSelector",
+      "inputs": {
+        "aspect_ratio": "16:9 (Widescreen)",
+        "megapixels": 2,
+        "multiple": 32
+      }
+    },
+    "214": {
+      "class_type": "CR Prompt Text",
+      "inputs": {
+        "prompt": ""
+      }
+    },
+    "215": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "luckyray-reference-0.png"
+      }
+    },
+    "217": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "219": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+      }
+    },
+    "225": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen3vl_8b_bf16.safetensors",
+        "type": "qwen_image",
+        "device": "default"
+      }
+    }
+  },
+  "character": {
+    "227": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "z_image_bf16.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "228": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "泛黄，发绿，模糊，低分辨率，低质量图像，扭曲的肢体，诡异的外观，丑陋，AI感，噪点，网格感，JPEG压缩条纹，异常的肢体，水印，乱码，意义不明的字符，泛蓝",
+        "clip": [
+          "245",
+          0
+        ]
+      }
+    },
+    "235": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 8,
+        "cfg": 1,
+        "sampler_name": "res_2s_ode",
+        "scheduler": "kl_optimal",
+        "denoise": 1,
+        "model": [
+          "250",
+          0
+        ],
+        "positive": [
+          "247",
+          0
+        ],
+        "negative": [
+          "228",
+          0
+        ],
+        "latent_image": [
+          "244",
+          0
+        ]
+      }
+    },
+    "236": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "235",
+          0
+        ],
+        "vae": [
+          "246",
+          0
+        ]
+      }
+    },
+    "240": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "lora_name": "Kook_Zimage_如梦似幻.safetensors",
+        "strength_model": 0.7000000000000002,
+        "model": [
+          "249",
+          0
+        ]
+      }
+    },
+    "241": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "LuckyRay/short-drama",
+        "images": [
+          "236",
+          0
+        ]
+      }
+    },
+    "244": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": [
+          "251",
+          0
+        ],
+        "height": [
+          "252",
+          0
+        ],
+        "batch_size": 1
+      }
+    },
+    "245": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen_3_4b.safetensors",
+        "type": "qwen_image",
+        "device": "default"
+      }
+    },
+    "246": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "ae.safetensors"
+      }
+    },
+    "247": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": [
+          "248",
+          0
+        ],
+        "clip": [
+          "245",
+          0
+        ]
+      }
+    },
+    "248": {
+      "class_type": "CR Text",
+      "inputs": {
+        "text": ""
+      }
+    },
+    "249": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "lora_name": "Kook_Zimage_瑶光.safetensors",
+        "strength_model": 0.5000000000000001,
+        "model": [
+          "227",
+          0
+        ]
+      }
+    },
+    "250": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "lora_name": "Z-Image-Fun-Lora-Distill-8-Steps-2603-ComfyUI.safetensors",
+        "strength_model": 0.45000000000000007,
+        "model": [
+          "240",
+          0
+        ]
+      }
+    },
+    "251": {
+      "class_type": "INTConstant",
+      "inputs": {
+        "value": 1024
+      }
+    },
+    "252": {
+      "class_type": "INTConstant",
+      "inputs": {
+        "value": 1680
+      }
+    }
+  },
+  "scene": {
+    "253": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "z_image_bf16.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "254": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "泛黄，发绿，模糊，低分辨率，低质量图像，扭曲的肢体，诡异的外观，丑陋，AI感，噪点，网格感，JPEG压缩条纹，异常的肢体，水印，乱码，意义不明的字符，泛蓝",
+        "clip": [
+          "270",
+          0
+        ]
+      }
+    },
+    "261": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 8,
+        "cfg": 1,
+        "sampler_name": "res_2s_ode",
+        "scheduler": "kl_optimal",
+        "denoise": 1,
+        "model": [
+          "274",
+          0
+        ],
+        "positive": [
+          "272",
+          0
+        ],
+        "negative": [
+          "254",
+          0
+        ],
+        "latent_image": [
+          "269",
+          0
+        ]
+      }
+    },
+    "262": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "261",
+          0
+        ],
+        "vae": [
+          "271",
+          0
+        ]
+      }
+    },
+    "266": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "lora_name": "Kook_Zimage_如梦似幻.safetensors",
+        "strength_model": 0.7000000000000002,
+        "model": [
+          "273",
+          0
+        ]
+      }
+    },
+    "267": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "LuckyRay/short-drama",
+        "images": [
+          "262",
+          0
+        ]
+      }
+    },
+    "269": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": [
+          "275",
+          0
+        ],
+        "height": [
+          "276",
+          0
+        ],
+        "batch_size": 1
+      }
+    },
+    "270": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen_3_4b.safetensors",
+        "type": "qwen_image",
+        "device": "default"
+      }
+    },
+    "271": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "ae.safetensors"
+      }
+    },
+    "272": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": [
+          "277",
+          0
+        ],
+        "clip": [
+          "270",
+          0
+        ]
+      }
+    },
+    "273": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "lora_name": "Kook_Zimage_瑶光.safetensors",
+        "strength_model": 0.5000000000000001,
+        "model": [
+          "253",
+          0
+        ]
+      }
+    },
+    "274": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "lora_name": "Z-Image-Fun-Lora-Distill-8-Steps-2603-ComfyUI.safetensors",
+        "strength_model": 0.45000000000000007,
+        "model": [
+          "266",
+          0
+        ]
+      }
+    },
+    "275": {
+      "class_type": "INTConstant",
+      "inputs": {
+        "value": 1920
+      }
+    },
+    "276": {
+      "class_type": "INTConstant",
+      "inputs": {
+        "value": 1080
+      }
+    },
+    "277": {
+      "class_type": "CR Text",
+      "inputs": {
+        "text": ""
+      }
+    }
+  }
+}

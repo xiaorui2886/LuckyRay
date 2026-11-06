@@ -46,6 +46,7 @@ mod agent_skills;
 mod agent_workspace;
 mod assets_import_file;
 mod ai_profiles;
+mod ai_secret_store;
 mod backend;
 mod browser_broker;
 mod canvas_agent;
@@ -68,6 +69,19 @@ pub fn verify_installed_lsh() -> Result<(), &'static str> {
     let executable = std::env::current_exe().map_err(|_| "dsh-installation-executable-unavailable")?;
     let directory = executable.parent().ok_or("dsh-installation-directory-unavailable")?;
     dsh_host::verify_installation(directory)
+}
+
+/// Build metadata only: no application, profile, service or window is opened.
+pub fn compiled_build_identity() -> serde_json::Value {
+    let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+    let config = context.config();
+    serde_json::json!({
+        "identifier": config.identifier,
+        "version": config.version,
+        "devUrl": config.build.dev_url.as_ref().map(ToString::to_string),
+        "bundleActive": config.bundle.active,
+        "debug": cfg!(debug_assertions),
+    })
 }
 mod favorites;
 mod extension_note_capture;
@@ -97,6 +111,13 @@ mod extension_process;
 mod extension_broker;
 mod extension_domains;
 mod extension_runtime;
+mod desktop_extension_runtime;
+#[cfg(test)]
+mod desktop_ai_transport_tests;
+mod extension_ai;
+mod extension_ai_redactor;
+mod extension_event_hub;
+mod extension_events;
 pub fn run_extension_worker() { extension_worker::run_stdio(); }
 #[cfg(all(debug_assertions,feature="extension-runtime-fixture"))]
 mod extension_fixture;
@@ -128,6 +149,7 @@ pub fn run_extension_community_fixture() {
         .invoke_handler(tauri::generate_handler![
             extension_packages::manage_extension_packages,
             extension_runtime::extension_runtime,
+            desktop_extension_runtime::desktop_extension_runtime,
             material_catalog_list_assets,
             material_catalog_get_assets,
             knowledge_list_documents,
@@ -155,6 +177,7 @@ pub fn run_extension_community_fixture() {
         .expect("community fixture failed to build")
         .run(|_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                desktop_extension_runtime::close_all();
                 community_mcp::shutdown();
                 extension_runtime::close_all_sessions();
             }
@@ -166,6 +189,7 @@ mod local_transport;
 mod material_drag;
 mod material_native_video;
 mod material_shell;
+mod material_file_preview;
 mod materials;
 mod media_transfer;
 pub mod native_messaging;
@@ -751,6 +775,7 @@ pub fn run() {
             extension_appearance::publish_extension_appearance,
             extension_packages::manage_extension_packages,
             extension_runtime::extension_runtime,
+            desktop_extension_runtime::desktop_extension_runtime,
             notes_drop_diagnostic,
             minimize_window,
             hide_window,
@@ -777,6 +802,11 @@ pub fn run() {
             canvas_comfyui_get_config,
             canvas_comfyui_set_config,
             canvas_comfyui_test_connection,
+            canvas_comfyui_set_workflow,
+            canvas_comfyui_preflight,
+            canvas_comfyui_submit,
+            canvas_comfyui_job_status,
+            canvas_comfyui_materialize,
             canvas_media_profiles_list,
             canvas_media_profile_upsert,
             canvas_media_profile_activate,
@@ -784,6 +814,8 @@ pub fn run() {
             canvas_media_profile_list_models,
             canvas_text_generate,
             ai_model_profiles_list,
+            ai_settings_secret_status,
+            ai_settings_secret_update,
             ai_model_profile_upsert,
             ai_model_profile_activate,
             ai_model_profile_test_connection,
@@ -794,11 +826,11 @@ pub fn run() {
             set_auto_launch_enabled,
             get_backend_bootstrap_status,
             companion_gateway::companion_gateway_status,
+            companion_gateway::endpoint_recovery::companion_gateway_recover_endpoint,
+            companion_gateway::endpoint_recovery::companion_gateway_endpoint_recovery_presentation,
             companion_gateway::companion_gateway_start,
             companion_gateway::companion_gateway_stop,
             companion_gateway::companion_gateway_restart,
-            companion_gateway::endpoint_recovery::companion_gateway_recover_endpoint,
-            companion_gateway::endpoint_recovery::companion_gateway_endpoint_recovery_presentation,
             companion_gateway::companion_gateway_issue_pairing,
             companion_gateway::companion_gateway_set_authorization_mode,
             companion_gateway::companion_gateway_cancel_pairing,
@@ -966,6 +998,7 @@ pub fn run() {
             material_catalog_merge_tags,
             material_catalog_begin_external_drag,
             material_catalog_shell_action,
+            material_file_preview::material_file_preview,
             material_library_command,
             material_native_video::material_native_video_command,
             workspace_windows::workspace_window_command,
@@ -1023,6 +1056,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                desktop_extension_runtime::close_all();
                 community_mcp::shutdown();
                 if !NORMAL_QUIT_COMPLETED.load(std::sync::atomic::Ordering::Acquire) {
                     // An unexpected termination must never activate a pending
@@ -1475,9 +1509,36 @@ fn checked_surface_bounds(
     ))
 }
 
+// Background preparation is optional. A minimized/not-yet-sized Main has no
+// usable viewport; defer creation to the existing foreground open, rather than
+// permanently latching a geometry error as an engine startup failure.
+fn background_surface_geometry(
+    viewport: tauri::LogicalSize<f64>,
+    minimized: bool,
+) -> Option<(tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>)> {
+    if minimized { return None; }
+    checked_surface_bounds(DshNativeSurfaceBounds {
+        x: 0.0, y: 60.0, width: viewport.width, height: viewport.height - 60.0,
+    }, viewport).ok()
+}
+
 #[cfg(test)]
 mod dsh_native_surface_bounds_tests {
     use super::*;
+
+    #[test]
+    fn background_preparation_defers_unusable_viewports_without_weakening_foreground() {
+        assert!(background_surface_geometry(tauri::LogicalSize::new(1440.0, 900.0), true).is_none());
+        for viewport in [tauri::LogicalSize::new(0.0, 0.0), tauri::LogicalSize::new(1440.0, 0.0),
+            tauri::LogicalSize::new(500.0, 900.0), tauri::LogicalSize::new(f64::NAN, 900.0)] {
+            assert!(background_surface_geometry(viewport, false).is_none());
+            assert!(checked_surface_bounds(DshNativeSurfaceBounds {
+                x: 0.0, y: 60.0, width: viewport.width, height: viewport.height - 60.0,
+            }, viewport).is_err());
+        }
+        let (position, size) = background_surface_geometry(tauri::LogicalSize::new(1024.0, 768.0), false).unwrap();
+        assert_eq!((position.x, position.y, size.width, size.height), (0.0, 60.0, 1024.0, 708.0));
+    }
 
     #[test]
     fn warm_existing_webview_close_failure_forces_level_two_before_return() {
@@ -1842,6 +1903,15 @@ fn open_dsh_native_surface_blocking(
     bounds: DshNativeSurfaceBounds,
 ) -> Result<dsh_host::DshNativeSurfaceStatusView, String> {
     let (position, size) = checked_surface_bounds(bounds, main_surface_viewport(caller)?)?;
+    open_dsh_native_surface_at_checked_geometry(caller, surface_host, position, size)
+}
+
+fn open_dsh_native_surface_at_checked_geometry(
+    caller: &tauri::Webview,
+    surface_host: &Arc<dsh_host::DshHostService>,
+    position: tauri::LogicalPosition<f64>,
+    size: tauri::LogicalSize<f64>,
+) -> Result<dsh_host::DshNativeSurfaceStatusView, String> {
     if let Some(existing) = caller
         .app_handle()
         .get_webview(DSH_NATIVE_SURFACE_WEBVIEW_LABEL)
@@ -1905,9 +1975,13 @@ async fn dsh_native_surface_preload(
             let _lifecycle = DSH_NATIVE_SURFACE_LIFECYCLE.lock()
                 .map_err(|_| "dsh-native-surface-unavailable".to_owned())?;
             let viewport = main_surface_viewport(&caller)?;
-            open_dsh_native_surface_blocking(&caller, &surface_host, DshNativeSurfaceBounds {
-                x: 0.0, y: 60.0, width: viewport.width, height: viewport.height - 60.0,
-            })?;
+            let minimized = caller.window().is_minimized().unwrap_or(true);
+            let Some((position, size)) = background_surface_geometry(viewport, minimized) else {
+                return Ok(None);
+            };
+            // Use the same validated snapshot: another viewport read after Main
+            // minimizes can turn a valid optional preload into a latched failure.
+            open_dsh_native_surface_at_checked_geometry(&caller, &surface_host, position, size)?;
             let Some(binding) = surface_host.native_surface_binding() else {
                 // Shutdown or host failure may win just after child creation.
                 // Even this early exit must retire the already-created child.
@@ -2358,10 +2432,11 @@ async fn knowledge_refresh_index(modified_paths: Option<Vec<String>>) -> Result<
 }
 
 #[tauri::command]
-fn knowledge_index_snapshot() -> Result<knowledge::KnowledgeIndexSnapshot, String> {
-    knowledge_service()?
-        .index_snapshot()
-        .map_err(knowledge_error)
+async fn knowledge_index_snapshot() -> Result<knowledge::KnowledgeIndexSnapshot, String> {
+    let service = knowledge_service()?;
+    tauri::async_runtime::spawn_blocking(move || service.ensure_index_snapshot().map_err(knowledge_error))
+        .await
+        .map_err(|_| "knowledge-index-worker-failed: Knowledge index worker failed".to_string())?
 }
 
 #[tauri::command]
@@ -2496,8 +2571,10 @@ fn knowledge_deactivate_ui_source() -> Result<(), String> {
 
 #[tauri::command]
 fn knowledge_create_document(
+    app: tauri::AppHandle,
     input: knowledge::KnowledgeCreateInput,
     source_epoch: u64,
+    desktop_event_origins: Option<Vec<String>>,
 ) -> Result<knowledge::KnowledgeDocumentSnapshot, String> {
     let service=knowledge_service()?;
     let document=service
@@ -2506,40 +2583,53 @@ fn knowledge_create_document(
     if let Ok(_source)=service.lock_active_ui_source(source_epoch,Some(&document.summary.document_ref.vault_id)) {
         if let Ok(backend)=backend_services() {let _=attachment_coordination::sync_note_attachment_index(&service,&backend.material_catalog(),&document.summary.document_ref);}
     }
+    extension_events::knowledge_saved(&app,&document.summary.document_ref,desktop_event_origins.as_deref());
     Ok(document)
 }
 
 #[tauri::command]
 fn knowledge_append_document(
+    app: tauri::AppHandle,
     input: knowledge::KnowledgeWriteInput,
     source_epoch: u64,
+    desktop_event_origins: Option<Vec<String>>,
 ) -> Result<knowledge::KnowledgeMutationResult, String> {
-    knowledge_service()?
+    let result = knowledge_service()?
         .append_document_from_ui(source_epoch, &input)
         .map(attachment_coordination::project_saved_mutation)
-        .map_err(knowledge_error)
+        .map_err(knowledge_error)?;
+    extension_events::knowledge_saved(&app,&result.document.summary.document_ref,desktop_event_origins.as_deref());
+    Ok(result)
 }
 
 #[tauri::command]
 fn knowledge_insert_document(
+    app: tauri::AppHandle,
     input: knowledge::KnowledgeInsertInput,
     source_epoch: u64,
+    desktop_event_origins: Option<Vec<String>>,
 ) -> Result<knowledge::KnowledgeMutationResult, String> {
-    knowledge_service()?
+    let result = knowledge_service()?
         .insert_document_from_ui(source_epoch, &input)
         .map(attachment_coordination::project_saved_mutation)
-        .map_err(knowledge_error)
+        .map_err(knowledge_error)?;
+    extension_events::knowledge_saved(&app,&result.document.summary.document_ref,desktop_event_origins.as_deref());
+    Ok(result)
 }
 
 #[tauri::command]
 fn knowledge_replace_document(
+    app: tauri::AppHandle,
     input: knowledge::KnowledgeWriteInput,
     source_epoch: u64,
+    desktop_event_origins: Option<Vec<String>>,
 ) -> Result<knowledge::KnowledgeMutationResult, String> {
-    knowledge_service()?
+    let result = knowledge_service()?
         .replace_document_from_ui(source_epoch, &input)
         .map(attachment_coordination::project_saved_mutation)
-        .map_err(knowledge_error)
+        .map_err(knowledge_error)?;
+    extension_events::knowledge_saved(&app,&result.document.summary.document_ref,desktop_event_origins.as_deref());
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2903,7 +2993,7 @@ fn material_catalog_in_library(app:&tauri::AppHandle,caller:&tauri::Webview,libr
     match library_id {Some(id)=>{require_main_caller(caller)?;catalog.for_library(id).map_err(encode_material_catalog_command_error)},None=>Ok(catalog)}
 }
 #[tauri::command]
-async fn material_library_command(caller:tauri::Webview,app:tauri::AppHandle,mut request:materials::LibraryRequest)->Result<serde_json::Value,String> {
+async fn material_library_command(caller:tauri::Webview,app:tauri::AppHandle,mut request:materials::LibraryRequest,desktop_event_origins:Option<Vec<String>>)->Result<serde_json::Value,String> {
     require_main_caller(&caller)?;
     if matches!(&request.action, materials::LibraryAction::WatchLibraryRoot { .. } | materials::LibraryAction::UnwatchLibraryRoot { .. }) {
         if request.vault_id.is_some() { return Err("vault-attachment-operation-not-authorized".into()); }
@@ -2937,8 +3027,18 @@ async fn material_library_command(caller:tauri::Webview,app:tauri::AppHandle,mut
         }
         _=>{}
     }
+    let event_library = if request.vault_id.is_none() && matches!(&request.action,
+        materials::LibraryAction::ImportPaths { .. } | materials::LibraryAction::ImportBytes { .. } |
+        materials::LibraryAction::ImportFolder { .. } | materials::LibraryAction::ImportLibraryRoot { .. }) {
+        request.library_id.clone()
+    } else { None };
     let catalog=material_catalog_for_app(&app)?;
-    tauri::async_runtime::spawn_blocking(move||materials::execute_library_request_with_progress(catalog,request,&mut |value| { if let Some(channel)=&progress { let _=channel.send(value); } })).await.map_err(|error|format!("material-library-worker-failed: {error}"))?
+    let result = tauri::async_runtime::spawn_blocking(move||materials::execute_library_request_with_progress(catalog,request,&mut |value| { if let Some(channel)=&progress { let _=channel.send(value); } })).await.map_err(|error|format!("material-library-worker-failed: {error}"))??;
+    if let (Some(library),Some(assets)) = (event_library.as_deref(),result.get("assets").and_then(serde_json::Value::as_array)) {
+        let ids:Vec<String> = assets.iter().filter_map(|asset|asset.get("id").and_then(serde_json::Value::as_str).map(str::to_owned)).collect();
+        extension_events::materials_imported(&app,library,&ids,desktop_event_origins.as_deref());
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -3751,6 +3851,33 @@ async fn canvas_comfyui_test_connection(caller: tauri::Webview, base_url: String
 }
 
 #[tauri::command]
+fn canvas_comfyui_set_workflow(caller: tauri::Webview, backend: tauri::State<'_, Arc<backend::BackendServices>>, workflow_json: Option<String>, workflow_name: Option<String>, expected_revision: u64) -> Result<canvas_comfyui::Config, String> {
+    require_main_caller(&caller)?;
+    canvas_comfyui::set_workflow(backend.db_path(), workflow_json, workflow_name, expected_revision).map_err(str::to_owned)
+}
+#[tauri::command]
+async fn canvas_comfyui_preflight(caller: tauri::Webview, base_url: String, workflow: serde_json::Value) -> Result<canvas_comfyui::Preflight, String> {
+    require_main_caller(&caller)?;
+    canvas_comfyui::preflight(&base_url, &workflow).await.map_err(str::to_owned)
+}
+#[tauri::command]
+async fn canvas_comfyui_submit(caller: tauri::Webview, backend: tauri::State<'_, Arc<backend::BackendServices>>, request: canvas_comfyui::SubmitRequest) -> Result<canvas_comfyui::Job, String> {
+    require_main_caller(&caller)?;
+    canvas_comfyui::submit(backend.db_path(), request).await.map_err(str::to_owned)
+}
+#[tauri::command]
+async fn canvas_comfyui_job_status(caller: tauri::Webview, backend: tauri::State<'_, Arc<backend::BackendServices>>, client_task_id: String) -> Result<canvas_comfyui::Job, String> {
+    require_main_caller(&caller)?;
+    canvas_comfyui::status(backend.db_path(), &client_task_id).await.map_err(str::to_owned)
+}
+#[tauri::command]
+async fn canvas_comfyui_materialize(caller: tauri::Webview, app: tauri::AppHandle, backend: tauri::State<'_, Arc<backend::BackendServices>>, client_task_id: String) -> Result<canvas_comfyui::Job, String> {
+    require_main_caller(&caller)?;
+    let output_dir=app.path().app_data_dir().map_err(|_| "comfyui-save-failed".to_owned())?.join("canvas").join("generated-videos");
+    canvas_comfyui::materialize(backend.db_path(), &client_task_id, &output_dir).await.map_err(str::to_owned)
+}
+
+#[tauri::command]
 fn canvas_media_profiles_list(caller: tauri::Webview, backend: tauri::State<'_, Arc<backend::BackendServices>>) -> Result<canvas_media_profiles::Snapshot, String> {
     require_main_caller(&caller)?;
     canvas_media_profiles::list(backend.db_path()).map_err(str::to_owned)
@@ -3795,6 +3922,13 @@ async fn canvas_media_profile_list_models(
 ) -> Result<Vec<String>, String> {
     require_main_caller(&caller)?;
     let base=canvas_media_profiles::validated_base(&query.base_url).map_err(str::to_owned)?;
+    // Agent Plan discovery is a separate AK-signed management API, not /models.
+    if matches!(query.image_protocol.as_str(), "doubao-image" | "doubao-video") {
+        return Err("canvas-media-provider-removed".to_owned());
+    }
+    if base.trim_end_matches('/') == "https://ark.cn-beijing.volces.com/api/plan/v3" {
+        return Err("canvas-media-model-discovery-manual".to_owned());
+    }
     let mut key = query.api_key.unwrap_or_default();
     if key.trim().is_empty() && !query.clear_api_key {
         if let Ok(runtime) = canvas_media_profiles::resolve(backend.db_path(),query.profile_id.as_deref(),query.profile_revision) {
@@ -3806,6 +3940,44 @@ async fn canvas_media_profile_list_models(
     canvas_media_protocols::list_models(&base, &key, gemini)
         .await
         .map_err(str::to_owned)
+}
+
+#[tauri::command]
+fn ai_settings_secret_status(
+    caller: tauri::Webview,
+    backend: tauri::State<'_, Arc<backend::BackendServices>>,
+) -> Result<ai_secret_store::Configured, String> {
+    require_main_caller(&caller)?;
+    let conn = rusqlite::Connection::open(backend.db_path()).map_err(|_| "ai-secret-storage-unavailable")?;
+    ai_secret_store::migrate(&conn).map_err(str::to_owned)?;
+    ai_secret_store::configured(&conn).map_err(str::to_owned)
+}
+
+#[tauri::command]
+fn ai_settings_secret_update(
+    caller: tauri::Webview,
+    backend: tauri::State<'_, Arc<backend::BackendServices>>,
+    api_key: Option<String>,
+    image_api_key: Option<String>,
+    only_if_missing: Option<bool>,
+) -> Result<ai_secret_store::Configured, String> {
+    require_main_caller(&caller)?;
+    let conn = rusqlite::Connection::open(backend.db_path()).map_err(|_| "ai-secret-storage-unavailable")?;
+    ai_secret_store::migrate(&conn).map_err(str::to_owned)?;
+    let tx = conn.unchecked_transaction().map_err(|_| "ai-secret-storage-unavailable")?;
+    for (name, value) in [("aiApiKey", api_key), ("aiImageApiKey", image_api_key)] {
+        if let Some(mut value) = value {
+            let exists = only_if_missing == Some(true) && tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key=?1)", [name], |row| row.get::<_, bool>(0)
+            ).map_err(|_| "ai-secret-storage-unavailable")?;
+            let result = if exists { Ok(()) } else { ai_secret_store::write(&tx, name, value.trim()) };
+            use zeroize::Zeroize;
+            value.zeroize();
+            result.map_err(str::to_owned)?;
+        }
+    }
+    tx.commit().map_err(|_| "ai-secret-storage-unavailable")?;
+    ai_secret_store::configured(&conn).map_err(str::to_owned)
 }
 
 #[tauri::command]
@@ -7778,9 +7950,24 @@ pub(crate) struct AiModelConfig {
 pub(crate) fn load_ai_model_config(db_path: &std::path::Path) -> Result<AiModelConfig, String> {
     let conn = rusqlite::Connection::open_with_flags(
         db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|e| e.to_string())?;
+    ai_secret_store::migrate(&conn).map_err(str::to_owned)?;
+    ai_model_config_from_connection(&conn)
+}
+
+// Plugin requests may use an existing protected credential, but must never
+// perform the settings boundary's automatic plaintext-secret migration.
+pub(crate) fn load_ai_model_config_read_only(db_path: &std::path::Path) -> Result<AiModelConfig, String> {
+    let conn = rusqlite::Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ).map_err(|_| "ai-settings-unavailable".to_string())?;
+    ai_model_config_from_connection(&conn)
+}
+
+fn ai_model_config_from_connection(conn: &rusqlite::Connection) -> Result<AiModelConfig, String> {
     let get_setting = |key: &str| -> Option<String> {
         conn.query_row(
             "SELECT value FROM settings WHERE key = ?1",
@@ -7792,7 +7979,7 @@ pub(crate) fn load_ai_model_config(db_path: &std::path::Path) -> Result<AiModelC
     Ok(AiModelConfig {
         provider: get_setting("aiProvider").unwrap_or_else(|| "deepseek".to_string()),
         protocol: get_setting("aiProtocol").unwrap_or_else(|| "openai-compatible".to_string()),
-        api_key: get_setting("aiApiKey").unwrap_or_default(),
+        api_key: ai_secret_store::read(conn, "aiApiKey").map_err(str::to_owned)?.unwrap_or_default(),
         model: get_setting("aiModel").unwrap_or_else(|| "deepseek-chat".to_string()),
         custom_url: get_setting("aiBaseURL"),
     })
@@ -8139,8 +8326,11 @@ fn openai_content_to_anthropic(content: &serde_json::Value) -> serde_json::Value
 
 #[tauri::command]
 async fn ai_chat_complete(
+    caller: tauri::Webview,
     app: tauri::AppHandle,
     request: AiChatRequest,
+    cancellation_id: Option<String>,
+    on_registered: Option<tauri::ipc::JavaScriptChannelId>,
 ) -> Result<AiChatResponse, String> {
     let app_data = match app.path().app_data_dir() {
         Ok(path) => path,
@@ -8151,7 +8341,7 @@ async fn ai_chat_complete(
         Ok(config) => config,
         Err(_) => return Ok(ai_chat_failure_response("provider_error")),
     };
-    ai_chat_complete_with_config(config, request).await
+    cancellable_ai_completion(cancellation_id, on_registered.map(|id| id.channel_on(caller)), ai_chat_complete_with_config(config, request)).await
 }
 
 fn notes_inline_error(error: notes_inline::NotesInlineError) -> String {
@@ -8298,6 +8488,8 @@ async fn canvas_text_generate(
     profile_id: String,
     profile_revision: u64,
     request: AiChatRequest,
+    cancellation_id: Option<String>,
+    on_registered: Option<tauri::ipc::JavaScriptChannelId>,
 ) -> Result<AiChatResponse, String> {
     require_main_caller(&caller)?;
     let runtime = match canvas_media_profiles::resolve(backend.db_path(), Some(&profile_id), Some(profile_revision)) {
@@ -8308,7 +8500,8 @@ async fn canvas_text_generate(
         Ok(config) => config,
         Err(_) => return Ok(AiChatResponse { success:false,content:None,error_kind:Some("profile_disabled".into()),error_message:Some("这套配置的文本协议或模型不可用。".into()),error_detail:None }),
     };
-    ai_chat_complete_transport(config, request, Some(Vec::new()), None, true).await
+    cancellable_ai_completion(cancellation_id, on_registered.map(|id| id.channel_on(caller)),
+        ai_chat_complete_transport(config, request, Some(Vec::new()), None, true)).await
 }
 
 async fn ai_chat_complete_with_config_and_fallbacks(
@@ -8326,6 +8519,22 @@ async fn ai_chat_complete_transport(
     fallback_override: Option<Vec<(String, bool)>>,
     timeout_override: Option<std::time::Duration>,
     pinned_endpoint: bool,
+) -> Result<AiChatResponse, String> {
+    ai_chat_complete_transport_endpoint(config,request,fallback_override,timeout_override,pinned_endpoint,None).await
+}
+async fn plugin_ai_complete_transport(config:AiModelConfig,request:AiChatRequest,timeout:std::time::Duration)->Result<AiChatResponse,String>{
+    let endpoint=build_ai_endpoint(&config.provider.trim().to_lowercase(),&config.protocol,config.custom_url.as_deref());
+    let url=reqwest::Url::parse(&endpoint).map_err(|_|"plugin-ai-endpoint")?;
+    if !matches!(url.scheme(),"http"|"https") || !url.username().is_empty() || url.password().is_some(){return Err("plugin-ai-endpoint".into());}
+    ai_chat_complete_transport_endpoint(config,request,Some(Vec::new()),Some(timeout),true,Some(endpoint)).await
+}
+async fn ai_chat_complete_transport_endpoint(
+    config: AiModelConfig,
+    request: AiChatRequest,
+    fallback_override: Option<Vec<(String, bool)>>,
+    timeout_override: Option<std::time::Duration>,
+    pinned_endpoint: bool,
+    endpoint_override: Option<String>,
 ) -> Result<AiChatResponse, String> {
     let AiModelConfig {
         provider,
@@ -8351,7 +8560,7 @@ async fn ai_chat_complete_transport(
         model.trim().to_string()
     };
     let safe_max_tokens = request.max_tokens.unwrap_or(4096).clamp(1, 32768);
-    let endpoint = if pinned_endpoint {
+    let endpoint = if let Some(endpoint)=endpoint_override { endpoint } else if pinned_endpoint {
         match canvas_media_protocols::endpoint(custom_url.as_deref().unwrap_or(""), "chat/completions", false) {
             Ok(endpoint) => endpoint,
             Err(_) => return Ok(ai_chat_failure_response("provider_error")),
@@ -8674,17 +8883,18 @@ fn emit_ai_stream_error(
     kind: &str,
     _untrusted_detail: &str,
 ) {
+    emit_ai_stream_event(app, ai_stream_error_event(stream_id, kind));
+}
+
+fn ai_stream_error_event(stream_id: &str, kind: &str) -> AiStreamEvent {
     let failure = safe_ai_stream_failure(kind);
-    emit_ai_stream_event(
-        app,
-        AiStreamEvent {
+    AiStreamEvent {
             stream_id: stream_id.to_string(),
             delta: None,
             done: true,
             error_kind: Some(failure.kind.to_string()),
             error_message: Some(failure.message.to_string()),
-        },
-    );
+        }
 }
 
 const AI_STREAM_MAX_TOTAL_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -10221,28 +10431,30 @@ async fn ai_chat_stream(
     };
     let db_path = app_data.join("luckyray.db");
 
-    let AiModelConfig {
-        provider,
-        protocol,
-        api_key,
-        model,
-        custom_url,
-    } = match load_ai_model_config(&db_path) {
+    let config = match load_ai_model_config(&db_path) {
         Ok(config) => config,
         Err(_) => {
             emit_ai_stream_error(&app, &stream_id, "provider_error", "");
             return Ok(ai_stream_terminal_failure("provider_error"));
         }
     };
+    ai_chat_stream_with_config(config, request, false, |event| emit_ai_stream_event(&app, event)).await
+}
+
+// The same bounded provider/SSE implementation is used by host UI and plugins.
+// A plugin request pins the selected endpoint and emits only to its own worker.
+async fn ai_chat_stream_with_config(
+    config: AiModelConfig,
+    request: AiChatStreamRequest,
+    pinned_endpoint: bool,
+    mut emit: impl FnMut(AiStreamEvent),
+) -> Result<AiStreamTerminalResult, String> {
+    let stream_id = request.stream_id.clone();
+    let AiModelConfig { provider, protocol, api_key, model, custom_url } = config;
 
     let api_key = normalize_ai_api_key(&api_key);
     if api_key.is_empty() {
-        emit_ai_stream_error(
-            &app,
-            &stream_id,
-            "no_api_key",
-            "请先在设置中配置 AI API Key",
-        );
+        emit(ai_stream_error_event(&stream_id, "no_api_key"));
         return Ok(ai_stream_terminal_failure("no_api_key"));
     }
 
@@ -10294,14 +10506,18 @@ async fn ai_chat_stream(
         }
     }
 
-    let client = match reqwest::Client::builder()
+    let client_builder = reqwest::Client::builder()
         .no_proxy()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-    {
+        .timeout(std::time::Duration::from_secs(60));
+    let client_builder = if pinned_endpoint {
+        client_builder.redirect(reqwest::redirect::Policy::none())
+    } else {
+        client_builder
+    };
+    let client = match client_builder.build() {
         Ok(client) => client,
         Err(_) => {
-            emit_ai_stream_error(&app, &stream_id, "provider_error", "");
+            emit(ai_stream_error_event(&stream_id, "provider_error"));
             return Ok(ai_stream_terminal_failure("provider_error"));
         }
     };
@@ -10331,7 +10547,7 @@ async fn ai_chat_stream(
             } else {
                 "connection"
             };
-            emit_ai_stream_error(&app, &stream_id, kind, "");
+            emit(ai_stream_error_event(&stream_id, kind));
             return Ok(ai_stream_terminal_failure(kind));
         }
     };
@@ -10345,7 +10561,7 @@ async fn ai_chat_stream(
             read_ai_response_body_bounded(resp, AI_STREAM_MAX_ERROR_BODY_BYTES, "provider_error")
                 .await
                 .unwrap_or_default();
-        if provider_key == "minimax" && is_minimax_auth_error(status, &resp_text) {
+        if !pinned_endpoint && provider_key == "minimax" && is_minimax_auth_error(status, &resp_text) {
             let mut fallback_resp_for_stream: Option<reqwest::Response> = None;
             let mut minimax_fallback_errors: Vec<String> = Vec::new();
             for (fallback_endpoint, anthropic_format) in minimax_fallback_attempts(&endpoint) {
@@ -10415,7 +10631,8 @@ async fn ai_chat_stream(
                     } else {
                         minimax_fallback_errors.join(" | ")
                     };
-                    emit_ai_stream_error(&app, &stream_id, "unauthorized", &error_msg);
+                    let _ = error_msg;
+                    emit(ai_stream_error_event(&stream_id, "unauthorized"));
                     return Ok(ai_stream_terminal_failure("unauthorized"));
                 }
             }
@@ -10428,7 +10645,8 @@ async fn ai_chat_stream(
             } else {
                 "api_error"
             };
-            emit_ai_stream_error(&app, &stream_id, kind, &error_msg);
+            let _ = error_msg;
+            emit(ai_stream_error_event(&stream_id, kind));
             return Ok(ai_stream_terminal_failure(kind));
         }
     } else {
@@ -10436,18 +10654,40 @@ async fn ai_chat_stream(
     };
 
     let terminal_content =
-        match forward_ai_stream_response(resp, stream_parse_provider_key, &stream_id, |event| {
-            emit_ai_stream_event(&app, event)
-        })
+        match forward_ai_stream_response(resp, stream_parse_provider_key, &stream_id, |event| emit(event))
         .await
         {
             Ok(content) => content,
             Err(error) => {
-                emit_ai_stream_error(&app, &stream_id, error.kind, error.message);
+                emit(ai_stream_error_event(&stream_id, error.kind));
                 return Ok(ai_stream_terminal_failure(error.kind));
             }
         };
     Ok(ai_stream_terminal_success(terminal_content))
+}
+
+// Non-stream completions share the existing cancellation registry. Dropping the
+// transport future stops local HTTP work; it does not promise provider billing cancellation.
+async fn cancellable_ai_completion(
+    cancellation_id: Option<String>,
+    on_registered: Option<tauri::ipc::Channel<()>>,
+    completion: impl std::future::Future<Output = Result<AiChatResponse, String>>,
+) -> Result<AiChatResponse, String> {
+    let Some(id) = cancellation_id else { return completion.await; };
+    let _guard = AiStreamCancellationGuard::begin(&id)?;
+    if let Some(channel) = on_registered {
+        channel.send(()).map_err(|error| error.to_string())?;
+    }
+    tokio::select! {
+        biased;
+        _ = async {
+            loop {
+                if ai_stream_is_cancelled(&id) { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        } => Ok(ai_chat_failure_response("cancelled")),
+        result = completion => result,
+    }
 }
 
 struct AiStreamCancellationGuard {
@@ -14019,6 +14259,7 @@ fn canvas_generation_message(kind: &str) -> &'static str {
         "submission_binding_changed" => "原视频任务的配置或输入已改变，无法安全恢复；请检查原任务后再决定是否重新生成",
         "stable_task_id_required" => "缺少可恢复的视频任务标识，请更新客户端后重新操作",
         "no_api_key" => "尚未配置画布生成服务",
+        "canvas-media-provider-removed" => "豆包连接器已移除。已有结果保留，此任务不会改发到其他服务",
         "profile_changed" => "生成配置已更改或删除；请检查原配置后重新发起，不会自动切换服务",
         "unauthorized" => "画布生成服务认证失败",
         "rate_limited" => "画布生成服务请求过于频繁",
@@ -14570,6 +14811,7 @@ async fn ai_image_generate_with_binding(
     };
     let runtime = match canvas_media_profiles::resolve(&db_path, profile_id, profile_revision) {
         Ok(runtime) => runtime,
+        Err("canvas-media-provider-removed") => return Ok(ai_image_failure("canvas-media-provider-removed")),
         Err("canvas-media-profile-changed" | "canvas-media-profile-missing") => return Ok(ai_image_failure("profile_changed")),
         Err(_) => return Ok(ai_image_failure("provider_error")),
     };
@@ -15006,6 +15248,7 @@ async fn ai_video_generate_with_binding(
     };
     let runtime = match canvas_media_profiles::resolve(&db_path, profile_id, profile_revision) {
         Ok(runtime) => runtime,
+        Err("canvas-media-provider-removed") => return Ok(ai_video_failure("canvas-media-provider-removed")),
         Err("canvas-media-profile-changed" | "canvas-media-profile-missing") => return Ok(ai_video_failure("profile_changed")),
         Err(_) => return Ok(ai_video_failure("provider_error")),
     };
@@ -16138,7 +16381,7 @@ fn load_canvas(app: tauri::AppHandle, canvas_id: String) -> Result<CanvasFile, S
 }
 
 #[tauri::command]
-fn save_canvas(
+async fn save_canvas(
     backend: tauri::State<'_, Arc<backend::BackendServices>>,
     canvas: CanvasFile,
 ) -> Result<CanvasListEntry, String> {
@@ -16146,11 +16389,16 @@ fn save_canvas(
     if canvas.canvas_id.is_empty() {
         return Err("画布 ID 不能为空".to_string());
     }
-    backend
-        .canvas_agent()
-        .save_normal_canvas(canvas)
-        .map(canvas_list_entry)
-        .map_err(canvas_storage_error)
+    let backend = backend.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        backend
+            .canvas_agent()
+            .save_normal_canvas(canvas)
+            .map(canvas_list_entry)
+            .map_err(canvas_storage_error)
+    })
+    .await
+    .map_err(|_| "画布保存任务执行失败".to_string())?
 }
 
 #[tauri::command]

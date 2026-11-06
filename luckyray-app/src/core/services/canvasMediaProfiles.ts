@@ -1,8 +1,9 @@
+import { invokeCancellableAiCompletion } from "./aiCompletionTransport";
 import { invoke } from "@tauri-apps/api/core";
 import type { BridgeAiMessageContent } from "../bridge/bridgeTypes";
 
-export type CanvasImageProtocol = "easycli-auto" | "agnes" | "openai-image" | "gemini-image" | "12ai-task" | "disabled";
-export type CanvasVideoProtocol = "agnes" | "openai-video" | "bigmodel-video" | "12ai-task" | "disabled";
+export type CanvasImageProtocol = "doubao-image" | "ark-image" | "easycli-auto" | "agnes" | "openai-image" | "gemini-image" | "12ai-task" | "disabled";
+export type CanvasVideoProtocol = "doubao-video" | "ark-video" | "agnes" | "openai-video" | "bigmodel-video" | "12ai-task" | "disabled";
 export type CanvasTextProtocol = "legacy" | "openai-chat" | "disabled";
 export type CanvasMediaProfile = {
   id: string; name: string; baseUrl: string; imageModel: string; videoModel: string;
@@ -16,6 +17,8 @@ export type CanvasMediaProfileInput = Omit<CanvasMediaProfile, "revision" | "api
   expectedRevision: number | null; apiKey?: string; clearApiKey?: boolean;
 };
 export const CANVAS_MEDIA_PRESETS = {
+  arkPlan: { name: "火山方舟 · Agent Plan", baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3", imageModel: "", videoModel: "", imageProtocol: "ark-image", videoProtocol: "ark-video", textProtocol: "disabled" },
+  arkPaygo: { name: "火山方舟 · 按量付费", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", imageModel: "", videoModel: "", imageProtocol: "ark-image", videoProtocol: "ark-video", textProtocol: "disabled" },
   agnes: { name: "Agnes", baseUrl: "https://apihub.agnes-ai.com/v1", imageModel: "agnes-image-2.1-flash", videoModel: "agnes-video-v2.0", imageProtocol: "agnes", videoProtocol: "agnes" },
   openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1", imageModel: "", videoModel: "", imageProtocol: "openai-image", videoProtocol: "disabled" },
   twelve: { name: "12API", baseUrl: "https://new.12ai.org/v1", imageModel: "", videoModel: "", imageProtocol: "openai-image", videoProtocol: "12ai-task" },
@@ -44,8 +47,8 @@ export function projectCanvasMediaProfiles(value: unknown): CanvasMediaProfilesS
     ids.add(id);
     const imageProtocol = field("imageProtocol",32) as CanvasImageProtocol;
     const videoProtocol = field("videoProtocol",32) as CanvasVideoProtocol;
-    if (!["easycli-auto","agnes","openai-image","gemini-image","12ai-task","disabled"].includes(imageProtocol)
-      || !["agnes","openai-video","bigmodel-video","12ai-task","disabled"].includes(videoProtocol)
+    if (!["doubao-image","ark-image","easycli-auto","agnes","openai-image","gemini-image","12ai-task","disabled"].includes(imageProtocol)
+      || !["doubao-video","ark-video","agnes","openai-video","bigmodel-video","12ai-task","disabled"].includes(videoProtocol)
       || !Number.isSafeInteger(row.revision) || Number(row.revision) < 1) throw new Error("canvas-media-profiles-invalid");
     const textProtocol = row.textProtocol ?? "legacy";
     if (!["legacy","openai-chat","disabled"].includes(String(textProtocol))) throw new Error("canvas-media-profiles-invalid");
@@ -80,7 +83,7 @@ export function createCanvasMediaProfilesClient(call: typeof invoke = invoke) {
     activate: (profileId: string) => mutate("canvas_media_profile_activate",{profileId}),
     remove: (profileId: string, revision: number) => mutate("canvas_media_profile_delete",{profileId,revision}),
     listModels: (baseUrl: string, apiKey: string, imageProtocol: string, binding?: {profileId?:string;profileRevision?:number;clearApiKey?:boolean}): Promise<string[]> =>
-      call("canvas_media_profile_list_models", { query: { baseUrl, apiKey: apiKey || undefined, imageProtocol, ...binding } })
+      (baseUrl.replace(/\/$/, "") === CANVAS_MEDIA_PRESETS.arkPlan.baseUrl || imageProtocol.startsWith("doubao-") ? Promise.reject(new Error("canvas-media-model-discovery-disabled")) : call("canvas_media_profile_list_models", { query: { baseUrl, apiKey: apiKey || undefined, imageProtocol, ...binding } }))
         .then((value: unknown) => {
           if (!Array.isArray(value) || value.length > 500
             || value.some((id) => typeof id !== "string" || !id || id.length > 128)) {
@@ -97,9 +100,9 @@ export const canvasMediaProfilesClient = createCanvasMediaProfilesClient();
 export async function completeCanvasProfileText(
   profileId: string, profileRevision: number,
   messages: Array<{role:string;content:BridgeAiMessageContent}>,
-  options?: {systemPrompt?:string;temperature?:number;maxTokens?:number;model?:string},
+  options?: {systemPrompt?:string;temperature?:number;maxTokens?:number;model?:string;signal?:AbortSignal},
 ): Promise<{success:boolean;content?:string;error_kind?:string;error_message?:string;error_detail?:string}> {
-  return invoke("canvas_text_generate", {profileId,profileRevision,request:{messages,system_prompt:options?.systemPrompt,temperature:options?.temperature,max_tokens:options?.maxTokens,model:options?.model}});
+  return invokeCancellableAiCompletion("canvas_text_generate", {profileId,profileRevision,request:{messages,system_prompt:options?.systemPrompt,temperature:options?.temperature,max_tokens:options?.maxTokens,model:options?.model}}, options?.signal);
 }
 export function resolveCanvasTextSelection(profile: CanvasMediaProfile | null, legacy: {model:string;models:string[];providerLabel:string}) {
   if (!profile || (profile.textProtocol ?? "legacy") === "legacy") return legacy;

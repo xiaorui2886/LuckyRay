@@ -9,7 +9,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const esbuild = require(require.resolve('esbuild', { paths: [fs.realpathSync(path.join(root, 'node_modules', 'vite'))] }));
 const { chromium } = require(process.env.LUCKYRAY_PLAYWRIGHT_MODULE ||
-  'playwright');
+  'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@playwright/mcp/node_modules/playwright');
 const output = process.env.LUCKYRAY_EXPORT_UX_SCREENSHOTS || path.join(root, 'output', 'playwright');
 
 const entry = String.raw`

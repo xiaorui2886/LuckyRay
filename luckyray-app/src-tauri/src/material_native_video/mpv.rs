@@ -18,8 +18,8 @@ use windows::{
     },
 };
 
-pub const DLL_SHA256: &str = "1a51f1000450ce97ae99fa44b13bc312ab5335e511bc8ae28ae2d90c78069848";
-pub const DLL_SIZE: u64 = 100_487_168;
+pub const DLL_SHA256: &str = "6938419e82922251619c274c20b33186e70ad2408bb16b30f490433e8c1cbb17";
+pub const DLL_SIZE: u64 = 52_959_744;
 type Result<T> = std::result::Result<T, String>;
 type Handle = *mut c_void;
 type Create = unsafe extern "C" fn() -> Handle;

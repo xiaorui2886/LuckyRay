@@ -4,10 +4,12 @@ use rusqlite::{params, Connection, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::{collections::BTreeMap, fs, path::Path, time::Duration};
 
 pub const MAX_PACKAGE_BYTES: usize = 131_072;
-const MAX_STATE_BYTES: usize = 4_500_000;
+pub const MAX_DESKTOP_PACKAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_STATE_BYTES: usize = 64 * 1024 * 1024;
 const TOKENS: &[&str] = &[
     "--theme-app-bg",
     "--theme-sidebar-bg",
@@ -45,10 +47,22 @@ pub struct Manifest {
 pub struct Package {
     pub manifest: Manifest,
     pub resource: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<PackageSignature>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackageSignature {
+    pub version: u8,
+    pub public_key: String,
+    pub signature: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Installed {
+    // This is a user-confirmed key, not an author-supplied display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trusted_publisher: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +100,24 @@ pub struct ScriptResource {
     pub data_version: u32,
     pub contributions: Vec<Contribution>,
 }
+/// Explicitly trusted application code, NOT a capability-isolated script.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DesktopResource {
+    pub code: String,
+    #[serde(default)] pub css: String,
+    #[serde(default)] pub assets: BTreeMap<String, DesktopAsset>,
+    pub data_version: u32,
+    pub contributions: Vec<Contribution>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DesktopAsset { pub mime_type: String, pub base64: String }
+pub fn desktop(package: &Package) -> Result<DesktopResource,String> {
+    serde_json::from_value(package.resource.clone()).map_err(|_| "extension-invalid-desktop".into())
+}
+pub fn executable(p: &Package) -> bool { matches!(p.manifest.kind.as_str(), "script" | "desktop") }
+fn data_limit(p: &Package) -> usize { if p.manifest.kind == "desktop" { 8 * 1024 * 1024 } else { 65536 } }
 pub const PERMISSIONS: &[&str] = &[
     "materials.read",
     "materials.image",
@@ -95,8 +127,14 @@ pub const PERMISSIONS: &[&str] = &[
     "knowledge.insert",
     "canvas.read",
     "canvas.export",
+    "ai.generate",
+    "events.subscribe",
 ];
 pub fn script(package: &Package) -> Result<ScriptResource, String> {
+    if package.manifest.kind == "desktop" {
+        let r = desktop(package)?;
+        return Ok(ScriptResource {code:r.code,required_permissions:vec!["desktop.fullTrust".into()],optional_permissions:vec![],data_version:r.data_version,contributions:r.contributions});
+    }
     serde_json::from_value(package.resource.clone()).map_err(|_| "extension-invalid-script".into())
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -125,11 +163,15 @@ pub enum Request {
     },
     Install {
         package: Package,
+        #[serde(default, rename = "publisherApproved")]
+        publisher_approved: bool,
         #[serde(rename = "expectedRevision")]
         expected_revision: u64,
     },
     Update {
         package: Package,
+        #[serde(default, rename = "publisherApproved")]
+        publisher_approved: bool,
         #[serde(rename = "expectedRevision")]
         expected_revision: u64,
     },
@@ -166,12 +208,14 @@ fn version(s: &str) -> Option<[u64; 3]> {
     }
     Some([v[0].parse().ok()?, v[1].parse().ok()?, v[2].parse().ok()?])
 }
-fn module_available(s: &str) -> bool {
-    ["knowledge", "materials", "canvas"].contains(&s)
+fn module_available(s: &str, desktop:bool) -> bool {
+    if !desktop {return ["knowledge", "materials", "canvas", "ai", "events"].contains(&s);}
+    ["knowledge", "materials", "canvas", "ai", "events", "workspace", "editor", "commands", "theme", "network", "filesystem", "process", "storage"].contains(&s)
 }
 pub fn compatible(p: &Package, host: &str) -> bool {
     ((p.manifest.kind == "script" && p.manifest.api_version == 1)
-        || (p.manifest.kind != "script" && p.manifest.api_version == 0))
+        || (p.manifest.kind == "desktop" && p.manifest.api_version == 2)
+        || (matches!(p.manifest.kind.as_str(), "theme" | "template") && p.manifest.api_version == 0))
         && version(&p.manifest.min_host_version)
             .zip(version(host))
             .map(|(a, b)| a <= b)
@@ -179,19 +223,21 @@ pub fn compatible(p: &Package, host: &str) -> bool {
         && p.manifest
             .required_modules
             .iter()
-            .all(|m| module_available(m))
+            .all(|m| module_available(m,p.manifest.kind=="desktop"))
 }
 pub fn validate(p: &Package) -> Result<(), String> {
+    verified_publisher(p)?;
     let m = &p.manifest;
     if serde_json::to_vec(p)
         .map_err(|_| "extension-invalid-json")?
         .len()
-        > MAX_PACKAGE_BYTES
+        > if m.kind == "desktop" { MAX_DESKTOP_PACKAGE_BYTES } else { MAX_PACKAGE_BYTES }
     {
         return fail("package-too-large");
     }
     if (m.kind == "script" && (m.schema_version != 1 || m.api_version != 1))
-        || (m.kind != "script" && (m.schema_version != 0 || m.api_version != 0))
+        || (m.kind == "desktop" && (m.schema_version != 2 || m.api_version != 2))
+        || (!matches!(m.kind.as_str(), "script" | "desktop") && (m.schema_version != 0 || m.api_version != 0))
     {
         return fail("unsupported-api");
     }
@@ -227,6 +273,23 @@ pub fn validate(p: &Package) -> Result<(), String> {
         return fail("invalid-modules");
     }
     match m.kind.as_str() {
+        "desktop" => {
+            let r = desktop(p)?;
+            if m.entry != "main.js" || r.code.trim().is_empty() || r.data_version == 0
+                || r.contributions.len() > 128 || r.assets.len() > 256 { return fail("invalid-desktop"); }
+            let mut ids = std::collections::HashSet::new();
+            for c in &r.contributions {
+                if c.id.is_empty() || c.id.len()>80 || !c.id.bytes().all(|b|b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                    || c.label.trim().is_empty() || c.label.len()>160 || c.label.chars().any(char::is_control)
+                    || !["page","panel","settings","command","menu"].contains(&c.kind.as_str()) || !ids.insert(&c.id) {return fail("invalid-contribution");}
+            }
+            for (name, asset) in &r.assets {
+                if name.is_empty() || name.len()>240 || name.starts_with('/') || name.contains('\\')
+                    || name.split('/').any(|p|p.is_empty() || p=="." || p=="..") || name.chars().any(char::is_control)
+                    || asset.mime_type.is_empty() || asset.mime_type.len()>120 || asset.mime_type.chars().any(char::is_control)
+                    || BASE64.decode(&asset.base64).is_err() { return fail("invalid-desktop-resource"); }
+            }
+        }
         "script" => {
             if m.entry != "main.js" {
                 return fail("invalid-entry");
@@ -340,6 +403,24 @@ pub fn validate(p: &Package) -> Result<(), String> {
     }
     Ok(())
 }
+/// The signature covers the complete manifest and resource. Keys are initially
+/// self-asserted; only a separate host-user decision records trust for upgrades.
+fn verified_publisher(p: &Package) -> Result<Option<String>, String> {
+    let Some(signature) = &p.signature else { return Ok(None) };
+    if signature.version != 1 { return fail("signature-invalid"); }
+    let key = BASE64.decode(&signature.public_key).map_err(|_| "extension-signature-invalid")?;
+    let proof = BASE64.decode(&signature.signature).map_err(|_| "extension-signature-invalid")?;
+    if key.len() != 32 || proof.len() != 64
+        || BASE64.encode(&key) != signature.public_key || BASE64.encode(&proof) != signature.signature {
+        return fail("signature-invalid");
+    }
+    let value = serde_json::json!({"manifest": p.manifest, "resource": p.resource});
+    let mut message = b"luckyray-package-v1\0".to_vec();
+    message.extend(serde_json::to_vec(&value).map_err(|_| "extension-signature-invalid")?);
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
+        .verify(&message, &proof).map_err(|_| "extension-signature-invalid")?;
+    Ok(Some(signature.public_key.clone()))
+}
 fn digest(p: &Package) -> String {
     format!(
         "{:x}",
@@ -411,10 +492,13 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
     state.host_version = host.to_string();
     for entry in &mut state.packages {
         validate(&entry.package)?;
+        if entry.trusted_publisher.is_some() && entry.trusted_publisher != verified_publisher(&entry.package)? {
+            return fail("storage-corrupt");
+        }
         if digest(&entry.package) != entry.digest {
             return fail("integrity-mismatch");
         }
-        if entry.package.manifest.kind == "script" {
+        if executable(&entry.package) {
             let resource = script(&entry.package)?;
             if entry.epoch == 0
                 || entry.epoch > state.revision
@@ -438,7 +522,7 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
                     || serde_json::to_vec(data)
                         .map_err(|_| "extension-storage-corrupt")?
                         .len()
-                        > 65536
+                        > data_limit(&entry.package)
                 {
                     return fail("storage-corrupt");
                 }
@@ -489,7 +573,7 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
             let entry = state
                 .packages
                 .iter_mut()
-                .find(|x| x.package.manifest.id == id && x.package.manifest.kind == "script")
+                .find(|x| x.package.manifest.id == id && executable(&x.package))
                 .ok_or("extension-not-installed")?;
             let r = script(&entry.package)?;
             if grants.len() > 16
@@ -512,7 +596,7 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
             let entry = state
                 .packages
                 .iter_mut()
-                .find(|x| x.package.manifest.id == id && x.package.manifest.kind == "script")
+                .find(|x| x.package.manifest.id == id && executable(&x.package))
                 .ok_or("extension-not-installed")?;
             let r = script(&entry.package)?;
             let old = entry.data.as_ref();
@@ -522,14 +606,15 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
                 || serde_json::to_vec(&data)
                     .map_err(|_| "extension-data-invalid")?
                     .len()
-                    > 65536
+                    > data_limit(&entry.package)
             {
                 return fail("data-conflict-or-limit");
             }
             entry.data = Some(data);
         }
-        Request::Install { package, .. } | Request::Update { package, .. } => {
+        Request::Install { package, publisher_approved, .. } | Request::Update { package, publisher_approved, .. } => {
             validate(&package)?;
+            let publisher = verified_publisher(&package)?;
             if !compatible(&package, host) {
                 return fail("incompatible");
             }
@@ -550,10 +635,21 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
                 {
                     return fail("version-conflict");
                 }
+                let publisher_continues = old.trusted_publisher.is_some()
+                    && old.trusted_publisher == publisher;
+                if !publisher_continues && !publisher_approved {
+                    return fail("publisher-approval-required");
+                }
                 let mut enabled = old.enabled;
                 let mut grants = old.grants.clone();
                 let data = old.data.clone();
-                if package.manifest.kind == "script" {
+                // A new/unknown publisher cannot inherit a previous script's
+                // permissions. Owned data remains intact for the user's choice.
+                if !publisher_continues && executable(&package) {
+                    grants.clear();
+                    enabled = false;
+                }
+                if executable(&package) {
                     let next = script(&package)?;
                     let previous = script(&old.package)?;
                     let expanded = next
@@ -587,10 +683,12 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
                         return fail("data-version-conflict");
                     }
                 }
+                if package.manifest.kind == "desktop" { grants.clear(); enabled = false; }
                 state.packages[index] = Installed {
+                    trusted_publisher: publisher,
                     grants,
                     data,
-                    epoch: if package.manifest.kind == "script" {
+                    epoch: if executable(&package) {
                         state.revision + 1
                     } else {
                         0
@@ -606,10 +704,14 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
                 if state.packages.len() >= 32 {
                     return fail("package-limit");
                 }
+                if publisher.is_some() && !publisher_approved {
+                    return fail("publisher-approval-required");
+                }
                 state.packages.push(Installed {
+                    trusted_publisher: publisher,
                     grants: Vec::new(),
                     data: None,
-                    epoch: if package.manifest.kind == "script" {
+                    epoch: if executable(&package) {
                         state.revision + 1
                     } else {
                         0
@@ -635,7 +737,7 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
                     return fail("incompatible");
                 }
                 if enable
-                    && state.packages[index].package.manifest.kind == "script"
+                    && executable(&state.packages[index].package)
                     && !script(&state.packages[index].package)?
                         .required_permissions
                         .iter()
@@ -654,7 +756,7 @@ pub fn manage(app_data: &Path, host: &str, request: Request) -> Result<State, St
                     }
                 }
                 state.packages[index].enabled = enable;
-                if state.packages[index].package.manifest.kind == "script" {
+                if executable(&state.packages[index].package) {
                     state.packages[index].epoch = state.revision + 1;
                 }
             }
