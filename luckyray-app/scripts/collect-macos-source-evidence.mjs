@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 
 export const PUBLIC_REPOSITORY = "xiaorui2886/LuckyRay";
 export const PUBLIC_BRANCH = "codex/mac-source-evidence-20261105";
-export const MANIFEST_BLOB = "8b083a89ba7dee0cb2c09883964856fc0449136e";
+export const MANIFEST_BLOB = "ee71ed70648cd59eac1f7a1f781690c57174f548";
 const INPUT_IDS = [145, 147, 155, 177, 223, 278, 302, 310, 325, 334, 364, 376]
   .map(line => `libvips-input-${line}`);
 const OFFICIAL_CHECKSUMS = {

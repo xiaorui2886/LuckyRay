@@ -1,0 +1,13 @@
+IANA / IETF registry rights: a short official excerpt
+
+Source: https://www.iana.org/help/licensing-terms
+Statement revised: 2021-11-10
+
+Verbatim excerpt (20 words):
+any applicable rights that they may have in the Protocol Registries are subject to the Creative Commons CC0 1.0 dedication
+
+This excerpt is supplied with its official source link. It is not an original
+file inside the LibreOffice-supplied registry archive. The full statement's
+scope and limitations, including limits concerning other parties' rights,
+remain at the source URL. The complete standard CC0-1.0 text is supplied
+separately.

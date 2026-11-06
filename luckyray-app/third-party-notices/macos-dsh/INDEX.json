@@ -68,6 +68,23 @@
       "sourceKind": "standard license/version text; original mp11 copyright grant recorded separately",
       "sourceUrl": "https://github.com/boostorg/boost/blob/boost-1.82.0/LICENSE_1_0.txt",
       "sourcePath": "LICENSE_1_0.txt"
+    },
+    "CC0-1.0": {
+      "path": "bodies/a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499.txt",
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "bytes": 7048,
+      "sourceKind": "standard CC0-1.0 legal text; applicability is established separately by the IANA/IETF statement",
+      "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/CC0-1.0.txt",
+      "sourcePath": "text/CC0-1.0.txt"
+    },
+    "MPL-2.0": {
+      "path": "bodies/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+      "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+      "bytes": 16725,
+      "sourceKind": "standard MPL 2.0 license/version text reused from an already pinned source input; not an original selectors standalone notice or a package-specific copyright grant",
+      "sourceUrl": "https://github.com/LibreOffice/core/archive/bce0998afefdbc355585ca324285661a2170ba77.tar.gz",
+      "sourcePath": "core-bce0998afefdbc355585ca324285661a2170ba77/COPYING.MPL",
+      "canonicalLicenseUrl": "https://www.mozilla.org/en-US/MPL/2.0/"
     }
   },
   "missingStandaloneNoticeGrants": [
@@ -3628,7 +3645,24 @@
       "required": true,
       "kind": "source-archive",
       "archiveName": "language-subtag-registry-2026-08-08.tar.bz2",
-      "notices": [],
+      "notices": [
+        {
+          "path": "bodies/914621413835ba855363b010bf043f1609f29822ec4096c14779c6ccba93bbcb.txt",
+          "sha256": "914621413835ba855363b010bf043f1609f29822ec4096c14779c6ccba93bbcb",
+          "bytes": 602,
+          "sourceKind": "short excerpt from an official external rights statement with app-authored context; not a bundled original archive notice",
+          "sourceUrl": "https://www.iana.org/help/licensing-terms",
+          "sourcePath": "official statement revised 2021-11-10, short excerpt and source pointer"
+        },
+        {
+          "path": "bodies/a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499.txt",
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+          "bytes": 7048,
+          "sourceKind": "standard CC0-1.0 legal text; applicability is established separately by the IANA/IETF statement",
+          "sourceUrl": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/CC0-1.0.txt",
+          "sourcePath": "text/CC0-1.0.txt"
+        }
+      ],
       "role": "Exact LibreOffice Core bce0998afefdbc355585ca324285661a2170ba77 download.lst input; selected by the original @deepseek-ai/libreoffice-kit-darwin-arm64@0.1.5 generated-license condition and Makefile.fetch mapping. This is partial original build-configuration evidence; it is not an original config_host.mk, complete BUILD_TYPE, or final static-link receipt.",
       "libreofficeSelectionEvidence": {
         "buildCondition": "LIBLANGTAG",
@@ -3636,7 +3670,19 @@
         "generatedLicenseSha256": "7527132c7368ce07be0796e6716d3cb53adecef76285e7d7394c7ccaf4f913f1",
         "scope": "original generated-license selection; complete resolved/link closure remains unresolved"
       },
-      "noticeLimitation": "The exact IANA registry data archive contains no standalone license/notice; no liblangtag library grant is substituted for the registry data."
+      "noticeLimitation": "The exact registry archive has no standalone notice. Applicable IANA/IETF rights are documented by the external official statement below; this does not substitute the liblangtag library license or assert rights outside that statement.",
+      "licenseApplicability": {
+        "license": "CC0-1.0",
+        "basis": "official IANA/IETF joint statement, revised 2021-11-10",
+        "statementUrl": "https://www.iana.org/help/licensing-terms",
+        "protocolIndexUrl": "https://www.iana.org/protocols",
+        "registryPageUrl": "https://www.iana.org/assignments/language-subtags-tags-extensions",
+        "registryFileDate": "2026-08-08",
+        "archiveMember": "data/language-subtag-registry",
+        "archiveMemberSha256": "be21e91b6851f750a7b1a687f11209d46ad5a8471d6b10a1efc8d1dac4c8a926",
+        "scope": "Rights held or sublicensable by the statement parties in the identified protocol-registry data; all original statement and CC0 limitations remain.",
+        "evidenceKind": "externally verified applicability record; not a newly recovered publisher build artifact"
+      }
     },
     {
       "id": "libreoffice-external-liblangtag-tarball-source",
@@ -5891,7 +5937,38 @@
       "digestProvenance": "Exact crate bytes match the SHA256 in librsvg 2.63.2 Cargo.lock (Git blob c78cf09e12e2a998a5ffdb4528772f95b414d73c). The original sharp-libvips v1.3.4 Darwin ARM64 job 108609814186 logged zero newly locked packages and exactly four removed packages; this crate is in the retained set.",
       "role": "Exact registry source for a derived retained registry-package inventory constrained by original sharp-libvips v1.3.4 ARM64 release job 108609814186 in run 36315646015. The 353-entry inventory includes target and development dependencies, including entries not compiled on the ARM64 path. It does not assert that all crates were linked, retrieval of the original effective Cargo.lock, or completion of corresponding-source closure.",
       "noticeLimitation": "Exact published crate and exact version tag tree contain no independent named LICENSE/COPYING/NOTICE file. Original Cargo MIT declaration and author metadata retained; no copyright grant text invented or substituted.",
-      "declaredLicense": "MIT"
+      "declaredLicense": "MIT",
+      "licenseEvidence": {
+        "scope": "Applicable-license evidence layers. Does not assert acquisition of an original standalone license file or completion of corresponding-source closure.",
+        "originalPublishedDeclaration": {
+          "license": "MIT",
+          "authors": [
+            "Steven Sheldon"
+          ],
+          "sourceArchiveSha256": "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a",
+          "manifestNotice": {
+            "path": "bodies/24df2f33b48c9e756a4f864f882c1ab07a159b6c2b790f45af2e8162499b6719.txt",
+            "sha256": "24df2f33b48c9e756a4f864f882c1ab07a159b6c2b790f45af2e8162499b6719",
+            "bytes": 531,
+            "sourceKind": "original Cargo package metadata with license declaration; not a substitute copyright grant or license text",
+            "sourceUrl": "https://static.crates.io/crates/block/block-0.1.6.crate",
+            "sourcePath": "block-0.1.6/Cargo.toml"
+          }
+        },
+        "observedInOriginalArm64Build": {
+          "downloaded": true,
+          "compiled": true,
+          "jobUrl": "https://github.com/lovell/sharp-libvips/actions/runs/36315646015/job/108609814186"
+        },
+        "originalSourceHeader": null,
+        "standardLicense": "MIT",
+        "standardTermsReference": "standardTexts.MIT",
+        "standardTermsArePackageOriginalStandaloneNotice": false,
+        "originalStandaloneNoticeAcquired": false,
+        "licensingFieldMeaningSource": "https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields",
+        "inventedCopyrightHolderOrYear": false,
+        "remainingOriginalFileLimit": "Exact published MIT declaration and original attribution are retained. An original standalone notice applicable to this precise version has not been obtained; holder/year are not inferred from another version or unmerged PR."
+      }
     },
     {
       "id": "librsvg-crate-block-buffer-0-12-1",
@@ -9863,7 +9940,38 @@
       "digestProvenance": "Exact crate bytes match the SHA256 in librsvg 2.63.2 Cargo.lock (Git blob c78cf09e12e2a998a5ffdb4528772f95b414d73c). The original sharp-libvips v1.3.4 Darwin ARM64 job 108609814186 logged zero newly locked packages and exactly four removed packages; this crate is in the retained set.",
       "role": "Exact registry source for a derived retained registry-package inventory constrained by original sharp-libvips v1.3.4 ARM64 release job 108609814186 in run 36315646015. The 353-entry inventory includes target and development dependencies, including entries not compiled on the ARM64 path. It does not assert that all crates were linked, retrieval of the original effective Cargo.lock, or completion of corresponding-source closure.",
       "noticeLimitation": "Exact published crate and exact version tag tree contain no independent named LICENSE/COPYING/NOTICE file. Original Cargo MIT declaration and author metadata retained; no copyright grant text invented or substituted.",
-      "declaredLicense": "MIT"
+      "declaredLicense": "MIT",
+      "licenseEvidence": {
+        "scope": "Applicable-license evidence layers. Does not assert acquisition of an original standalone license file or completion of corresponding-source closure.",
+        "originalPublishedDeclaration": {
+          "license": "MIT",
+          "authors": [
+            "Steven Sheldon"
+          ],
+          "sourceArchiveSha256": "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb",
+          "manifestNotice": {
+            "path": "bodies/d87624d9d117489bd49dbaeb70077a0721e00ac2a76eb371faec818a92da5661.txt",
+            "sha256": "d87624d9d117489bd49dbaeb70077a0721e00ac2a76eb371faec818a92da5661",
+            "bytes": 349,
+            "sourceKind": "original Cargo package metadata with license declaration; not a substitute copyright grant or license text",
+            "sourceUrl": "https://static.crates.io/crates/malloc_buf/malloc_buf-0.0.6.crate",
+            "sourcePath": "malloc_buf-0.0.6/Cargo.toml"
+          }
+        },
+        "observedInOriginalArm64Build": {
+          "downloaded": true,
+          "compiled": true,
+          "jobUrl": "https://github.com/lovell/sharp-libvips/actions/runs/36315646015/job/108609814186"
+        },
+        "originalSourceHeader": null,
+        "standardLicense": "MIT",
+        "standardTermsReference": "standardTexts.MIT",
+        "standardTermsArePackageOriginalStandaloneNotice": false,
+        "originalStandaloneNoticeAcquired": false,
+        "licensingFieldMeaningSource": "https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields",
+        "inventedCopyrightHolderOrYear": false,
+        "remainingOriginalFileLimit": "Exact published MIT declaration and original attribution are retained. An original standalone notice applicable to this precise version has not been obtained; holder/year are not inferred from another version or unmerged PR."
+      }
     },
     {
       "id": "librsvg-crate-markup5ever-0-39-0",
@@ -10643,7 +10751,38 @@
       "digestProvenance": "Exact crate bytes match the SHA256 in librsvg 2.63.2 Cargo.lock (Git blob c78cf09e12e2a998a5ffdb4528772f95b414d73c). The original sharp-libvips v1.3.4 Darwin ARM64 job 108609814186 logged zero newly locked packages and exactly four removed packages; this crate is in the retained set.",
       "role": "Exact registry source for a derived retained registry-package inventory constrained by original sharp-libvips v1.3.4 ARM64 release job 108609814186 in run 36315646015. The 353-entry inventory includes target and development dependencies, including entries not compiled on the ARM64 path. It does not assert that all crates were linked, retrieval of the original effective Cargo.lock, or completion of corresponding-source closure.",
       "noticeLimitation": "Exact published crate and exact version tag tree contain no independent named LICENSE/COPYING/NOTICE file. Original Cargo MIT declaration and author metadata retained; no copyright grant text invented or substituted.",
-      "declaredLicense": "MIT"
+      "declaredLicense": "MIT",
+      "licenseEvidence": {
+        "scope": "Applicable-license evidence layers. Does not assert acquisition of an original standalone license file or completion of corresponding-source closure.",
+        "originalPublishedDeclaration": {
+          "license": "MIT",
+          "authors": [
+            "Steven Sheldon"
+          ],
+          "sourceArchiveSha256": "1add1b659e36c9607c7aab864a76c7a4c2760cd0cd2e120f3fb8b952c7e22bf9",
+          "manifestNotice": {
+            "path": "bodies/27c851b122617cfbf263603bcf05d637aaddbc87c12c2e78f8f91675739928a8.txt",
+            "sha256": "27c851b122617cfbf263603bcf05d637aaddbc87c12c2e78f8f91675739928a8",
+            "bytes": 446,
+            "sourceKind": "original Cargo package metadata with license declaration; not a substitute copyright grant or license text",
+            "sourceUrl": "https://static.crates.io/crates/objc-foundation/objc-foundation-0.1.1.crate",
+            "sourcePath": "objc-foundation-0.1.1/Cargo.toml"
+          }
+        },
+        "observedInOriginalArm64Build": {
+          "downloaded": true,
+          "compiled": true,
+          "jobUrl": "https://github.com/lovell/sharp-libvips/actions/runs/36315646015/job/108609814186"
+        },
+        "originalSourceHeader": null,
+        "standardLicense": "MIT",
+        "standardTermsReference": "standardTexts.MIT",
+        "standardTermsArePackageOriginalStandaloneNotice": false,
+        "originalStandaloneNoticeAcquired": false,
+        "licensingFieldMeaningSource": "https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields",
+        "inventedCopyrightHolderOrYear": false,
+        "remainingOriginalFileLimit": "Exact published MIT declaration and original attribution are retained. An original standalone notice applicable to this precise version has not been obtained; holder/year are not inferred from another version or unmerged PR."
+      }
     },
     {
       "id": "librsvg-crate-objc-id-0-1-1",
@@ -10666,7 +10805,38 @@
       "digestProvenance": "Exact crate bytes match the SHA256 in librsvg 2.63.2 Cargo.lock (Git blob c78cf09e12e2a998a5ffdb4528772f95b414d73c). The original sharp-libvips v1.3.4 Darwin ARM64 job 108609814186 logged zero newly locked packages and exactly four removed packages; this crate is in the retained set.",
       "role": "Exact registry source for a derived retained registry-package inventory constrained by original sharp-libvips v1.3.4 ARM64 release job 108609814186 in run 36315646015. The 353-entry inventory includes target and development dependencies, including entries not compiled on the ARM64 path. It does not assert that all crates were linked, retrieval of the original effective Cargo.lock, or completion of corresponding-source closure.",
       "noticeLimitation": "Exact published crate and exact version tag tree contain no independent named LICENSE/COPYING/NOTICE file. Original Cargo MIT declaration and author metadata retained; no copyright grant text invented or substituted.",
-      "declaredLicense": "MIT"
+      "declaredLicense": "MIT",
+      "licenseEvidence": {
+        "scope": "Applicable-license evidence layers. Does not assert acquisition of an original standalone license file or completion of corresponding-source closure.",
+        "originalPublishedDeclaration": {
+          "license": "MIT",
+          "authors": [
+            "Steven Sheldon"
+          ],
+          "sourceArchiveSha256": "c92d4ddb4bd7b50d730c215ff871754d0da6b2178849f8a2a2ab69712d0c073b",
+          "manifestNotice": {
+            "path": "bodies/7d444ee847aa9b34cbe6cddeaf4001b28be86b28c2855e09c2e7fbfa797a66dd.txt",
+            "sha256": "7d444ee847aa9b34cbe6cddeaf4001b28be86b28c2855e09c2e7fbfa797a66dd",
+            "bytes": 929,
+            "sourceKind": "original Cargo package metadata with license declaration; not a substitute copyright grant or license text",
+            "sourceUrl": "https://static.crates.io/crates/objc_id/objc_id-0.1.1.crate",
+            "sourcePath": "objc_id-0.1.1/Cargo.toml"
+          }
+        },
+        "observedInOriginalArm64Build": {
+          "downloaded": true,
+          "compiled": true,
+          "jobUrl": "https://github.com/lovell/sharp-libvips/actions/runs/36315646015/job/108609814186"
+        },
+        "originalSourceHeader": null,
+        "standardLicense": "MIT",
+        "standardTermsReference": "standardTexts.MIT",
+        "standardTermsArePackageOriginalStandaloneNotice": false,
+        "originalStandaloneNoticeAcquired": false,
+        "licensingFieldMeaningSource": "https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields",
+        "inventedCopyrightHolderOrYear": false,
+        "remainingOriginalFileLimit": "Exact published MIT declaration and original attribution are retained. An original standalone notice applicable to this precise version has not been obtained; holder/year are not inferred from another version or unmerged PR."
+      }
     },
     {
       "id": "librsvg-crate-once-cell-1-21-4",
@@ -12575,7 +12745,50 @@
       "digestProvenance": "Exact crate bytes match the SHA256 in librsvg 2.63.2 Cargo.lock (Git blob c78cf09e12e2a998a5ffdb4528772f95b414d73c). The original sharp-libvips v1.3.4 Darwin ARM64 job 108609814186 logged zero newly locked packages and exactly four removed packages; this crate is in the retained set.",
       "role": "Exact registry source for a derived retained registry-package inventory constrained by original sharp-libvips v1.3.4 ARM64 release job 108609814186 in run 36315646015. The 353-entry inventory includes target and development dependencies, including entries not compiled on the ARM64 path. It does not assert that all crates were linked, retrieval of the original effective Cargo.lock, or completion of corresponding-source closure.",
       "noticeLimitation": "Original MPL 2.0 source-file notice and package declaration retained. No applicable full standalone MPL text exists in the inspected exact crate or source commit tree; standard license text has not been substituted as an upstream grant.",
-      "declaredLicense": "MPL-2.0"
+      "declaredLicense": "MPL-2.0",
+      "licenseEvidence": {
+        "scope": "Applicable-license evidence layers. Does not assert acquisition of an original standalone license file or completion of corresponding-source closure.",
+        "originalPublishedDeclaration": {
+          "license": "MPL-2.0",
+          "authors": [
+            "The Servo Project Developers"
+          ],
+          "sourceArchiveSha256": "eeee001a77567bb05e71652718d3ff76d8697c151ac523e68e9513194eb2b75a",
+          "manifestNotice": {
+            "path": "bodies/f883725ad3e3ce9100c7b236858942d9182581c1ae6fe1511b41aa130657589b.txt",
+            "sha256": "f883725ad3e3ce9100c7b236858942d9182581c1ae6fe1511b41aa130657589b",
+            "bytes": 1705,
+            "sourceKind": "original Cargo package metadata with license declaration; not a substitute copyright grant or license text",
+            "sourceUrl": "https://static.crates.io/crates/selectors/selectors-0.40.0.crate",
+            "sourcePath": "selectors-0.40.0/Cargo.toml"
+          }
+        },
+        "observedInOriginalArm64Build": {
+          "downloaded": true,
+          "compiled": true,
+          "jobUrl": "https://github.com/lovell/sharp-libvips/actions/runs/36315646015/job/108609814186"
+        },
+        "originalSourceHeader": {
+          "notice": {
+            "path": "bodies/d54c6e13e9e952dac17d209171df8657e3cae93beaddace4906150cdec8d02e9.txt",
+            "sha256": "d54c6e13e9e952dac17d209171df8657e3cae93beaddace4906150cdec8d02e9",
+            "bytes": 643,
+            "sourceKind": "complete original source file containing upstream MPL 2.0 license header; not a replacement full standalone license text",
+            "sourceUrl": "https://static.crates.io/crates/selectors/selectors-0.40.0.crate",
+            "sourcePath": "selectors-0.40.0/lib.rs"
+          },
+          "classification": "Original file-level MPL 2.0 applicability notice; corresponds to official Exhibit A, separate from the standard terms.",
+          "officialExhibitUrl": "https://www.mozilla.org/en-US/MPL/2.0/#exhibit-a-source-code-form-license-notice",
+          "scannedRustSourceFilesWithMplNotice": 16
+        },
+        "standardLicense": "MPL-2.0",
+        "standardTermsReference": "standardTexts.MPL-2.0",
+        "standardTermsArePackageOriginalStandaloneNotice": false,
+        "originalStandaloneNoticeAcquired": false,
+        "licensingFieldMeaningSource": "https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields",
+        "inventedCopyrightHolderOrYear": false,
+        "remainingOriginalFileLimit": "No original selectors standalone LICENSE was obtained. Original applicability header and exact published MPL-2.0 declaration remain distinct from supplied standard MPL 2.0 terms."
+      }
     },
     {
       "id": "librsvg-crate-semver-1-0-28",
@@ -17255,7 +17468,37 @@
           }
         ],
         "completeLibrsvgCorrespondingSourceClosureAsserted": false,
-        "existingAdditionalUnresolvedRequirementsMustRemainUnchanged": true
+        "existingAdditionalUnresolvedRequirementsMustRemainUnchanged": true,
+        "actualLockedBuild": {
+          "jobUrl": "https://github.com/lovell/sharp-libvips/actions/runs/36315646015/job/108609814186",
+          "logLine": 8706,
+          "pathsInCommandAreAbbreviatedFromOriginalPublicJob": true,
+          "originalCargoWrapperSourceInput": "libvips-input-334",
+          "cargoWrapperSourcePath": "librsvg-2.63.2/meson/cargo_wrapper.py",
+          "cargoWrapperSha256": "3ecc239a5a9880459927d6dc0178cba29ac2700694660d9b93c6e0e7fe72ba43",
+          "postWorkspaceUpdatePatchChangesCargoManifestOrLock": false,
+          "originalEffectiveCargoLockRetrieved": false,
+          "fullOriginalResolvedGraphOrLockBytesAsserted": false,
+          "loggedCommandSummary": "cargo cbuild --locked --library-type staticlib --manifest-path deps/rsvg/Cargo.toml --target-dir deps/rsvg/_build/target --release -p librsvg-c"
+        },
+        "standardLibrarySourceCoverage": {
+          "sourceInputId": "librsvg-rust-std-source-20260927",
+          "libraryLockPackageCount": 50,
+          "libraryLockRegistryCount": 31,
+          "matchingVendorManifestNameVersionCount": 31,
+          "scope": "Inventory of the pinned official rust-src archive; library-lock registry entries are present in its vendor tree by exact manifest name and version."
+        },
+        "cargoCToolBootstrapScope": {
+          "exactVersion": "0.10.25+cargo-0.99.0",
+          "originalInstallUsesLocked": true,
+          "lockedRegistryCount": 410,
+          "sameNameVersionChecksumAlreadyIn353": 132,
+          "outside353Count": 278,
+          "outside353HistoricallyDownloadedCount": 246,
+          "outside353HistoricallyCompiledCount": 243,
+          "outside353CurrentArchiveAvailability": "Exact registry URLs and checksums are located in the original tool lock; not individually probed and not supplied as separate sourceInput archives.",
+          "classifiedAutomaticallyAsMandatoryProductRuntimeInputs": false
+        }
       }
     },
     {
