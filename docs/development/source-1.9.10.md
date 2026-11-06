@@ -10,8 +10,11 @@
 
 ## Public-tree projection
 
-The application export contains 3,390 product/source files and 43 additional player
-runtime/source-material files. This repository imports the product tree without
+The application export contains 3,390 product/source entries and 43 additional player
+runtime/source-material files. The public tree imports 3,388 of those entries and
+excludes two generated sidecar identity receipts under `src-tauri/binaries/`; fresh
+builds must produce their own receipts. It adds eight retained public test/helper files.
+The repository does not import
 private Git history, user data, credentials, installation receipts or screenshots.
 The 43 staged files under `src-tauri/native-video/` remain downloadable in the named
 release ZIP. Their licenses, source index, build recipe and relinking instructions
