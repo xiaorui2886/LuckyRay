@@ -4,6 +4,17 @@
 
 各桌面历史版本的下载状态见下方条目。可用附件以 [Releases](https://github.com/xiaorui2886/LuckyRay/releases) 为准；有版本说明不代表有可下载的安装包。旧版本不代表当前推荐版本，请勿用旧程序直接打开新版格式的数据。
 
+## v1.9.10
+
+公开发布日期：2026-11-06。桌面 1.9.10，Collector 继续使用 1.9.6。
+
+- 加入独立 ComfyUI 工作流卡片与已保存连接模型直选。
+- 更新 LGPL 播放组件，修复画布视频交叠和素材引用显示。
+- 内置 DeepSeek Harness 0.2.2-rc.1 与 Node 24.22.2，修复 Canvas Agent 工具兼容和失败详情。
+- 改善图谱、笔记、素材库与社区日常操作。
+
+[完整更新说明](releases/v1.9.10.md) · [发行附件与校验](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.9.10)。
+
 ## v1.9.9
 
 公开发布日期：2026-10-27（UTC+08:00）。桌面 1.9.9，Collector 继续使用 1.9.6。
@@ -226,3 +237,4 @@
 - 恢复文件树操作、标签、附件嵌入及 Markdown 导入导出。
 
 下载：[Windows x64 v1.6.0 历史归档](https://github.com/xiaorui2886/LuckyRay/releases/tag/v1.6.0)（公开归档日期：2026-10-04；保留原安装包）。请同时下载并保留该 Release 中列出的全部第三方材料，并核对 SHA-256。EXE 与 MSI 安装方式可任选其一。
+

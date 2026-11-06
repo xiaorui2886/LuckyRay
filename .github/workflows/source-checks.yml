@@ -28,7 +28,7 @@ jobs:
         run: |
           npm install --global pnpm@11.3.0 --ignore-scripts --no-audit --no-fund
           pnpm install --frozen-lockfile
-      - name: Typecheck and build (includes unchanged 16 resource seal tests)
+      - name: Typecheck and build (includes 26 resource seal tests)
         run: |
           pnpm exec tsc --noEmit
           pnpm build
@@ -72,6 +72,10 @@ jobs:
             D:/lr-public-check-target
           key: public-win-cargo-1.95-${{ hashFiles('luckyray-app/src-tauri/Cargo.lock', 'luckyray-app/tests/desktop-updater-native/Cargo.lock') }}
           restore-keys: public-win-cargo-1.95-
+      - name: Stage exact public 1.9.10 native-video source materials
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ..\scripts\prepare-public-native-video.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'public-native-video-input-staging-failed' }
       - name: Stage exact public media inputs
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\prepare-media-engine.ps1
